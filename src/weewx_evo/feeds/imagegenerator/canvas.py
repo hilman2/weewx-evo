@@ -117,6 +117,15 @@ class Canvas:
                            self._s(x) + r, self._s(y) + r],
                           fill=theming.rgba(color, opacity))
 
+    def circle(self, x: float, y: float, radius: float, color: str,
+               width: float = 1.0) -> None:
+        """A ring, not a disc."""
+        r = self._s(radius)
+        self.draw.ellipse([self._s(x) - r, self._s(y) - r,
+                           self._s(x) + r, self._s(y) + r],
+                          outline=theming.rgba(color),
+                          width=max(1, int(round(self._s(width)))))
+
     def fade_under(self, points: list[tuple[float, float]], baseline: float,
                    color: str, opacity: float) -> None:
         """The area under a line, fading out towards the bottom.

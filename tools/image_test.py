@@ -249,6 +249,32 @@ def main() -> int:
         failures += not check("even without one installed",
                               large > small * 1.5, True)
 
+        print("\na wind chart says which way is north")
+        # Without it a field of arrows has no key, and a plot may turn
+        # them -- WeeWX's own default rotates by ninety degrees.
+        #
+        # Found by changing the letter and diffing, rather than by
+        # counting dark pixels in a corner: the arrows and the axis
+        # labels are in that corner too, and a count says nothing about
+        # which of them it found.
+        from PIL import ImageChops
+
+        marked = ImageGenerator(reader, charts, target=target,
+                                unit_system=reader.system,
+                                rose_label="X")
+        marked.produce(tmp / "rose", now=last)
+        one = Image.open(tmp / "png" / "daywindvec.png").convert("RGB")
+        other = Image.open(tmp / "rose" / "daywindvec.png").convert("RGB")
+        where = ImageChops.difference(one, other).getbbox()
+        failures += not check("the letter is drawn", where is not None,
+                              True)
+        if where:
+            failures += not check("in the bottom left, out of the data",
+                                  where[2] < one.width * 0.15
+                                  and where[1] > one.height * 0.55, True)
+        one.close()
+        other.close()
+
         print("\na chart is a picture, not a blank one")
         with Image.open(tmp / "png" / "daytemp.png") as picture:
             colors = picture.convert("RGB").getcolors(maxcolors=1 << 20)

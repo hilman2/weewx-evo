@@ -73,7 +73,8 @@ class ImageGenerator:
                  scale: int = SCALE,
                  look: theming.Theme | None = None,
                  spans: tuple[str, ...] = (),
-                 titles: bool = True, twilight: bool = True) -> None:
+                 titles: bool = True, twilight: bool = True,
+                 rose_label: str = "N") -> None:
         self.reader = reader
         self.plots = plots
         self.target = target or units.Target(unit_system)
@@ -94,6 +95,9 @@ class ImageGenerator:
         #: one line, so this is both.
         self.titles = titles
         self.twilight = twilight
+        #: The letter in the middle of the compass rose. WeeWX's own option,
+        #: and a skin in another language changes it.
+        self.rose_label = str(rose_label or "N")
         self.written = 0
         self.skipped = 0
         self.failed: list[tuple[str, str]] = []
@@ -489,6 +493,42 @@ class ImageGenerator:
             sheet.line([(x, middle), tip], color, look.line_width * 0.8)
             self._arrow_head(sheet, (x, middle), tip, color, look)
 
+        self._draw_rose(sheet, box, look, color, rotate)
+
+    def _draw_rose(self, sheet: drawing.Canvas, box: drawing.Box,
+                   look: theming.Theme, color: str, rotate: float) -> None:
+        """A compass rose, so an arrow means something.
+
+        Without it a vector chart is a field of arrows with no key: nothing
+        on it says which way is north, and a plot may rotate them -- WeeWX's
+        own default turns them ninety degrees. The rose turns with them, so
+        the letter always points where north is on that chart.
+        """
+        size = look.rose_size
+        centre_x = box.left + size * 0.75
+        centre_y = box.bottom - size * 0.75
+        reach = size * 0.5
+
+        # Straight up before the rotation, which is what north is on a chart
+        # nobody has turned.
+        dx, dy = 0.0, -reach
+        if rotate:
+            dx, dy = (dx * math.cos(rotate) - dy * math.sin(rotate),
+                      dx * math.sin(rotate) + dy * math.cos(rotate))
+        tip = (centre_x + dx, centre_y + dy)
+        tail = (centre_x - dx, centre_y - dy)
+        sheet.line([tail, tip], color, look.line_width * 0.8, 0.9)
+        self._arrow_head(sheet, tail, tip, color, look)
+        # The middle is filled with the page before the ring goes on it.
+        # WeeWX draws the letter straight over the shaft, and at this size
+        # the two are hard to tell apart.
+        ring = size * 0.3
+        sheet.dot(centre_x, centre_y, ring, look.background)
+        sheet.circle(centre_x, centre_y, ring, color, look.line_width * 0.7)
+        sheet.text(centre_x, centre_y + look.font_size * 0.05,
+                   self.rose_label, look.text,
+                   max(6, int(look.font_size * 0.8)), "mm", bold=True)
+
     def _arrow_head(self, sheet: drawing.Canvas, tail: tuple[float, float],
                     tip: tuple[float, float], color: str,
                     look: theming.Theme) -> None:
@@ -564,6 +604,11 @@ class ImageGenerator:
                             "third of its width."),
                 Option("twilight", "Shade twilight as well as night",
                        kind="bool", default=True, advanced=True),
+                Option("rose_label", "North, on a wind chart", default="N",
+                       advanced=True,
+                       help="The letter in the compass rose. Wind charts "
+                            "draw one so an arrow means something; N is "
+                            "north in most languages and not in all."),
                 Option("spans", "Only these groups", kind="list",
                        help="One per line: day, week, month, year. Empty "
                             "draws every group there is."),
@@ -628,6 +673,7 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         spans=tuple(s for s in spans if s),
         titles=option("titles") is not False,
         twilight=option("twilight") is not False,
+        rose_label=str(option("rose_label") or "N"),
     )
 
 

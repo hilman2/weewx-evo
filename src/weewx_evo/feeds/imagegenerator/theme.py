@@ -85,7 +85,7 @@ class Theme:
     palette: tuple[str, ...] = PALETTE
 
     #: Room for the labels. Left is wider because a y label sits there.
-    pad_left: int = 42
+    pad_left: int = 46
     pad_right: int = 12
     pad_top: int = 10
     pad_bottom: int = 24
@@ -106,9 +106,12 @@ class Theme:
     #: unit 22, heading 26. Smaller than that and a chart shown at a third
     #: of its width -- which is what a page of thumbnails does -- has
     #: labels nobody can read.
-    font_size: int = 10
-    unit_size: int = 11
-    title_size: int = 13
+    font_size: int = 12
+    unit_size: int = 13
+    title_size: int = 14
+    #: The compass rose on a vector chart: how far across, and how big the
+    #: ring in the middle of it is.
+    rose_size: int = 26
     #: About how many gridlines. The tick chooser lands near this, never on
     #: it exactly: the numbers matter more than the count.
     y_ticks: int = 4
@@ -140,6 +143,7 @@ class Theme:
             pad_left=up(self.pad_left), pad_right=up(self.pad_right),
             pad_top=up(self.pad_top), pad_bottom=up(self.pad_bottom),
             heading_height=up(self.heading_height),
+            rose_size=up(self.rose_size),
             line_width=self.line_width * factor,
             font_size=max(1, int(round(self.font_size * factor))),
             unit_size=max(1, int(round(self.unit_size * factor))),
