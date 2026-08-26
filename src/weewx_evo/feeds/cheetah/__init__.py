@@ -36,9 +36,9 @@ page, and in the install command.
 from __future__ import annotations
 
 import logging
-import re
+import os
 import shutil
-import tempfile
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -101,13 +101,12 @@ class CheetahFeed:
         self.failed: list[tuple[str, str]] = []
         #: Which "SummaryBy" files exist, for `$SummaryByMonth` in a template.
         self.summaries: dict[str, list[str]] = {}
+        #: What the skin's own Python contributed. Built once per run: an
+        #: extension may walk the whole archive, and doing that for every
+        #: page of a forty-page skin is forty times too often.
+        self.contributed: list[Any] = []
         #: The plain values at the top of skin.conf, for `$SKIN_NAME`.
         self.skin_values: dict[str, Any] = {}
-        #: Where the prepared templates live -- the skin's own, with their
-        #: includes made absolute. Made on the first run and refreshed only
-        #: where a file has changed, so a station rewrites nothing per
-        #: interval.
-        self.work: Path = Path(tempfile.gettempdir()) / _work_name(self.skin)
         #: Whether the skin decides which units it is shown in. False once
         #: the operator has picked a system on the feed's own page.
         self.skin_units = True
@@ -122,16 +121,23 @@ class CheetahFeed:
         self.failed = []
         self.summaries = {name: [] for name in SUMMARIES}
 
-        prepare(self.skin, self.work)
         conf = self._skin_conf()
         if conf is None:
             return Produced(directory=into,
                             note=f"no skin.conf in {self.skin}")
 
+        # The skin's own words and units first, its own code second. The
+        # other way round, an extension is handed a formatter that has not
+        # been told what the skin shows things in, and every number it
+        # works out comes back in the unit the archive holds -- a chart
+        # captioned in Fahrenheit on a page that says Celsius everywhere
+        # else, with nothing anywhere saying why.
+        self._extras(conf)
+        self.contributed = self._extensions(conf)
+
         files: list[Path] = []
         section = conf.get("CheetahGenerator") or conf.get("FileGenerator")
         if isinstance(section, dict):
-            self._extras(conf)
             files += self._generate(section, "", into, conf)
         else:
             log.warning("%s has no [CheetahGenerator]; nothing to render",
@@ -230,6 +236,99 @@ class CheetahFeed:
                             if not isinstance(v, dict)}
 
     # -- walking the generator sections -----------------------------------
+
+    def _extensions(self, conf: dict[str, Any]) -> list[Any]:
+        """Run the skin's own Python, if it ships any.
+
+        `search_list_extensions` names classes; each is handed the generator
+        and asked what it wants to add. weewx-wdc ships eight of them and
+        without them not one of its pages renders -- so a skin that brings
+        code is not an edge case, it is the second one anybody tries.
+
+        One failure costs that extension's names and nothing else. Half a
+        page is worse than a named gap, and the tag report lists what was
+        missing either way.
+        """
+        wanted = conf.get("CheetahGenerator", {}).get(
+            "search_list_extensions") if isinstance(
+                conf.get("CheetahGenerator"), dict) else None
+        wanted = [str(x).strip() for x in _as_list(wanted) if str(x).strip()]
+        if not wanted:
+            return []
+
+        from ... import weewxapi
+
+        weewxapi.install()
+        span = self.reader.span()
+        timespan = weewxapi.TimeSpan(span[0], span[1]) if span else             weewxapi.TimeSpan(0, 0)
+        generator = weewxapi.Generator(conf, {}, self.reader,
+                                       self.tags.target, self.tags)
+        lookup = generator.db_binder
+
+        found: list[Any] = []
+        for name in wanted:
+            try:
+                extension = self._one_extension(name, generator)
+                if extension is None:
+                    continue
+                # Whatever it hands back, in the order it handed it back.
+                # Not only dictionaries: an extension that does not override
+                # `get_extension_list` returns itself, and then its methods
+                # are the tags. Taking dictionaries alone dropped every one
+                # of those, and the page said "'Unknown' object is not
+                # iterable" without saying why.
+                found.extend(extension.get_extension_list(timespan, lookup))
+            except Exception as exc:  # noqa: BLE001
+                # Named, and then left out. An extension that raises should
+                # cost its own names rather than the whole site, and the
+                # message says which one so it can be reported upstream.
+                log.warning("the skin's %s did not run: %s: %s", name,
+                            type(exc).__name__, exc)
+                log.debug("%s", name, exc_info=True)
+        if found:
+            log.info("%s: %d thing(s) from its own code", self.skin.name,
+                     len(found))
+        return found
+
+    def _one_extension(self, name: str, generator: Any) -> Any:
+        """Import and build one, from wherever the skin keeps its code."""
+        import importlib
+        import importlib.util
+
+        module_name, _, attribute = name.rpartition(".")
+        if not module_name or not attribute:
+            log.warning("%r does not name a class", name)
+            return None
+
+        module = None
+        # `user.weewx_wdc` is where WeeWX puts a skin's code. A skin
+        # installed here keeps it beside itself, which is the arrangement
+        # that survives being copied to another machine.
+        for where in (self.skin / "bin", self.skin.parent.parent / "bin",
+                      self.skin, self.skin.parent):
+            path = where / Path(*module_name.split(".")).with_suffix(".py")
+            if not path.is_file():
+                continue
+            spec = importlib.util.spec_from_file_location(
+                f"weewx_evo_skin_{self.skin.name}_{module_name}", path)
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            break
+        if module is None:
+            try:
+                module = importlib.import_module(module_name)
+            except ImportError as exc:
+                log.warning("%s: the skin's %s is not where it says: %s",
+                            self.skin.name, module_name, exc)
+                return None
+
+        thing = getattr(module, attribute, None)
+        if thing is None:
+            log.warning("%s has no %s", module_name, attribute)
+            return None
+        return thing(generator)
 
     def _units(self, block: dict[str, Any]) -> None:
         """Take the skin's own units, decimals and words.
@@ -407,19 +506,24 @@ class CheetahFeed:
             self.failed.append((template.name, "Cheetah3 is not installed"))
             return None
 
+        _teach_cheetah()
+        _CURRENT.skin = self.skin
         try:
-            # From the prepared copy, so Cheetah does its own including and
-            # each part keeps its own imports. `file=` rather than
-            # `source=`: that is what makes an include an include.
-            prepared = self.work / template.relative_to(self.skin)
+            # `file=`, not `source=`: that is what makes an include an
+            # include, and an include is its own compilation unit with its
+            # own imports.
             rendered = Cheetah.Template.Template(
-                file=str(prepared),
+                file=str(template),
                 searchList=self._search_list(span, page, relative,
                                              encoding)).respond()
         except Exception as exc:
             # One template, not the site. A skin with one broken page should
             # still publish the other forty.
             log.error("%s: %s: %s", template.name, type(exc).__name__, exc)
+            # The traceback at debug: a one-line message says which page
+            # broke, and the line inside the skin that did it is the next
+            # question every single time.
+            log.debug("%s failed", template.name, exc_info=True)
             self.failed.append((template.name, f"{type(exc).__name__}: {exc}"))
             return None
 
@@ -475,8 +579,12 @@ class CheetahFeed:
         # rather than `$DisplayOptions.observations`, because WeeWX puts the
         # contents of those sections into the search list directly. Before
         # the tags, so a skin can name something the tag layer also has.
-        return [about, summaries, here, self.skin_values,
-                dict(self.tags.display), dict(self.tags.extras), self.tags]
+        # The skin's own code before its own sections, and both before the
+        # tags: an extension is written to add names, and a name it adds
+        # must not be swallowed by the layer that answers everything.
+        return ([about, summaries, here] + list(self.contributed)
+                + [self.skin_values, dict(self.tags.display),
+                   dict(self.tags.extras), self.tags])
 
     # -- everything that is not a template --------------------------------
 
@@ -597,124 +705,69 @@ class CheetahFeed:
 
 # -- small things ----------------------------------------------------------
 
-#: `#include "titlebar.inc"`, in either of the two spellings a skin uses.
-_INCLUDE = re.compile(r'^([ \t]*)#include\s+(raw\s+)?"([^"]+)"[ \t]*$',
-                      re.MULTILINE)
-
-#: A template that includes itself, or two that include each other. Ten is
-#: far past any real nesting and stops the recursion being a hang.
-MAX_INCLUDE_DEPTH = 10
-
-#: Where preparing starts. Anything one of these includes is prepared too,
-#: whatever it is called -- wdc includes `icons/wdc.svg`, and an SVG in a
-#: template is still template source. Everything a skin ships that nothing
-#: includes stays where it is and is published from there.
-TEMPLATE_SUFFIXES = (".tmpl", ".inc")
+def _as_list(value: Any) -> list:
+    """One name or several, as a configuration file may spell either."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return list(str(value).split(","))
 
 
-def prepare(skin: Path, work: Path) -> Path:
-    """A copy of the skin's templates whose includes point at each other.
+#: Which skin is being rendered on this thread. Thread-local rather than
+#: global because two feeds may render two skins at once, and rather than
+#: an argument because the thing that needs it is inside Cheetah.
+_CURRENT = threading.local()
 
-    Cheetah resolves `#include "layout/head.inc"` against the process's
-    *current directory*, so a skin only works if something has changed into
-    its directory first. WeeWX does exactly that -- `os.chdir` from inside
-    the report thread -- and it gets away with it because nothing else in
-    the process uses a relative path. Here a listener is answering hardware
-    on other threads, and a directory that moves under them is the fault
-    that happens once a month and cannot be reproduced.
 
-    So the paths are made absolute instead, in a copy. The obvious cheaper
-    thing -- splicing each included file into the text of the one that
-    includes it -- was what this did first, and it is wrong: Cheetah
-    compiles an include as its *own unit*, so each part keeps its own
-    imports. Glued together, one file's `#from datetime import datetime`
-    and another's `#import datetime` are the same name twice, and whichever
-    loses takes the page down with `module 'datetime' has no attribute
-    'now'`. Measured: two files that render correctly through Cheetah's own
-    include raise a TypeError spliced.
+def _teach_cheetah() -> None:
+    """Tell Cheetah where a skin is, instead of moving the process into it.
+
+    Cheetah resolves `#include "layout/head.inc"` with `serverSidePath`,
+    which is `abspath()` -- against the process's *current directory*. WeeWX
+    gets away with that by doing `os.chdir` into the skin from inside its
+    report thread, because nothing else in the process uses a relative path.
+    Here a listener is answering hardware on other threads, and a directory
+    that moves under them is the fault that happens once a month and cannot
+    be reproduced.
+
+    So `serverSidePath` is replaced, once, on Cheetah's own class. Three
+    things were tried before this one and each failed on something real:
+
+    - Splicing each included file into the text of the one that includes it.
+      Cheetah compiles an include as its *own unit*, so each part keeps its
+      own imports; glued together, one file's `#from datetime import
+      datetime` and another's `#import datetime` are the same name twice and
+      whichever loses takes the page down.
+    - Rewriting every `#include` to an absolute path in a mirrored copy.
+      That works only for paths written as literals, and a skin may compute
+      one: weewx-wdc has `#include $get_celestial_icon($body, 'rise')`.
+    - Subclassing Template and overriding the method there. Cheetah compiles
+      an include against the class of the template that includes it, and a
+      *subclass* gets its body compiled into `writeBody` rather than
+      `respond` -- so the include ran, wrote nothing, and printed `None`
+      into the page where its content should have been.
+
+    Patching the class Cheetah itself instantiates is the one that works,
+    and this feed is the only thing in the process that uses Cheetah.
     """
-    work.mkdir(parents=True, exist_ok=True)
-    done: set[Path] = set()
-    for source in sorted(skin.rglob("*")):
-        if source.is_file() and source.suffix.lower() in TEMPLATE_SUFFIXES:
-            _prepare_one(source, skin, work, done)
-    return work
+    import Cheetah.Template
 
-
-def _prepare_one(source: Path, skin: Path, work: Path,
-                 done: set[Path], depth: int = 0) -> None:
-    """One file, and then whatever it includes."""
-    if source in done or depth > MAX_INCLUDE_DEPTH:
+    if getattr(Cheetah.Template.Template, "_weewx_evo_taught", False):
         return
-    done.add(source)
-    try:
-        text = source.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        log.debug("not preparing %s: %s", source, exc)
-        return
+    original = Cheetah.Template.Template.serverSidePath
 
-    target = work / source.relative_to(skin)
-    try:
-        if not (target.is_file()
-                and target.stat().st_mtime >= source.stat().st_mtime):
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(
-                _absolute_includes(text, source.parent, skin, work),
-                encoding="utf-8")
-    except OSError as exc:
-        log.warning("could not prepare %s: %s", source, exc)
-        return
+    def serverSidePath(self: Any, path: Any = None,  # noqa: N802
+                       **kwargs: Any) -> Any:
+        skin = getattr(_CURRENT, "skin", None)
+        if skin is not None and path and not os.path.isabs(str(path)):
+            here = Path(skin) / str(path)
+            if here.exists():
+                return os.path.normpath(str(here))
+        return original(self, path, **kwargs)
 
-    for match in _INCLUDE.finditer(text):
-        if match.group(2):
-            # `raw` is read from the skin itself and never rewritten.
-            continue
-        found = _find(match.group(3), source.parent, skin)
-        if found is not None and _inside(found, skin):
-            _prepare_one(found, skin, work, done, depth + 1)
-
-
-def _inside(path: Path, skin: Path) -> bool:
-    """Whether a file is part of the skin, so a copy of it makes sense."""
-    try:
-        path.relative_to(skin)
-    except ValueError:
-        return False
-    return True
-
-
-def _absolute_includes(text: str, base: Path, skin: Path, work: Path) -> str:
-    """Point every `#include` at a full path, so no directory has to move."""
-    def rewrite(match: re.Match) -> str:
-        indent, raw, name = match.group(1), match.group(2), match.group(3)
-        found = _find(name, base, skin)
-        if found is None:
-            log.warning("%s includes %r, which is not there", base, name)
-            # Left as it was, so Cheetah reports it against the real line
-            # rather than this rendering a page with a hole in it.
-            return match.group(0)
-        if raw:
-            # Raw means "do not parse this", so it comes from the skin
-            # itself: there is nothing in it for us to have rewritten.
-            return f'{indent}#include raw "{found.as_posix()}"'
-        here = work / found.relative_to(skin)
-        return f'{indent}#include "{here.as_posix()}"'
-
-    return _INCLUDE.sub(rewrite, text)
-
-
-def _work_name(skin: Path) -> str:
-    """A directory name that says which skin it belongs to.
-
-    Readable, then eight hex characters of the whole path: two skins called
-    Seasons in two installations must not share a working directory.
-    """
-    import hashlib
-
-    text = str(skin)
-    name = "".join(c if c.isalnum() else "-" for c in skin.name)[:32]
-    stamp = hashlib.sha1(text.encode()).hexdigest()[:8]  # noqa: S324
-    return f"weewx-evo-skin-{name or 'skin'}-{stamp}"
+    Cheetah.Template.Template.serverSidePath = serverSidePath
+    Cheetah.Template.Template._weewx_evo_taught = True
 
 
 def _find(name: str, base: Path, skin: Path) -> Path | None:

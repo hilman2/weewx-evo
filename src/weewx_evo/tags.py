@@ -79,9 +79,23 @@ _round = round
 #: of the tag layer is that `$day.<anything>` works for a sensor nobody
 #: wrote down.
 IMPORTED = {
+    # Modules a template imports, and names it imports out of them.
     "datetime", "date", "timedelta", "time", "calendar", "math", "os",
     "sys", "json", "random", "re", "string", "itertools", "collections",
-    "strftime", "strptime", "locale", "decimal", "operator", "Decimal",
+    "strftime", "strptime", "localtime", "gmtime", "mktime", "locale",
+    "decimal", "operator", "Decimal",
+    # And the pieces of WeeWX's own toolkit that a skin imports directly.
+    "startOfDay", "startOfArchiveDay", "TimeSpan", "archiveDaySpan",
+    "to_bool", "to_int", "to_float", "option_as_list", "search_up",
+    "accumulateLeaves", "rounder",
+    # And the builtins. `$str($x)` and `$len($y)` are ordinary in a
+    # template, and a search list that answers for `str` hands the template
+    # our `?'str'?` to call -- which fails as "can only concatenate str
+    # (not Unknown) to str", nine pages at a time.
+    "str", "int", "float", "bool", "len", "list", "dict", "tuple", "set",
+    "sorted", "reversed", "enumerate", "range", "zip", "min", "max", "sum",
+    "abs", "round", "type", "isinstance", "hasattr", "repr", "any", "all",
+    "map", "filter", "print", "format",
 }
 
 #: Attributes Cheetah's NameMapper probes for on every lookup. Answering them
@@ -548,6 +562,16 @@ class Current:
         self.record = record
         self.when = when
 
+    def __call__(self, *_args: Any, **_kwargs: Any) -> "Current":
+        """`$current($data_binding='wx_binding')`. The same readings again.
+
+        WeeWX lets a template switch databases here. There is one archive
+        in weewx-evo, so it comes back unchanged rather than pretending to
+        bind something else -- and a skin that asks keeps working instead
+        of failing with "'Current' object is not callable".
+        """
+        return self
+
     def __getattr__(self, reading: str) -> Any:
         if reading.startswith("_") or reading in IGNORE:
             raise AttributeError(reading)
@@ -841,8 +865,23 @@ class Almanac:
         found = _moment(name, self.tags.when)
         if found is not None:
             return self._time(found, "ephem_year")
+        if name in BODIES:
+            # A planet. pyephem knows where they are; nothing here does,
+            # and putting VSOP87 in would be another `moon.py` for four
+            # readings nobody checks against a clock. With pyephem
+            # installed these answer properly; without it they answer
+            # "N/A", which is the truth and lets the page render.
+            return Body(self.almanac, name)
         return self.tags.missed(f"almanac.{name}")
 
+
+#: The bodies an almanac can be asked about. The sun and the moon are
+#: worked out here; the planets need pyephem, and a skin that asks for one
+#: gets an honest "N/A" rather than a broken page when it is not installed.
+BODIES = frozenset({
+    "sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn",
+    "uranus", "neptune", "pluto",
+})
 
 #: The long name of each angle, and the short one it is the same reading as.
 LONG_ANGLES = {"altitude": "alt", "azimuth": "az",
@@ -1502,13 +1541,27 @@ class Tags:
     # -- everything else a template names --------------------------------
 
     def __getattr__(self, name: str) -> Any:
-        """Anything not defined above. Counted, and reported afterwards."""
+        """Anything not defined above. Counted, and then declined.
+
+        Counted, because a skin asking for something nothing here has is
+        worth reporting -- that is the whole reason this layer keeps a
+        tally. Declined, because a template asks `$varExists('x')` before
+        using `$x`, and an object that answers everything makes that always
+        true. weewx-wdc does exactly this:
+
+            #if $varExists('diagram_classes_custom')
+
+        and with a polite `?'x'?` coming back it took the branch, then
+        called `len()` on it.
+
+        `$current.foo` and `$day.foo.max` are different questions and still
+        answer WeeWX's way -- one prints `?'foo'?`, the other raises. This
+        is the top level only: a bare `$foo` that nothing defines.
+        """
         if name.startswith("_") or name in IGNORE or name in IMPORTED:
-            # IMPORTED raises rather than misses: raising is what sends
-            # Cheetah on to the frame the template was compiled in, where
-            # its own `#import datetime` is waiting.
             raise AttributeError(name)
-        return self.missed(name)
+        self.missed(name)
+        raise AttributeError(name)
 
 
 class Trend:

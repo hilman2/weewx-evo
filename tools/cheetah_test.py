@@ -44,6 +44,24 @@ except AttributeError:  # pragma: no cover - Windows
     pass
 
 
+def _with_extensions(skin, named):
+    """Rewrite the test skin's config to name some search list extensions."""
+    (skin / "skin.conf").write_text(
+        SKIN_CONF.replace(
+            "[CheetahGenerator]",
+            "[CheetahGenerator]" + chr(10)
+            + "    search_list_extensions = " + named),
+        encoding="utf-8")
+
+
+def _read_page(path):
+    """A rendered page as key=value pairs, which is how these templates are
+    written so that a check can name one line."""
+    return dict(line.split("=", 1)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if "=" in line)
+
+
 def _decimals(text: object) -> int:
     """How many digits are printed after the point. "12.758 Grad" is three."""
     head, _, tail = str(text or "").partition(".")
@@ -156,6 +174,85 @@ unit_system = metricwx
 [Texts]
     "Current Conditions" = "Aktuelle Werte"
     "Sunrise" = "Sonnenaufgang"
+"""
+
+#: A skin's own Python, in the shape WeeWX defines. Two things are checked
+#: by its shape rather than its content: it inherits from
+#: `weewx.cheetahgenerator.SearchList` and does *not* override
+#: `get_extension_list`, so the default has to return `[self]` and its
+#: methods have to become tags; and it uses the pieces of `weewx.units` and
+#: `weeutil` that every real extension uses.
+EXTENSION = """
+from weewx.cheetahgenerator import SearchList
+from weewx.units import ValueHelper, ValueTuple, UnitInfoHelper, ObsInfoHelper
+from weeutil.weeutil import TimeSpan, to_bool, rounder, startOfDay
+from weeutil.config import search_up, accumulateLeaves
+import weewx.xtypes
+
+
+class Extras(SearchList):
+    def __init__(self, generator):
+        SearchList.__init__(self, generator)
+        self.unit = UnitInfoHelper(generator.formatter, generator.converter)
+        self.obs = ObsInfoHelper(generator.skin_dict)
+
+    def greeting(self):
+        return "from the skin's own code"
+
+    def temperature_unit(self):
+        return self.unit.unit_type.outTemp
+
+    def what_it_is_called(self):
+        return self.obs.label.outTemp
+
+
+class Numbers(SearchList):
+    def get_extension_list(self, timespan, db_lookup):
+        manager = db_lookup()
+        row = manager.getSql(
+            "SELECT COUNT(*) FROM archive WHERE dateTime > ? AND dateTime <= ?",
+            (timespan[0], timespan[1]))
+        start, stop, values = weewx.xtypes.get_series(
+            "outTemp", TimeSpan(timespan[0], timespan[1]), manager,
+            aggregate_type="max", aggregate_interval=3600)
+        warmest = max((v for v in values[0] if v is not None), default=None)
+        # Converted first, as WeeWX's own extensions do: get_series hands
+        # back what the archive holds, and turning that into what the page
+        # shows is the converter's job, not the helper's.
+        shown = self.generator.converter.convert(
+            ValueTuple(warmest, values[1], values[2]))
+        return [{
+            "rows": row[0] if row else 0,
+            "buckets": len(values[0]),
+            "warmest": ValueHelper(shown, "day", self.generator.formatter,
+                                   self.generator.converter),
+            "rounded": rounder(1.23456, 2),
+            "settled": to_bool("yes"),
+            "midnight": startOfDay(timespan[1]),
+            "looked_up": search_up(self.generator.skin_dict,
+                                   "SKIN_NAME", "none"),
+            "flattened": len(accumulateLeaves(self.generator.skin_dict)),
+        }]
+"""
+
+#: A broken one, to check that it costs only its own names.
+BROKEN = """
+
+class Broken(SearchList):
+    def get_extension_list(self, timespan, db_lookup):
+        raise RuntimeError("this extension is broken")
+"""
+
+#: What a template asks the extension for.
+EXTENSION_TAGS = """greeting=$greeting()
+unit_of=$temperature_unit()
+called=$what_it_is_called()
+rows=$rows
+buckets=$buckets
+warmest=$warmest
+rounded=$rounded
+settled=$settled
+looked_up=$looked_up
 """
 
 AUSTRIAN = """
@@ -323,6 +420,74 @@ def main() -> int:
         failures += not check("but not its templates or its config",
                               (out / "index.html.tmpl").exists()
                               or (out / "skin.conf").exists(), False)
+
+        print("\nand a skin's own Python runs, and becomes tags")
+        # A WeeWX skin may ship code: `search_list_extensions` names
+        # classes, each is handed the generator and asked what it wants
+        # to add. weewx-wdc ships eight of them and 2851 lines, and
+        # without this not one of its thirteen pages renders -- not
+        # "renders with gaps", not at all.
+        code = skin / "bin" / "user"
+        code.mkdir(parents=True, exist_ok=True)
+        (code / "myskin.py").write_text(EXTENSION, encoding="utf-8")
+        _with_extensions(skin, "user.myskin.Extras, user.myskin.Numbers")
+        (skin / "index.html.tmpl").write_text(
+            INDEX + EXTENSION_TAGS, encoding="utf-8")
+
+        coded = Tags(reader, target=units.Target(reader.system),
+                     unit_system=reader.system)
+        with_code = CheetahFeed(reader, skin, coded, encoding="utf8")
+        with_code.produce(tmp / "coded")
+        failures += not check("nothing failed", with_code.failed, [])
+        got = _read_page(tmp / "coded" / "index.html")
+
+        # An extension that does not override get_extension_list returns
+        # itself, and then its methods are the tags. Returning an empty
+        # list instead cost weewx-wdc eight pages, all with the same
+        # unhelpful "'Unknown' object is not iterable".
+        failures += not check("its methods are tags",
+                              got.get("greeting"),
+                              "from the skin's own code")
+        failures += not check("UnitInfoHelper answers",
+                              got.get("unit_of"), "degree_C")
+        failures += not check("ObsInfoHelper answers",
+                              got.get("called"), "Aussentemperatur")
+
+        print("  and one that returns a dictionary adds those names")
+        failures += not check("its own SQL ran",
+                              int(got.get("rows", "0")) > 0, True)
+        failures += not check("get_series came back",
+                              int(got.get("buckets", "0")) > 0, True)
+        # In the skin's own unit and the skin's own word for it: an
+        # extension that converts with the generator's converter gets what
+        # the page is set to, which is the whole point of handing it one.
+        failures += not check("a ValueHelper prints itself, converted",
+                              got.get("warmest", "").endswith(" Grad"),
+                              True)
+        failures += not check("rounder", got.get("rounded"), "1.23")
+        failures += not check("to_bool", got.get("settled"), "True")
+        failures += not check("search_up found the skin's own key",
+                              got.get("looked_up"), "Testing")
+
+        print("  and one that raises costs its own names, not the site")
+        (code / "myskin.py").write_text(EXTENSION + BROKEN,
+                                        encoding="utf-8")
+        _with_extensions(
+            skin, "user.myskin.Broken, user.myskin.Extras, "
+                  "user.myskin.Numbers")
+        survived = CheetahFeed(
+            reader, skin,
+            Tags(reader, target=units.Target(reader.system),
+                 unit_system=reader.system), encoding="utf8")
+        survived.produce(tmp / "broken")
+        got = _read_page(tmp / "broken" / "index.html")
+        failures += not check("the other one still ran",
+                              got.get("greeting"),
+                              "from the skin's own code")
+
+        # Put the skin back for the checks that follow.
+        (skin / "skin.conf").write_text(SKIN_CONF, encoding="utf-8")
+        (skin / "index.html.tmpl").write_text(INDEX, encoding="utf-8")
 
         print("\nand it runs in the language the skin was translated into")
         # A WeeWX skin keeps its translations in lang/de.conf, and those

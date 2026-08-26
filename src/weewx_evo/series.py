@@ -696,9 +696,15 @@ class Reader:
         every bucket after it by an hour.
         """
         if isinstance(interval, str):
-            interval = interval.lower()
+            interval = interval.strip().lower()
             if interval in FIXED:
                 interval = FIXED[interval]
+            elif interval.isdigit():
+                # A number that arrived as text. A configuration file has
+                # no numbers in it, only words, and a skin passing
+                # `aggregate_interval` straight through hands over "21600"
+                # -- which is six hours and not a name.
+                interval = int(interval)
             elif interval not in CALENDAR:
                 raise ValueError(
                     f"{interval!r} is not an interval. A number of seconds, "
