@@ -55,7 +55,7 @@ class LocalExport(BaseExport):
 
     def __init__(self, directory: str = "", source: str = "",
                  directory_source: str = "", trigger: str = "feed",
-                 every: int = 900, link: bool = True, delete: bool = False,
+                 every: int = 900, link: bool = True, delete: bool = True,
                  tracker: str = "") -> None:
         #: Where it ends up. Under what the web server serves, this is the
         #: address it appears at.
@@ -75,10 +75,14 @@ class LocalExport(BaseExport):
         #: that opened its own output and wrote into it would change what is
         #: published underneath a reader, so turn this off for one that does.
         self.link = link
-        #: Remove what the feed no longer produces. Off by default, and only
-        #: files this export put there are ever considered -- it keeps a
-        #: record. A hand-written page in the same directory is not this
-        #: export's to delete.
+        #: Remove what the feed no longer produces. On by default: nothing
+        #: else ever clears up after a renamed chart, and a feed with dated
+        #: filenames grows without bound.
+        #:
+        #: Only files this export recorded sending are considered. A
+        #: hand-written page in the same directory is not its to delete, and
+        #: a lost record means it cleans up nothing rather than the wrong
+        #: thing.
         self.delete = delete
         self._tracker_path = tracker
         self._tracker: Tracker | None = None
@@ -142,6 +146,11 @@ class LocalExport(BaseExport):
             tracker.save()
 
         result.seconds = time.monotonic() - started
+        if not result.sent and not result.deleted and not result.failures:
+            # Said at the end rather than on the way in: with mirroring on,
+            # a run still has to look at what is no longer there before it
+            # can know that nothing happened.
+            result.note = "nothing had changed"
         self.sent_files += result.sent
         self.last_note = result.note
         return result
@@ -267,10 +276,14 @@ class LocalExport(BaseExport):
                        help="Used when no feed is chosen. Everything under it "
                             "is published, keeping the structure."),
                 Option("delete", "Remove files that are no longer produced",
-                       kind="bool", default=False,
-                       help="Off by default. Only files this export put there "
-                            "are ever removed -- it keeps a record -- but a "
-                            "directory usually holds more than one thing."),
+                       kind="bool", default=True,
+                       help="On, because otherwise nothing ever clears up. A "
+                            "chart that is renamed leaves its old file behind "
+                            "for good, and a feed whose filenames carry a "
+                            "date fills the disk one file a day. Only files "
+                            "this export put there are ever removed: it keeps "
+                            "a record of what it sent, and anything else in "
+                            "the directory is not its to touch."),
             )),
             Group("When it runs", "", (
                 Option("trigger", "Publish", kind="choice", default="feed",

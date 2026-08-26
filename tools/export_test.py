@@ -138,6 +138,24 @@ def local_export(check) -> int:
         failures += not check("no leftover partial",
                               sorted(f.name for f in site.rglob("*.part")), [])
 
+        print("\nclearing up is what it does unasked")
+        # Otherwise nothing ever does. A renamed chart leaves its file
+        # behind for good, and a feed with dated filenames fills the disk
+        # one file a day. Bounded by the record of what was sent, so what
+        # this export did not put there is never touched.
+        failures += not check("a local export mirrors by default",
+                              LocalExport(directory=str(tmp)).delete, True)
+        from weewx_evo.exports.rsync import RsyncExport
+
+        # rsync is the exception, and not out of timidity: --delete
+        # removes everything in the target that is not in the source,
+        # with no record bounding it. In a mistyped directory that is the
+        # directory.
+        rsync_delete = next(
+            o for g in RsyncExport.options() for o in g.options
+            if o.name == "delete")
+        failures += not check("rsync does not, because its is unbounded",
+                              rsync_delete.default, False)
         print("\ndeleting is decided against the whole directory")
         # Given the handful of files a feed just wrote, everything else
         # looks gone. It is not: it is the rest of the site. Worse, the

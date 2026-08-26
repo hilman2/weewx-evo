@@ -297,11 +297,14 @@ class FtpExport(BaseExport):
                        help="Used when no feed is chosen. Everything under it "
                             "is sent, keeping the structure."),
                 Option("delete", "Remove files that are no longer produced",
-                       kind="bool", default=False,
-                       help="Off by default. Only files this export put there "
-                            "are ever removed -- it keeps a record -- but "
-                            "deleting from somebody's web host is not "
-                            "something to start doing without being asked."),
+                       kind="bool", default=True,
+                       help="On, so that a renamed chart does not leave its "
+                            "old file on the host for good. Only files this "
+                            "export put there are ever removed: it keeps a "
+                            "record of what it sent, and the rest of the "
+                            "directory is not its to touch. Turn it off for "
+                            "a host that holds a site somebody else also "
+                            "writes to."),
             )),
             Group("When it runs", "", (
                 Option("trigger", "Send", kind="choice", default="feed",
