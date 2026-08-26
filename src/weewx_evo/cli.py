@@ -1520,6 +1520,234 @@ def _diagnostic_feed(cfg: Settings, name: str, reads: Path):
                                                     prefix=f"feeds.{name}")
 
 
+class _Watcher:
+    """Notices that the configuration file has been written.
+
+    `Settings.reload()` was built for exactly this and nothing called it, so
+    a setting changed on the admin page did nothing at all until somebody
+    restarted -- with no message anywhere saying so. Checking a timestamp
+    once a tick costs a stat.
+    """
+
+    def __init__(self, path: Any) -> None:
+        self.path = Path(path) if path else None
+        self.seen = self._stamp()
+
+    def _stamp(self) -> float:
+        try:
+            return self.path.stat().st_mtime if self.path else 0.0
+        except OSError:
+            return 0.0
+
+    def changed(self) -> bool:
+        now = self._stamp()
+        if now == self.seen:
+            return False
+        self.seen = now
+        return True
+
+def served_directories(args: argparse.Namespace,
+                       cfg: Settings) -> dict[str, Path]:
+    """What the built-in server hands out, by name.
+
+    The local exports, plus anything named directly. The same answer
+    `site_from` works out, taken from the settings object so it follows a
+    reload rather than re-reading the file a second time.
+    """
+    out: dict[str, Path] = {}
+    for name, options in sorted((cfg.config.get("exports") or {}).items()):
+        if isinstance(options, dict) and options.get("kind") == "local":
+            where = str(options.get("directory", "")).strip()
+            if where:
+                # The same path the export publishes to, worked out the same
+                # way. Two readings of one relative path is a server looking
+                # in a directory nothing writes to.
+                out[name] = Path(resolve_paths(args, options)["directory"])
+    for name, where in ((cfg.config.get("web", {}) or {}).get("serve") or {}).items():
+        if isinstance(where, str) and where.strip():
+            out[name] = Path(where)
+    return out
+
+def cmd_plots_list(args: argparse.Namespace) -> int:
+    """What charts exist."""
+    cfg = settings_for(args)
+    path = plots_path(args, cfg)
+    charts = plot_defs.load(path)
+    if not len(charts):
+        print(f"No plots in {path}.")
+        print()
+        print("Bring some over from an existing WeeWX skin:")
+        print("  weewx-evo plots import /etc/weewx/skins/Seasons/skin.conf")
+        return 0
+
+    print(f"{len(charts)} plot(s) in {path}")
+    for span, group in sorted(charts.by_span().items()):
+        print()
+        print(f"  {span}  ({len(group)})")
+        for plot in group:
+            readings = ", ".join(
+                f"{line.obs}" + (f"/{line.aggregate}" if line.aggregate else "")
+                for line in plot.lines)
+            print(f"    {plot.name:<22} {readings}")
+    if charts.labels:
+        print()
+        print(f"  {len(charts.labels)} label(s) for readings")
+    return 0
+
+def cmd_plots_show(args: argparse.Namespace) -> int:
+    """One chart, in full."""
+    cfg = settings_for(args)
+    charts = load_plots(args, cfg)
+    plot = charts.get(args.name)
+    if plot is None:
+        print(f"There is no plot called {args.name!r}.", file=sys.stderr)
+        if len(charts):
+            print("There is: " + ", ".join(p.name for p in charts),
+                  file=sys.stderr)
+        return 1
+
+    print(f"{plot.name}   ({plot.span}, "
+          f"{option_defs.format_duration(plot.time_length)} back)")
+    if plot.title:
+        print(f"  title: {plot.title}")
+    if plot.show_daynight:
+        print("  night is shaded")
+    if plot.skip_if_empty:
+        print(f"  left out where there is nothing over a {plot.skip_if_empty}")
+    if any(v is not None for v in plot.yscale):
+        low, high, step = plot.yscale
+        print(f"  y axis: {low if low is not None else 'auto'}"
+              f" to {high if high is not None else 'auto'}"
+              f", step {step if step is not None else 'auto'}")
+    print()
+    for line in plot.drawn:
+        bits = [f"{line.kind}", f"color {line.color}"]
+        if line.aggregate:
+            bits.append(f"{line.aggregate} per {line.interval}")
+        if line.label or charts.labels.get(line.obs):
+            bits.append(f"labelled {line.label or charts.labels[line.obs]!r}")
+        print(f"  {line.obs:<16} {', '.join(bits)}")
+    return 0
+
+def cmd_plots_import(args: argparse.Namespace) -> int:
+    """Take the plots out of a WeeWX skin.conf or weewx.conf.
+
+    Read, reported, and only written when asked. An import that silently
+    replaced a set of charts somebody had tuned would be worse than no import.
+    """
+    try:
+        conf = weewxconf.read(args.source)
+    except OSError as exc:
+        print(f"Cannot read {args.source}: {exc}", file=sys.stderr)
+        return 1
+
+    section = conf.get("ImageGenerator")
+    if not isinstance(section, dict):
+        # A weewx.conf holds the skins by name rather than the plots
+        # themselves; say where to look rather than "nothing found".
+        print(f"No [ImageGenerator] section in {args.source}.", file=sys.stderr)
+        skins = [k for k, v in conf.items()
+                 if isinstance(v, dict) and "ImageGenerator" in v]
+        if skins:
+            print("  It is in: " + ", ".join(skins), file=sys.stderr)
+        else:
+            print("  Plots live in a skin's skin.conf, not in weewx.conf --"
+                  " try skins/Seasons/skin.conf.", file=sys.stderr)
+        return 1
+
+    result = plot_defs.from_image_generator(section, plot_defs.labels_from(conf))
+    print(result.report(str(args.source)))
+
+    if not args.write:
+        print()
+        print("Nothing was changed. Keep them with --write.")
+        return 0
+
+    cfg = settings_for(args)
+    path = plots_path(args, cfg)
+    existing = plot_defs.load(path)
+    if len(existing) and not args.replace:
+        kept = 0
+        for plot in result.plots:
+            if existing.get(plot.name) is None:
+                existing.add(plot)
+            else:
+                kept += 1
+        existing.labels.update(
+            {k: v for k, v in result.plots.labels.items()
+             if k not in existing.labels})
+        written = existing
+        print()
+        print(f"Added to the {len(existing) - len(result.plots) + kept} already"
+              f" there; {kept} kept as they were."
+              " Use --replace to start from nothing instead.")
+    else:
+        written = result.plots
+
+    plot_defs.save(path, written, f"Imported from {args.source}.")
+    print(f"Written to {path}.")
+    return 0
+
+def cmd_plots_remove(args: argparse.Namespace) -> int:
+    """Delete a chart."""
+    cfg = settings_for(args)
+    path = plots_path(args, cfg)
+    charts = plot_defs.load(path)
+    if not charts.remove(args.name):
+        print(f"There is no plot called {args.name!r}.", file=sys.stderr)
+        return 1
+    plot_defs.save(path, charts)
+    print(f"Removed {args.name} from {path}.")
+    return 0
+
+def cmd_plots_run(args: argparse.Namespace) -> int:
+    """Produce the JSON now, and say what came out."""
+    import sqlite3
+
+    from .feeds import jsongenerator
+    from .series import Reader
+
+    cfg = settings_for(args)
+    charts = load_plots(args, cfg)
+    if not len(charts):
+        print("No plots are defined. See `weewx-evo plots import`.",
+              file=sys.stderr)
+        return 1
+
+    archive = Path(cfg.get("archive_db"))
+    if not archive.exists():
+        print(f"No archive at {archive}.", file=sys.stderr)
+        return 1
+
+    connection = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)
+    try:
+        generator = jsongenerator.from_settings(cfg, Reader(connection), charts)
+        into = Path(args.into or (Path(cfg.get("feeds_dir") or "data/feeds")
+                                  / "json"))
+        made = generator.produce(into)
+    finally:
+        connection.close()
+
+    print(f"{made.note or 'nothing'}")
+    print(f"  into {made.directory}")
+    if made.files:
+        total = sum(f.stat().st_size for f in made.files if f.exists())
+        print(f"  {len(made.files)} file(s), {total / 1024:.1f} KB")
+
+    if args.page:
+        # The diagnostic page, beside the data. One file that draws all of it
+        # and lists what looks wrong -- worth the second it costs, because the
+        # alternative is reading JSON by eye.
+        from .feeds import diagnostic
+
+        page = diagnostic.from_settings(cfg, made.directory)
+        drawn = page.produce(made.directory.parent)
+        print()
+        print(f"  {drawn.note}")
+        print(f"  {drawn.files[0] if drawn.files else drawn.directory}")
+    return 0
+
+
 def start_feeds(args: argparse.Namespace,
                 cfg: Settings) -> "feed_runner.Runner | None":
     """Start the feed runner, or say why there is nothing to run.
