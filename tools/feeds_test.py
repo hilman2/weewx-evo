@@ -168,9 +168,9 @@ feeds.theme.encoding = "utf8"
         bare = tmp / "bare.toml"
         bare.write_text(f'archive_db = "{db.as_posix()}"\n', encoding="utf-8")
         # A fresh resolver, or the first configuration is still cached.
-        import weewx_evo.cli as cli
+        from weewx_evo import settings as settings_state
 
-        cli._RESOLVED = None
+        settings_state.forget_running()
         plain = configured_feeds(argparse.Namespace(config=bare,
                                                     weewx_conf=None))
         failures += not check("the two that ship", sorted(plain),

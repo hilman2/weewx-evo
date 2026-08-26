@@ -16,11 +16,13 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+SRC = Path(__file__).resolve().parent.parent / "src"
+sys.path.insert(0, str(SRC))
 
 from weewx_evo import options as option_defs  # noqa: E402
 from weewx_evo.settings import Settings  # noqa: E402
@@ -35,6 +37,14 @@ def check(label: str, got: object, want: object) -> bool:
 CORE = option_defs.Schema(name="core", label="core",
                           groups=tuple(option_defs.core_options()))
 
+
+#: An export pointed at a feed by the name the operator gave it.
+EXPORT_CONFIG = """
+feeds.theme.kind = "json"
+exports.theme.kind = "local"
+exports.theme.source = "theme"
+exports.theme.directory = "WHERE"
+"""
 
 #: Two feeds the operator named. Neither name is a kind, which is the whole
 #: point: a list that reads the kinds back cannot offer either of them.
@@ -240,9 +250,9 @@ def main() -> int:
         os.environ["WEEWX_EVO_CONFIG"] = str(named)
 
         import weewx_evo.cli as cli
+        from weewx_evo import settings as settings_state
 
-        cli._RESOLVED = None
-        cli._ARGS = None
+        settings_state.forget_running()
         option_defs.building_for(None)
         # As `serve` does it: argparse takes the path from the environment,
         # so the namespace carries it and nothing was typed.
@@ -253,8 +263,31 @@ def main() -> int:
         offered = [name for name, _label in option_defs.defined_feeds()]
         failures += not check("and both feeds can be pointed at",
                               offered, ["metric", "theme"])
-        cli._RESOLVED = None
-        cli._ARGS = None
+        settings_state.forget_running()
+        print("\nand the same is true of the real entry point")
+        # This has to be a subprocess, and it has to be `python -m
+        # weewx_evo.cli`. That is how the container starts, and it is the
+        # only way the fault appears: cli.py then runs as `__main__`, so
+        # a later `from .cli import ...` loads the file a second time
+        # under its package name and reads that copy's empty globals.
+        # Importing cli and calling into it, as the checks above do,
+        # loads it once and cannot see this at all.
+        export_config = tmp / "export.toml"
+        export_config.write_text(
+            EXPORT_CONFIG.replace("WHERE", (tmp / "out").as_posix()),
+            encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, "-m", "weewx_evo.cli", "export", "check",
+             "theme"],
+            capture_output=True, text=True,
+            env={**os.environ,
+                 "WEEWX_EVO_CONFIG": str(export_config),
+                 "PYTHONPATH": str(SRC)})
+        said = result.stdout + result.stderr
+        failures += not check("the export was built",
+                              "must be one of" not in said, True)
+        failures += not check("and it named its own directory",
+                              str(tmp / "out") in said, True)
     finally:
         os.environ.clear()
         os.environ.update(saved_env)

@@ -425,9 +425,10 @@ def _config_path() -> Any:
     """Which file the forms are being built for."""
     if _FOR_FILE is not None:
         return _FOR_FILE
-    from .cli import _ARGS
+    from .settings import running_args
 
-    return getattr(_ARGS, "config", None) if _ARGS else None
+    args = running_args()
+    return getattr(args, "config", None) if args else None
 
 
 def _current_config() -> dict:
@@ -452,10 +453,11 @@ def _current_config() -> dict:
         except Exception:  # noqa: BLE001
             return {}
 
-    from .cli import _RESOLVED
+    from .settings import running
 
-    if _RESOLVED is not None:
-        return _RESOLVED.config or {}
+    found = running()
+    if found is not None:
+        return found.config or {}
     try:
         return config_file.read(_config_path()) or {}
     except Exception:  # noqa: BLE001

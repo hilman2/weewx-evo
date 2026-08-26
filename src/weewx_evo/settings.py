@@ -283,3 +283,41 @@ def load(schema: Schema, config_path: str | Path | None = None,
 
     return Settings(schema, config=config, args=args, weewx=shared,
                     prefix=prefix, path=config_path)
+
+
+# -- the one instance this process resolved ------------------------------
+
+#: Here, and deliberately not in `cli.py`.
+#:
+#: `cli.py` is also `__main__`: the container runs `python -m
+#: weewx_evo.cli`. A later `from .cli import _RESOLVED` then imports the
+#: same file a *second* time under its package name, and that copy's
+#: globals are empty forever. Everything that read them saw None and
+#: quietly fell back to a default -- a dropdown listed the feeds that
+#: ship instead of the ones configured, and an export aimed at a feed the
+#: operator had named was refused at startup as one that did not exist.
+#: Nothing anywhere said why. This module is only ever imported, so there
+#: is one of it.
+_RUNNING: Any = None
+_RUNNING_ARGS: Any = None
+
+
+def running() -> Any:
+    """The settings this process resolved, or None before it has."""
+    return _RUNNING
+
+
+def running_args() -> Any:
+    """The arguments this run was given. Which file, above all."""
+    return _RUNNING_ARGS
+
+
+def set_running(settings: Any, args: Any = None) -> None:
+    global _RUNNING, _RUNNING_ARGS
+    _RUNNING = settings
+    _RUNNING_ARGS = args
+
+
+def forget_running() -> None:
+    """Start over. For a test that resolves twice in one process."""
+    set_running(None, None)

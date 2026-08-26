@@ -49,6 +49,7 @@ from .derive import from_settings as deriver_from
 from .ingest import drivers, userdrivers
 from .ingest import state as state_module
 from .ingest.listener import HttpListener, Ingest, UdpListener
+from . import settings as settings_state
 from .settings import Settings, load as load_settings
 from . import feedrunner as feed_runner
 from . import plots as plot_defs
@@ -134,12 +135,6 @@ def add_archive_args(parser: argparse.ArgumentParser) -> None:
                              "0 does not keep them at all")
 
 
-_RESOLVED: Settings | None = None
-#: The arguments this run was given, so `all_schemas()` can find the
-#: configuration file without every caller having to pass it.
-_ARGS: argparse.Namespace | None = None
-
-
 def settings_for(args: argparse.Namespace) -> Settings:
     """The process's settings, resolved once.
 
@@ -147,13 +142,17 @@ def settings_for(args: argparse.Namespace) -> Settings:
     file rewritten between two of them would hand two different
     configurations to one running system, and that is a bug nobody can
     reproduce afterwards.
+
+    Held in `settings.py`, not here. This file is also `__main__`, so its
+    globals exist twice as soon as anything imports it by name -- see the
+    note there.
     """
-    global _RESOLVED, _ARGS
-    if _RESOLVED is not None:
-        return _RESOLVED
-    _ARGS = args
-    _RESOLVED = _resolve(args)
-    return _RESOLVED
+    found = settings_state.running()
+    if found is not None:
+        return found
+    resolved = _resolve(args)
+    settings_state.set_running(resolved, args)
+    return resolved
 
 
 def _resolve(args: argparse.Namespace) -> Settings:
@@ -900,7 +899,8 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
     changes.
     """
     if config_path is None:
-        config_path = getattr(_ARGS, "config", None) if _ARGS else None
+        args = settings_state.running_args()
+        config_path = getattr(args, "config", None) if args else None
     # The dropdowns are built later, from inside the renderer, and by then
     # nothing has told them which file they describe.
     option_defs.building_for(config_path)
