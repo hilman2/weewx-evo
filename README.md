@@ -193,12 +193,52 @@ eigene Spalte.
 
 ## Tests
 
+`tools/` ist kein Beiwerk. Die Zusage dieses Projekts ist, dass eine bestehende
+Datenbank unverändert bleibt und dieselben Zahlen herauskommen. Diese Dateien
+sind der Beleg dafür, und sie laufen gegen eine echte Datenbank statt gegen
+ausgedachte Werte.
+
+Alle ohne Netz, ohne Zustand außerhalb eines Temp-Verzeichnisses:
+
 ```bash
-python tools/difftest.py reference/weewx.sdb          # die Arithmetik
-python tools/roundtrip.py reference/weewx.sdb --days 3 # das Schreiben
-python tools/multisource.py                            # mehrere Quellen
-WEEWX_EVO_ECOWITT=../weewx-ecowitt python tools/smoke.py   # alles zusammen
+python tools/difftest.py reference/weewx.sdb     # die Arithmetik
+python tools/roundtrip.py reference/weewx.sdb    # das Schreiben
+python tools/smoke.py                             # alles zusammen
+python tools/multisource.py                       # mehrere Stationen
+python tools/driverinstall.py                     # Fremdtreiber
+python tools/adminpage.py                         # die Einstellungsseite
+python tools/settings_test.py                     # die Rangfolge der Quellen
+python tools/netaccess_test.py                    # wer geantwortet wird
+python tools/ratelimit_test.py                    # die zwei Grenzen
+python tools/export_test.py                       # FTP und rsync
+python tools/web_test.py                          # der lokale Webserver
+python tools/derive_test.py                       # die Ableitungen
+python -m pytest tests/                           # der Ecowitt-Treiber
 ```
+
+Drei vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
+im Pfad:
+
+```bash
+PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/seriestest.py \
+    reference/weewx.sdb Europe/Berlin      # Zeitreihen gegen weewx.xtypes
+PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/unitcheck.py   # 147 Umrechnungen
+PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/suncheck.py    # Sonnenstand
+```
+
+Die Zeitzone bei `seriestest.py` ist kein Beiwerk: die Tagestabellen sind auf
+lokale Mitternacht geschlüsselt, und in der falschen Zone gelesen vergleicht man
+einen Tag mit einem anderen.
+
+Gemessen, Stand heute:
+
+| | |
+|---|---|
+| Tagesstatistiken gegen die echte Datenbank | 0 Summenabweichungen |
+| Zeitreihen gegen `weewx.xtypes` | 94 Vergleiche, 19 957 Punkte, 0 Fehler |
+| Einheiten gegen `weewx.units` | 147 Umrechnungen × 9 Werte, exakt |
+| Sonnenaufgang gegen pyephem | 37 s im schlechtesten Fall |
+| Ecowitt-Treiber | 59 Tests, unverändert übernommen |
 
 ### Der Abnahmetest
 
