@@ -319,19 +319,22 @@ class ImageGenerator:
 
     def _shade_night(self, sheet: drawing.Canvas, chart: chartdata.Chart,
                      box: drawing.Box, look: theming.Theme) -> None:
-        """Shade the hours of darkness, and the twilight either side.
+        """Shade the hours of darkness, and soften the two edges.
 
         `sun.day_night` gives which side of the horizon the span starts on
-        and every crossing inside it, not a list of night bands -- because a
+        and every crossing inside it, not a list of night bands -- a
         crossing is a fact and a band is a way of drawing one. Turning the
         one into the other is this renderer's job.
+
+        The edges are not edges. Night painted as a rectangle stops dead at
+        sunrise, and a chart of a day is mostly showing the half hour either
+        side of that. So the twilight the almanac worked out is washed back
+        to the page across its own real length, which is a minute in the
+        tropics and an hour in Norway, and neither is a fixed number of
+        pixels.
         """
         if not chart.daynight:
             return
-
-        for band in chart.daynight.get("twilight") or ():
-            self._band(sheet, chart, box, band.get("from"), band.get("to"),
-                       look.twilight)
 
         state = chart.daynight.get("first")
         edges = ([chart.start]
@@ -342,17 +345,42 @@ class ImageGenerator:
                 self._band(sheet, chart, box, begin, end, look.night)
             state = "day" if state == "night" else "night"
 
+        for band in chart.daynight.get("twilight") or ():
+            # Dawn runs from the start of civil twilight to sunrise, getting
+            # lighter, so the page colour comes in from the right. Dusk is
+            # the other way round.
+            self._fade(sheet, chart, box, band.get("from"), band.get("to"),
+                       look.background,
+                       towards_right=band.get("dir") != "dusk")
+
     def _band(self, sheet: drawing.Canvas, chart: chartdata.Chart,
               box: drawing.Box, begin: Any, end: Any, color: str) -> None:
+        span = self._within(chart, begin, end)
+        if span is None:
+            return
+        sheet.rectangle(self._x(span[0], box, chart), box.top,
+                        self._x(span[1], box, chart), box.bottom, color)
+
+    def _fade(self, sheet: drawing.Canvas, chart: chartdata.Chart,
+              box: drawing.Box, begin: Any, end: Any, color: str,
+              towards_right: bool) -> None:
+        span = self._within(chart, begin, end)
+        if span is None:
+            return
+        sheet.fade_across(self._x(span[0], box, chart), box.top,
+                          self._x(span[1], box, chart), box.bottom,
+                          color, towards_right)
+
+    @staticmethod
+    def _within(chart: chartdata.Chart, begin: Any,
+                end: Any) -> tuple[float, float] | None:
+        """A stretch of time clipped to the chart, or None if it misses it."""
         try:
             begin = max(float(begin), chart.start)
             end = min(float(end), chart.stop)
         except (TypeError, ValueError):
-            return
-        if end <= begin:
-            return
-        sheet.rectangle(self._x(begin, box, chart), box.top,
-                        self._x(end, box, chart), box.bottom, color)
+            return None
+        return (begin, end) if end > begin else None
 
     def _draw_line(self, sheet: drawing.Canvas, line: chartdata.Line,
                    chart: chartdata.Chart, box: drawing.Box,

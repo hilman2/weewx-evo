@@ -163,6 +163,37 @@ class Canvas:
         self.big.paste(theming.rgba(color)[:3], (x0, y0),
                        ImageChops.multiply(shape, column.resize((w, h))))
 
+    def fade_across(self, x0: float, y0: float, x1: float, y1: float,
+                    color: str, towards_right: bool = True) -> None:
+        """Wash a colour across a band, fading it out as it goes.
+
+        For dawn and dusk. Night drawn as a rectangle has a hard edge at
+        sunrise, and the sky does not do that: it is the half hour either
+        side that a chart of a day is actually showing. So the night is
+        painted first and this fades it back to the page across the real
+        length of the twilight -- not across a fixed number of pixels, which
+        is what WeeWX's `daynight_gradient` does and why the same setting
+        looks right on a day chart and wrong on a month one.
+        """
+        if x1 <= x0 or y1 <= y0:
+            return
+
+        from PIL import Image
+
+        left, top = math.floor(self._s(x0)), math.floor(self._s(y0))
+        w = max(1, math.ceil(self._s(x1)) - left)
+        h = max(1, math.ceil(self._s(y1)) - top)
+
+        # One row of the ramp, stretched. The band is a few hundred pixels
+        # at most and this is two allocations rather than one per column.
+        row = Image.new("L", (w, 1))
+        row.putdata([
+            int(round(255 * ((i / max(1, w - 1)) if towards_right
+                             else 1.0 - i / max(1, w - 1))))
+            for i in range(w)])
+        self.big.paste(theming.rgba(color)[:3], (left, top),
+                       row.resize((w, h)))
+
     # -- text, kept for the end -------------------------------------------
 
     def text(self, x: float, y: float, said: str, color: str = "",

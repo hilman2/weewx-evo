@@ -247,6 +247,17 @@ class Reader:
         """
         if obs_type in DEGREE_DAY_BASES:
             return self.degree_days(obs_type, start, stop, how, bases)
+        if obs_type in VECTORS:
+            # `windvec` is not a column: it is a speed and a direction, and
+            # `series()` knows how to put them together. One number out of a
+            # pair of columns is the speed -- whether there is a wind vector
+            # to draw is whether there is a wind speed, and the highest wind
+            # of a day is the highest speed whichever way it blew.
+            #
+            # Without this a template asking `check_for_data('windvec')` got
+            # nothing back and left the chart off the page, while the file
+            # sat there drawn and correct.
+            obs_type = VECTORS[obs_type][0]
         if stop > start and is_midnight(start) and is_midnight(stop) \
                 and self.has_daily(obs_type):
             value = self._from_daily(obs_type, start, stop, how)

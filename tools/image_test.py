@@ -60,15 +60,17 @@ def archive(path: Path) -> int:
     conn.execute("CREATE TABLE archive (dateTime INTEGER PRIMARY KEY, "
                  "usUnits INTEGER, `interval` INTEGER, outTemp REAL, "
                  "dewpoint REAL, rain REAL, windSpeed REAL, windDir REAL, "
-                 "radiation REAL)")
+                 "windGust REAL, windGustDir REAL, radiation REAL)")
     midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
     when = midnight - 86400
     last = when
     while when < time.time():
         hour = (when % 86400) / 3600.0
-        conn.execute("INSERT INTO archive VALUES (?, 1, 5, ?, ?, ?, ?, ?, NULL)",
+        conn.execute("INSERT INTO archive VALUES "
+                     "(?, 1, 5, ?, ?, ?, ?, ?, ?, ?, NULL)",
                      (when, 50.0 + hour, 40.0 + hour / 2, 0.01,
-                      2.0 + (hour % 3), 180.0 + hour * 5))
+                      2.0 + (hour % 3), 180.0 + hour * 5,
+                      3.0 + (hour % 4), 190.0 + hour * 5))
         last = when
         when += 300
     conn.commit()
@@ -197,6 +199,17 @@ def main() -> int:
         failures += not check("a plot title wins outright",
                               plain._heading(chart),
                               [("Rain (hourly total)", "")])
+
+        print("\na wind vector answers as a wind speed does")
+        # `windvec` is not a column, and `aggregate` did not know it.
+        # A template asking `check_for_data('windvec')` got nothing
+        # back and left the chart off the page -- while the file sat
+        # there, drawn and correct, which is why it took a while to see.
+        for obs in ("windvec", "windgustvec"):
+            failures += not check(f"{obs} has data",
+                                  bool(reader.aggregate(
+                                      obs, last - 86400, last,
+                                      "not_null")), True)
 
         print("\nthe axis suits what is drawn on it")
         bars = chartdata.build(charts.plots[1], reader, last, target=target,
