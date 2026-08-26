@@ -367,6 +367,11 @@ def cmd_archive(args: argparse.Namespace) -> int:
     if scheduled:
         runner = export_runner.Runner(scheduled)
         runner.start()
+        if feeds is not None:
+            # An export set to run when its feed finishes is waiting for
+            # exactly this. Wired here because it is the one place that has
+            # both, and neither has to know about the other.
+            feeds.on_produced = runner.feed_produced
     last_prune = 0.0
     try:
         while not stopping.is_set():
@@ -518,6 +523,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if scheduled:
         runner = export_runner.Runner(scheduled)
         runner.start()
+        if feeds is not None:
+            # An export set to run when its feed finishes is waiting for
+            # exactly this. Wired here because it is the one place that has
+            # both, and neither has to know about the other.
+            feeds.on_produced = runner.feed_produced
 
     stopping = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stopping.set())

@@ -37,11 +37,20 @@ class Runner:
     """Produces every feed, in order, whenever a record lands."""
 
     def __init__(self, feeds: list[tuple[str, Callable, Path]],
-                 archive_path: Path) -> None:
+                 archive_path: Path,
+                 on_produced: Callable[[str, list], None] | None = None) -> None:
         #: (name, build(reader) -> feed, where to write). Built late, with a
         #: connection made on this thread.
         self.feeds = list(feeds)
         self.archive_path = Path(archive_path)
+        #: Called with (name, files) after each feed finishes. This is what
+        #: an export set to run "when its feed finishes" is waiting for, and
+        #: without it such an export waits for ever without saying so.
+        #:
+        #: A callback rather than a reference to the export runner: a feed
+        #: has no business knowing that exports exist, and the two are wired
+        #: together where both are already in scope.
+        self.on_produced = on_produced
         self.due = threading.Event()
         self.stopping = threading.Event()
         self.thread: threading.Thread | None = None
@@ -105,6 +114,17 @@ class Runner:
                     feed = build(reader)
                     made = feed.produce(into)
                     notes.append(f"{name}: {made.note}" if made.note else name)
+                    if self.on_produced is not None:
+                        # After the files are written, never before. That
+                        # ordering is the whole reason an export prefers this
+                        # over the archive record: started by the record it
+                        # can begin while the feed is still writing, and half
+                        # a page gets published.
+                        try:
+                            self.on_produced(name, list(made.files))
+                        except Exception:
+                            log.exception("could not hand %r on to the "
+                                          "exports; carrying on", name)
                 except Exception:
                     # One feed failing must not cost the others. A broken
                     # template should not stop the JSON that everything else

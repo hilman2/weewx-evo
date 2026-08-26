@@ -178,6 +178,81 @@ def local_export(check) -> int:
     return failures
 
 
+def feed_to_export(check) -> int:
+    """A feed finishing is what starts an export set to wait for it.
+
+    The link that was missing: the export runner has `feed_produced`, the
+    feed runner writes the files, and for a while nothing joined the two. An
+    export configured exactly as the settings page writes it sat waiting for
+    a signal nobody sent, and said nothing about it.
+    """
+    import shutil
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from weewx_evo import feedrunner
+    from weewx_evo.exports import Sent
+    from weewx_evo.exports import runner as export_runner
+
+    failures = 0
+    tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-chain-"))
+    try:
+        work = tmp / "work"
+        work.mkdir()
+
+        class Fake:
+            """Stands in for a feed. Writes one file and says it did."""
+
+            def produce(self, into, now=None):
+                Path(into).mkdir(parents=True, exist_ok=True)
+                written = Path(into) / "index.html"
+                written.write_text("<h1>21.4</h1>", encoding="utf-8")
+                from weewx_evo.feeds import Produced
+
+                return Produced(directory=Path(into), files=[written],
+                                note="one file")
+
+        published: list[tuple[str, int]] = []
+
+        class Destination:
+            trigger = "feed"
+
+            def send(self, source, files=None):
+                published.append((str(source), len(files or [])))
+                return Sent(sent=len(files or []))
+
+        scheduled = [export_runner.Scheduled(
+            name="site", export=Destination(), source=work, feed="json")]
+        exports = export_runner.Runner(scheduled)
+        exports.start()
+
+        feeds = feedrunner.Runner([("json", lambda _reader: Fake(), work)],
+                                  archive_path=tmp / "nothing.sdb")
+        feeds.on_produced = exports.feed_produced
+
+        # No archive on disk, so run the feeds the way the loop would once
+        # there is one.
+        (tmp / "nothing.sdb").write_bytes(b"")
+        feeds.run_once()
+
+        for _ in range(50):
+            if published:
+                break
+            time.sleep(0.1)
+        exports.stop()
+
+        failures += not check("the export ran", bool(published), True)
+        if published:
+            failures += not check("with the feed's directory",
+                                  published[0][0], str(work))
+            failures += not check("and the file the feed named",
+                                  published[0][1], 1)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return failures
+
+
 def main() -> int:
     failures = 0
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-export-"))
@@ -238,6 +313,8 @@ def main() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
     failures += local_export(check)
+    failures += feed_to_export(check)
+
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")
     return 1 if failures else 0
