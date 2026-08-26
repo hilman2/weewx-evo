@@ -431,6 +431,25 @@ def main() -> int:
                               (out / "index.html.tmpl").exists()
                               or (out / "skin.conf").exists(), False)
 
+        print("\nthe operator can set the skin's own Extras")
+        # A skin keeps the things its author meant an operator to
+        # change in [Extras]. Editing the skin to change them loses it
+        # at the next update, so they are a feed setting -- which is
+        # where WeeWX keeps them too. weewx-wdc needs `base_path` here
+        # or its stylesheet and its charts are looked for at the root
+        # of the site instead of where it was published.
+        theirs = Tags(reader, target=units.Target(reader.system),
+                      unit_system=reader.system)
+        overridden = CheetahFeed(reader, skin, theirs, encoding="utf8",
+                                 extras={"radar_url": "/mine.png",
+                                         "base_path": "/wdc/"})
+        overridden.produce(tmp / "extras")
+        got = _read_page(tmp / "extras" / "index.html")
+        failures += not check("the operator's value wins",
+                              got.get("extras"), "/mine.png")
+        failures += not check("and one the skin never had is added too",
+                              theirs.extras.get("base_path"), "/wdc/")
+
         print("\nand a skin's own Python runs, and becomes tags")
         # A WeeWX skin may ship code: `search_list_extensions` names
         # classes, each is handed the generator and asked what it wants

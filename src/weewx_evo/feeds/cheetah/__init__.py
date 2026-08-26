@@ -83,13 +83,20 @@ class CheetahFeed:
                  encoding: str = "html_entities",
                  copy_static: bool = True,
                  stale_ok: bool = True,
-                 language: str = "") -> None:
+                 language: str = "",
+                 extras: dict[str, Any] | None = None) -> None:
         self.reader = reader
         #: The skin's own directory, holding skin.conf and the templates.
         self.skin = Path(skin)
         self.tags = tags
         self.encoding = encoding
         self.copy_static = copy_static
+        #: What to put in the skin's own `[Extras]`, over whatever it says
+        #: itself. WeeWX has this under `[StdReport][[Report]][[[Extras]]]`
+        #: and it is not a nicety: a skin's Extras are where its author put
+        #: the things an operator is meant to change, and editing the skin
+        #: to change them means losing it at the next update.
+        self.extras = dict(extras or {})
         #: Which of the skin's translations to run it in. Empty means what
         #: the skin itself says, which is usually English.
         self.language = str(language or "").strip()
@@ -223,6 +230,12 @@ class CheetahFeed:
             found = conf.get(name)
             if isinstance(found, dict):
                 getattr(self.tags, into).update(found)
+        # The operator's own, last: they are the reason this setting exists.
+        if self.extras:
+            self.tags.extras.update(self.extras)
+            block = conf.setdefault("Extras", {})
+            if isinstance(block, dict):
+                block.update(self.extras)
         block = conf.get("Units")
         if isinstance(block, dict):
             self._units(block)
@@ -652,6 +665,17 @@ class CheetahFeed:
                        help="Where skins are looked for. A WeeWX "
                             "installation keeps them in `skins`; that "
                             "directory can be used directly."),
+                Option("extras", "The skin's own settings", kind="list",
+                       advanced=True,
+                       help="One `name = value` per line, put into the "
+                            "skin's [Extras] over whatever it says itself. "
+                            "That is where a skin's author puts the things "
+                            "an operator is meant to change, and editing "
+                            "the skin to change them loses it at the next "
+                            "update. weewx-wdc needs `base_path = /wdc/` "
+                            "here if it is published anywhere but the root "
+                            "of a site, or its stylesheet and its charts "
+                            "are looked for in the wrong place."),
                 Option("lang", "Language", kind="choice", default="",
                        choices=(("", "As the skin says"),),
                        choices_from=_skin_languages,
@@ -704,6 +728,29 @@ class CheetahFeed:
 
 
 # -- small things ----------------------------------------------------------
+
+def _settings_block(value: Any) -> dict[str, Any]:
+    """A skin's `[Extras]` overrides, written either way.
+
+    A configuration file writes them as a table:
+
+        feeds.wdc.extras.base_path = "/wdc/"
+
+    and the settings page has one field, so it writes them as lines:
+
+        base_path = /wdc/
+    """
+    if isinstance(value, dict):
+        return dict(value)
+    if not value:
+        return {}
+    out: dict[str, Any] = {}
+    for line in str(value).splitlines():
+        key, sep, said = line.partition("=")
+        if sep and key.strip():
+            out[key.strip()] = said.strip()
+    return out
+
 
 def _as_list(value: Any) -> list:
     """One name or several, as a configuration file may spell either."""
@@ -967,6 +1014,7 @@ def from_settings(settings: Any, reader: Reader,
         copy_static=option("copy_static") is not False,
         stale_ok=option("stale_ok") is not False,
         language=spoken.code,
+        extras=_settings_block(option("extras")),
     )
     # An explicit choice on the feed's page beats what the skin asked for.
     # Left empty, the skin decides, which is the point of running it at all.
