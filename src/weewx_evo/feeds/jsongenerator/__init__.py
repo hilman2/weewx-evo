@@ -638,10 +638,20 @@ def _drop_empty(entry: dict[str, Any], gap_fraction: float | None,
 
 
 def from_settings(settings: Any, reader: Reader, plots: PlotSet,
-                  extra_groups: dict[str, str] | None = None) -> JSONGenerator:
-    """Build the generator from the configuration."""
+                  extra_groups: dict[str, str] | None = None,
+                  prefix: str = "feeds.json") -> JSONGenerator:
+    """Build the generator from the configuration.
+
+    `prefix` names the configured feed, so two of them can be set up
+    differently -- one in metric for a site, one in US units for somebody
+    else's uploader -- without either knowing about the other.
+    """
+    def option(name: str, fallback: Any = None) -> Any:
+        found = settings.get(f"{prefix}.{name}")
+        return fallback if found is None else found
+
     stored = units.system_from(settings.get("station.units") or units.US)
-    indent = int(settings.get("feeds.json.indent") or 0)
+    indent = int(option("indent") or 0)
 
     # A group named on its own wins over the system. Somebody wanting Celsius
     # and inches of mercury on one page is not confused; that is what their
@@ -649,20 +659,20 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
     overrides = {}
     for group in ("group_temperature", "group_pressure", "group_rain",
                   "group_speed", "group_altitude", "group_distance"):
-        chosen = (settings.get(f"feeds.json.unit.{group}") or "").strip()
+        chosen = (option(f"unit.{group}") or "").strip()
         if chosen:
             overrides[group] = chosen
     try:
-        target = units.Target(settings.get("feeds.json.units") or "METRICWX",
+        target = units.Target(option("units") or "METRICWX",
                               overrides)
     except ValueError as exc:
         # A unit a group cannot be shown in. Named, and then ignored, rather
         # than stopping a station from producing anything at all.
         log.error("%s -- the overrides are being ignored", exc)
-        target = units.Target(settings.get("feeds.json.units") or "METRICWX")
+        target = units.Target(option("units") or "METRICWX")
 
     spans = tuple(s.strip() for s
-                  in str(settings.get("feeds.json.spans") or "").split(",")
+                  in str(option("spans") or "").split(",")
                   if s.strip())
 
     return JSONGenerator(
@@ -673,13 +683,13 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         longitude=_number(settings.get("station.longitude")),
         unit_system=stored,
         extra_groups=extra_groups,
-        rounding=int(settings.get("feeds.json.rounding") or ROUNDING),
+        rounding=int(option("rounding") or ROUNDING),
         indent=indent or None,
         spans=spans,
-        manifest=_truth(settings.get("feeds.json.manifest"), True),
-        twilight=_truth(settings.get("feeds.json.twilight"), True),
+        manifest=_truth(option("manifest"), True),
+        twilight=_truth(option("twilight"), True),
         rewrite_unchanged=_truth(
-            settings.get("feeds.json.rewrite_unchanged"), False),
+            option("rewrite_unchanged"), False),
     )
 
 

@@ -350,11 +350,19 @@ def _span(start: Any, stop: Any) -> str:
     return f"{length:.0f}s"
 
 
-def from_settings(settings: Any, source: Path) -> Diagnostic:
+def from_settings(settings: Any, source: Path,
+                  prefix: str = "feeds.diagnostic") -> Diagnostic:
+    """Build the page from the configuration.
+
+    `prefix` names the configured feed. Two of them can draw two different
+    directories -- one per data set -- without either knowing about the
+    other.
+    """
+    points = settings.get(f"{prefix}.points")
     return Diagnostic(
         source=source,
         title=str(settings.get("station.name") or "weewx-evo"),
-        draw_limit=int(settings.get("feeds.diagnostic.points") or 400),
+        draw_limit=int(points or 400),
     )
 
 

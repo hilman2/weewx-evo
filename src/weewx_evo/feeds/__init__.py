@@ -88,21 +88,34 @@ class Produced:
         return len(self.files)
 
 
-def names() -> list[str]:
-    """The feeds that exist.
+def kinds() -> list[str]:
+    """The kinds of feed that can be configured.
 
-    A function rather than a list, so that an export's dropdown fills itself
-    the moment a feed appears. The export does not have to be told and nobody
-    has to restart anything.
+    A kind is what a feed *is* -- JSON, a diagnostic page, a Cheetah skin.
+    A name is one configured instance of it. Two Cheetah feeds rendering two
+    different skins are two names of one kind, which is how a station shows
+    Belchertown and a phone layout at the same time. WeeWX arranges this the
+    same way, with named sections under `[StdReport]`.
     """
     load()
     return sorted(_FEEDS)
 
 
-def describe(name: str) -> str:
-    """One line about a feed, for a form that offers it."""
+def names() -> list[str]:
+    """Kept for anything still asking. See `kinds`."""
+    return kinds()
+
+
+def describe(kind: str) -> str:
+    """One line about a kind of feed, for a form that offers it."""
     load()
-    return DESCRIPTIONS.get(name, "")
+    return DESCRIPTIONS.get(kind, "")
+
+
+def factory_for(kind: str) -> Any:
+    """The class behind a kind, loading the registry first."""
+    load()
+    return _FEEDS.get(kind)
 
 
 #: Registered feeds, by name. Filled the way drivers are: from what ships

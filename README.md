@@ -213,6 +213,7 @@ python tools/ratelimit_test.py                    # die zwei Grenzen
 python tools/export_test.py                       # FTP und rsync
 python tools/web_test.py                          # der lokale Webserver
 python tools/derive_test.py                       # die Ableitungen
+python tools/feeds_test.py                        # mehrere Feeds nebeneinander
 python -m pytest tests/                           # der Ecowitt-Treiber
 python -m ruff check --select F src/ tools/       # undefinierte Namen
 ```
