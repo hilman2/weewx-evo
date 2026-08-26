@@ -237,7 +237,7 @@ HOOK
 chmod +x .git/hooks/pre-commit
 ```
 
-Vier vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
+Fünf vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
 im Pfad:
 
 ```bash
@@ -245,6 +245,7 @@ PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/seriestest.py \
     reference/weewx.sdb Europe/Berlin      # Zeitreihen gegen weewx.xtypes
 PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/unitcheck.py   # 147 Umrechnungen
 PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/suncheck.py    # Sonnenstand
+PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/mooncheck.py   # Mondstand und -phasen
 PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/tagcheck.py     reference/weewx.sdb Europe/Berlin      # die Tags, die eine Skin benutzt
 ```
 

@@ -17,6 +17,7 @@ different page.
 
 from __future__ import annotations
 
+import datetime
 import os
 import sqlite3
 import sys
@@ -138,14 +139,53 @@ TAGS = {
 }
 
 
+#: Tags where a difference of a few seconds is the answer, not a fault.
+#:
+#: WeeWX asks pyephem for these. weewx-evo works them out from Meeus's
+#: series, which is what makes `$almanac.hasExtras` true on an installation
+#: with nothing added to it -- and lands a handful of seconds away. Measured
+#: properly in `tools/mooncheck.py`, over twenty years and six places; this
+#: only has to stop reporting it as a mismatch.
+NEARLY = {
+    "$almanac.next_full_moon", "$almanac.next_new_moon",
+    "$almanac.next_first_quarter_moon", "$almanac.next_last_quarter_moon",
+    "$almanac.previous_full_moon", "$almanac.previous_new_moon",
+    "$almanac.next_equinox", "$almanac.next_solstice",
+    "$almanac.previous_equinox", "$almanac.previous_solstice",
+    "$almanac.moon.rise", "$almanac.moon.set", "$almanac.moon.transit",
+}
+
+#: How far apart two of those may be. Two minutes is well inside what any
+#: page shows and well outside what a transcription error looks like.
+NEARLY_SECONDS = 120
+
+
 def check(label: str, ours: str, theirs: str) -> bool:
     ok = ours == theirs
+    if not ok and label in NEARLY:
+        apart = _seconds_apart(ours, theirs)
+        if apart is not None and apart <= NEARLY_SECONDS:
+            print(f"  ok   {label:<44} {ours} ({apart:.0f}s from weewx)")
+            return True
     if ok:
         print(f"  ok   {label:<44} {ours}")
     else:
         print(f"  FAIL {label:<44} evo={ours!r}")
         print(f"       {'':<44} weewx={theirs!r}")
     return ok
+
+
+def _seconds_apart(ours: str, theirs: str) -> float | None:
+    """How far apart two printed moments are, or None if they are not two."""
+    shapes = ("%m/%d/%y %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%H:%M:%S", "%X")
+    for shape in shapes:
+        try:
+            first = datetime.datetime.strptime(ours.strip(), shape)
+            second = datetime.datetime.strptime(theirs.strip(), shape)
+        except ValueError:
+            continue
+        return abs((first - second).total_seconds())
+    return None
 
 
 def main() -> int:

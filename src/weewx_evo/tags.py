@@ -743,8 +743,18 @@ class Almanac:
 
     @property
     def hasExtras(self) -> bool:  # noqa: N802 -- WeeWX's spelling
-        """Whether the harder questions can be answered at all."""
-        return sun_module._ephem is not None
+        """Whether the harder questions can be answered at all.
+
+        Always, now. In WeeWX this asks "is pyephem installed", because
+        without it there is no moon, no equinox and no next full moon. Here
+        all three are worked out from Meeus's series and measured against
+        pyephem in `tools/mooncheck.py`, so the honest answer is yes.
+
+        It stays as a tag because a skin branches on it, and a skin that
+        prints "install ephem for detailed celestial timings" should stop
+        saying so rather than be edited.
+        """
+        return True
 
     @property
     def _placed(self) -> bool:
@@ -799,25 +809,9 @@ class Almanac:
         if name.startswith("_") or name in IGNORE:
             raise AttributeError(name)
 
-        events = {
-            "next_full_moon": "next_full_moon",
-            "next_new_moon": "next_new_moon",
-            "next_first_quarter_moon": "next_first_quarter_moon",
-            "next_last_quarter_moon": "next_last_quarter_moon",
-            "previous_full_moon": "previous_full_moon",
-            "previous_new_moon": "previous_new_moon",
-            "next_equinox": "next_equinox",
-            "next_solstice": "next_solstice",
-            "previous_equinox": "previous_equinox",
-            "previous_solstice": "previous_solstice",
-            "next_vernal_equinox": "next_vernal_equinox",
-            "next_autumnal_equinox": "next_autumnal_equinox",
-            "next_summer_solstice": "next_summer_solstice",
-            "next_winter_solstice": "next_winter_solstice",
-        }
-        if name in events:
-            return self._time(_ephem_event(events[name], self.tags.when),
-                              "ephem_year")
+        found = _moment(name, self.tags.when)
+        if found is not None:
+            return self._time(found, "ephem_year")
         return self.tags.missed(f"almanac.{name}")
 
 
@@ -908,11 +902,16 @@ class Body:
             short = LONG_ANGLES[name]
             degrees = _position(self, short)
             if name == "azimuth":
-                return Value(degrees, "degree_compass", "group_direction",
-                             "ephem_day", self.almanac.tags.target)
-            return Value(None if degrees is None else math.radians(degrees),
-                         "radian", "group_angle", "ephem_day",
-                         self.almanac.tags.target)
+                return self.almanac.tags.shown(
+                    degrees, "degree_compass", "group_direction",
+                    "ephem_day")
+            # Radians, as WeeWX stores an angle, and shown in whatever the
+            # target says -- which is degrees. Handed back unconverted, a
+            # skin's `.format("%.1f")` prints 0.7 where it has always
+            # printed 41.3, and nothing says why.
+            return self.almanac.tags.shown(
+                None if degrees is None else math.radians(degrees),
+                "radian", "group_angle", "ephem_day")
 
         if name in ("alt", "az", "dec", "ra"):
             # Radians and a plain float: what pyephem hands back, and what
@@ -926,8 +925,10 @@ class Body:
 def _position(body: Body, what: str) -> float | None:
     """Where something is in the sky right now, in degrees.
 
-    Only the sun's height is worked out without pyephem; the rest of it is
-    orbital mechanics that has no business being approximated here.
+    pyephem where it is installed, because a skin that has printed the
+    moon's azimuth for years should keep printing the same number. Without
+    it: NOAA's series for the sun and Meeus's for the moon, both in this
+    package, both measured.
     """
     tags = body.almanac.tags
     if not body.almanac._placed:
@@ -948,28 +949,118 @@ def _position(body: Body, what: str) -> float | None:
             log.debug("pyephem could not place the %s", body.which,
                       exc_info=True)
 
-    if body.which == "sun" and what == "alt":
-        return sun_module.position(tags.when, body.almanac.latitude,
-                                   body.almanac.longitude)[0]
-    if body.which == "sun" and what == "dec":
-        return sun_module.solar(tags.when)[0]
+    if body.which == "moon":
+        from . import moon as moon_module
+
+        right_ascension, declination, _parallax = moon_module.equatorial(
+            tags.when)
+        if what == "ra":
+            return right_ascension
+        if what == "dec":
+            return declination
+        if what in ("alt", "az"):
+            return _horizon_of(right_ascension, declination, tags.when,
+                               body.almanac.latitude,
+                               body.almanac.longitude)[what == "az"]
+        return None
+
+    if body.which == "sun":
+        if what == "alt":
+            # From the refraction-corrected series rather than from the
+            # geometry below, because that is the number the night shading
+            # and `$almanac.sun.alt < 0` are both decided on.
+            return sun_module.position(tags.when, body.almanac.latitude,
+                                       body.almanac.longitude)[0]
+        right_ascension, declination = sun_module.equatorial(tags.when)
+        if what == "ra":
+            return right_ascension
+        if what == "dec":
+            return declination
+        if what == "az":
+            return _horizon_of(right_ascension, declination, tags.when,
+                               body.almanac.latitude,
+                               body.almanac.longitude)[1]
     return None
 
 
-def _ephem_event(name: str, when: float) -> float | None:
-    """One of pyephem's moments, as a timestamp. None without pyephem."""
-    if sun_module._ephem is None:
-        return None
-    try:
-        date = sun_module._ephem.Date(
-            sun_module._ephem.Date("1970/1/1 00:00:00") + when / 86400.0)
-        found = getattr(sun_module._ephem, name)(date)
-        return ((float(found)
-                 - float(sun_module._ephem.Date("1970/1/1 00:00:00")))
-                * 86400.0)
-    except Exception:
-        log.debug("pyephem could not work out %s", name, exc_info=True)
-        return None
+def _horizon_of(right_ascension: float, declination: float, when: float,
+                latitude: float, longitude: float) -> tuple[float, float]:
+    """Altitude and azimuth, in degrees, from right ascension and declination.
+
+    Azimuth from north through east, which is the convention every compass
+    rose and every wind vane uses.
+    """
+    from . import moon as moon_module
+
+    hour_angle = math.radians(
+        (moon_module._gmst(when) + longitude - right_ascension) % 360.0)
+    lat = math.radians(latitude)
+    dec = math.radians(declination)
+
+    altitude = math.asin(math.sin(lat) * math.sin(dec)
+                         + math.cos(lat) * math.cos(dec)
+                         * math.cos(hour_angle))
+    azimuth = math.atan2(
+        math.sin(hour_angle),
+        math.cos(hour_angle) * math.sin(lat)
+        - math.tan(dec) * math.cos(lat))
+    # atan2 there measures from south through west, which is the older
+    # convention and is 180 degrees from what anybody expects to read.
+    return math.degrees(altitude), (math.degrees(azimuth) + 180.0) % 360.0
+
+
+#: Which point of the moon's cycle each name asks for, and which way to
+#: look. WeeWX offers all of them and a skin uses two or three.
+MOON_MOMENTS = {
+    "next_new_moon": (0.0, True),
+    "next_first_quarter_moon": (0.25, True),
+    "next_full_moon": (0.5, True),
+    "next_last_quarter_moon": (0.75, True),
+    "previous_new_moon": (0.0, False),
+    "previous_first_quarter_moon": (0.25, False),
+    "previous_full_moon": (0.5, False),
+    "previous_last_quarter_moon": (0.75, False),
+}
+
+#: And the four turns of the year. `next_equinox` is whichever comes first;
+#: the named ones are for a page that wants a particular one.
+SEASON_MOMENTS = {
+    "next_vernal_equinox": (0, True),
+    "next_summer_solstice": (1, True),
+    "next_autumnal_equinox": (2, True),
+    "next_winter_solstice": (3, True),
+    "previous_vernal_equinox": (0, False),
+    "previous_summer_solstice": (1, False),
+    "previous_autumnal_equinox": (2, False),
+    "previous_winter_solstice": (3, False),
+}
+
+
+def _moment(name: str, when: float) -> float | None:
+    """One of the almanac's moments, or None if that is not one of them."""
+    from . import moon as moon_module
+
+    if name in MOON_MOMENTS:
+        phase, forwards = MOON_MOMENTS[name]
+        return moon_module.phase_event(when, phase, forwards)
+    if name in SEASON_MOMENTS:
+        which, forwards = SEASON_MOMENTS[name]
+        return sun_module.season(when, which, forwards)
+    # The unqualified pair: whichever equinox or solstice is nearest. Both
+    # of the four turns are equinoxes or solstices, so each of these picks
+    # from its own two.
+    if name in ("next_equinox", "previous_equinox"):
+        forwards = name.startswith("next")
+        return _nearest(when, (0, 2), forwards)
+    if name in ("next_solstice", "previous_solstice"):
+        forwards = name.startswith("next")
+        return _nearest(when, (1, 3), forwards)
+    return None
+
+
+def _nearest(when: float, which: tuple[int, ...], forwards: bool) -> float:
+    found = [sun_module.season(when, quarter, forwards) for quarter in which]
+    return min(found) if forwards else max(found)
 
 
 # -- the root --------------------------------------------------------------
@@ -1079,6 +1170,23 @@ class Tags:
                                               self.degree_day_bases))
         except Exception:  # noqa: BLE001
             return False
+
+    def shown(self, value: Any, unit: str | None, group: str | None,
+              context: str = "current") -> "Value":
+        """A number worked out in one unit, wrapped in what to show it in.
+
+        Everything the database answers goes through `answer`, which does
+        this on the way past. The almanac does not touch the database, so
+        without this its angles came out in radians on a page set to
+        degrees -- `.format("%.1f")` printing 0.7 where it had always
+        printed 41.3.
+        """
+        wanted = self.target.unit(group) or unit
+        try:
+            converted = units.convert(value, unit, wanted)
+        except ValueError:
+            converted, wanted = value, unit
+        return Value(converted, wanted, group, context, self.target)
 
     def answer(self, reading: str, how: str, span: tuple[float, float],
                context: str, options: dict[str, Any]) -> Value:
