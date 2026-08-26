@@ -166,6 +166,38 @@ def main() -> int:
                               chart.lines[0].time)
         failures += not check("same unit", document["unit"], chart.unit)
 
+        print("\nevery chart says what it is")
+        # This was the visible fault: thirty charts on a page, not one
+        # of them headed. A plot definition imported from a skin carries
+        # no label unless somebody wrote one, so the reading's own name
+        # has to stand in -- "Outside Temperature", not "outTemp", and
+        # not nothing.
+        bare = plot_defs.PlotSet([
+            plot_defs.Plot("daybare", "day", 86400,
+                           [plot_defs.Line("outTemp"),
+                            plot_defs.Line("dewpoint")]),
+        ])
+        plain = ImageGenerator(reader, bare, target=target,
+                               unit_system=reader.system)
+        chart = chartdata.build(bare.plots[0], reader, last, target=target,
+                                unit_system=reader.system)
+        heading = plain._heading(chart)
+        failures += not check("both readings are named",
+                              [said for said, _c in heading],
+                              ["Outside Temperature", "Dew Point"])
+        failures += not check("each in its own colour",
+                              len({c for _s, c in heading}), 2)
+        # The heading and the legend are one line, so a plot with a title
+        # of its own replaces the lot rather than being printed above it.
+        titled = plot_defs.Plot("x", "day", 86400,
+                                [plot_defs.Line("outTemp")],
+                                title="Rain (hourly total)")
+        chart = chartdata.build(titled, reader, last, target=target,
+                                unit_system=reader.system)
+        failures += not check("a plot title wins outright",
+                              plain._heading(chart),
+                              [("Rain (hourly total)", "")])
+
         print("\nthe axis suits what is drawn on it")
         bars = chartdata.build(charts.plots[1], reader, last, target=target,
                                unit_system=reader.system)

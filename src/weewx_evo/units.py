@@ -313,6 +313,109 @@ CONVERT: dict[str, dict[str, Callable[[float], float]]] = {
 }
 
 
+#: What a reading is called, in words, when nothing else says. WeeWX's
+#: `[Labels] [[Generic]]` defaults, transcribed.
+#:
+#: A skin brings its own and they win -- these are for everything that has
+#: no skin behind it, which is every chart drawn on its own. Without them a
+#: chart has no heading at all, and a page of thirty unlabelled charts is a
+#: page nobody can read.
+OBS_LABELS: dict[str, str] = {
+    "barometer": "Barometer",
+    "barometerRate": "Barometer Change Rate",
+    "pressure": "Pressure",
+    "altimeter": "Altimeter",
+    "dewpoint": "Dew Point",
+    "ET": "ET",
+    "heatindex": "Heat Index",
+    "appTemp": "Apparent Temperature",
+    "humidex": "Humidex",
+    "inHumidity": "Inside Humidity",
+    "inTemp": "Inside Temperature",
+    "inDewpoint": "Inside Dew Point",
+    "outHumidity": "Outside Humidity",
+    "outTemp": "Outside Temperature",
+    "radiation": "Radiation",
+    "maxSolarRad": "Clear Sky Radiation",
+    "rain": "Rain",
+    "rainRate": "Rain Rate",
+    "hail": "Hail",
+    "hailRate": "Hail Rate",
+    "snow": "Snow",
+    "snowRate": "Snow Rate",
+    "snowDepth": "Snow Depth",
+    "UV": "UV Index",
+    "wind": "Wind",
+    "windDir": "Wind Direction",
+    "windGust": "Gust Speed",
+    "windGustDir": "Gust Direction",
+    "windSpeed": "Wind Speed",
+    "windchill": "Wind Chill",
+    "windgustvec": "Gust Vector",
+    "windvec": "Wind Vector",
+    "windrun": "Wind Run",
+    "cloudbase": "Cloud Base",
+    "heatdeg": "Heating Degree Days",
+    "cooldeg": "Cooling Degree Days",
+    "growdeg": "Growing Degree Days",
+    "lightning_distance": "Lightning Distance",
+    "lightning_strike_count": "Lightning Strikes",
+    "rxCheckPercent": "Signal Quality",
+    "txBatteryStatus": "Transmitter Battery",
+    "windBatteryStatus": "Wind Battery",
+    "rainBatteryStatus": "Rain Battery",
+    "outTempBatteryStatus": "Outside Temperature Battery",
+    "inTempBatteryStatus": "Inside Temperature Battery",
+    "consBatteryVoltage": "Console Battery",
+    "heatingVoltage": "Heating Battery",
+    "supplyVoltage": "Supply Voltage",
+    "referenceVoltage": "Reference Voltage",
+    "pm1_0": "PM1.0", "pm2_5": "PM2.5", "pm10_0": "PM10",
+    "co": "CO", "co2": "CO2", "nh3": "NH3", "no2": "NO2",
+    "o3": "O3", "so2": "SO2",
+}
+
+#: Readings that come in numbered families. Spelling out forty of each in
+#: the table above would be forty chances to mistype one.
+NUMBERED = {
+    "extraTemp": "Temperature", "extraHumid": "Humidity",
+    "leafTemp": "Leaf Temperature", "leafWet": "Leaf Wetness",
+    "soilTemp": "Soil Temperature", "soilMoist": "Soil Moisture",
+    "batteryStatus": "Battery", "signal": "Signal",
+}
+
+
+def obs_label(obs_type: str) -> str:
+    """What to call a reading on a chart, when nothing else says.
+
+    A skin's own name wins wherever there is one. This is the fallback, and
+    it is better than the column name: "Outside Temperature" over "outTemp",
+    and "Soil Moisture 3" over "soilMoist3".
+    """
+    name = str(obs_type or "")
+    if name in OBS_LABELS:
+        return OBS_LABELS[name]
+    stem = name.rstrip("0123456789")
+    number = name[len(stem):]
+    if number and stem in NUMBERED:
+        return f"{NUMBERED[stem]} {number}"
+    if not name:
+        return ""
+    # Something nobody has named. Split the camel case and the
+    # underscores, which turns `soilTempSensor` into something readable
+    # rather than leaving it raw.
+    said = ""
+    for i, char in enumerate(name):
+        if char == "_":
+            said += " "
+        elif char.isupper() and i and name[i - 1].islower():
+            said += " " + char
+        else:
+            said += char
+    said = " ".join(said.split())
+    return said[:1].upper() + said[1:] if said else name
+
+
 #: Which group each reading belongs to. WeeWX's `obs_group_dict`. A driver
 #: adds its own on top; this is what the core knows without one.
 GROUPS: dict[str, str] = {

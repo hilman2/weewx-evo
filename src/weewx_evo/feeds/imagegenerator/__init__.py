@@ -73,8 +73,7 @@ class ImageGenerator:
                  scale: int = SCALE,
                  look: theming.Theme | None = None,
                  spans: tuple[str, ...] = (),
-                 titles: bool = True, legend: bool = True,
-                 twilight: bool = True) -> None:
+                 titles: bool = True, twilight: bool = True) -> None:
         self.reader = reader
         self.plots = plots
         self.target = target or units.Target(unit_system)
@@ -91,8 +90,9 @@ class ImageGenerator:
         self.look = look or theming.Theme()
         #: Which groups to draw. Empty means all of them.
         self.spans = tuple(spans)
+        #: Whether a chart says what it is. The heading and the legend are
+        #: one line, so this is both.
         self.titles = titles
-        self.legend = legend
         self.twilight = twilight
         self.written = 0
         self.skipped = 0
@@ -171,18 +171,12 @@ class ImageGenerator:
         height = self.height * self.scale
         sheet = drawing.Canvas(width, height, look)
 
-        title = chart.title or self._title(chart)
-        shown = [line for line in chart.lines if line.time]
-        has_legend = self.legend and len(shown) > 1 and any(
-            line.label for line in shown)
-
+        heading = self._heading(chart)
         box = drawing.Box(
             left=look.pad_left,
-            top=look.pad_top + (look.title_height if title and self.titles
-                                else 0),
+            top=look.pad_top + (look.heading_height if heading else 0),
             right=width - look.pad_right,
-            bottom=height - look.pad_bottom
-            - (look.legend_height if has_legend else 0))
+            bottom=height - look.pad_bottom)
         if box.width <= 0 or box.height <= 0:
             return None
 
@@ -211,20 +205,60 @@ class ImageGenerator:
         sheet.rectangle(box.left, box.bottom, box.right,
                         box.bottom + max(1.0, self.scale * 0.5), look.axis)
 
-        if title and self.titles:
-            sheet.text(box.left, look.pad_top * 0.6, title,
-                       look.title_text, look.title_size, "lt", bold=True)
+        if heading:
+            self._draw_heading(sheet, heading, box, look)
         if chart.unit_label:
-            sheet.text(width - look.pad_right, look.pad_top * 0.6,
-                       chart.unit_label, look.faint_text, look.font_size, "rt")
-        if has_legend:
-            self._draw_legend(sheet, shown, box, look, height)
+            sheet.text(width - look.pad_right, look.pad_top * 0.7,
+                       chart.unit_label, look.faint_text, look.unit_size, "rt")
         return sheet.finish()
 
-    def _title(self, chart: chartdata.Chart) -> str:
-        """A title out of the line labels, when the plot gave none."""
-        said = [line.label for line in chart.lines if line.label]
-        return ", ".join(dict.fromkeys(said))
+    def _heading(self, chart: chartdata.Chart) -> list[tuple[str, str]]:
+        """What the chart says it is: a name and a colour for each line.
+
+        Heading and legend are the same thing, which is why there is one of
+        them. A chart of two readings is headed by their two names in their
+        two colours, and a reader has both the title and the key in one
+        line -- which is what WeeWX's `top_label` always was.
+
+        A plot with a title of its own overrides the lot: "Rain (hourly
+        total)" says more than "Rain" twice.
+        """
+        if not self.titles:
+            return []
+        if chart.title:
+            return [(chart.title, "")]
+        out: list[tuple[str, str]] = []
+        for i, line in enumerate(chart.lines):
+            if not line.time:
+                continue
+            # The reading's own name where the plot did not give one. WeeWX
+            # falls back to `[Labels] [[Generic]]`; without something here a
+            # page of thirty charts has thirty blank headings, which is what
+            # it looked like.
+            said = line.label or units.obs_label(line.obs_type)
+            if said and said not in [name for name, _c in out]:
+                out.append((said, line.color or self.look.color(i)))
+        return out
+
+    def _draw_heading(self, sheet: drawing.Canvas,
+                      heading: list[tuple[str, str]], box: drawing.Box,
+                      look: theming.Theme) -> None:
+        y = look.pad_top + look.heading_height * 0.4
+        x = box.left
+        swatch = look.title_size * 0.75
+        for said, color in heading:
+            if color:
+                sheet.rectangle(x, y - swatch * 0.2, x + swatch,
+                                y + swatch * 0.2, color)
+                x += swatch * 1.45
+            sheet.text(x, y, said, look.title_text, look.title_size, "lm",
+                       bold=True)
+            x += sheet.measure(said, look.title_size, bold=True)[0]
+            x += swatch * 1.6
+            if x > box.right:
+                # Out of room. The rest are on the chart in their own
+                # colours, which is more use than a heading running off it.
+                break
 
     def _range(self, chart: chartdata.Chart) -> tuple[float, float]:
         """What the value axis covers.
@@ -444,26 +478,6 @@ class ImageGenerator:
              tip[1] - size * math.sin(angle + 0.4)),
         ], color)
 
-    def _draw_legend(self, sheet: drawing.Canvas, lines: list[chartdata.Line],
-                     box: drawing.Box, look: theming.Theme,
-                     height: int) -> None:
-        y = height - look.pad_bottom * 0.2 - look.legend_height * 0.5
-        x = box.left
-        swatch = look.font_size * 0.9
-        for i, line in enumerate(lines):
-            if not line.label:
-                continue
-            color = line.color or look.color(i)
-            sheet.rectangle(x, y - swatch * 0.25, x + swatch, y + swatch * 0.25,
-                            color)
-            x += swatch * 1.5
-            sheet.text(x, y, line.label, look.text, look.font_size, "lm")
-            x += sheet.measure(line.label, look.font_size)[0] + swatch * 1.6
-            if x > box.right:
-                # Out of room. The rest are on the chart in their own
-                # colours, which is more use than a legend running off it.
-                break
-
     # -- where a value lands ----------------------------------------------
 
     def _x(self, when: float, box: drawing.Box,
@@ -507,12 +521,19 @@ class ImageGenerator:
                             "in CSS gets it without any change."),
             )),
             Group("What is on it", "", (
-                Option("titles", "Draw a title", kind="bool", default=True,
-                       help="From the plot's own title, or from what its "
-                            "lines are called."),
-                Option("legend", "Draw a legend", kind="bool", default=True,
-                       help="Only where there is more than one line, and "
-                            "only where they have names."),
+                Option("titles", "Head each chart with what it shows",
+                       kind="bool", default=True,
+                       help="The plot's own title, or the names of the "
+                            "readings in it, each in its own colour. That "
+                            "is the legend as well: a chart of two readings "
+                            "is headed by both names in both colours."),
+                Option("heading_size", "Heading size", kind="int",
+                       default=13, minimum=6, maximum=40, unit="pt",
+                       advanced=True,
+                       help="At twice the pixels a chart is written at "
+                            "twice this. 13 comes out at 26, which is what "
+                            "reads on a page that shows the chart at a "
+                            "third of its width."),
                 Option("twilight", "Shade twilight as well as night",
                        kind="bool", default=True, advanced=True),
                 Option("spans", "Only these groups", kind="list",
@@ -556,6 +577,7 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         text=str(option("text") or "#495057"),
         night=str(option("night") or "#eceff3"),
         fill_opacity=float(option("fill_opacity", 0.16)),
+        title_size=int(option("heading_size", 13)),
     )
 
     spans = option("spans") or ()
@@ -577,7 +599,6 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         look=look,
         spans=tuple(s for s in spans if s),
         titles=option("titles") is not False,
-        legend=option("legend") is not False,
         twilight=option("twilight") is not False,
     )
 

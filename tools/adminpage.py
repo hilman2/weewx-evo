@@ -64,7 +64,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 SKIN = b"""[ImageGenerator]
-    image_width = 500
+    image_width = 1000
+    width = 3
     chart_line_colors = "#4282b4", "#b44242"
     show_daynight = true
     skip_if_empty = year
@@ -494,10 +495,17 @@ def main() -> int:
         failures += not check("and the bar is still a bar",
                               year.lines[0].kind if year else None, "bar")
         day = charts.get("dayrain")
+        # Three pixels on a 1000-wide chart is a thin line. Taken as three
+        # pixels of a 500-wide one and then doubled for a sharp file, the
+        # same number comes out four times too heavy -- a smear rather than
+        # a line, which is what a day plot looked like.
         failures += not check("an hourly one stayed hourly",
                               day.lines[0].interval if day else None, "hour")
         failures += not check("skip_if_empty is a span, not a yes or no",
                               day.skip_if_empty if day else None, "year")
+
+        failures += not check("a line width is read off its own image",
+                              day.lines[0].width if day else None, 1.5)
 
         print("\n  and importing again does not double them")
         html = upload(where, {}, {"upload": ("skin.conf", SKIN)})

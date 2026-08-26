@@ -82,24 +82,30 @@ class Theme:
     palette: tuple[str, ...] = PALETTE
 
     #: Room for the labels. Left is wider because a y label sits there.
-    pad_left: int = 38
-    pad_right: int = 10
+    pad_left: int = 42
+    pad_right: int = 12
     pad_top: int = 10
-    pad_bottom: int = 20
-    #: Extra room at the top when there is a title.
-    title_height: int = 16
-    #: And at the bottom when there is a legend.
-    legend_height: int = 15
+    pad_bottom: int = 24
+    #: The band at the top holding the heading and the legend. They are one
+    #: line: what a chart shows *is* its heading, and writing it twice wastes
+    #: the room the data wants.
+    heading_height: int = 20
 
-    line_width: float = 1.6
+    line_width: float = 1.4
     #: How far the fill under a line fades. 0 draws no fill at all.
     fill_opacity: float = 0.16
     bar_opacity: float = 0.75
     #: A gap between bars, as a fraction of the bar's own width.
     bar_gap: float = 0.15
 
-    font_size: int = 9
-    title_size: int = 10
+    #: Sizes in logical points, so a 2x file gets twice these. The numbers
+    #: are what the Horizon skin settled on for a 1000-pixel chart: axis 19,
+    #: unit 22, heading 26. Smaller than that and a chart shown at a third
+    #: of its width -- which is what a page of thumbnails does -- has
+    #: labels nobody can read.
+    font_size: int = 10
+    unit_size: int = 11
+    title_size: int = 13
     #: About how many gridlines. The tick chooser lands near this, never on
     #: it exactly: the numbers matter more than the count.
     y_ticks: int = 4
@@ -130,10 +136,10 @@ class Theme:
             self,
             pad_left=up(self.pad_left), pad_right=up(self.pad_right),
             pad_top=up(self.pad_top), pad_bottom=up(self.pad_bottom),
-            title_height=up(self.title_height),
-            legend_height=up(self.legend_height),
+            heading_height=up(self.heading_height),
             line_width=self.line_width * factor,
             font_size=max(1, int(round(self.font_size * factor))),
+            unit_size=max(1, int(round(self.unit_size * factor))),
             title_size=max(1, int(round(self.title_size * factor))),
         )
 

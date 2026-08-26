@@ -490,6 +490,33 @@ def from_image_generator(section: dict[str, Any],
     return result
 
 
+#: The image width a line width is understood against. WeeWX's classic size,
+#: and what a plot definition means by "3 pixels".
+REFERENCE_WIDTH = 500.0
+
+
+def _scaled(value: Any, image_width: Any) -> float | None:
+    """A pixel measurement, taken off the image it was written for.
+
+    A skin drawing at 1000 wide and asking for a 3-pixel line means a thin
+    one. Read as 3 pixels of a 500-wide chart and then doubled for a
+    high-resolution file, the same number comes out four times too heavy --
+    which is what a day plot looked like: a smear rather than a line.
+
+    So the number is carried across as a fraction of the width it was
+    written against. Nothing else about the image survives the import, and
+    this does not either: it is folded into the line and the image size is
+    still left behind.
+    """
+    number = _float(value)
+    if number is None:
+        return None
+    written_for = _float(image_width)
+    if not written_for or written_for <= 0:
+        return number
+    return round(number * REFERENCE_WIDTH / written_for, 3)
+
+
 def _line_from(name: str, options: dict[str, Any]) -> Line:
     """One `[[[[outTemp]]]]` subsection.
 
@@ -512,12 +539,13 @@ def _line_from(name: str, options: dict[str, Any]) -> Line:
         kind=kind,
         color=_color(options.get("color")),
         fill_color=_color(options.get("fill_color")),
-        width=_float(options.get("width")),
+        width=_scaled(options.get("width"), options.get("image_width")),
         aggregate=aggregate,
         interval=(_normalise(_weewx_span(options.get("aggregate_interval")))
                   if aggregate else None),
         marker="" if marker in ("none", "") else marker,
-        marker_size=(_int(options.get("marker_size"))
+        marker_size=(_int(_scaled(options.get("marker_size"),
+                                  options.get("image_width")))
                      if marker not in ("none", "") else None),
         gap_fraction=_float(options.get("line_gap_fraction")),
         # Inherited from the top of the section by every line, and meaningless
