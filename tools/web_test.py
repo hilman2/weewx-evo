@@ -140,6 +140,42 @@ def main() -> int:
         finally:
             server.stop()
 
+        print("\na changed setting takes effect without a restart")
+        # The web server reads what it serves once, at startup. Changing
+        # it on the settings page wrote the file and nothing told the
+        # running server, so the page kept showing the old thing and said
+        # nothing about needing a restart.
+        live = Site({"website": site_dir, "archive": other},
+                    default="website", title="Kirchdorf")
+        server = WebServer(live, "127.0.0.1", 0, access=Access.parse("any"))
+        server.start()
+        base = f"http://127.0.0.1:{server.port}"
+        time.sleep(0.1)
+        try:
+            failures += not check("/ is the default feed", get("/")[1],
+                                  "<h1>21.4</h1>")
+
+            # What the serve loop does when the file changes.
+            moved = live.update({"website": site_dir, "archive": other},
+                                default="")
+            failures += not check("the site says it moved", moved, True)
+            code, body = get("/")
+            failures += not check("/ now lists them", "archive" in body
+                                  and "website" in body, True)
+            failures += not check("and the feeds still answer",
+                                  get("/website/")[1], "<h1>21.4</h1>")
+
+            live.update({"archive": other}, default="archive")
+            failures += not check("one can be taken away",
+                                  get("/website/")[0], 404)
+            failures += not check("and another rooted at /",
+                                  get("/")[1], "<h1>archive</h1>")
+
+            failures += not check("nothing changed means nothing moved",
+                                  live.update({"archive": other},
+                                              default="archive"), False)
+        finally:
+            server.stop()
         print("\na feed that does not exist is named, not guessed")
         empty = Site({"website": site_dir}, default="nosuchfeed")
         failures += not check("an unknown default is ignored", empty.default, "")

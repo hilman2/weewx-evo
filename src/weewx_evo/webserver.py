@@ -68,6 +68,26 @@ class Site:
         self.served = 0
         self.refused = 0
 
+    def update(self, feeds: dict[str, Path], default: str = "",
+               title: str = "") -> bool:
+        """Serve something else from now on. Returns whether anything moved.
+
+        The handler holds this object, so replacing its contents is how a
+        changed setting takes effect without a restart. What cannot change
+        this way is the port and the address it is bound to, and those are
+        the two marked as needing one.
+        """
+        fresh = {name: Path(where).resolve() for name, where in feeds.items()}
+        wanted = default if default in fresh else ""
+        if fresh == self.feeds and wanted == self.default \
+                and (not title or title == self.title):
+            return False
+        self.feeds = fresh
+        self.default = wanted
+        if title:
+            self.title = title
+        return True
+
     def resolve(self, feed: str, rest: str) -> Path | None:
         """The file for a request, or None if there is not one to serve.
 

@@ -538,10 +538,25 @@ def cmd_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, lambda *_: stopping.set())
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
 
+    watcher = _Watcher(getattr(args, "config", None))
     last_prune = 0.0
     try:
         while not stopping.is_set():
             try:
+                if watcher.changed() and cfg.reload():
+                    # What can be picked up without a restart is picked up.
+                    # The rest is marked `restart` and the settings page says
+                    # so, which is the only honest arrangement: a setting
+                    # that silently does nothing is worse than one that says
+                    # it needs a restart.
+                    if web is not None and web.site.update(
+                            served_directories(args, cfg),
+                            str(cfg.get("web.default") or ""),
+                            str(cfg.get("station.name") or "")):
+                        log.info("serving %d feed(s)%s", len(web.site.feeds),
+                                 f", {web.site.default} at /"
+                                 if web.site.default else ", listing them at /")
+
                 n = archiver.process_due(grace=cfg.get("grace"))
                 if n:
                     log.info("archived %d interval(s)", n)
@@ -1346,8 +1361,11 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
 
     where = feed_dirs(cfg)
     made: list = []
+    # The charts are read again on every run rather than held from startup.
+    # One small TOML file a minute, against a chart added on the settings
+    # page doing nothing at all until somebody restarts.
     made.append(("json", lambda reader: jsongenerator.from_settings(
-        cfg, reader, charts), where["json"]))
+        cfg, reader, load_plots(args, cfg)), where["json"]))
     if cfg.get("feeds.diagnostic.enabled") is not False:
         made.append(("diagnostic",
                      lambda _reader: diagnostic.from_settings(
@@ -1538,6 +1556,53 @@ def cmd_plots_run(args: argparse.Namespace) -> int:
         print(f"  {drawn.note}")
         print(f"  {drawn.files[0] if drawn.files else drawn.directory}")
     return 0
+
+
+def served_directories(args: argparse.Namespace,
+                       cfg: Settings) -> dict[str, Path]:
+    """What the built-in server hands out, by name.
+
+    The local exports, plus anything named directly. The same answer
+    `site_from` works out, taken from the settings object so it follows a
+    reload rather than re-reading the file a second time.
+    """
+    out: dict[str, Path] = {}
+    for name, options in sorted((cfg.config.get("exports") or {}).items()):
+        if isinstance(options, dict) and options.get("kind") == "local":
+            where = str(options.get("directory", "")).strip()
+            if where:
+                out[name] = Path(where)
+    for name, where in ((cfg.config.get("web", {}) or {}).get("serve") or {}).items():
+        if isinstance(where, str) and where.strip():
+            out[name] = Path(where)
+    return out
+
+
+class _Watcher:
+    """Notices that the configuration file has been written.
+
+    `Settings.reload()` was built for exactly this and nothing called it, so
+    a setting changed on the admin page did nothing at all until somebody
+    restarted -- with no message anywhere saying so. Checking a timestamp
+    once a tick costs a stat.
+    """
+
+    def __init__(self, path: Any) -> None:
+        self.path = Path(path) if path else None
+        self.seen = self._stamp()
+
+    def _stamp(self) -> float:
+        try:
+            return self.path.stat().st_mtime if self.path else 0.0
+        except OSError:
+            return 0.0
+
+    def changed(self) -> bool:
+        now = self._stamp()
+        if now == self.seen:
+            return False
+        self.seen = now
+        return True
 
 
 def start_feeds(args: argparse.Namespace,
