@@ -297,38 +297,39 @@ class Diagnostic:
         )
 
     @staticmethod
-    def options() -> Schema:
-        return Schema(
-            "feeds.diagnostic",
-            "Diagnostic page",
-            (
-                Group("Diagnostics",
-                      "One page that draws whatever JSON is on disk.", (
-                          Option("feeds.diagnostic.enabled",
-                                 "Produce the page", kind="bool",
-                                 default=True,
-                                 help="A single self-contained HTML file that "
-                                      "draws every series file and lists what "
-                                      "looks wrong in them. Costs one file "
-                                      "and answers 'is it the data or the "
-                                      "template' without a second thought."),
-                          Option("feeds.diagnostic.source", "Read from",
-                                 default="json",
-                                 help="Which directory of JSON to draw. "
-                                      "Normally the one the JSON feed writes."),
-                          Option("feeds.diagnostic.points",
-                                 "Points drawn per series", kind="int",
-                                 default=400, minimum=50, maximum=20000,
-                                 advanced=True,
-                                 help="The chart is sampled down to this; the "
-                                      "data in the page stays whole. A "
-                                      "hundred thousand points is a black "
-                                      "rectangle either way."),
-                      )),
-            ),
-            help="Draws what actually landed on disk, rather than what a feed "
-                 "meant to produce.",
-            kind="feed")
+    def options() -> list:
+        """The settings one of these offers. Bare names; the page prefixes."""
+        from ...options import defined_feeds
+
+        return [
+            Group("Diagnostics",
+                  "One page that draws whatever JSON is on disk.", (
+                      Option("enabled", "Produce the page", kind="bool",
+                             default=True,
+                             help="A single self-contained HTML file that "
+                                  "draws every series file and lists what "
+                                  "looks wrong in them. Costs one file and "
+                                  "answers 'is it the data or the template' "
+                                  "without a second thought."),
+                      Option("source", "Draw what this feed wrote",
+                             kind="choice", default="json",
+                             choices=(("", "-- a directory instead --"),),
+                             choices_from=defined_feeds,
+                             help="Which feed's output to read. Normally the "
+                                  "JSON one."),
+                      Option("destination", "Directory", default="",
+                             advanced=True,
+                             help="Under the feed output directory. Empty "
+                                  "means a directory named after this feed."),
+                      Option("points", "Points drawn per series", kind="int",
+                             default=400, minimum=50, maximum=20000,
+                             advanced=True,
+                             help="The chart is sampled down to this; the "
+                                  "data in the page stays whole. A hundred "
+                                  "thousand points is a black rectangle "
+                                  "either way."),
+                  )),
+        ]
 
 
 def _read(path: Path) -> str:

@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from weewx_evo import config as config_file  # noqa: E402
-from weewx_evo.admin import Admin, AdminServer  # noqa: E402
+from weewx_evo.admin import MARKER, Admin, AdminServer  # noqa: E402
 from weewx_evo.ratelimit import Limits  # noqa: E402
 from weewx_evo.cli import all_schemas  # noqa: E402
 
@@ -149,8 +149,10 @@ def main() -> int:
         # one is configured, so they are not expected here.
         failures += not check("the core, the drivers and the feeds",
                               {"core", "driver", "feed"} <= kinds, True)
+        # One page per configured feed, named `feed:<name>`. A file that
+        # names none is running the two that ship, and the page shows those.
         failures += not check("the JSON feed among them",
-                              "feeds.json" in names, True)
+                              "feed:json" in names, True)
 
         print("\nno token, no page")
         for where in ("/", "/core", "/wrong-token/core", "/schema.json"):
@@ -384,6 +386,65 @@ def main() -> int:
         failures += not check("as .bak",
                               path.with_suffix(".toml.bak").exists(), True)
 
+        print("\nfeeds are added the way exports are")
+        # Several of one kind is the normal case: two sets of JSON in two
+        # unit systems, or two themes side by side. Each writes its own
+        # directory and has its own settings.
+        code, _ = post(f"{base}/{TOKEN}/new-feed",
+                       {"name": "metric", "kind": "json"})
+        failures += not check("it redirects to the new page", code, 303)
+
+        after = config_file.read(path).get("feeds") or {}
+        # The two that ship were running unnamed. Adding a third has to
+        # write them down first, or it silently turns them off.
+        failures += not check("the shipped ones were written down",
+                              sorted(after), ["diagnostic", "json",
+                                              "metric"])
+
+        post(f"{base}/{TOKEN}/new-feed", {"name": "imperial",
+                                          "kind": "json"})
+        again = config_file.read(path).get("feeds") or {}
+        failures += not check("two of one kind is fine",
+                              sorted(k for k, v in again.items()
+                                     if v.get("kind") == "json"),
+                              ["imperial", "json", "metric"])
+
+        _, html_said = post(f"{base}/{TOKEN}/new-feed",
+                            {"name": "metric", "kind": "json"})
+        failures += not check("but not the same name twice",
+                              "already a feed" in html_said, True)
+        _, html_said = post(f"{base}/{TOKEN}/new-feed",
+                            {"name": "x", "kind": "sorcery"})
+        failures += not check("nor a kind nothing provides",
+                              "is not one of" in html_said, True)
+
+        print("\n  and each gets its own page and its own settings")
+        admin.refresh()
+        pages = [s.name for s in admin.schemas if s.kind == "feed"]
+        failures += not check("a page each", sorted(pages),
+                              ["feed:diagnostic", "feed:imperial",
+                               "feed:json", "feed:metric"])
+
+        one = next(s for s in admin.schemas if s.name == "feed:metric")
+        errors = admin.save(one, {"units": "METRICWX", "rounding": "2",
+                                  "enabled": "1",
+                                  MARKER + "enabled": "1"})
+        failures += not check("saved without complaint", errors, {})
+        stored = config_file.read(path)
+        failures += not check("under its own name",
+                              config_file.get(stored,
+                                              "feeds.metric.units"),
+                              "METRICWX")
+        failures += not check("and the other one is untouched",
+                              config_file.get(stored,
+                                              "feeds.imperial.units"),
+                              None)
+
+        code, _ = post(f"{base}/{TOKEN}/feed:imperial/remove", {})
+        failures += not check("removing one", code, 303)
+        failures += not check("leaves the rest",
+                              sorted(config_file.read(path)["feeds"]),
+                              ["diagnostic", "json", "metric"])
         print("\na choice that offers 'none' can be set back to it")
         # Every dropdown with an empty entry was one way: an empty value
         # parsed to the option's default, so the old choice stayed. Nobody

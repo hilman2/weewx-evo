@@ -412,131 +412,130 @@ class JSONGenerator:
     # -- what the admin page asks for -------------------------------------
 
     @staticmethod
-    def options() -> Schema:
-        """The settings this feed offers, for the admin page and the file."""
-        def unit_choice(group: str, *units_offered: str) -> tuple:
+    def options() -> list:
+        """The settings one of these offers.
+
+        Bare names, and the page supplies the prefix -- the same arrangement
+        an export has, and the reason a station can run two of these with
+        different settings.
+        """
+        def unit_choice(group: str, *offered: str) -> tuple:
             # The name, and how it is printed after a number -- unless those
             # are the same word, which for mmHg they are.
             out = []
-            for unit in units_offered:
+            for unit in offered:
                 shown = units.label(unit).strip()
                 out.append((unit, unit if shown in ("", unit)
                             else f"{unit}   {shown}"))
             return tuple(out)
 
-        return Schema(
-            "feeds.json",
-            "JSON",
-            (
-                Group("Writing", "Where the files go and what is in them.", (
-                    Option("feeds.json.enabled", "Produce the JSON",
-                           kind="bool", default=True,
-                           help="Off only if nothing reads it. Every other "
-                                "feed that draws a chart does."),
-                    Option("feeds.json.destination", "Directory",
-                           default="json",
-                           help="Under the feed output directory. A "
-                                "subdirectory rather than the top level, so "
-                                "the data does not sit among the pages."),
-                    Option("feeds.json.manifest", "Write index.json",
-                           kind="bool", default=True,
-                           help="A list of what exists, so a client can lay "
-                                "out its page before fetching anything and "
-                                "never asks for a sensor this station does "
-                                "not have."),
-                    Option("feeds.json.rewrite_unchanged",
-                           "Rewrite files that have not changed",
-                           kind="bool", default=False,
-                           help="A year of daily averages says the same thing "
-                                "at ten past as it did at ten o'clock. Left "
-                                "off, a file whose data is identical is not "
-                                "touched -- which matters if an export sends "
-                                "everything that changed, over a connection "
-                                "somebody pays for by the megabyte."),
-                    Option("feeds.json.rounding", "Decimals", kind="int",
-                           default=ROUNDING, minimum=0, maximum=9,
-                           help="Three is already finer than any weather "
-                                "sensor and takes about a third off the size "
-                                "of every file. Raise it only for something "
-                                "that is not weather."),
-                    Option("feeds.json.indent", "Indent the files",
-                           kind="int", default=0, minimum=0, maximum=8,
-                           advanced=True,
-                           help="0 writes them as small as possible, which is "
-                                "what you want on a live site. 2 makes them "
-                                "readable while you are working out why a "
-                                "chart looks wrong."),
-                    Option("feeds.json.spans", "Only these groups",
-                           default="",
-                           advanced=True,
-                           suggestions=(("", "all of them"),
-                                        ("day,week", "just the short ones")),
-                           help="Comma separated, matching the group a chart "
-                                "is in. Empty produces all of them. A year "
-                                "chart over a decade of records is the "
-                                "expensive one; leaving it out is how a small "
-                                "machine keeps up."),
-                )),
-                Group("Units", "What the readings are shown in.", (
-                    Option("feeds.json.units", "Unit system",
-                           kind="choice", default="METRICWX",
-                           choices=tuple((units.NAMES[k], v) for k, v
-                                         in units.DESCRIPTIONS.items()),
-                           help="What the files are written in, whatever the "
-                                "archive holds. A console that reports "
-                                "Fahrenheit and a site in Celsius is the "
-                                "ordinary case: the archive keeps what the "
-                                "station wrote and the conversion happens on "
-                                "the way out."),
-                    Option("feeds.json.unit.group_temperature", "Temperature",
-                           kind="choice", default="",
-                           choices=(("", "-- as the system above --"),)
-                           + unit_choice("group_temperature", "degree_C",
-                                         "degree_F", "degree_K"),
-                           help="Overrides the system for this one group. "
-                                "Which is how somebody ends up with degrees "
-                                "Celsius and inches of mercury on one page, "
-                                "because that is what their readers expect."),
-                    Option("feeds.json.unit.group_pressure", "Pressure",
-                           kind="choice", default="",
-                           choices=(("", "-- as the system above --"),)
-                           + unit_choice("group_pressure", "mbar", "hPa",
-                                         "inHg", "mmHg", "kPa")),
-                    Option("feeds.json.unit.group_rain", "Rain",
-                           kind="choice", default="",
-                           choices=(("", "-- as the system above --"),)
-                           + unit_choice("group_rain", "mm", "cm", "inch")),
-                    Option("feeds.json.unit.group_speed", "Wind speed",
-                           kind="choice", default="",
-                           choices=(("", "-- as the system above --"),)
-                           + unit_choice("group_speed", "meter_per_second",
-                                         "km_per_hour", "mile_per_hour",
-                                         "knot")),
-                    Option("feeds.json.unit.group_altitude", "Height",
-                           kind="choice", default="",
-                           choices=(("", "-- as the system above --"),)
-                           + unit_choice("group_altitude", "meter", "foot"),
-                           advanced=True),
-                    Option("feeds.json.unit.group_distance", "Distance",
-                           kind="choice", default="",
-                           choices=(("", "-- as the system above --"),)
-                           + unit_choice("group_distance", "km", "mile"),
-                           advanced=True),
-                )),
-                Group("Night", "What a chart needs to shade darkness.", (
-                    Option("feeds.json.twilight", "Include dawn and dusk",
-                           kind="bool", default=True,
-                           help="Dusk is not an edge: the light fades over "
-                                "the half hour of civil twilight, and over "
-                                "far longer at high latitude in summer. With "
-                                "this on, a chart can draw the real thing "
-                                "instead of a step. Costs a few hundred bytes "
-                                "per file."),
-                )),
-            ),
-            help="The time series every other feed is built on: one file per "
-                 "chart, plus a manifest of what exists.",
-            kind="feed")
+        return [
+            Group("Writing", "Where the files go and what is in them.", (
+                Option("enabled", "Produce the JSON",
+                       kind="bool", default=True,
+                       help="Off only if nothing reads it. Every other "
+                            "feed that draws a chart does."),
+                Option("destination", "Directory",
+                       default="json",
+                       help="Under the feed output directory. A "
+                            "subdirectory rather than the top level, so "
+                            "the data does not sit among the pages."),
+                Option("manifest", "Write index.json",
+                       kind="bool", default=True,
+                       help="A list of what exists, so a client can lay "
+                            "out its page before fetching anything and "
+                            "never asks for a sensor this station does "
+                            "not have."),
+                Option("rewrite_unchanged",
+                       "Rewrite files that have not changed",
+                       kind="bool", default=False,
+                       help="A year of daily averages says the same thing "
+                            "at ten past as it did at ten o'clock. Left "
+                            "off, a file whose data is identical is not "
+                            "touched -- which matters if an export sends "
+                            "everything that changed, over a connection "
+                            "somebody pays for by the megabyte."),
+                Option("rounding", "Decimals", kind="int",
+                       default=ROUNDING, minimum=0, maximum=9,
+                       help="Three is already finer than any weather "
+                            "sensor and takes about a third off the size "
+                            "of every file. Raise it only for something "
+                            "that is not weather."),
+                Option("indent", "Indent the files",
+                       kind="int", default=0, minimum=0, maximum=8,
+                       advanced=True,
+                       help="0 writes them as small as possible, which is "
+                            "what you want on a live site. 2 makes them "
+                            "readable while you are working out why a "
+                            "chart looks wrong."),
+                Option("spans", "Only these groups",
+                       default="",
+                       advanced=True,
+                       suggestions=(("", "all of them"),
+                                    ("day,week", "just the short ones")),
+                       help="Comma separated, matching the group a chart "
+                            "is in. Empty produces all of them. A year "
+                            "chart over a decade of records is the "
+                            "expensive one; leaving it out is how a small "
+                            "machine keeps up."),
+            )),
+            Group("Units", "What the readings are shown in.", (
+                Option("units", "Unit system",
+                       kind="choice", default="METRICWX",
+                       choices=tuple((units.NAMES[k], v) for k, v
+                                     in units.DESCRIPTIONS.items()),
+                       help="What the files are written in, whatever the "
+                            "archive holds. A console that reports "
+                            "Fahrenheit and a site in Celsius is the "
+                            "ordinary case: the archive keeps what the "
+                            "station wrote and the conversion happens on "
+                            "the way out."),
+                Option("unit.group_temperature", "Temperature",
+                       kind="choice", default="",
+                       choices=(("", "-- as the system above --"),)
+                       + unit_choice("group_temperature", "degree_C",
+                                     "degree_F", "degree_K"),
+                       help="Overrides the system for this one group. "
+                            "Which is how somebody ends up with degrees "
+                            "Celsius and inches of mercury on one page, "
+                            "because that is what their readers expect."),
+                Option("unit.group_pressure", "Pressure",
+                       kind="choice", default="",
+                       choices=(("", "-- as the system above --"),)
+                       + unit_choice("group_pressure", "mbar", "hPa",
+                                     "inHg", "mmHg", "kPa")),
+                Option("unit.group_rain", "Rain",
+                       kind="choice", default="",
+                       choices=(("", "-- as the system above --"),)
+                       + unit_choice("group_rain", "mm", "cm", "inch")),
+                Option("unit.group_speed", "Wind speed",
+                       kind="choice", default="",
+                       choices=(("", "-- as the system above --"),)
+                       + unit_choice("group_speed", "meter_per_second",
+                                     "km_per_hour", "mile_per_hour",
+                                     "knot")),
+                Option("unit.group_altitude", "Height",
+                       kind="choice", default="",
+                       choices=(("", "-- as the system above --"),)
+                       + unit_choice("group_altitude", "meter", "foot"),
+                       advanced=True),
+                Option("unit.group_distance", "Distance",
+                       kind="choice", default="",
+                       choices=(("", "-- as the system above --"),)
+                       + unit_choice("group_distance", "km", "mile"),
+                       advanced=True),
+            )),
+            Group("Night", "What a chart needs to shade darkness.", (
+                Option("twilight", "Include dawn and dusk",
+                       kind="bool", default=True,
+                       help="Dusk is not an edge: the light fades over "
+                            "the half hour of civil twilight, and over "
+                            "far longer at high latitude in summer. With "
+                            "this on, a chart can draw the real thing "
+                            "instead of a step. Costs a few hundred bytes "
+                            "per file."),
+            )),
+        ]
 
 
 # -- trimming --------------------------------------------------------------

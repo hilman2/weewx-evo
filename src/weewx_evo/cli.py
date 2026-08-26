@@ -932,15 +932,33 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         help="Where what the exports published can be read.",
         groups=tuple(option_defs.website_options())))
 
-    # The JSON feed. Always there: everything that draws is built on it, so
-    # it is not something to install or enable, only to configure.
-    from .feeds import jsongenerator
+    # One page per configured feed, named by the operator. Two JSON feeds in
+    # two unit systems are two entries, not one shared form -- the same
+    # arrangement the exports have, and the reason a station can publish two
+    # themes at once.
+    configured = config_file.read(config_path) if config_path else {}
+    if not (configured.get("feeds") or {}):
+        # A file that names none gets the two that ship, so the page shows
+        # what the station is actually producing rather than nothing.
+        configured = dict(configured, feeds=dict(DEFAULT_FEEDS))
 
-    schemas.append(jsongenerator.JSONGenerator.options())
+    from . import feeds as feed_registry
 
-    from .feeds import diagnostic
-
-    schemas.append(diagnostic.Diagnostic.options())
+    for name, settings in sorted((configured.get("feeds") or {}).items()):
+        if not isinstance(settings, dict):
+            continue
+        kind = str(settings.get("kind", "")).strip()
+        factory = feed_registry.factory_for(kind)
+        if factory is None:
+            continue
+        groups = factory.options() if hasattr(factory, "options") else []
+        if not groups:
+            continue
+        schemas.append(option_defs.Schema(
+            name=f"feed:{name}", label=f"Feed: {name} ({kind})", kind="feed",
+            help=feed_registry.describe(kind),
+            groups=tuple(replace_group(group, f"feeds.{name}")
+                         for group in groups)))
 
     # One page per configured export, named by the operator: two FTP exports
     # to two hosts are two entries, not one shared form.
@@ -948,7 +966,6 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
     # The path is a parameter rather than something found in a global. The
     # admin page knows which file it edits, and reading a different one would
     # show pages for exports that are not in it.
-    configured = config_file.read(config_path) if config_path else {}
     for name, settings in sorted((configured.get("exports") or {}).items()):
         if not isinstance(settings, dict):
             continue

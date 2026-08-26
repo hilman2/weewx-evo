@@ -49,6 +49,20 @@ def export_kinds() -> list[str]:
     return exports.kinds()
 
 
+def feed_kinds() -> list[str]:
+    """The kinds of feed that can be added. Asked, not listed."""
+    from . import feeds
+
+    return feeds.kinds()
+
+
+def feed_kind_choices() -> list[tuple[str, str, str]]:
+    """Each kind, and what it is for."""
+    from . import feeds
+
+    return [(kind, kind, feeds.describe(kind)) for kind in feeds.kinds()]
+
+
 def export_kind_choices() -> list[tuple[str, str, str]]:
     """Each kind, what it is called, and what it is for.
 
@@ -154,6 +168,64 @@ class Admin:
                 config_file.write(self.path, current, self.schemas)
             except Exception as exc:
                 log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def add_feed(self, name: str, kind: str) -> str:
+        """Create a feed. Returns an error, or empty if it worked.
+
+        Only the name and the kind. Everything else is on the page that
+        appears afterwards, for the same reason an export works that way:
+        asking for a dozen settings before there is anything to save them in
+        is how a form loses what somebody typed.
+        """
+        if self.read_only:
+            return "This admin page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return ("A name may hold lowercase letters, digits, - and _, and "
+                    "must start with a letter. It becomes a heading and the "
+                    "directory this feed writes into.")
+        if kind not in feed_kinds():
+            return f"{kind!r} is not one of: {', '.join(feed_kinds())}"
+
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"feeds.{name}") is not None:
+                return f"There is already a feed called {name!r}."
+            # A file that named no feeds was running the two that ship. Write
+            # them down before adding a third, or adding one would silently
+            # turn the other two off.
+            if not (current.get("feeds") or {}):
+                from .cli import DEFAULT_FEEDS
+
+                for existing, settings in DEFAULT_FEEDS.items():
+                    for key, value in settings.items():
+                        config_file.put(current, f"feeds.{existing}.{key}",
+                                        value)
+            config_file.put(current, f"feeds.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def remove_feed(self, name: str) -> str:
+        """Delete a feed. What it already wrote is left where it is."""
+        if self.read_only:
+            return "This admin page was started read-only."
+        with self._lock:
+            current = self.config()
+            section = current.get("feeds")
+            if not isinstance(section, dict) or name not in section:
+                return f"There is no feed called {name!r}."
+            del section[name]
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
                 return f"Could not write {self.path}: {exc}"
         self.refresh()
         return ""
@@ -435,6 +507,46 @@ def new_export_page(admin: Admin, error: str = "", form: dict | None = None) -> 
 </section>'''
 
 
+def new_feed_page(admin: Admin, error: str = "",
+                  form: dict | None = None) -> str:
+    """Two fields: a name and a kind. The rest waits."""
+    form = form or {}
+    kinds = feed_kind_choices()
+    chosen = form.get("kind") or (kinds[0][0] if kinds else "")
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
+        for kind, label, _summary in kinds)
+    explained = "".join(
+        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
+        for _kind, label, summary in kinds if summary)
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return f'''
+<section class="group">
+  <h3>Add a feed</h3>
+  <p class="lede">A feed turns the readings into files. Several of one kind
+     is normal: two sets of JSON in two unit systems, or two themes side by
+     side. Each writes its own directory and has its own settings.</p>
+  {problem}
+  <form method="post" action="./new-feed">
+    <div class="field">
+      <label for="f-name">Name</label>
+      <input type="text" id="f-name" name="name" required
+             value="{html.escape(str(form.get("name", "")))}"
+             placeholder="metric" autocomplete="off" spellcheck="false">
+      <p class="help">Lowercase letters, digits, - and _. It becomes the
+         directory this feed writes into, and what an export points at.</p>
+    </div>
+    <div class="field">
+      <label for="f-kind">Kind</label>
+      <select id="f-kind" name="kind">{options}</select>
+      <ul class="kinds">{explained}</ul>
+    </div>
+    <div class="actions"><button type="submit">Create</button></div>
+  </form>
+</section>'''
+
+
 def _where_it_lands(admin: Admin, name: str) -> str:
     """For a local export: the address its files end up at.
 
@@ -600,7 +712,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
     schema = next((s for s in admin.schemas if s.name == active), None)
-    adding = schema is None and active == "new-export"
+    adding = schema is None and active in ("new-export", "new-feed")
     charting = schema is None and (active in ("new-plot", "import-plots")
                                    or active.startswith("plot:"))
     if schema is None and not adding and not charting:
@@ -638,6 +750,10 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             current = " aria-current='page'" if s.name == active else ""
             nav.append(f'<a href="./{html.escape(s.name)}"{current}>'
                        f"{html.escape(s.label)}</a>")
+        if kind == "feed" and not admin.read_only:
+            current = " aria-current='page'" if active == "new-feed" else ""
+            nav.append(f'<a class="add" href="./new-feed"{current}>'
+                       "+ Add a feed</a>")
         if kind == "export" and not admin.read_only:
             current = " aria-current='page'" if active == "new-export" else ""
             nav.append(f'<a class="add" href="./new-export"{current}>'
@@ -654,7 +770,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             body = [adminplots.edit(admin, active.split(":", 1)[1],
                                     admin.columns(), errors, form)]
     elif adding:
-        body = [new_export_page(admin, errors.get("", ""), form)]
+        body = [new_feed_page(admin, errors.get("", ""), form)
+                if active == "new-feed"
+                else new_export_page(admin, errors.get("", ""), form)]
     else:
         body = [group_html(g, values, errors) for g in schema.groups]
 
@@ -664,6 +782,20 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     extra = ""
     if schema is not None and schema.name == "website":
         extra = website_summary(admin)
+    if schema is not None and schema.kind == "feed" and not admin.read_only:
+        name = schema.name.split(":", 1)[-1]
+        extra = f'''
+<section class="group danger">
+  <h3>Remove</h3>
+  <p class="lede">Takes {html.escape(name)} out of the configuration. The
+     files it has already written are left where they are, and any export
+     pointed at it stops running rather than sending an empty directory.</p>
+  <form method="post" action="./{html.escape(schema.name)}/remove"
+        onsubmit="return confirm('Remove the feed {html.escape(name)}?')">
+    <div class="actions"><button class="warn" type="submit">Remove</button></div>
+  </form>
+</section>'''
+
     if schema is not None and schema.kind == "export" and not admin.read_only:
         name = schema.name.split(":", 1)[-1]
         extra += _where_it_lands(admin, name)
@@ -710,7 +842,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                    else "Import charts" if active == "import-plots"
                    else f"Chart: {active.split(':', 1)[1]}")
     else:
-        heading = schema.label if schema else "Add an export"
+        heading = (schema.label if schema
+                   else "Add a feed" if active == "new-feed"
+                   else "Add an export")
 
     return _PAGE.format(
         title=html.escape(heading),
@@ -1033,8 +1167,8 @@ class _Handler(BaseHTTPRequestHandler):
         parts = self._parts(path)
         names = {s.name for s in self.admin.schemas}
         for part in reversed(parts):
-            if part in names or part in ("new-export", "new-plot",
-                                         "import-plots"):
+            if part in names or part in ("new-export", "new-feed",
+                                         "new-plot", "import-plots"):
                 return part
             if part.startswith("plot:"):
                 return part
@@ -1082,6 +1216,26 @@ class _Handler(BaseHTTPRequestHandler):
 
         # Adding one. Two fields; everything else waits for the page that
         # appears next.
+        if action == "new-feed":
+            error = self.admin.add_feed(form.get("name", ""),
+                                        form.get("kind", ""))
+            if error:
+                self._reply(200, page(self.admin, "new-feed",
+                                      errors={"": error}, form=form))
+                return
+            self._redirect(f"./feed:{form['name'].strip().lower()}")
+            return
+
+        if action == "remove" and len(parts) >= 2 \
+                and parts[-2].startswith("feed:"):
+            error = self.admin.remove_feed(parts[-2].split(":", 1)[1])
+            if error:
+                self._reply(200, page(self.admin, parts[-2],
+                                      errors={"": error}))
+                return
+            self._redirect("./new-feed?removed=1")
+            return
+
         if action == "new-plot":
             error = adminplots.add(self.admin, form.get("name", ""),
                                    form.get("span", "day"),
