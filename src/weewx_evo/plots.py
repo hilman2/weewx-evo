@@ -540,7 +540,27 @@ def _note_options(options: dict[str, Any], result: Imported) -> None:
     for key in options:
         if key in understood:
             continue
-        (result.drawing if key in IMAGE_ONLY else result.unknown).add(key)
+        result.drawing.add(key) if _is_drawing(key) else result.unknown.add(key)
+
+
+#: Prefixes that mean an option is about drawing a picture. Matched by shape
+#: rather than by name: skins invent their own, and `rose_line_width` from one
+#: nobody here has seen should be reported as left behind, not as a mystery.
+DRAWING_PREFIXES = ("image_", "chart_", "rose_", "daynight_", "axis_label_",
+                    "top_label_", "bottom_label_", "unit_label_", "x_label_",
+                    "y_label_")
+
+
+def _is_drawing(key: str) -> bool:
+    """Whether an option describes a picture rather than what is in it."""
+    if key in IMAGE_ONLY:
+        return True
+    if key == "rose_label":
+        # The one exception: what the compass rose is labelled is text, and a
+        # chart in a browser needs it as much as a PNG does.
+        return False
+    return (key.startswith(DRAWING_PREFIXES)
+            or "_font" in key or key.endswith("_color"))
 
 
 def _holds_plots(section: dict[str, Any]) -> bool:
