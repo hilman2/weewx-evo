@@ -229,7 +229,11 @@ PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/seriestest.py \
     reference/weewx.sdb Europe/Berlin      # Zeitreihen gegen weewx.xtypes
 PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/unitcheck.py   # 147 Umrechnungen
 PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/suncheck.py    # Sonnenstand
+PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/tagcheck.py     reference/weewx.sdb Europe/Berlin      # die Tags, die ein Skin benutzt
 ```
+
+`PYTHONPATH` dabei **nicht** exportieren: die Ecowitt-Tests greifen sonst auf
+WeeWX' eigene Module zu und schlagen fehl, ohne dass etwas kaputt wäre.
 
 Die Zeitzone bei `seriestest.py` ist kein Beiwerk: die Tagestabellen sind auf
 lokale Mitternacht geschlüsselt, und in der falschen Zone gelesen vergleicht man
@@ -243,6 +247,7 @@ Gemessen, Stand heute:
 | Zeitreihen gegen `weewx.xtypes` | 94 Vergleiche, 19 957 Punkte, 0 Fehler |
 | Einheiten gegen `weewx.units` | 147 Umrechnungen × 9 Werte, exakt |
 | Sonnenaufgang gegen pyephem | 37 s im schlechtesten Fall |
+| Template-Tags gegen `weewx.tags` | 82 Ausdrücke, 0 Abweichungen |
 | Ecowitt-Treiber | 59 Tests, unverändert übernommen |
 
 ### Der Abnahmetest

@@ -351,6 +351,190 @@ def day_night(start: float, stop: float, latitude: float | None,
     return {"first": first, "transitions": transitions, "twilight": unique}
 
 
+def rising_setting(after: float, latitude: float, longitude: float,
+                   body: str = "sun", horizon: float | None = None,
+                   altitude_m: float = 0.0, use_center: bool = False,
+                   temperature: float = 15.0,
+                   pressure: float = 1010.0) -> dict[str, float | None]:
+    """The next rising, setting and transit after a given moment.
+
+    Anchored at an instant rather than at a day, because that is the only
+    unambiguous way to ask: "when does the moon rise today" has no answer on
+    the days it rises twice and none at all on the days it does not rise. The
+    caller passes local midnight and gets what WeeWX's almanac gives.
+
+    Needs pyephem for the moon. For the sun it falls back to the arithmetic
+    in this file, which is anchored on solar noon and so answers a slightly
+    different question -- close enough for a sunrise, and the difference is
+    named in `tools/suncheck.py`.
+    """
+    out: dict[str, float | None] = {"rise": None, "set": None,
+                                    "transit": None}
+    if _ephem is not None:
+        try:
+            observer = _ephem.Observer()
+            observer.lat = str(latitude)
+            observer.lon = str(longitude)
+            # The observer's own height lowers the horizon: from 440 metres
+            # the sun rises twenty seconds earlier than at sea level, and a
+            # skin that prints seconds shows it.
+            observer.elevation = float(altitude_m or 0.0)
+            observer.date = _ephem.Date(
+                _ephem.Date("1970/1/1 00:00:00") + after / 86400.0)
+            # WeeWX's almanac lets pyephem model refraction from the
+            # observer's air, with a horizon of zero. The other convention --
+            # refraction off, horizon at 34 arcminutes -- is the one used for
+            # the night shading in `day_night`, where it matches the
+            # arithmetic that runs without pyephem.
+            #
+            # Twenty seconds apart, and both defensible. This one is here
+            # because a skin printing sunrise to the second should print what
+            # it printed yesterday under WeeWX.
+            observer.temp = temperature
+            observer.pressure = pressure
+            observer.horizon = math.radians(horizon or 0.0)
+            thing = _ephem.Sun() if body == "sun" else _ephem.Moon()
+
+            def moment(value: object) -> float:
+                return ((float(value)
+                         - float(_ephem.Date("1970/1/1 00:00:00")))
+                        * 86400.0)
+
+            for key, call in (("rise", observer.next_rising),
+                              ("set", observer.next_setting)):
+                try:
+                    out[key] = moment(call(thing, start=observer.date,
+                                           use_center=use_center))
+                except Exception:
+                    out[key] = None  # never rises, or never sets
+            try:
+                # No `use_center` here: a transit is the moment the centre
+                # crosses the meridian whatever you asked for the horizon,
+                # and passing it raises rather than being ignored.
+                out["transit"] = moment(
+                    observer.next_transit(thing, start=observer.date))
+            except Exception:
+                out["transit"] = None
+            return out
+        except Exception:
+            log.debug("pyephem could not work out the %s rising", body,
+                      exc_info=True)
+
+    if body != "sun":
+        # The moon's path is not something to approximate here. None, so a
+        # skin prints its own "N/A" rather than a wrong time.
+        return out
+    rise, sets = crossings(after + 43200, latitude, longitude,
+                           HORIZON if horizon is None else horizon)
+    out["rise"], out["set"] = rise, sets
+    out["transit"] = solar_noon(after + 43200, longitude)
+    return out
+
+
+# -- the moon --------------------------------------------------------------
+
+#: The eight names a phase is given. WeeWX's defaults exactly, because a
+#: skin prints `$almanac.moon_phase` straight into a page and "Full Moon"
+#: where it has always said "Full" is a visible change. A skin that names its
+#: own overrides these.
+MOON_PHASES = ("New", "Waxing crescent", "First quarter", "Waxing gibbous",
+               "Full", "Waning gibbous", "Last quarter", "Waning crescent")
+
+#: One synodic month: new moon to new moon, in days. Not the orbital period --
+#: the Earth has moved too, and the difference is two and a bit days.
+SYNODIC = 29.530588853
+
+#: A new moon that actually happened, as the anchor everything counts from.
+#: 2000-01-06 18:14 UTC.
+KNOWN_NEW_MOON = 947182440.0
+
+
+def moon_age(when: float) -> float:
+    """Days since the last new moon, 0 to 29.53.
+
+    Good to a few hours, which is what a phase name and a percentage need.
+    pyephem is used where it is installed and is good to minutes; this is the
+    fallback, and the difference does not show in either of those.
+    """
+    if _ephem is not None:
+        try:
+            date = _ephem.Date(_ephem.Date("1970/1/1 00:00:00") + when / 86400.0)
+            previous = _ephem.previous_new_moon(date)
+            return float(date - previous)
+        except Exception:
+            log.debug("pyephem could not age the moon; using the built-in "
+                      "calculation", exc_info=True)
+    return ((when - KNOWN_NEW_MOON) / 86400.0) % SYNODIC
+
+
+def moon_fullness(when: float) -> int:
+    """How much of the disc is lit, as a percentage.
+
+    Not the fraction of the cycle: the moon is half lit a quarter of the way
+    through, which is where a linear reading would say 25.
+    """
+    if _ephem is not None:
+        try:
+            observer = _ephem.Observer()
+            observer.date = _ephem.Date(
+                _ephem.Date("1970/1/1 00:00:00") + when / 86400.0)
+            moon = _ephem.Moon(observer)
+            return int(round(float(moon.moon_phase) * 100.0))
+        except Exception:
+            log.debug("pyephem could not light the moon; using the built-in "
+                      "calculation", exc_info=True)
+    angle = 2.0 * math.pi * moon_age(when) / SYNODIC
+    return int(round(50.0 * (1.0 - math.cos(angle))))
+
+
+def moon_phase(when: float) -> tuple[int, str]:
+    """Which of the eight phases, and its name.
+
+    The quarters are moments and the crescents are stretches, so the eight
+    are not eight equal slices: a name is chosen by which eighth of the cycle
+    the moon is in, which is what everybody means by "waxing gibbous".
+    """
+    index = int((moon_age(when) / SYNODIC) * 8 + 0.5) % 8
+    return index, MOON_PHASES[index]
+
+
+def moon_events(day_ts: float, latitude: float,
+                longitude: float) -> dict[str, float | None]:
+    """When the moon rises, sets and is highest, for one day.
+
+    Needs pyephem: the moon's path is not the sun's, and an orbit that is
+    tilted, elliptical and pulled about by the Earth is not something to
+    approximate in thirty lines. Without pyephem these come back as None and
+    a skin prints its own "N/A" rather than a wrong time.
+    """
+    out: dict[str, float | None] = {"rise": None, "set": None, "transit": None}
+    if _ephem is None:
+        return out
+    try:
+        noon = solar_noon(day_ts, longitude)
+        observer = _ephem.Observer()
+        observer.lat = str(latitude)
+        observer.lon = str(longitude)
+        observer.date = _ephem.Date(
+            _ephem.Date("1970/1/1 00:00:00") + noon / 86400.0)
+        moon = _ephem.Moon()
+
+        def moment(value: object) -> float:
+            return (float(value)
+                    - float(_ephem.Date("1970/1/1 00:00:00"))) * 86400.0
+
+        for key, call in (("rise", observer.previous_rising),
+                          ("set", observer.next_setting),
+                          ("transit", observer.next_transit)):
+            try:
+                out[key] = moment(call(moon, start=observer.date))
+            except Exception:
+                out[key] = None
+    except Exception:
+        log.debug("pyephem could not place the moon", exc_info=True)
+    return out
+
+
 def local_midnight(ts: float) -> int:
     """The start of the local day a timestamp falls in."""
     return int(datetime.datetime.fromtimestamp(ts).replace(
