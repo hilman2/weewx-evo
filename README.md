@@ -219,8 +219,21 @@ python -m ruff check --select F src/ tools/       # undefinierte Namen
 ```
 
 `ruff` ist der einzige Punkt, an dem ein Werkzeug von außen gebraucht wird,
-und er verdient seinen Platz: ein Aufruf in einer Schleife, die selten läuft,
-wird sonst erst im Betrieb gefunden. Genau so ist es einmal passiert.
+und er verdient seinen Platz. Es findet die Sorte Fehler, die kein Test
+findet: einen Aufruf in einem Zweig, den nichts durchläuft. Ein Umbau nahm
+hier einmal sieben Funktionen mit, und **alle Tests liefen weiter durch** —
+weil keiner davon die serve-Schleife startet. `ruff` nannte jede einzelne.
+
+Deshalb gehört es vor den Commit, nicht danach:
+
+```bash
+cat > .git/hooks/pre-commit <<'HOOK'
+#!/bin/sh
+python -m ruff check --select F src/ tools/ || {
+    echo "ruff hat etwas gefunden. Erst beheben." >&2; exit 1; }
+HOOK
+chmod +x .git/hooks/pre-commit
+```
 
 Drei vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
 im Pfad:
