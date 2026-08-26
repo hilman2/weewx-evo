@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ...options import Group, Option, Schema
+from ...options import Group, Option
 from .. import Produced
 
 log = logging.getLogger(__name__)

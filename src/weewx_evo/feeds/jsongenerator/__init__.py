@@ -58,7 +58,7 @@ from pathlib import Path
 from typing import Any
 
 from ... import sun, units
-from ...options import Group, Option, Schema
+from ...options import Group, Option
 from ...plots import Plot, PlotSet
 from ...series import Reader, Series, VECTORS
 from .. import Produced
