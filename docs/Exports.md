@@ -350,6 +350,12 @@ Verzeichnisse entstehen, das Hineinbewegen passiert. `pyftpdlib` ist keine
 Abhängigkeit von weewx-evo, dieser Teil wird also ausgelassen, wenn es fehlt,
 und der Rest läuft trotzdem.
 
+`local_export()` prüft die Ausfallarten, die FTP nicht hat: ein Hardlink, der
+still einen Inode teilt; ein Löschen, das mehr mitnimmt als das, was dieser
+Export hingelegt hat; ein Ziel, das das Quellverzeichnis ist. Und danach, dass
+der **Web-Server tatsächlich ausliefert, was der Export veröffentlicht hat** —
+beide Hälften der Kette in einem Test.
+
 `runner_tests()` prüft, wann welcher Export läuft und **dass einer den anderen
 nicht aufhalten kann** — mit einem `FakeExport`, der sich absichtlich Zeit lässt.
 

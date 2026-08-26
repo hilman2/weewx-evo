@@ -362,12 +362,29 @@ def published_names() -> list[tuple[str, str]]:
     return out
 
 
-def _config_path() -> Any:
-    """Which file the forms are being built for.
+#: Which configuration file the forms being built belong to. Set by
+#: `all_schemas`, because that is the one moment when it is known and the
+#: dropdowns are built long after it.
+_FOR_FILE: Any = None
 
-    The admin page knows; a form generated for a different file would offer
-    exports that are not in it.
+
+def building_for(path: Any) -> None:
+    """Say which file the forms about to be built describe.
+
+    A dropdown that lists the exports has to read them from somewhere, and it
+    is called from inside the renderer with no argument. Reaching for the
+    command line instead was wrong twice already: the settings page passes
+    its own path, and a form built from a different file offers exports that
+    are not in it.
     """
+    global _FOR_FILE
+    _FOR_FILE = path
+
+
+def _config_path() -> Any:
+    """Which file the forms are being built for."""
+    if _FOR_FILE is not None:
+        return _FOR_FILE
     from .cli import _ARGS
 
     return getattr(_ARGS, "config", None) if _ARGS else None
@@ -384,6 +401,52 @@ def defined_feeds() -> list[tuple[str, str]]:
     return [(name, f"{name} -- {feeds.describe(name)}"
              if feeds.describe(name) else name)
             for name in feeds.names()]
+
+
+def website_options() -> list[Group]:
+    """The built-in web server.
+
+    Its own page, because "where does what I made end up" is the question
+    people actually arrive with, and it was previously three fields halfway
+    down a page about databases and ports.
+    """
+    return [
+        Group("The built-in web server",
+              "Hands what the exports published to a browser. Enough to look "
+              "at a station's own pages on the local network without "
+              "installing anything else.", (
+                  Option("web.enabled", "Serve the pages", kind="bool",
+                         default=False, restart=True,
+                         help="Off, nothing is served and the exports still "
+                              "publish. On, whatever a local export wrote is "
+                              "reachable at the addresses below."),
+                  Option("web.port", "Port", kind="int", default=8081,
+                         minimum=1, maximum=65535, restart=True,
+                         help="Its own, separate from the upload port and the "
+                              "settings page. Those two answer hardware and "
+                              "an operator; this answers browsers."),
+                  Option("web.default", "Show this at /", kind="choice",
+                         choices=(("", "-- a list of what there is --"),),
+                         choices_from=published_names,
+                         help="What appears at the address itself. With one "
+                              "chosen, / is that one and the rest stay at "
+                              "/<name>/. Without, / lists them."),
+              )),
+        Group("Who gets an answer", "", (
+            Option("web.allow", "Answer", default="private",
+                   suggestions=(("private", "the local network"),
+                                ("any", "anywhere, including the internet")),
+                   help="A page of weather is not a secret, but it is still "
+                        "this machine answering strangers. Behind a reverse "
+                        "proxy leave this alone: the proxy connects from "
+                        "loopback, which is private."),
+            Option("web.host", "Listen on", default="0.0.0.0",
+                   restart=True, advanced=True,
+                   help="Bound to everything and answering private networks "
+                        "only. What keeps it private is the line above, not "
+                        "this one."),
+        )),
+    ]
 
 
 def core_options() -> list[Group]:
@@ -428,6 +491,12 @@ def core_options() -> list[Group]:
         )),
 
         Group("Databases", "Two files: the record, and the packets behind it.", (
+            Option("feeds_dir", "Feed output", kind="path",
+                   default="data/feeds", restart=True,
+                   help="Where the feeds write. Each gets a directory under "
+                        "it. This is their working directory and not a "
+                        "published one: an export is what puts the files "
+                        "somewhere anybody can read them."),
             Option("plots_file", "Plot definitions", kind="path",
                    default="plots.toml", restart=True,
                    help="Which charts exist, and what goes in each. Its own "
@@ -543,34 +612,6 @@ def core_options() -> list[Group]:
                    help="Saving is two requests, and clicking through the "
                         "tabs makes several a second. A limit that gets in "
                         "the way is one that gets turned off."),
-        )),
-
-        Group("Website", "Serving what the feeds produced, on this machine.", (
-            Option("web.enabled", "Serve the feeds", kind="bool", default=False,
-                   restart=True,
-                   help="A small web server for what the feeds write. Enough "
-                        "to look at a station's own pages on the local "
-                        "network without installing nginx. Anything more "
-                        "serious goes behind a real server, or is pushed "
-                        "somewhere by an export."),
-            Option("web.port", "Port", kind="int", default=8081,
-                   minimum=1, maximum=65535, restart=True,
-                   help="Its own, separate from the upload port and the "
-                        "settings page. Those two answer hardware and an "
-                        "operator; this answers browsers."),
-            Option("web.default", "Show this at /", kind="choice",
-                   choices=(("", "-- a list of what there is --"),),
-                   choices_from=published_names,
-                   help="What appears at the address itself. With one chosen, "
-                        "/ is that one and the rest stay at /<name>/. Without, "
-                        "/ lists them."),
-            Option("web.allow", "Answer", default="private",
-                   suggestions=(("private", "the local network"),
-                                ("any", "anywhere, including the internet")),
-                   help="As elsewhere. A page of weather is not a secret, but "
-                        "it is still this machine answering strangers."),
-            Option("web.host", "Listen on", default="0.0.0.0",
-                   restart=True, advanced=True),
         )),
 
         Group("Running", "Where things are put and how often they happen.", (

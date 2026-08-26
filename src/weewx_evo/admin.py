@@ -48,11 +48,30 @@ def export_kinds() -> list[str]:
 
     return exports.kinds()
 
+
+def export_kind_choices() -> list[tuple[str, str, str]]:
+    """Each kind, what it is called, and what it is for.
+
+    A dropdown reading `ftp / local / rsync` asks somebody to already know
+    the answer. The point of the page is that they should not have to.
+    """
+    from . import exports
+
+    out = []
+    for kind in exports.kinds():
+        factory = exports.DEFAULT.factory_for(kind)
+        out.append((kind, getattr(factory, "label", kind),
+                    getattr(factory, "summary", "")))
+    return out
+
 #: Prefix for the hidden field that says "this checkbox was on the form".
 #: A browser sends nothing for an unticked box, which is indistinguishable
 #: from a field that was never there -- and the two must mean different
 #: things, or a partial request wipes what it did not mention.
 MARKER = "__present__"
+
+#: A newline, for joining inside an f-string.
+NEWLINE = chr(10)
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -373,38 +392,199 @@ def group_html(group: Group, values: dict[str, Any],
 def new_export_page(admin: Admin, error: str = "", form: dict | None = None) -> str:
     """The form that creates one. Two fields, and nothing else yet."""
     form = form or {}
-    kinds = export_kinds()
-    options = "\n".join(
-        f'<option value="{html.escape(k)}"'
-        f'{" selected" if form.get("kind") == k else ""}>{html.escape(k)}</option>'
-        for k in kinds)
+    kinds = export_kind_choices()
+    # Local first and chosen by default: it is the one that needs nothing
+    # else installed and the one somebody adding their first export wants.
+    kinds.sort(key=lambda row: row[0] != "local")
+    chosen = form.get("kind") or kinds[0][0]
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
+        for kind, label, _summary in kinds)
+    # The select holds the names; this holds what they mean. A dropdown
+    # cannot carry a sentence, and the sentence is the part that helps.
+    explained = "".join(
+        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
+        for _kind, label, summary in kinds if summary)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
   <h3>Add an export</h3>
-  <p class="lede">An export moves what a feed produced somewhere else.
-     Give it a name and say what kind it is; the rest is on the page that
-     appears next.</p>
+  <p class="lede">A feed writes into its own working directory. An export is
+     what puts those files somewhere anybody can read them. Give it a name
+     and a destination; the rest is on the page that appears next.</p>
   {problem}
   <form method="post" action="./new-export">
     <div class="field">
       <label for="f-name">Name</label>
       <input type="text" id="f-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
-             placeholder="website" autocomplete="off" spellcheck="false">
+             placeholder="site" autocomplete="off" spellcheck="false">
       <p class="help">Lowercase letters, digits, - and _. It becomes a
-         heading here and part of a filename, so keep it short:
-         <code>website</code>, <code>backup</code>, <code>hoster</code>.</p>
+         heading here, and for a local export it becomes the address the
+         files appear at, so keep it short: <code>site</code>,
+         <code>backup</code>, <code>hoster</code>.</p>
     </div>
     <div class="field">
-      <label for="f-kind">Kind</label>
+      <label for="f-kind">Destination</label>
       <select id="f-kind" name="kind">{options}</select>
-      <p class="help">rsync sends only what changed and needs SSH. FTP works
-         with shared hosting, which is often all there is.</p>
+      <ul class="kinds">{explained}</ul>
     </div>
     <div class="actions"><button type="submit">Create</button></div>
   </form>
 </section>'''
+
+
+def _where_it_lands(admin: Admin, name: str) -> str:
+    """For a local export: the address its files end up at.
+
+    Shown on the export's own page, because that is where somebody has just
+    typed a directory and is wondering what to do with it.
+    """
+    config = admin.config()
+    settings = (config.get("exports") or {}).get(name)
+    if not isinstance(settings, dict) or settings.get("kind") != "local":
+        return ""
+
+    web = config.get("web", {}) or {}
+    directory = str(settings.get("directory") or "")
+    if not web.get("enabled"):
+        return f'''
+<section class="group">
+  <h3>Where it lands</h3>
+  <p class="lede">In <code>{html.escape(directory or "-- no directory set --")}</code>
+     on this machine. Point a web server at it, or
+     <a href="./website">turn the built-in one on</a> and it is readable
+     straight away.</p>
+</section>'''
+
+    port = web.get("port", 8081)
+    path = "/" if web.get("default") == name else f"/{html.escape(name)}/"
+    host = _addresses()[0][0]
+    return f'''
+<section class="group">
+  <h3>Where it lands</h3>
+  <p class="lede">In <code>{html.escape(directory)}</code>, and the built-in
+     server hands it out at
+     <a href="http://{html.escape(host)}:{port}{path}">http://{html.escape(host)}:{port}{path}</a>.
+     The name in the address is this export's name.</p>
+</section>'''
+
+
+def website_summary(admin: Admin) -> str:
+    """What the built-in server hands out, and at which address.
+
+    The question this page exists to answer. Without it somebody sets a
+    directory, saves, and has nowhere to click: the address is not written
+    down anywhere, and neither is the fact that the path comes from the name
+    of an export.
+    """
+    from .webserver import site_from
+
+    config = admin.config()
+    web = config.get("web", {}) or {}
+    if not web.get("enabled"):
+        return '''
+<section class="group">
+  <h3>Nothing is being served</h3>
+  <p class="lede">Turn the server on above and whatever a local export
+     published becomes readable in a browser. Until then the exports still
+     run and still write their files.</p>
+</section>'''
+
+    class _View:
+        def __init__(self, raw):
+            self.config = raw
+
+        def get(self, key):
+            return config_file.get(self.config, key)
+
+    site = site_from(_View(config))
+    port = web.get("port", 8081)
+    hosts = _addresses()
+
+    if not site.feeds:
+        return f'''
+<section class="group">
+  <h3>Serving nothing yet</h3>
+  <p class="lede">The server is on, at
+     <code>http://{html.escape(hosts[0][0])}:{port}/</code>, and there is
+     nothing to hand out.</p>
+  <p class="lede">A feed writes into its own working directory. What puts it
+     somewhere readable is an <strong>export</strong> of kind
+     <em>local</em>: choose the feed, say which directory, and it appears
+     here under the export's own name.</p>
+  <div class="actions"><a class="button" href="./new-export">Add an
+     export</a></div>
+</section>'''
+
+    rows = []
+    for name in sorted(site.feeds):
+        where = site.feeds[name]
+        try:
+            count = sum(1 for f in where.rglob("*") if f.is_file())
+        except OSError:
+            count = 0
+        path = "/" if name == site.default else f"/{name}/"
+        links = " ".join(
+            f'<a href="http://{html.escape(host)}:{port}{path}">'
+            f"{html.escape(host)}:{port}{path}</a>"
+            for host, _what in hosts[:2])
+        rows.append(
+            f"<tr><td>{html.escape(name)}</td>"
+            f"<td>{links}</td>"
+            f"<td class='n'>{count}</td>"
+            f"<td><code>{html.escape(str(where))}</code></td></tr>")
+
+    also = ""
+    if site.default:
+        also = (f"<p class='lede'><code>{html.escape(site.default)}</code> is "
+                "also at the address itself, without a name after it.</p>")
+
+    return f'''
+<section class="group">
+  <h3>What is being served</h3>
+  <p class="lede">The name in the address is the name of the export that
+     published it. Rename the export and the address follows.</p>
+  {also}
+  <table>
+    <thead><tr><th>name</th><th>address</th><th class="n">files</th>
+      <th>from</th></tr></thead>
+    <tbody>
+{chr(10).join(rows)}
+    </tbody>
+  </table>
+</section>'''
+
+
+def _addresses() -> list[tuple[str, str]]:
+    """Addresses this machine can be reached at, best guess first.
+
+    The same list `weewx-evo url` prints. A page that says `0.0.0.0` has told
+    somebody nothing they can type into a browser.
+    """
+    import socket
+
+    found: list[tuple[str, str]] = []
+    try:
+        name = socket.gethostname()
+        found.append((f"{name}.local", "this machine's name"))
+    except OSError:
+        pass
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.settimeout(0.2)
+        try:
+            # Nothing is sent. It only asks the routing table which address
+            # this machine would use to reach the outside.
+            probe.connect(("192.0.2.1", 9))
+            found.insert(0, (probe.getsockname()[0], "on the local network"))
+        finally:
+            probe.close()
+    except OSError:
+        pass
+    found.append(("127.0.0.1", "on this machine only"))
+    return found
 
 
 def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
@@ -473,9 +653,12 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # Testing is worth a great deal here -- a wrong password found now beats
     # one found at the next archive interval, in a log nobody is reading.
     extra = ""
+    if schema is not None and schema.name == "website":
+        extra = website_summary(admin)
     if schema is not None and schema.kind == "export" and not admin.read_only:
         name = schema.name.split(":", 1)[-1]
-        extra = f'''
+        extra += _where_it_lands(admin, name)
+        extra += f'''
 <section class="group">
   <h3>Try it</h3>
   <p class="lede">Connects and looks, without sending anything.</p>
@@ -671,6 +854,11 @@ _PAGE = """<!doctype html>
       font-size: .8125rem; }}
   details > summary {{ cursor: pointer; color: var(--dim); font-size: .8125rem;
       margin: .2rem 0 .6rem; }}
+  ul.kinds {{ list-style: none; margin: .5rem 0 0; padding: 0;
+      font-size: .8125rem; color: var(--dim); }}
+  ul.kinds li {{ margin-bottom: .35rem; line-height: 1.5; }}
+  ul.kinds strong {{ color: var(--ink); font-weight: 500; }}
+  a.button {{ display: inline-block; text-decoration: none; }}
   .hint {{ display: block; color: var(--dim); font-size: .75rem;
       margin-top: .25rem; line-height: 1.4; }}
   fieldset.line {{ border: 1px solid var(--line); border-radius: .4rem;

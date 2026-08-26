@@ -127,9 +127,16 @@ class Page:
 
 
 def pages() -> list[Page]:
+    """The pages worth an index entry: not the generated ones, not the furniture.
+
+    `_Sidebar.md` and `_Footer.md` are navigation GitHub renders around every
+    page. They document nothing, so listing them as pages with no subject
+    would put two permanent dashes in the register and teach whoever reads it
+    to skip the first two rows.
+    """
     found = []
     for path in sorted(DOCS.glob("*.md")):
-        if path.name in GENERATED:
+        if path.name in GENERATED or path.name in FURNITURE:
             continue
         found.append(Page(path))
     return found
@@ -296,46 +303,49 @@ def render_index(found: list[Page]) -> str:
 
 # -- the API index ---------------------------------------------------------
 
-def symbols(path: Path) -> list[tuple[str, str, int]]:
-    """Top-level classes, functions and methods, as (kind, name, line)."""
+def summarise(node: ast.AST, width: int) -> str:
+    """A symbol's docstring as one line, or empty."""
+    doc = ast.get_docstring(node) or ""       # type: ignore[arg-type]
+    if not doc:
+        return ""
+    one = " ".join(doc.split())
+    return one if len(one) <= width else one[:width - 1].rstrip() + "…"
+
+
+def symbols(path: Path) -> list[tuple[str, str, int, str]]:
+    """Public classes, functions and methods, as (kind, name, line, summary).
+
+    The file is parsed once. Asking for each docstring separately was the
+    obvious way to write it and reparses a thousand-line module a hundred
+    times.
+
+    Private names are left out, with one exception on each side: `__init__`
+    is in, because its arguments are how a class is used, and a private class
+    stays out along with everything in it -- `_Handler` is the HTTP plumbing
+    and nobody calls it.
+    """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (SyntaxError, OSError):
         return []
-    out: list[tuple[str, str, int]] = []
+    out: list[tuple[str, str, int, str]] = []
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if not node.name.startswith("_"):
-                out.append(("def", node.name, node.lineno))
+            if node.name.startswith("_"):
+                continue
+            out.append(("def", node.name, node.lineno, summarise(node, 110)))
         elif isinstance(node, ast.ClassDef):
-            out.append(("class", node.name, node.lineno))
+            if node.name.startswith("_"):
+                continue
+            out.append(("class", node.name, node.lineno, summarise(node, 110)))
             for sub in node.body:
-                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    if sub.name.startswith("_") and sub.name != "__init__":
-                        continue
-                    out.append(("method", f"{node.name}.{sub.name}", sub.lineno))
+                if not isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if sub.name.startswith("_") and sub.name != "__init__":
+                    continue
+                out.append(("method", f"{node.name}.{sub.name}", sub.lineno,
+                            summarise(sub, 90)))
     return out
-
-
-def summary(path: Path, name: str) -> str:
-    """The first line of a symbol's docstring, if it has one."""
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except (SyntaxError, OSError):
-        return ""
-    want = name.split(".")
-    for node in tree.body:
-        if getattr(node, "name", None) != want[0]:
-            continue
-        target = node
-        if len(want) == 2:
-            target = next((s for s in node.body
-                           if getattr(s, "name", None) == want[1]), None)
-            if target is None:
-                return ""
-        doc = ast.get_docstring(target) or ""
-        return " ".join(doc.split())[:110]
-    return ""
 
 
 def render_api(found: list[Page]) -> str:
@@ -370,9 +380,8 @@ def render_api(found: list[Page]) -> str:
         lines += [f"## `{rel}`", "",
                   f"{where} · zuletzt geändert {when(stamp(path))}", "",
                   "| | Name | Zeile | |", "|---|---|---|---|"]
-        for kind, name, lineno in found_syms:
+        for kind, name, lineno, doc in found_syms:
             mark = {"class": "**C**", "def": "f", "method": "·"}[kind]
-            doc = summary(path, name) if kind != "method" else ""
             shown = f"`{name}`" if kind != "method" else f"&nbsp;&nbsp;`{name}`"
             lines.append(f"| {mark} | {shown} | {lineno} | {doc} |")
         lines.append("")

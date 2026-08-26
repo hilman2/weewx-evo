@@ -45,6 +45,13 @@ class LocalExport(BaseExport):
     """Copies what a feed produced into a directory on this machine."""
 
     label = "local directory"
+    #: One line for the form that offers the kinds. Somebody adding an
+    #: export is choosing a destination, and "local" on its own is not a
+    #: destination.
+    summary = (
+        "A directory on this machine. The built-in web server serves "
+        "it, so a feed is readable on the local network with nothing "
+        "else installed.")
 
     def __init__(self, directory: str = "", source: str = "",
                  directory_source: str = "", trigger: str = "feed",

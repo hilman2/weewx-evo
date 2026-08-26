@@ -347,9 +347,13 @@ def cmd_archive(args: argparse.Namespace) -> int:
              cfg.get("archive_db"))
 
     runner = None
+    # An export pointed at a feed has to be told where that feed writes.
+    # Without this every one of them is left out at startup with "no feed and
+    # no directory set", which reads like the export is wrong when it is not.
+    where = feed_dirs(cfg)
     scheduled = export_runner.build(
         configured_exports(args), build_export,
-        lambda settings: export_registry.source_for(settings))
+        lambda settings: export_registry.source_for(settings, where.get))
     if scheduled:
         runner = export_runner.Runner(scheduled)
         runner.start()
@@ -500,9 +504,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # has stopped answering sits in a connect for its timeout, and thirty
     # seconds of that here is thirty seconds the archiver is not archiving.
     runner = None
+    # An export pointed at a feed has to be told where that feed writes.
+    # Without this every one of them is left out at startup with "no feed and
+    # no directory set", which reads like the export is wrong when it is not.
+    where = feed_dirs(cfg)
     scheduled = export_runner.build(
         configured_exports(args), build_export,
-        lambda settings: export_registry.source_for(settings))
+        lambda settings: export_registry.source_for(settings, where.get))
     if scheduled:
         runner = export_runner.Runner(scheduled)
         runner.start()
@@ -842,6 +850,12 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
     field and a commented line in the configuration file, and nothing here
     changes.
     """
+    if config_path is None:
+        config_path = getattr(_ARGS, "config", None) if _ARGS else None
+    # The dropdowns are built later, from inside the renderer, and by then
+    # nothing has told them which file they describe.
+    option_defs.building_for(config_path)
+
     schemas = [option_defs.Schema(
         name="core", label="weewx-evo", kind="core",
         help="The station, the archive, and the port hardware uploads to.",
@@ -861,6 +875,14 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
             replace_group(group, f"drivers.{name}") for group in schema.groups)
         schemas.append(schema)
 
+    # The built-in web server. Its own page rather than three fields on the
+    # core one: "where does what I made end up" is the question people
+    # arrive with.
+    schemas.append(option_defs.Schema(
+        name="website", label="Website", kind="core",
+        help="Where what the exports published can be read.",
+        groups=tuple(option_defs.website_options())))
+
     # The JSON feed. Always there: everything that draws is built on it, so
     # it is not something to install or enable, only to configure.
     from .feeds import jsongenerator
@@ -877,8 +899,6 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
     # The path is a parameter rather than something found in a global. The
     # admin page knows which file it edits, and reading a different one would
     # show pages for exports that are not in it.
-    if config_path is None:
-        config_path = getattr(_ARGS, "config", None) if _ARGS else None
     configured = config_file.read(config_path) if config_path else {}
     for name, settings in sorted((configured.get("exports") or {}).items()):
         if not isinstance(settings, dict):
@@ -1273,6 +1293,24 @@ def load_plots(args: argparse.Namespace, cfg: Settings) -> plot_defs.PlotSet:
     return plot_defs.load(plots_path(args, cfg))
 
 
+def feed_dirs(cfg: Settings) -> dict[str, Path]:
+    """Where each feed writes.
+
+    One place, because two things need the answer and they must agree: the
+    feed runner, which writes there, and an export, which sends what is
+    there. Working it out twice is how an export ends up publishing an empty
+    directory that nothing ever filled.
+    """
+    root = Path(cfg.get("feeds_dir") or "data/feeds")
+    return {
+        "json": root / (cfg.get("feeds.json.destination") or "json"),
+        # The diagnostic page sits above the JSON rather than beside it: it
+        # draws what is in there, and an export pointed at it gets the page
+        # and the data it draws from in one directory.
+        "diagnostic": root,
+    }
+
+
 def build_feeds(args: argparse.Namespace, cfg: Settings,
                 charts: plot_defs.PlotSet) -> list:
     """The feeds this configuration asks for, in the order they run.
@@ -1283,15 +1321,15 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
     """
     from .feeds import diagnostic, jsongenerator
 
-    root = Path(cfg.get("feeds_dir") or "data/feeds")
+    where = feed_dirs(cfg)
     made: list = []
-    json_dir = root / (cfg.get("feeds.json.destination") or "json")
     made.append(("json", lambda reader: jsongenerator.from_settings(
-        cfg, reader, charts), json_dir))
+        cfg, reader, charts), where["json"]))
     if cfg.get("feeds.diagnostic.enabled") is not False:
         made.append(("diagnostic",
-                     lambda _reader: diagnostic.from_settings(cfg, json_dir),
-                     root))
+                     lambda _reader: diagnostic.from_settings(
+                         cfg, where["json"]),
+                     where["diagnostic"]))
     return made
 
 

@@ -197,6 +197,27 @@ weewx-evo serve --config evo.toml --explain
 Eine Zeile je Einstellung, mit ihrer Herkunft. Danach hört das Programm auf.
 → [Configuration](Configuration)
 
+## Eine eigene Seite im lokalen Netz
+
+Drei Zeilen, und die Diagramme sind im Browser:
+
+```toml
+[exports.site]
+kind = "local"
+directory = "data/site"
+source = "json"
+
+[web]
+enabled = true
+default = "site"
+```
+
+Ein [`local`-Export](Exports#ein-verzeichnis-auf-dieser-maschine) legt hin, was
+der [JSON-Feed](Feeds) erzeugt hat, und der eingebaute
+[Web-Server](Web-Server) liefert es unter `http://<host>:8081/` aus. Der Name
+des Exports **ist** die Adresse — niemand muss denselben Pfad zweimal
+aufschreiben.
+
 ## Nächste Schritte
 
 - Diagramme und JSON erzeugen → [Plots](Plots), [Feeds](Feeds)

@@ -45,6 +45,13 @@ class RsyncExport(BaseExport):
     """Sends a directory to a server with rsync over SSH."""
 
     label = "rsync"
+    #: One line for the form that offers the kinds. Somebody adding an
+    #: export is choosing a destination, and "local" on its own is not a
+    #: destination.
+    summary = (
+        "A machine reachable over SSH. rsync works out what changed "
+        "itself, which makes it the cheapest destination over a slow "
+        "line.")
 
     def __init__(self, host: str = "", user: str = "", directory: str = "",
                  source: str = "", port: int = 22, key: str = "",

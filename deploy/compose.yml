@@ -19,6 +19,9 @@ services:
       # The settings page. Its own port, and a reverse proxy passes only its
       # own token.
       - "127.0.0.1:${WEEWX_EVO_ADMIN_PORT:-3042}:8080"
+      # The pages the exports published. No token: this is the part meant to
+      # be read. Still on loopback, so a reverse proxy decides who sees it.
+      - "127.0.0.1:${WEEWX_EVO_WEB_PORT:-3043}:8081"
 
     volumes:
       - ${WEEWX_EVO_DATA:-../data}:/data
@@ -39,6 +42,9 @@ services:
       - WEEWX_EVO_PUBLIC_URL=${WEEWX_EVO_PUBLIC_URL:-}
       # Third-party drivers, installed with `weewx-evo driver install`.
       - WEEWX_EVO_DRIVER_DIR=/data/drivers
+      # Where the feeds write. Their working directory: an export is what
+      # puts the files somewhere anybody reads them.
+      - WEEWX_EVO_FEEDS_DIR=/data/feeds
       # How long every packet is kept, not just every archive record. This
       # is what makes a statistic repairable after the fact.
       - WEEWX_EVO_RETENTION_DAYS=${WEEWX_EVO_RETENTION_DAYS:-7}

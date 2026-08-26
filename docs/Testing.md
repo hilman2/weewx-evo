@@ -236,6 +236,12 @@ ausgelassen, wenn es fehlt, und der Rest läuft trotzdem.
 
 Die rsync-Hälfte prüft die Kommandozeile — nichts geht durch eine Shell.
 
+`local_export()` prüft die Ausfallarten, die FTP nicht hat: ein Hardlink, der
+still einen Inode teilt; ein Löschen, das mehr mitnimmt als das, was dieser
+Export hingelegt hat; ein Ziel, das das Quellverzeichnis ist. Und danach, dass
+der **Web-Server tatsächlich ausliefert, was der Export veröffentlicht hat** —
+die beiden Hälften der Kette in einem Test.
+
 `runner_tests()` prüft mit einem absichtlich langsamen `FakeExport`, wann welcher
 Export läuft und dass einer den anderen nicht aufhalten kann.
 

@@ -167,7 +167,7 @@ niemand auf einen Blick prüfen kann.
 
 | Feld | Wofür |
 |---|---|
-| `choices_from` | Auswahl, die von der Installation abhängt statt vom Code — welche Treiber installiert sind, welche Feeds es gibt. Eine Funktion, weil sich die Antwort zur Laufzeit ändert |
+| `choices_from` | Auswahl, die von der Installation abhängt statt vom Code — `installed_drivers()`, `defined_feeds()`, `published_names()`. Eine **Funktion**, weil sich die Antwort zur Laufzeit ändert: einen Feed hinzuzufügen muss ihn in die Liste des Exports bringen, ohne Neustart |
 | `suggestions` | Werte, die es wert sind, angeboten zu werden, ohne andere zu verbieten. Der Fall dafür ist `allow`: „private", „any" oder eine Liste von Netzen, die niemand aufzählen kann |
 | `advanced` | Versteckt hinter einem Schalter statt weggelassen — eine versteckte Einstellung ist eine, die man durch Quelltextlesen findet |
 | `restart` | Änderung wirkt erst nach Neustart |

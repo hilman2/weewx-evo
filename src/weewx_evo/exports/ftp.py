@@ -46,6 +46,12 @@ class FtpExport(BaseExport):
     """Sends a directory to an FTP server."""
 
     label = "FTP"
+    #: One line for the form that offers the kinds. Somebody adding an
+    #: export is choosing a destination, and "local" on its own is not a
+    #: destination.
+    summary = (
+        "A web host over FTP. What shared hosting gives you, and the "
+        "reason the record of what was already sent has to exist.")
 
     def __init__(self, host: str = "", user: str = "", password: str = "",
                  directory: str = "/", port: int = 21, tls: bool = True,
