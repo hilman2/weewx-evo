@@ -32,7 +32,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import BaseExport, ExportError, Sent, walk
+from . import BaseExport, ExportError, Sent
+from .local import _tracker_path, walk
 from .tracker import Tracker
 
 log = logging.getLogger(__name__)
@@ -255,7 +256,8 @@ class FtpExport(BaseExport):
     def _tracker_for(self, source: Path) -> Tracker:
         if self._tracker is None:
             where = (Path(self._tracker_path) if self._tracker_path
-                     else source.parent / f".sent-ftp-{_slug(self.host)}.json")
+                     else _tracker_path(
+                         source, f"{self.host}-{self.directory}", "ftp"))
             self._tracker = Tracker(where)
         return self._tracker
 

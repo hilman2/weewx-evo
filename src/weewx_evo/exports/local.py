@@ -208,7 +208,7 @@ class LocalExport(BaseExport):
     def _tracker_for(self, source: Path) -> Tracker:
         if self._tracker is None:
             where = (Path(self._tracker_path) if self._tracker_path
-                     else source.parent / f".sent-local-{_slug(self.directory)}.json")
+                     else _tracker_path(source, self.directory, "local"))
             self._tracker = Tracker(where)
         return self._tracker
 
@@ -325,3 +325,42 @@ def _same_file(one: Path, other: Path) -> bool:
 
 def _slug(text: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in text).strip("-")[:40] or "site"
+
+
+def _tracker_path(source: "Path", target: str, kind: str) -> "Path":
+    """Where an export remembers what it has already sent.
+
+    Named after *both* ends. Two exports publishing into one directory is a
+    legitimate arrangement -- a skin's pages from one feed and its charts
+    from another -- and with one file between them each saw the other's
+    files as ones its own feed no longer produces, and deleted them. They
+    took turns: 70 sent, 13 removed; then 13 sent, 70 removed.
+
+    An existing file is *renamed* rather than read where it is. Reading it
+    where it is looks like the kind thing to do -- nobody re-uploads a site
+    -- but it is what kept the fault alive: both exports found the same old
+    file and carried on eating each other. Renaming hands the history to
+    whichever asks first and gives the other an empty record, and an empty
+    record deletes nothing.
+    """
+    from pathlib import Path
+
+    import hashlib
+
+    where = Path(source).parent
+    # Readable name, then eight hex characters of both paths. `_slug` cuts
+    # at forty and cuts from the front, so two sources deep in one tree --
+    # /data/feeds/seasons and /data/feeds/images -- come out identical once
+    # the tree is deep enough, which is the fault this is meant to fix.
+    both = f"{source}->{target}".encode()
+    stamp = hashlib.sha1(both).hexdigest()[:8]  # noqa: S324 - a name, not a secret
+    old = where / f".sent-{kind}-{_slug(target)}.json"
+    new = where / f".sent-{kind}-{_slug(Path(source).name)}-{stamp}.json"
+    if old.is_file() and not new.is_file():
+        try:
+            old.rename(new)
+        except OSError as exc:
+            # Two exports starting together, and the other one won. Its own
+            # file is the one that matters; this one starts empty.
+            log.debug("could not carry %s over to %s: %s", old, new, exc)
+    return new

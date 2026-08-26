@@ -138,6 +138,61 @@ def local_export(check) -> int:
         failures += not check("no leftover partial",
                               sorted(f.name for f in site.rglob("*.part")), [])
 
+        print("\ntwo exports into one directory do not eat each other")
+        # A skin publishes its pages from one feed and its charts from
+        # another, into the same directory, because <img src="x.png">
+        # looks beside the page. Both remembered what they had sent in
+        # one file named after the destination, so each saw the other's
+        # files as ones its own feed no longer produces -- and deleted
+        # them. They took turns: 70 sent, 13 removed; 13 sent, 70
+        # removed. The published site never had both halves at once.
+        pages = tmp / "feeds" / "pages"
+        charts = tmp / "feeds" / "charts"
+        together = tmp / "published"
+        for where, name, text in ((pages, "index.html", "<h1>hi</h1>"),
+                                  (charts, "day.png", "not really a png")):
+            where.mkdir(parents=True, exist_ok=True)
+            (where / name).write_text(text, encoding="utf-8")
+
+        page_export = LocalExport(directory=str(together), delete=True)
+        chart_export = LocalExport(directory=str(together), delete=True)
+        # Twice each, alternating: the first run of either is a full
+        # scan, and a full scan is where the deleting happens.
+        for _round in range(2):
+            page_export.send(pages)
+            chart_export.send(charts)
+        failures += not check("both halves are published",
+                              sorted(f.name for f in together.iterdir()
+                                     if f.is_file()),
+                              ["day.png", "index.html"])
+        failures += not check("and they kept separate records",
+                              len({page_export._tracker_for(pages).path,
+                                   chart_export._tracker_for(charts).path}),
+                              2)
+
+        print("\n  and an existing record is carried over, once")
+        # The first version of this fix let both exports keep reading the
+        # old shared file, so that nobody had to re-upload a site. That
+        # is exactly what kept them eating each other. It is renamed
+        # instead: the first to ask inherits the history, the second
+        # starts empty, and an empty record deletes nothing.
+        from weewx_evo.exports.local import _slug, _tracker_path
+
+        legacy = tmp / "legacy"
+        (legacy / "a").mkdir(parents=True, exist_ok=True)
+        (legacy / "b").mkdir(parents=True, exist_ok=True)
+        shared = legacy / f".sent-local-{_slug('/tmp/out')}.json"
+        shared.write_text('{"files": {}}', encoding="utf-8")
+        first = _tracker_path(legacy / "a", "/tmp/out", "local")
+        failures += not check("the first one inherits it",
+                              first.is_file(), True)
+        second = _tracker_path(legacy / "b", "/tmp/out", "local")
+        failures += not check("the second gets its own", second != first,
+                              True)
+        failures += not check("and it is empty", second.is_file(), False)
+        failures += not check("the shared one is gone", shared.is_file(),
+                              False)
+
         print("\nclearing up is what it does unasked")
         # Otherwise nothing ever does. A renamed chart leaves its file
         # behind for good, and a feed with dated filenames fills the disk
