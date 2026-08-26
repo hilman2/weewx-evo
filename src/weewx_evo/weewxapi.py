@@ -375,9 +375,21 @@ class Converter:
             for group in units.SYSTEMS.get(units.US, {})}
 
     def convert(self, val_t: Any) -> ValueTuple:
+        """One value, or a whole series of them.
+
+        A list as well as a number, because `get_series` hands back lists
+        and an extension converts what it got: weewx-wdc does exactly that
+        for every chart. Given a list, `units.convert` multiplies a list by
+        a float and the page dies with "can't multiply sequence by non-int
+        of type 'float'" -- seven pages of thirteen, and only on a station
+        whose archive is not already in the unit the page shows.
+        """
         value, unit, group = ValueTuple(val_t or (None, None, None))
         wanted = self.target.unit(group) or unit
         try:
+            if isinstance(value, (list, tuple)):
+                return ValueTuple(units.convert_all(list(value), unit,
+                                                    wanted), wanted, group)
             return ValueTuple(units.convert(value, unit, wanted), wanted,
                               group)
         except ValueError:

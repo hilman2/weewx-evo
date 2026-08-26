@@ -215,6 +215,12 @@ class Numbers(SearchList):
         start, stop, values = weewx.xtypes.get_series(
             "outTemp", TimeSpan(timespan[0], timespan[1]), manager,
             aggregate_type="max", aggregate_interval=3600)
+        # A whole series through the converter, which is what an extension
+        # does before drawing one. Given a list, a converter that only
+        # knows how to convert a number multiplies the list by a float:
+        # "can't multiply sequence by non-int of type 'float'", and only on
+        # a station whose archive is not already in the page's own unit.
+        series_shown = self.generator.converter.convert(values)
         warmest = max((v for v in values[0] if v is not None), default=None)
         # Converted first, as WeeWX's own extensions do: get_series hands
         # back what the archive holds, and turning that into what the page
@@ -224,6 +230,8 @@ class Numbers(SearchList):
         return [{
             "rows": row[0] if row else 0,
             "buckets": len(values[0]),
+            "series_unit": series_shown[1],
+            "series_first": series_shown[0][0] if series_shown[0] else None,
             "warmest": ValueHelper(shown, "day", self.generator.formatter,
                                    self.generator.converter),
             "rounded": rounder(1.23456, 2),
@@ -249,6 +257,8 @@ unit_of=$temperature_unit()
 called=$what_it_is_called()
 rows=$rows
 buckets=$buckets
+series_unit=$series_unit
+series_first=$series_first
 warmest=$warmest
 rounded=$rounded
 settled=$settled
@@ -458,6 +468,11 @@ def main() -> int:
                               int(got.get("rows", "0")) > 0, True)
         failures += not check("get_series came back",
                               int(got.get("buckets", "0")) > 0, True)
+        failures += not check("a whole series converts too",
+                              got.get("series_unit"), "degree_C")
+        failures += not check("and its values with it",
+                              float(got.get("series_first", "99")) < 30.0,
+                              True)
         # In the skin's own unit and the skin's own word for it: an
         # extension that converts with the generator's converter gets what
         # the page is set to, which is the whole point of handing it one.
