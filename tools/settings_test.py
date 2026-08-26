@@ -149,6 +149,26 @@ def main() -> int:
         failures += not check("and the new value is there", live.get("port"), 8200)
         failures += not check("what the file dropped went back to its default",
                               live.get("interval"), 300)
+        print("\nevery setting the page can write, the process can read")
+        # These are two different lists and they drifted apart once. The
+        # settings page grew a page of its own for the web server; the
+        # resolver kept building from the first list only, and the server
+        # started with no host to bind to and would not come up.
+        from weewx_evo.cli import all_schemas, settings_for
+
+        resolver = settings_for(args_with())
+        unreadable = []
+        for schema in all_schemas():
+            if schema.kind != "core":
+                continue
+            for _group, option in schema:
+                if option.default is None:
+                    continue
+                if resolver.get(option.name) is None:
+                    unreadable.append(option.name)
+        failures += not check("nothing the core declares is unreadable",
+                              unreadable, [])
+
         print("\na driver gets its options in the shape it declared them")
         # A driver declares kind="duration" and the file holds "4h". Handed
         # the string, `int("4h")` raises at startup, the exception is caught,

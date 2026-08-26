@@ -158,9 +158,14 @@ def settings_for(args: argparse.Namespace) -> Settings:
 
 def _resolve(args: argparse.Namespace) -> Settings:
     """Command line, environment, file, weewx.conf, defaults. See settings.py."""
+    # Everything the core declares, not just what the first page shows.
+    # These two are separate pages on the settings page and one schema here:
+    # splitting the page must not change what the process can read, and it
+    # did once -- the web server lost its defaults and would not bind.
     core = option_defs.Schema(
         name="core", label="weewx-evo",
-        groups=tuple(option_defs.core_options()))
+        groups=tuple(option_defs.core_options())
+        + tuple(option_defs.website_options()))
     resolved = load_settings(core, getattr(args, "config", None), args,
                              getattr(args, "weewx_conf", None))
     # Two arguments name a unit rather than a setting, so they are folded in
