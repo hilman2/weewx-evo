@@ -147,7 +147,7 @@ def local_export(check) -> int:
                              tracker=str(tmp / "t4.json"))
         (source / "one.json").write_text("{}", encoding="utf-8")
         (source / "two.json").write_text("{}", encoding="utf-8")
-        full = mirror.send(source)
+        mirror.send(source)
         before = sorted(f.name for f in (tmp / "mirror").rglob("*")
                         if f.is_file())
         partial = mirror.send(source, files=[Path("one.json")])
