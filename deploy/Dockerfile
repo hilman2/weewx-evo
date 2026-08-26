@@ -23,6 +23,12 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 # exists to avoid.
 RUN pip install --no-cache-dir "CT3==3.4.0.post5" "Pillow==12.3.0"
 
+# A typeface. Without one Pillow draws every label at a single fixed size, so
+# a chart rendered at twice the pixels comes out with type half the height it
+# should -- which looks like a decision somebody made rather than a missing
+# package. About a megabyte.
+RUN apt-get update && apt-get install -y --no-install-recommends         fonts-dejavu-core     && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 # The bundled drivers come with the source; weewx-ecowitt is one of them.
 COPY src/ /app/src/

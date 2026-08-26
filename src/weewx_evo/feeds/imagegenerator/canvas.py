@@ -189,10 +189,10 @@ class Canvas:
 
             path = self.theme.bold_path if bold else self.theme.font_path
             try:
-                self._fonts[key] = ImageFont.truetype(path, size) if path \
-                    else ImageFont.load_default()
+                self._fonts[key] = (ImageFont.truetype(path, size)
+                                    if path else _default_font(size))
             except Exception:  # noqa: BLE001
-                self._fonts[key] = ImageFont.load_default()
+                self._fonts[key] = _default_font(size)
         return self._fonts[key]
 
     # -- the finished picture ---------------------------------------------
@@ -207,6 +207,24 @@ class Canvas:
             painter.text((x, y), said, font=self._font(size, bold),
                          fill=theming.rgba(color)[:3], anchor=anchor)
         return image
+
+
+def _default_font(size: int) -> Any:
+    """Something to draw with when no typeface could be found.
+
+    `ImageFont.load_default()` with no argument hands back a face at one
+    fixed size, whatever is asked for. Every label on a chart then comes out
+    the same height, and a chart drawn at twice the pixels has type half the
+    size it should -- which looks like a styling choice and is not. Pillow
+    10.1 and later take a size; older ones do not, and there the labels stay
+    small whatever this does.
+    """
+    from PIL import ImageFont
+
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 # -- working out where things go -------------------------------------------

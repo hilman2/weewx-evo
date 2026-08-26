@@ -13,8 +13,11 @@ The data is the only thing with real contrast.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, replace
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 #: Where a TrueType face might be, in the order worth trying. Pillow's own
 #: fallback is a bitmap font at one fixed size, which no amount of scaling
@@ -152,9 +155,19 @@ def resolve(theme: Theme) -> Theme:
     """
     if theme.font_path or theme.bold_path:
         return theme
-    return replace(theme,
-                   font_path=_first_readable(FONT_CANDIDATES),
-                   bold_path=_first_readable(FONT_CANDIDATES_BOLD))
+    found = replace(theme,
+                    font_path=_first_readable(FONT_CANDIDATES),
+                    bold_path=_first_readable(FONT_CANDIDATES_BOLD))
+    if not found.font_path:
+        # Worth saying out loud. Without a typeface Pillow draws every label
+        # at one fixed size, so a chart at twice the pixels gets type half
+        # the height it should -- which reads as a bad design decision
+        # rather than as a missing package, and nothing else reports it.
+        log.warning(
+            "no TrueType font was found, so the chart labels will be small "
+            "and all one size. Install one -- 'apt install fonts-dejavu-core' "
+            "on Debian and Ubuntu -- or put one beside the skin.")
+    return found
 
 
 def _first_readable(candidates: tuple[str, ...]) -> str:

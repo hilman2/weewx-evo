@@ -211,6 +211,31 @@ def main() -> int:
         failures += not check("and symmetrically, so north reads like south",
                               round(low + high, 6), 0.0)
 
+        print("\nthe labels grow with the picture")
+        # The one that shipped broken. A container has no system fonts,
+        # Pillow fell back to a face of one fixed size, and every label
+        # on every chart came out the same small height whatever the
+        # scale -- which reads as a styling decision. Measured rather
+        # than assumed: ask for a size and see what comes back.
+        from weewx_evo.feeds.imagegenerator import canvas as drawing
+        from weewx_evo.feeds.imagegenerator import theme as theming
+
+        sheet = drawing.Canvas(200, 100, theming.resolve(theming.Theme()))
+        small = sheet.measure("Outside Temperature", 10)[0]
+        large = sheet.measure("Outside Temperature", 20)[0]
+        failures += not check("twice the size is about twice as wide",
+                              1.7 < large / max(small, 1) < 2.3, True)
+
+        # And with no typeface at all, which is what a slim container is.
+        bare = theming.Theme(font_path="", bold_path="")
+        blind = drawing.Canvas(200, 100, bare)
+        blind.theme = theming.replace(bare, font_path="", bold_path="")
+        blind._fonts.clear()
+        small = blind.measure("Outside Temperature", 10)[0]
+        large = blind.measure("Outside Temperature", 20)[0]
+        failures += not check("even without one installed",
+                              large > small * 1.5, True)
+
         print("\na chart is a picture, not a blank one")
         with Image.open(tmp / "png" / "daytemp.png") as picture:
             colors = picture.convert("RGB").getcolors(maxcolors=1 << 20)
