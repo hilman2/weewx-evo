@@ -536,11 +536,29 @@ def accumulateLeaves(section: Any,  # noqa: N802
 
 
 def rounder(value: Any, ndigits: Any) -> Any:
-    """Round, leaving None and anything unroundable alone."""
+    """Round a number, or a sequence of them. WeeWX's own, and its shape.
+
+    A *plain list* comes back for anything iterable, which is what WeeWX
+    does and is not a detail. An extension rounds a whole value tuple --
+
+        obs_vt = rounder(obs_vt, places)
+
+    -- and a version that rebuilt the same type turned
+    `ValueTuple(values, unit, group)` into `ValueTuple(<generator>, None,
+    None)`. Every chart then had one point in it, made of the first
+    timestamp, the second timestamp, and the entire list of values, and the
+    page drew a flat line with `undefined` along the bottom.
+    """
     if ndigits is None or value is None:
         return value
-    if isinstance(value, (list, tuple)):
-        return type(value)(rounder(x, ndigits) for x in value)
+    if isinstance(value, (str, bytes)):
+        return value
+    if isinstance(value, float):
+        return round(value, ndigits) if ndigits else int(value)
+    try:
+        return [rounder(x, ndigits) for x in value]
+    except TypeError:
+        pass
     try:
         return round(value, ndigits)
     except TypeError:

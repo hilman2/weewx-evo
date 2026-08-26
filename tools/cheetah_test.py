@@ -238,6 +238,11 @@ class Numbers(SearchList):
             "warmest": ValueHelper(shown, "day", self.generator.formatter,
                                    self.generator.converter),
             "rounded": rounder(1.23456, 2),
+            # A whole value tuple through the rounder, which is what an
+            # extension does before drawing a series. It has to come back
+            # as a plain list of three, still zippable with the timestamps.
+            "zipped": len(list(zip(start[0], stop[0],
+                                   rounder(series_shown, 2)[0]))),
             "settled": to_bool("yes"),
             "midnight": startOfDay(timespan[1]),
             "looked_up": search_up(self.generator.skin_dict,
@@ -264,6 +269,7 @@ series_unit=$series_unit
 series_first=$series_first
 warmest=$warmest
 rounded=$rounded
+zipped=$zipped
 settled=$settled
 looked_up=$looked_up
 """
@@ -516,6 +522,14 @@ def main() -> int:
                               got.get("warmest", "").endswith(" Grad"),
                               True)
         failures += not check("rounder", got.get("rounded"), "1.23")
+        # The one that made every chart on the page a single flat point:
+        # rounding a value tuple has to leave it zippable with its
+        # timestamps. Rebuilt as the same type instead, it became
+        # ValueTuple(<generator>, None, None) and the whole series
+        # collapsed into one entry.
+        failures += not check("a rounded series still zips with its times",
+                              int(got.get("zipped", "0")),
+                              int(got.get("buckets", "-1")))
         failures += not check("to_bool", got.get("settled"), "True")
         failures += not check("search_up found the skin's own key",
                               got.get("looked_up"), "Testing")
