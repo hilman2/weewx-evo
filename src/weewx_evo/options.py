@@ -464,6 +464,13 @@ def _current_config() -> dict:
         return {}
 
 
+def available_languages() -> list[tuple[str, str]]:
+    """Every language there is a file for. English is built in."""
+    from .language import languages
+
+    return languages()
+
+
 def running_config() -> dict:
     """What the configuration says, for a list that has to name reality.
 
@@ -565,6 +572,15 @@ def core_options() -> list[Group]:
                         "into the barometer reading everyone compares. Take it "
                         "from a map, not from the console: consoles are usually "
                         "set to whatever made the display look right."),
+            Option("language", "Language", kind="choice", default="en",
+                   choices_from=available_languages, restart=False,
+                   help="What everything is written in: the labels on the "
+                        "charts, the names of the moon's phases, the points "
+                        "of the compass, and any skin that has been "
+                        "translated. One setting, because a station is read "
+                        "by the people who live near it and they read one "
+                        "language. A feed can still be pointed at another "
+                        "on its own page, for a site published twice."),
             Option("station.url", "Station web page", default="",
                    placeholder="https://example.org/weather",
                    help="Where the published pages live. A skin prints it in "

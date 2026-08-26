@@ -793,6 +793,9 @@ class Almanac:
 
     @property
     def moon_phase(self) -> str:
+        # The skin's own names first: it prints them straight into a page,
+        # so they are its to decide. Then the station's language, then the
+        # English WeeWX ships.
         names = self.tags.moon_phases or sun_module.MOON_PHASES
         index = sun_module.moon_phase(self.tags.when)[0]
         return names[index] if index < len(names) else ""

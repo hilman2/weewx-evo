@@ -385,14 +385,22 @@ NUMBERED = {
 }
 
 
-def obs_label(obs_type: str) -> str:
+def obs_label(obs_type: str, language: Any = None) -> str:
     """What to call a reading on a chart, when nothing else says.
 
     A skin's own name wins wherever there is one. This is the fallback, and
     it is better than the column name: "Outside Temperature" over "outTemp",
     and "Soil Moisture 3" over "soilMoist3".
+
+    `language` is a `language.Language`. Given one, its word comes first --
+    a chart drawn with no skin behind it is still read by somebody, and in
+    German that somebody wants "Aussentemperatur".
     """
     name = str(obs_type or "")
+    if language is not None:
+        said = language.obs(name)
+        if said:
+            return said
     if name in OBS_LABELS:
         return OBS_LABELS[name]
     stem = name.rstrip("0123456789")
@@ -959,7 +967,8 @@ class Target:
     """
 
     __slots__ = ("system", "overrides", "formats", "labels",
-                 "time_formats", "deltatime_formats", "ordinals")
+                 "time_formats", "deltatime_formats", "ordinals",
+                 "language")
 
     def __init__(self, system: int | str = US,
                  overrides: dict[str, str] | None = None,
@@ -967,7 +976,8 @@ class Target:
                  labels: dict[str, Any] | None = None,
                  time_formats: dict[str, str] | None = None,
                  deltatime_formats: dict[str, str] | None = None,
-                 ordinals: tuple[str, ...] | None = None) -> None:
+                 ordinals: tuple[str, ...] | None = None,
+                 language: Any = None) -> None:
         self.system = system_from(system)
         self.overrides = dict(overrides or {})
         #: How many decimals, what to call a unit, and how to print a time.
@@ -982,6 +992,15 @@ class Target:
         #: they go straight into a sentence, so they are the skin's to
         #: decide rather than ours.
         self.ordinals: tuple[str, ...] = tuple(ordinals or ())
+        #: What language a page is written in. Fills in the words a unit
+        #: carries and the points of the compass, unless a skin said its
+        #: own -- and a skin saying its own is exactly what should win.
+        self.language = language
+        if language is not None:
+            for unit, said in language.unit_labels().items():
+                self.labels.setdefault(unit, said)
+            if not self.ordinals:
+                self.ordinals = language.compass()
         for group, unit in self.overrides.items():
             if group not in SYSTEMS[US]:
                 raise ValueError(f"{group!r} is not a unit group")

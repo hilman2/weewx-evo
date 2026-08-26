@@ -1,0 +1,237 @@
+"""The words weewx-evo writes itself.
+
+Not a skin's words. A skin keeps its own translations and they win wherever
+they say anything, because the page belongs to whoever wrote it. This is for
+everything the core produces where there is no skin in the way:
+
+- the labels on a chart it draws, which go straight into a PNG
+- the names of the moon's phases and the points of the compass
+- the months on a time axis
+
+## Why not gettext
+
+`.mo` files are compiled and binary: they cannot be read with `cat`, cannot
+be diffed, and need a build step before a translation takes effect. A
+weather station is a machine somebody edits over SSH once a year. The same
+reasoning as `plots.toml`: a file a person can open, change and hand to
+somebody else.
+
+## Why the months are here
+
+`time.strftime("%b")` follows the *process* locale, not this setting. A
+container with nothing set answers "May" where a German page wants "Mai",
+and setting `LC_TIME` globally to fix one chart changes how every other part
+of the program formats every other thing. So the twelve words are written
+down and looked up.
+
+## Adding a language
+
+One file, `lang/<code>.toml`, in the shape of `de.toml`. Nothing has to be
+registered: the file being there is what makes the language available, and
+`languages()` reads the directory.
+"""
+
+from __future__ import annotations
+
+import logging
+import tomllib
+from pathlib import Path
+from typing import Any
+
+log = logging.getLogger(__name__)
+
+#: Where the files are. Beside this module, so an installation carries its
+#: translations with it however it was installed.
+HERE = Path(__file__).resolve().parent / "lang"
+
+#: English, and the shape every other file follows. Written out rather than
+#: kept in a file of its own: it is the fallback, and a fallback that can go
+#: missing is not one.
+ENGLISH: dict[str, Any] = {
+    "name": "English",
+    "moon": {
+        "phases": ("New", "Waxing crescent", "First quarter",
+                   "Waxing gibbous", "Full", "Waning gibbous",
+                   "Last quarter", "Waning crescent"),
+    },
+    "compass": {
+        "directions": ("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                       "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+                       "N/A"),
+        "north": "N",
+    },
+    "months": {
+        "short": ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+        "long": ("January", "February", "March", "April", "May", "June",
+                 "July", "August", "September", "October", "November",
+                 "December"),
+    },
+    "days": {
+        "short": ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"),
+        "long": ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+                 "Saturday", "Sunday"),
+    },
+}
+
+
+class Language:
+    """One language, and what to say in it.
+
+    Every lookup falls back to English rather than to the key: a translation
+    that covers most of the readings and none of the moon phases should give
+    English moon phases, not `moon.phases.3`.
+    """
+
+    __slots__ = ("code", "values")
+
+    def __init__(self, code: str = "en",
+                 values: dict[str, Any] | None = None) -> None:
+        self.code = code or "en"
+        self.values = values or {}
+
+    @property
+    def name(self) -> str:
+        return str(self.values.get("name") or ENGLISH["name"])
+
+    @property
+    def unit_system(self) -> str:
+        """What a page in this language is read in, unless told otherwise.
+
+        Empty for English, because there is no answer: an American and a
+        Briton read the same words and different units. German has one.
+        """
+        return str(self.values.get("unit_system") or "")
+
+    def obs(self, obs_type: str) -> str:
+        """What a reading is called. Empty where this language has no word.
+
+        Empty rather than the English, so a caller can tell "translated to
+        this" from "not translated" and fall back to whatever else it has --
+        which for a chart is the skin's label first.
+        """
+        name = str(obs_type or "")
+        found = (self.values.get("obs") or {})
+        if name in found and isinstance(found[name], str):
+            return found[name]
+
+        families = found.get("numbered") or {}
+        stem = name.rstrip("0123456789")
+        number = name[len(stem):]
+        if number and stem in families:
+            return f"{families[stem]} {number}"
+        return ""
+
+    def moon_phases(self) -> tuple[str, ...]:
+        return self._sequence("moon", "phases", 8)
+
+    def compass(self) -> tuple[str, ...]:
+        return self._sequence("compass", "directions", 17)
+
+    def months(self, long: bool = False) -> tuple[str, ...]:
+        return self._sequence("months", "long" if long else "short", 12)
+
+    def days(self, long: bool = False) -> tuple[str, ...]:
+        return self._sequence("days", "long" if long else "short", 7)
+
+    def unit_labels(self) -> dict[str, Any]:
+        """The words inside a unit, where this language has different ones.
+
+        Only the ones that differ. Degrees Celsius are degrees Celsius
+        everywhere; hours are Stunden.
+        """
+        found = self.values.get("units")
+        if not isinstance(found, dict):
+            return {}
+        return {key: (tuple(value) if isinstance(value, (list, tuple))
+                      else value)
+                for key, value in found.items()}
+
+    def _sequence(self, section: str, key: str,
+                  wanted: int) -> tuple[str, ...]:
+        found = (self.values.get(section) or {}).get(key)
+        if isinstance(found, (list, tuple)) and len(found) == wanted:
+            return tuple(str(x) for x in found)
+        if found is not None:
+            # The wrong length is worth saying: eight phases and seven names
+            # is an index error somewhere downstream, weeks later.
+            log.warning("%s: %s.%s has %d entries, not %d; using English",
+                        self.code, section, key,
+                        len(found) if hasattr(found, "__len__") else 0,
+                        wanted)
+        return tuple(ENGLISH[section][key])
+
+
+#: Read files stay read. A hundred charts is a hundred lookups otherwise.
+_LOADED: dict[str, Language] = {}
+
+
+def get(code: str | None) -> Language:
+    """The language for a code, or English.
+
+    `de_AT` reads `de.toml` and then `de_AT.toml` over it, the same way a
+    skin's translations work, so a regional file carries only what it says
+    differently.
+    """
+    wanted = str(code or "").strip() or "en"
+    if wanted in _LOADED:
+        return _LOADED[wanted]
+
+    country = wanted.split(".")[0]
+    parts = country.split("_")
+    order = [parts[0]] if len(parts) == 1 else [parts[0], country]
+
+    values: dict[str, Any] = {}
+    for name in order:
+        found = _read(HERE / f"{name}.toml")
+        if found:
+            values = _merge(values, found)
+    if not values and wanted not in ("en", "en_GB", "en_US"):
+        log.info("no translation for %r; the built-in English is being used",
+                 wanted)
+    language = Language(wanted, values)
+    _LOADED[wanted] = language
+    return language
+
+
+def languages() -> list[tuple[str, str]]:
+    """Every language there is a file for, as (code, name).
+
+    English is always first and always there, because it is built in.
+    """
+    out = [("en", ENGLISH["name"])]
+    if HERE.is_dir():
+        for path in sorted(HERE.glob("*.toml")):
+            found = _read(path)
+            name = str(found.get("name") or path.stem)
+            if path.stem != "en":
+                out.append((path.stem, name))
+    return out
+
+
+def forget() -> None:
+    """Drop what has been read. For a test that changes a file."""
+    _LOADED.clear()
+
+
+def _read(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, "rb") as handle:
+            return tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Named, and then ignored. A broken translation should cost its own
+        # words, not the whole report.
+        log.error("could not read %s: %s", path, exc)
+        return {}
+
+
+def _merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(out[key], value)
+        else:
+            out[key] = value
+    return out

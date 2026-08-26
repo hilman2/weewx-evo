@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from ... import chartdata, units
+from ... import language as language_module
 from ...options import Group, Option
 from ...plots import PlotSet
 from ...series import Reader
@@ -74,7 +75,8 @@ class ImageGenerator:
                  look: theming.Theme | None = None,
                  spans: tuple[str, ...] = (),
                  titles: bool = True, twilight: bool = True,
-                 rose_label: str = "N") -> None:
+                 rose_label: str = "",
+                 language: Any = None) -> None:
         self.reader = reader
         self.plots = plots
         self.target = target or units.Target(unit_system)
@@ -95,9 +97,14 @@ class ImageGenerator:
         #: one line, so this is both.
         self.titles = titles
         self.twilight = twilight
-        #: The letter in the middle of the compass rose. WeeWX's own option,
-        #: and a skin in another language changes it.
-        self.rose_label = str(rose_label or "N")
+        #: What language the chart is written in. A chart is read by
+        #: somebody even where no skin is involved.
+        self.language = language
+        #: The letter in the middle of the compass rose. North is not N in
+        #: every language.
+        self.rose_label = str(
+            rose_label
+            or (language.compass()[0] if language is not None else "N"))
         self.written = 0
         self.skipped = 0
         self.failed: list[tuple[str, str]] = []
@@ -239,7 +246,8 @@ class ImageGenerator:
             # falls back to `[Labels] [[Generic]]`; without something here a
             # page of thirty charts has thirty blank headings, which is what
             # it looked like.
-            said = line.label or units.obs_label(line.obs_type)
+            said = line.label or units.obs_label(line.obs_type,
+                                                 self.language)
             if said and said not in [name for name, _c in out]:
                 out.append((said, line.color or self.look.color(i)))
         return out
@@ -312,7 +320,8 @@ class ImageGenerator:
                        drawing.label_for(value, step),
                        look.faint_text, look.font_size, "rm")
 
-        for when, said in drawing.time_ticks(chart.start, chart.stop):
+        for when, said in drawing.time_ticks(chart.start, chart.stop,
+                                             language=self.language):
             if not (chart.start <= when <= chart.stop):
                 continue
             x = self._x(when, box, chart)
@@ -638,6 +647,10 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         found = settings.get(f"{prefix}.{name}")
         return fallback if found is None else found
 
+    # One setting for the whole station: a chart, a skin and the settings
+    # page are all read by the same person.
+    spoken = language_module.get(settings.get("language"))
+
     look = theming.Theme(
         background=str(option("background") or "#ffffff"),
         surround=str(option("background") or "#ffffff"),
@@ -655,7 +668,7 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
     return ImageGenerator(
         reader=reader,
         plots=plots,
-        target=_target(settings, option),
+        target=_target(settings, option, spoken),
         latitude=_number(settings.get("station.latitude")),
         longitude=_number(settings.get("station.longitude")),
         unit_system=reader.system,
@@ -668,25 +681,26 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         spans=tuple(s for s in spans if s),
         titles=option("titles") is not False,
         twilight=option("twilight") is not False,
-        rose_label=str(option("rose_label") or "N"),
+        rose_label=str(option("rose_label") or ""),
+        language=spoken,
     )
 
 
-def _target(settings: Any, option: Any) -> units.Target:
+def _target(settings: Any, option: Any, spoken: Any) -> units.Target:
     overrides = {}
     for group in ("group_temperature", "group_pressure", "group_rain",
                   "group_speed", "group_altitude", "group_distance"):
         chosen = str(option(f"unit.{group}") or "").strip()
         if chosen:
             overrides[group] = chosen
-    wanted = option("units") or "METRICWX"
+    wanted = option("units") or spoken.unit_system or "METRICWX"
     try:
-        return units.Target(wanted, overrides)
+        return units.Target(wanted, overrides, language=spoken)
     except ValueError as exc:
         # A unit a group cannot be shown in. Named, and then ignored, rather
         # than stopping a station from drawing anything at all.
         log.error("%s -- the overrides are being ignored", exc)
-        return units.Target(wanted)
+        return units.Target(wanted, language=spoken)
 
 
 def _turned(x: float, y: float, east: float, north: float,

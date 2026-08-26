@@ -43,6 +43,13 @@ except AttributeError:  # pragma: no cover - Windows
     pass
 
 
+def _utc_year_start() -> float:
+    """The first of January of the current year, locally."""
+    import datetime
+
+    return datetime.datetime(time.localtime().tm_year, 1, 1).timestamp()
+
+
 def check(label: str, got: object, want: object) -> bool:
     ok = got == want
     # Some of these compare a few hundred readings. Printing all of them
@@ -310,6 +317,56 @@ def main() -> int:
                                   and where[1] > one.height * 0.55, True)
         one.close()
         other.close()
+
+        print("\nand it is written in the station's language")
+        # One setting for the whole station. A chart has no skin behind
+        # it, so without this it says "Outside Temperature" on a page
+        # where everything else says Aussentemperatur.
+        from weewx_evo import language as language_module
+        from weewx_evo.feeds.imagegenerator import canvas as drawing
+
+        german = language_module.get("de")
+        spoken = ImageGenerator(reader, charts, target=target,
+                                unit_system=reader.system,
+                                language=german)
+        chart = chartdata.build(charts.plots[0], reader, last,
+                                target=target,
+                                unit_system=reader.system)
+        # The plot names its lines, and a plot that names them wins --
+        # so this asks the layer underneath, which is what a plot with
+        # no labels falls through to.
+        failures += not check("readings are named in it",
+                              units.obs_label("outTemp", german),
+                              "Aussentemperatur")
+        failures += not check("including the numbered families",
+                              units.obs_label("soilMoist3", german),
+                              "Bodenfeuchte 3")
+        failures += not check("and the compass turns with it",
+                              german.compass()[1], "NNO")
+
+        # The one that is easy to miss: strftime follows the PROCESS
+        # locale, not this setting. A container with nothing set says
+        # "May" on a German page, and setting LC_TIME globally to fix
+        # one chart changes how the whole program formats everything.
+        import locale as locale_module
+
+        try:
+            locale_module.setlocale(locale_module.LC_TIME, "C")
+        except locale_module.Error:
+            pass
+        year = _utc_year_start()
+        ticks = drawing.time_ticks(year, year + 330 * 86400,
+                                   language=german)
+        said = [name for _when, name in ticks]
+        failures += not check("months come from the file, not the locale",
+                              "Mär" in said or "Mai" in said, True)
+        failures += not check("and not from English",
+                              "May" in said or "Mar" in said, False)
+        plain = drawing.time_ticks(year, year + 330 * 86400)
+        failures += not check("English still reads as English",
+                              "May" in [n for _w, n in plain], True)
+        failures += not check("the rose says north in it",
+                              spoken.rose_label, "N")
 
         print("\na chart is a picture, not a blank one")
         with Image.open(tmp / "png" / "daytemp.png") as picture:

@@ -1,0 +1,120 @@
+# Was weewx-evo selbst schreibt, auf Deutsch.
+#
+# Nicht die Woerter einer Skin: die stehen in deren eigener
+# lang/de.conf und gewinnen ueberall, wo sie etwas sagen. Hier steht,
+# was der Kern schreibt, wenn keine Skin dazwischen ist -- die
+# Beschriftung in den Diagrammen, die Namen der Mondphasen, die
+# Himmelsrichtungen.
+
+name = "Deutsch"
+
+# Die Einheiten, in denen eine Seite ohne andere Angabe gelesen wird.
+# Wer Deutsch liest, will fast sicher Millimeter.
+unit_system = "METRICWX"
+
+[obs]
+outTemp = "Aussentemperatur"
+inTemp = "Innentemperatur"
+dewpoint = "Taupunkt"
+inDewpoint = "Taupunkt innen"
+outHumidity = "Luftfeuchte"
+inHumidity = "Luftfeuchte innen"
+barometer = "Luftdruck"
+pressure = "Stationsdruck"
+altimeter = "Hoehenmesser"
+barometerRate = "Luftdruckaenderung"
+windSpeed = "Windgeschwindigkeit"
+windDir = "Windrichtung"
+windGust = "Boen"
+windGustDir = "Boenrichtung"
+wind = "Wind"
+windvec = "Windvektor"
+windgustvec = "Boenvektor"
+windchill = "Windchill"
+windrun = "Windweg"
+heatindex = "Hitzeindex"
+appTemp = "Gefuehlte Temperatur"
+humidex = "Humidex"
+rain = "Regen"
+rainRate = "Regenrate"
+hail = "Hagel"
+hailRate = "Hagelrate"
+snow = "Schnee"
+snowRate = "Schneerate"
+snowDepth = "Schneehoehe"
+radiation = "Sonnenstrahlung"
+maxSolarRad = "Klarhimmel-Strahlung"
+UV = "UV-Index"
+ET = "Verdunstung"
+cloudbase = "Wolkenuntergrenze"
+heatdeg = "Heizgradtage"
+cooldeg = "Kuehlgradtage"
+growdeg = "Wachstumsgradtage"
+lightning_distance = "Blitzentfernung"
+lightning_strike_count = "Blitzeinschlaege"
+rxCheckPercent = "Signalqualitaet"
+consBatteryVoltage = "Konsolenbatterie"
+supplyVoltage = "Versorgungsspannung"
+referenceVoltage = "Referenzspannung"
+heatingVoltage = "Heizungsspannung"
+txBatteryStatus = "Senderbatterie"
+windBatteryStatus = "Windsensor-Batterie"
+rainBatteryStatus = "Regensensor-Batterie"
+outTempBatteryStatus = "Aussensensor-Batterie"
+inTempBatteryStatus = "Innensensor-Batterie"
+pm1_0 = "PM1,0"
+pm2_5 = "PM2,5"
+pm10_0 = "PM10"
+
+# Messwerte, die es in Familien gibt. Die Nummer haengt der Kern an.
+[obs.numbered]
+extraTemp = "Temperatur"
+extraHumid = "Luftfeuchte"
+leafTemp = "Blatttemperatur"
+leafWet = "Blattnaesse"
+soilTemp = "Bodentemperatur"
+soilMoist = "Bodenfeuchte"
+batteryStatus = "Batterie"
+signal = "Signal"
+
+[moon]
+# Die acht Phasen, in der Reihenfolge des Zyklus.
+phases = ["Neumond", "zunehmende Sichel", "erstes Viertel",
+          "zunehmender Mond", "Vollmond", "abnehmender Mond",
+          "letztes Viertel", "abnehmende Sichel"]
+
+[compass]
+# Sechzehn Punkte, dann das Wort fuer "gar kein Wind".
+directions = ["N", "NNO", "NO", "ONO", "O", "OSO", "SO", "SSO",
+              "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
+              "k. A."]
+north = "N"
+
+[months]
+# Fuer die Zeitachse eines Diagramms. Nicht ueber strftime, weil das
+# der Locale des Prozesses folgt und nicht dieser Einstellung: in
+# einem Container ohne gesetzte Locale kommt "May" statt "Mai".
+short = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
+         "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+long = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November",
+        "Dezember"]
+
+[days]
+short = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+long = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag",
+        "Samstag", "Sonntag"]
+
+# Die Woerter, die in einer Einheit stecken. Nur die, die anders
+# heissen -- "°C" ist ueberall "°C".
+[units]
+day = [" Tag", " Tage"]
+hour = [" Stunde", " Stunden"]
+minute = [" Minute", " Minuten"]
+second = [" Sekunde", " Sekunden"]
+meter = " m"
+foot = " Fuss"
+mile_per_hour = " mph"
+degree_C_day = " °C-Tag"
+degree_F_day = " °F-Tag"
+

@@ -43,6 +43,7 @@ import unicodedata
 from pathlib import Path
 from typing import Any
 
+from ... import language as language_module
 from ... import units, weewxconf
 from ...options import Group, Option
 from ...series import Reader
@@ -796,12 +797,16 @@ def from_settings(settings: Any, reader: Reader,
     # up in Fahrenheit and never said so anywhere still gets Fahrenheit out
     # of its own records.
     stored = reader.system
+    # The station's language, unless this feed was pointed at another --
+    # which is how a site gets published twice, once in each.
+    spoken = language_module.get(option("lang") or settings.get("language"))
     chosen = str(option("units") or "").strip()
     try:
-        target = units.Target(chosen or stored)
+        target = units.Target(chosen or spoken.unit_system or stored,
+                              language=spoken)
     except ValueError as exc:
         log.error("%s -- showing the readings as stored instead", exc)
-        target, chosen = units.Target(stored), ""
+        target, chosen = units.Target(stored, language=spoken), ""
 
     tags = Tags(
         reader=reader,
@@ -822,6 +827,8 @@ def from_settings(settings: Any, reader: Reader,
         rain_year_start=int(settings.get("station.rain_year_start") or 1),
     )
     tags.plots = plots
+    tags.language = spoken.code
+    tags.moon_phases = spoken.moon_phases()
 
     skins = Path(str(option("skins_dir") or "skins"))
     skin = str(option("skin") or "").strip()
@@ -832,7 +839,7 @@ def from_settings(settings: Any, reader: Reader,
         encoding=str(option("encoding") or "html_entities"),
         copy_static=option("copy_static") is not False,
         stale_ok=option("stale_ok") is not False,
-        language=str(option("lang") or "").strip(),
+        language=spoken.code,
     )
     # An explicit choice on the feed's page beats what the skin asked for.
     # Left empty, the skin decides, which is the point of running it at all.

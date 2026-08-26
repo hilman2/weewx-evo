@@ -297,8 +297,8 @@ def nice_ticks(low: float, high: float, wanted: int = 4) -> list[float]:
     return ticks or [low, high]
 
 
-def time_ticks(start: float, stop: float,
-               wanted: int = 6) -> list[tuple[float, str]]:
+def time_ticks(start: float, stop: float, wanted: int = 6,
+               language: Any = None) -> list[tuple[float, str]]:
     """Where to label the time axis, and what to write there.
 
     Local time, on round boundaries. A day chart gets whole hours, a year
@@ -312,21 +312,23 @@ def time_ticks(start: float, stop: float,
     rough = span / max(1, wanted)
     for seconds, shape in TIME_STEPS:
         if seconds >= rough:
-            return _fixed_ticks(start, stop, seconds, shape)
+            return _fixed_ticks(start, stop, seconds, shape, language)
 
     # Months and years. Stepped through the calendar, because adding
     # 2592000 seconds twelve times lands in the middle of December.
     months = max(1, int(round(rough / (30 * 86400))))
     if months >= 12:
-        return _calendar_ticks(start, stop, years=max(1, months // 12))
+        return _calendar_ticks(start, stop, years=max(1, months // 12),
+                               language=language)
     for step in (1, 2, 3, 6):
         if step >= months:
-            return _calendar_ticks(start, stop, months=step)
-    return _calendar_ticks(start, stop, years=1)
+            return _calendar_ticks(start, stop, months=step,
+                                   language=language)
+    return _calendar_ticks(start, stop, years=1, language=language)
 
 
-def _fixed_ticks(start: float, stop: float, step: int,
-                 shape: str) -> list[tuple[float, str]]:
+def _fixed_ticks(start: float, stop: float, step: int, shape: str,
+                 language: Any = None) -> list[tuple[float, str]]:
     out = []
     # Aligned to local midnight rather than to the epoch: a six-hour tick
     # should land on 00, 06, 12, 18 in the reader's own day, and a zone
@@ -335,13 +337,14 @@ def _fixed_ticks(start: float, stop: float, step: int,
     first = midnight + math.ceil((start - midnight) / step) * step
     when = first
     while when <= stop:
-        out.append((when, time.strftime(shape, time.localtime(when))))
+        out.append((when, _spell(shape, when, language)))
         when += step
     return out
 
 
 def _calendar_ticks(start: float, stop: float, months: int = 0,
-                    years: int = 0) -> list[tuple[float, str]]:
+                    years: int = 0,
+                    language: Any = None) -> list[tuple[float, str]]:
     out = []
     first = datetime.datetime.fromtimestamp(start).replace(
         day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -352,7 +355,8 @@ def _calendar_ticks(start: float, stop: float, months: int = 0,
     when = first
     shape = "%Y" if years else "%b"
     while when.timestamp() <= stop:
-        out.append((when.timestamp(), when.strftime(shape)))
+        out.append((when.timestamp(), _spell(shape, when.timestamp(),
+                                             language)))
         when = _step_calendar(when, months, years)
     return out
 
@@ -363,6 +367,31 @@ def _step_calendar(when: datetime.datetime, months: int,
         return when.replace(year=when.year + years)
     total = when.month - 1 + months
     return when.replace(year=when.year + total // 12, month=total % 12 + 1)
+
+
+def _spell(shape: str, when: float, language: Any = None) -> str:
+    """A moment, written out. The month and day names from the language.
+
+    `strftime` follows the *process* locale, not this program's setting. A
+    container with nothing set answers "May" where a German page wants
+    "Mai", and setting LC_TIME globally to fix one chart changes how every
+    other part of the program formats every other thing. So the names are
+    substituted first and the rest is left to strftime, which is only
+    numbers by then.
+    """
+    when_local = time.localtime(when)
+    if language is not None:
+        for code, words, index in (("%b", language.months(), 1),
+                                   ("%B", language.months(long=True), 1),
+                                   ("%a", language.days(), 0),
+                                   ("%A", language.days(long=True), 0)):
+            if code not in shape:
+                continue
+            position = (when_local.tm_mon - 1 if index
+                        else when_local.tm_wday)
+            if 0 <= position < len(words):
+                shape = shape.replace(code, words[position])
+    return time.strftime(shape, when_local)
 
 
 def _midnight(when: float) -> float:
