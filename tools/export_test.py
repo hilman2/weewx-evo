@@ -159,6 +159,27 @@ def local_export(check) -> int:
                               True)
         failures += not check("and says it is writable", "writable" in said, True)
 
+        print("\na relative directory means beside the settings file")
+        # In a container the working directory is inside the image. A
+        # local export writing "data/site" there publishes to a place
+        # nothing serves and nothing keeps, and the web server reading
+        # the same setting looks somewhere else again.
+        import argparse
+
+        from weewx_evo.cli import resolve_paths
+
+        config = tmp / "etc" / "evo.toml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        fake_args = argparse.Namespace(config=config)
+        made = resolve_paths(fake_args, {"kind": "local",
+                                         "directory": "data/site"})
+        failures += not check("resolved against the file",
+                              made["directory"],
+                              str(tmp / "etc" / "data" / "site"))
+        kept = resolve_paths(fake_args, {"kind": "ftp",
+                                         "directory": "/httpdocs"})
+        failures += not check("but a remote directory is left alone",
+                              kept["directory"], "/httpdocs")
         print("\nthe web server serves what a local export published")
         # Nobody says the path twice: an export named `site` is at /site/.
         class Settings:

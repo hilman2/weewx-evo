@@ -360,10 +360,7 @@ def cmd_archive(args: argparse.Namespace) -> int:
     # An export pointed at a feed has to be told where that feed writes.
     # Without this every one of them is left out at startup with "no feed and
     # no directory set", which reads like the export is wrong when it is not.
-    where = feed_dirs(cfg)
-    scheduled = export_runner.build(
-        configured_exports(args), build_export,
-        lambda settings: export_registry.source_for(settings, where.get))
+    scheduled = build_schedule(args, cfg)
     if scheduled:
         runner = export_runner.Runner(scheduled)
         runner.start()
@@ -521,10 +518,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # An export pointed at a feed has to be told where that feed writes.
     # Without this every one of them is left out at startup with "no feed and
     # no directory set", which reads like the export is wrong when it is not.
-    where = feed_dirs(cfg)
-    scheduled = export_runner.build(
-        configured_exports(args), build_export,
-        lambda settings: export_registry.source_for(settings, where.get))
+    scheduled = build_schedule(args, cfg)
     if scheduled:
         runner = export_runner.Runner(scheduled)
         runner.start()
@@ -539,23 +533,36 @@ def cmd_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
 
     watcher = _Watcher(getattr(args, "config", None))
+    # Set when a setting changed that only a fresh process can apply.
+    # The supervisor brings it back: `restart: unless-stopped` in
+    # compose, `Restart=always` in a unit file.
+    restarting = False
+    # Set when a setting changed that only a fresh process can apply. The
+    # supervisor brings it back: `restart: unless-stopped` in compose,
+    # `Restart=always` in a unit file.
+    restarting = False
     last_prune = 0.0
     try:
         while not stopping.is_set():
             try:
                 if watcher.changed() and cfg.reload():
-                    # What can be picked up without a restart is picked up.
-                    # The rest is marked `restart` and the settings page says
-                    # so, which is the only honest arrangement: a setting
-                    # that silently does nothing is worse than one that says
-                    # it needs a restart.
-                    if web is not None and web.site.update(
-                            served_directories(args, cfg),
-                            str(cfg.get("web.default") or ""),
-                            str(cfg.get("station.name") or "")):
-                        log.info("serving %d feed(s)%s", len(web.site.feeds),
-                                 f", {web.site.default} at /"
-                                 if web.site.default else ", listing them at /")
+                    hard = cfg.needs_restart()
+                    if hard:
+                        # Some settings cannot be applied to a running
+                        # process: a port already bound, a database already
+                        # open. Rather than leaving them to take effect at
+                        # some restart nobody remembers to do, this one
+                        # restarts itself. Docker and systemd both bring it
+                        # back; a station is deaf for a second and correct
+                        # afterwards, which is the better of the two.
+                        log.info("restarting: %s changed, and %s cannot be "
+                                 "applied while running",
+                                 ", ".join(hard),
+                                 "they" if len(hard) > 1 else "it")
+                        restarting = True
+                        stopping.set()
+                        continue
+                    apply_live(args, cfg, web, runner)
 
                 n = archiver.process_due(grace=cfg.get("grace"))
                 if n:
@@ -597,6 +604,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
             udp.stop()
         live.close()
         archive.close()
+        if restarting:
+            log.info("stopped so a new process can pick up the change."
+                     " If nothing brings this back, the supervisor is"
+                     " missing.")
     return 0
 
 
@@ -1138,6 +1149,86 @@ def configured_exports(args: argparse.Namespace) -> dict[str, dict]:
             if isinstance(settings, dict)}
 
 
+def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
+               runner: Any) -> None:
+    """Apply a changed configuration to a running process.
+
+    Everything that can be rebuilt in place, in one function. Scattering
+    these across the loop is how three of them came to be missing: nothing
+    listed what had to be nudged, so nothing said when one was forgotten.
+
+    Anything that cannot be rebuilt here belongs marked `restart` in the
+    schema, and the loop restarts the process for it.
+    """
+    if runner is not None:
+        fresh = build_schedule(args, cfg)
+        if _differs(fresh, runner):
+            # An export added on the settings page joins the running set.
+            runner.stop()
+            runner.exports = fresh
+            runner.start()
+            log.info("%d export(s) running", len(fresh))
+
+    if web is not None and web.site.update(
+            served_directories(args, cfg),
+            str(cfg.get("web.default") or ""),
+            str(cfg.get("station.name") or "")):
+        log.info("serving %d feed(s)%s", len(web.site.feeds),
+                 f", {web.site.default} at /" if web.site.default
+                 else ", listing them at /")
+
+    # The charts are read on every feed run, so nothing is needed for them
+    # here. If that ever changes, this is where it goes.
+
+
+def _differs(fresh: list, runner: Any) -> bool:
+    """Whether the exports have actually changed.
+
+    Restarting their threads costs nothing much, but doing it on every write
+    to the file would interrupt an upload in progress for no reason.
+    """
+    before = [(s.name, str(s.source), getattr(s.export, "trigger", ""),
+               s.feed) for s in (runner.exports if runner is not None else [])]
+    after = [(s.name, str(s.source), getattr(s.export, "trigger", ""), s.feed)
+             for s in fresh]
+    return before != after
+
+
+def build_schedule(args: argparse.Namespace, cfg: Settings) -> list:
+    """What the exports are, right now.
+
+    An export pointed at a feed has to be told where that feed writes, or it
+    is left out at startup with "no feed and no directory set" -- which reads
+    like the export is wrong when it is not.
+    """
+    where = feed_dirs(cfg)
+    configured = {name: resolve_paths(args, settings)
+                  for name, settings in configured_exports(args).items()}
+    return export_runner.build(
+        configured, build_export,
+        lambda settings: export_registry.source_for(settings, where.get))
+
+
+def resolve_paths(args: argparse.Namespace, settings: dict) -> dict:
+    """Make an export's own paths absolute, against the configuration file.
+
+    The same rule as plots.toml: a relative path means "beside the settings",
+    not "beside whatever directory this process happens to have started in".
+    In a container that second reading points inside the image, where a
+    published site is served by nobody and kept by nothing.
+    """
+    base = Path(getattr(args, "config", None) or ".").parent
+    out = dict(settings)
+    for key in ("directory", "directory_source", "tracker"):
+        where = str(out.get(key) or "").strip()
+        if where and not Path(where).is_absolute():
+            # Only for the kinds where it is a path on this machine. An FTP
+            # export's `directory` is on the far side and means nothing here.
+            if key != "directory" or out.get("kind") == "local":
+                out[key] = str(base / where)
+    return out
+
+
 def build_export(name: str, settings: dict) -> object:
     """Make one export from its settings. Raises with a usable message."""
     kind = str(settings.pop("kind", "")).strip()
@@ -1571,7 +1662,10 @@ def served_directories(args: argparse.Namespace,
         if isinstance(options, dict) and options.get("kind") == "local":
             where = str(options.get("directory", "")).strip()
             if where:
-                out[name] = Path(where)
+                # The same path the export publishes to, worked out the same
+                # way. Two readings of one relative path is a server looking
+                # in a directory nothing writes to.
+                out[name] = Path(resolve_paths(args, options)["directory"])
     for name, where in ((cfg.config.get("web", {}) or {}).get("serve") or {}).items():
         if isinstance(where, str) and where.strip():
             out[name] = Path(where)

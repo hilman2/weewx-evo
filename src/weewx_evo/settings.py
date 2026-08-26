@@ -203,6 +203,9 @@ class Settings:
 
     # -- reloading -------------------------------------------------------
 
+    #: What changed on the last reload. Empty until one happens.
+    changed: list[str] = []
+
     def reload(self, path: str | Path | None = None) -> bool:
         """Re-read the file. Returns whether anything actually changed.
 
@@ -214,6 +217,10 @@ class Settings:
         """
         if path is None:
             path = self._path
+        # Cleared first. Leaving the previous answer standing means the next
+        # caller asks "what changed" and is told about something from a
+        # minute ago.
+        self.changed = []
         if path is None:
             return False
         fresh = config_file.read(path)
@@ -224,9 +231,23 @@ class Settings:
         self.config = fresh
         self._path = Path(path)
         changed = [name for name, was in before.items() if self.get(name) != was]
+        # Kept, because the caller needs to know *which*: some settings can be
+        # applied while running and some cannot, and the difference is in the
+        # schema rather than in anybody's memory.
+        self.changed = changed
         if changed:
             log.info("configuration reloaded; changed: %s", ", ".join(changed))
         return bool(changed)
+
+    def needs_restart(self) -> list[str]:
+        """Which of the settings that just changed cannot be applied live.
+
+        The schema already says so, one option at a time. Nothing else has to
+        keep a list, and an option added tomorrow is covered by the same
+        answer.
+        """
+        return [option.label for _group, option in self.schema
+                if option.restart and option.name in self.changed]
 
     def explain(self) -> list[str]:
         """One line per setting, saying what it is and where it came from."""

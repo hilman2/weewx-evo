@@ -152,10 +152,17 @@ class Option:
         if self.kind == "choice":
             value = str(raw).strip()
             allowed = [v for v, _ in self.options()]
-            if not allowed:
-                # Nothing is installed that could be chosen. Refusing the
-                # value would lose a setting made before the thing it names
-                # was uninstalled, which is worse than keeping it.
+            discovered = [v for v, _ in self.options()
+                          if v not in [c for c, _ in self.choices]]
+            if not allowed or (self.choices_from is not None and not discovered):
+                # Nothing could be discovered. That is not evidence the value
+                # is wrong: the list comes from somewhere else -- a plugin
+                # that is not installed right now, another file that could
+                # not be read this second -- and refusing on that basis
+                # silently replaces a setting with its default. Which is
+                # exactly what happened to a running station: a reload read
+                # the list a moment too early and the page it was serving
+                # changed underneath it.
                 return value
             if value not in allowed:
                 # By their labels: an empty choice is a real answer and its

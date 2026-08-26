@@ -360,7 +360,7 @@ def field(option: Option, value: Any, error: str = "") -> str:
     if option.help:
         out.append(f'<p class="help">{html.escape(option.help)}</p>')
     if option.restart:
-        out.append('<p class="note">Takes effect after a restart.</p>')
+        out.append('<p class="note">Restarts the service when saved.</p>')
     out.append("</div>")
     return "\n".join(out)
 
@@ -692,8 +692,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     restart = ""
     if admin.restart_pending:
         items = ", ".join(sorted(html.escape(x) for x in admin.restart_pending))
-        restart = ('<div class="banner warn">Saved, but these take effect only '
-                   f"after a restart: {items}.</div>")
+        restart = ('<div class="banner warn">Saved. The service is restarting '
+                   f"to apply {items}. It is back in a second or two.</div>")
 
     own_form = adding or charting
     if charting:

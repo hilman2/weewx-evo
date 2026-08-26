@@ -335,6 +335,21 @@ class WebServer:
         self.server.server_close()
 
 
+def _beside(settings: object, where: str) -> Path:
+    """A path from the configuration, made absolute against that file.
+
+    A relative path in a settings file means "beside the settings", not
+    "beside whatever directory this process started in". The export that
+    fills the directory uses the same rule, and the two have to agree or the
+    server hands out an empty one.
+    """
+    path = Path(where)
+    if path.is_absolute():
+        return path
+    base = getattr(settings, "_path", None)
+    return Path(base).parent / path if base else path
+
+
 def site_from(settings: object, feeds: dict[str, Path] | None = None) -> Site:
     """What this server hands out, and under which names.
 
@@ -357,13 +372,13 @@ def site_from(settings: object, feeds: dict[str, Path] | None = None) -> Site:
             continue
         where = str(options.get("directory", "")).strip()
         if where:
-            served[name] = Path(where)
+            served[name] = _beside(settings, where)
 
     # Named directly, and last, so an entry here wins over an export of the
     # same name. Somebody who wrote a path down meant it.
     for name, where in (configured.get("serve") or {}).items():
         if isinstance(where, str) and where.strip():
-            served[name] = Path(where)
+            served[name] = _beside(settings, where)
 
     return Site(served,
                 default=str(configured.get("default", "")),

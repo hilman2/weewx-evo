@@ -149,6 +149,33 @@ def main() -> int:
         failures += not check("and the new value is there", live.get("port"), 8200)
         failures += not check("what the file dropped went back to its default",
                               live.get("interval"), 300)
+        print("\na changed setting either applies or restarts")
+        # Not folklore, and not a list anybody maintains: the schema says
+        # which options a running process cannot apply, and the loop asks
+        # it. An option added tomorrow is covered by the same answer.
+        watched = tmp / "watched.toml"
+        watched.write_text('station.name = "A"\n'
+                           + 'port = 8000\n', encoding="utf-8")
+        live = Settings(CORE, config=config_file.read(watched),
+                        args=args_with(), path=watched)
+
+        watched.write_text('station.name = "B"\n'
+                           + 'port = 8000\n', encoding="utf-8")
+        live.reload()
+        failures += not check("a name is applied where it stands",
+                              live.needs_restart(), [])
+        failures += not check("and it did change", live.get("station.name"),
+                              "B")
+
+        watched.write_text('station.name = "B"\n'
+                           + 'port = 9000\n', encoding="utf-8")
+        live.reload()
+        failures += not check("a bound port asks for a restart, by name",
+                              live.needs_restart(), ["Port"])
+
+        live.reload()
+        failures += not check("and nothing new means nothing to do",
+                              live.needs_restart(), [])
         print("\nevery setting the page can write, the process can read")
         # These are two different lists and they drifted apart once. The
         # settings page grew a page of its own for the web server; the
