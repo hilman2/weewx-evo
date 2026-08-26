@@ -495,6 +495,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # archiver is not archiving. What they produce is a directory of files;
     # who moves it anywhere is an export's business.
     feeds = start_feeds(args, cfg)
+    if feeds is not None:
+        # Once at startup, so a restart does not leave yesterday's pages
+        # up until the next record lands a minute later.
+        feeds.record_written()
+
 
     # The local web server for whatever the feeds produced. Its own port:
     # the listener answers hardware behind a token and this answers browsers,
