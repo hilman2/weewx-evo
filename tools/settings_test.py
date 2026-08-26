@@ -36,6 +36,15 @@ CORE = option_defs.Schema(name="core", label="core",
                           groups=tuple(option_defs.core_options()))
 
 
+#: Two feeds the operator named. Neither name is a kind, which is the whole
+#: point: a list that reads the kinds back cannot offer either of them.
+TINY_CONFIG = """
+feeds.theme.kind = "cheetah"
+feeds.theme.skin = "Seasons"
+feeds.metric.kind = "json"
+"""
+
+
 def args_with(**kwargs) -> argparse.Namespace:
     """A namespace where everything not named is None, as argparse leaves it."""
     blank = {name.replace(".", "_"): None for _g, o in CORE for name in [o.name]}
@@ -220,6 +229,32 @@ def main() -> int:
         failures += not check("rather than leaving no driver at all",
                               built is not None, True)
 
+        print("\na dropdown reads the running settings, not the file again")
+        # The path arrives in the environment in a container, so nothing
+        # sets it on the command line. A list built by re-reading the file
+        # from a CLI argument came back empty there, and an export aimed
+        # at a feed the operator had configured was refused at startup as
+        # one that did not exist. Nothing said so anywhere.
+        named = tmp / "named.toml"
+        named.write_text(TINY_CONFIG, encoding="utf-8")
+        os.environ["WEEWX_EVO_CONFIG"] = str(named)
+
+        import weewx_evo.cli as cli
+
+        cli._RESOLVED = None
+        cli._ARGS = None
+        option_defs.building_for(None)
+        # As `serve` does it: argparse takes the path from the environment,
+        # so the namespace carries it and nothing was typed.
+        running = cli.settings_for(args_with(config=named))
+        failures += not check("the file was found at all",
+                              ((running.config.get("feeds") or {})
+                               .get("theme") or {}).get("skin"), "Seasons")
+        offered = [name for name, _label in option_defs.defined_feeds()]
+        failures += not check("and both feeds can be pointed at",
+                              offered, ["metric", "theme"])
+        cli._RESOLVED = None
+        cli._ARGS = None
     finally:
         os.environ.clear()
         os.environ.update(saved_env)

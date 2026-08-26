@@ -365,13 +365,7 @@ def installed_skins() -> list[tuple[str, str]]:
     """
     from pathlib import Path
 
-    from . import config as config_file
-
-    try:
-        current = config_file.read(_config_path())
-    except Exception:  # noqa: BLE001
-        return []
-
+    current = _current_config()
     roots = []
     for settings in (current.get("feeds") or {}).values():
         if isinstance(settings, dict) and settings.get("kind") == "cheetah":
@@ -397,12 +391,7 @@ def published_names() -> list[tuple[str, str]]:
     the exports rather than the feeds is the difference between offering what
     exists and offering what might.
     """
-    from . import config as config_file
-
-    try:
-        current = config_file.read(_config_path())
-    except Exception:  # noqa: BLE001
-        return []
+    current = _current_config()
     out = []
     for name, options in sorted((current.get("exports") or {}).items()):
         if isinstance(options, dict) and options.get("kind") == "local":
@@ -441,6 +430,38 @@ def _config_path() -> Any:
     return getattr(_ARGS, "config", None) if _ARGS else None
 
 
+def _current_config() -> dict:
+    """What the configuration says, for a list that has to name reality.
+
+    Two callers, two situations, and getting this wrong is silent.
+
+    The settings page builds a form for a named file, and `building_for`
+    says which one. That file is read.
+
+    Everything else is *running*, and then the answer is the process's own
+    settings. Reading the file again there gets it wrong wherever the path
+    did not arrive on the command line -- which is every container, because
+    there it arrives in the environment. The symptom was a feed the operator
+    had configured being refused at startup as one that did not exist.
+    """
+    from . import config as config_file
+
+    if _FOR_FILE is not None:
+        try:
+            return config_file.read(_FOR_FILE) or {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    from .cli import _RESOLVED
+
+    if _RESOLVED is not None:
+        return _RESOLVED.config or {}
+    try:
+        return config_file.read(_config_path()) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def defined_feeds() -> list[tuple[str, str]]:
     """The feeds that exist, by the names the operator gave them.
 
@@ -450,15 +471,10 @@ def defined_feeds() -> list[tuple[str, str]]:
     never at "metric", and a feed the operator named was refused at startup
     as though it did not exist.
     """
-    from . import config as config_file
     from . import feeds
     from .cli import DEFAULT_FEEDS
 
-    try:
-        current = config_file.read(_config_path()) or {}
-    except Exception:  # noqa: BLE001
-        current = {}
-    configured = current.get("feeds") or {}
+    configured = _current_config().get("feeds") or {}
     if not configured:
         # A file that names none still gets the two that ship, so the list
         # has to say the same thing the runner does.
