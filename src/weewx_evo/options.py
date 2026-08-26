@@ -357,6 +357,38 @@ def installed_drivers() -> list[tuple[str, str]]:
     return [(name, name) for name in drivers.names()]
 
 
+def installed_skins() -> list[tuple[str, str]]:
+    """The Cheetah skins that are there, for the dropdown that offers them.
+
+    Read from the directory a feed points at rather than from a list, so a
+    skin dropped in beside the others appears without anything being told.
+    """
+    from pathlib import Path
+
+    from . import config as config_file
+
+    try:
+        current = config_file.read(_config_path())
+    except Exception:  # noqa: BLE001
+        return []
+
+    roots = []
+    for settings in (current.get("feeds") or {}).values():
+        if isinstance(settings, dict) and settings.get("kind") == "cheetah":
+            roots.append(str(settings.get("skins_dir") or "skins"))
+    roots.append("skins")
+
+    found: dict[str, str] = {}
+    for root in roots:
+        where = Path(root)
+        if not where.is_dir():
+            continue
+        for entry in sorted(where.iterdir()):
+            if (entry / "skin.conf").is_file() and entry.name not in found:
+                found[entry.name] = entry.name
+    return sorted(found.items())
+
+
 def published_names() -> list[tuple[str, str]]:
     """What the built-in web server has to hand out.
 
@@ -487,6 +519,17 @@ def core_options() -> list[Group]:
                         "into the barometer reading everyone compares. Take it "
                         "from a map, not from the console: consoles are usually "
                         "set to whatever made the display look right."),
+            Option("station.url", "Station web page", default="",
+                   placeholder="https://example.org/weather",
+                   help="Where the published pages live. A skin prints it in "
+                        "its footer and a weather network wants it in a "
+                        "registration."),
+            Option("station.rain_year_start", "Rain year starts in",
+                   kind="int", default=1, minimum=1, maximum=12,
+                   advanced=True,
+                   help="Which month a rainfall year is counted from. "
+                        "January nearly everywhere; October where the water "
+                        "year is what people mean by a wet or dry year."),
         )),
 
         Group("Archive", "How readings become the record that is kept.", (

@@ -1511,6 +1511,8 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
         if kind == "json":
             made.append((name, _json_feed(cfg, name, charts, args),
                          where[name]))
+        elif kind == "cheetah":
+            made.append((name, _cheetah_feed(cfg, name, args), where[name]))
         elif kind == "diagnostic":
             reads = str(settings.get("source") or "json")
             made.append((name, _diagnostic_feed(cfg, name,
@@ -1527,6 +1529,13 @@ def _json_feed(cfg: Settings, name: str, charts: plot_defs.PlotSet,
     from .feeds import jsongenerator
 
     return lambda reader: jsongenerator.from_settings(
+        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}")
+
+
+def _cheetah_feed(cfg: Settings, name: str, args: argparse.Namespace):
+    from .feeds import cheetah
+
+    return lambda reader: cheetah.from_settings(
         cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}")
 
 

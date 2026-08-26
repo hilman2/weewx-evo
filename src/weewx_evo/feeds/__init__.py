@@ -134,6 +134,8 @@ BUNDLED = (
      "the time series everything else draws from"),
     ("diagnostic", "weewx_evo.feeds.diagnostic", "Diagnostic",
      "one page that draws whatever JSON is on disk"),
+    ("cheetah", "weewx_evo.feeds.cheetah", "CheetahFeed",
+     "a skin written for WeeWX, rendered unchanged"),
 )
 
 

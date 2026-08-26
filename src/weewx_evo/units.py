@@ -855,12 +855,24 @@ class Target:
     Target is built rather than halfway through a report.
     """
 
-    __slots__ = ("system", "overrides")
+    __slots__ = ("system", "overrides", "formats", "labels",
+                 "time_formats", "deltatime_formats")
 
     def __init__(self, system: int | str = US,
-                 overrides: dict[str, str] | None = None) -> None:
+                 overrides: dict[str, str] | None = None,
+                 formats: dict[str, str] | None = None,
+                 labels: dict[str, Any] | None = None,
+                 time_formats: dict[str, str] | None = None,
+                 deltatime_formats: dict[str, str] | None = None) -> None:
         self.system = system_from(system)
         self.overrides = dict(overrides or {})
+        #: How many decimals, what to call a unit, and how to print a time.
+        #: Empty here means the defaults below; a skin brings its own, and
+        #: a page that has said "%.1f" for eight years keeps saying it.
+        self.formats = dict(formats or {})
+        self.labels = dict(labels or {})
+        self.time_formats = dict(time_formats or {})
+        self.deltatime_formats = dict(deltatime_formats or {})
         for group, unit in self.overrides.items():
             if group not in SYSTEMS[US]:
                 raise ValueError(f"{group!r} is not a unit group")
@@ -868,6 +880,23 @@ class Target:
                     and unit != SYSTEMS[US][group]:
                 raise ValueError(
                     f"{unit!r} is not a unit {group} can be shown in")
+
+    def format_for(self, unit: str | None) -> str | None:
+        """The printf format for a unit, the skin's if it named one."""
+        if unit and unit in self.formats:
+            return self.formats[unit]
+        return FORMATS.get(unit or "")
+
+    def label_for(self, unit: str | None, plural: bool = True) -> str:
+        """What to print after the number, the skin's word if it has one."""
+        if not unit:
+            return ""
+        if unit in self.labels:
+            text = self.labels[unit]
+            if isinstance(text, (list, tuple)):
+                return str(text[1 if plural and len(text) > 1 else 0])
+            return str(text)
+        return label(unit, plural)
 
     def unit(self, group: str | None) -> str | None:
         """The unit this group is shown in."""

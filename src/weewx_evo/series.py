@@ -53,7 +53,16 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
+from . import units
+
 log = logging.getLogger(__name__)
+
+#: What degree days are counted from. WeeWX's defaults, and the numbers the
+#: convention is written in -- 65 F is not 18 C, and a "tidier" base here is
+#: a different measurement. A skin may name its own.
+DEGREE_DAY_BASES = {"heatdeg": (65.0, "degree_F"),
+                    "cooldeg": (65.0, "degree_F"),
+                    "growdeg": (50.0, "degree_F")}
 
 #: What can be asked for. The names are WeeWX's, so a plot definition that
 #: worked there works here.
@@ -145,6 +154,7 @@ class Reader:
         self.table = table
         self._daily: set[str] | None = None
         self._columns: set[str] | None = None
+        self._system: int | None = None
 
     # -- what the database has -------------------------------------------
 
@@ -156,6 +166,21 @@ class Reader:
                 row[1] for row in
                 self.conn.execute(f"PRAGMA table_info({self.table})")}
         return self._columns
+
+    @property
+    def system(self) -> int:
+        """Which unit system the archive holds. US, METRIC or METRICWX.
+
+        Taken from the first record, which is what WeeWX's manager does. A
+        database whose station changed system mid-life is already mixed, and
+        picking a different record here would only move which half is wrong.
+        """
+        if self._system is None:
+            row = self.conn.execute(
+                f"SELECT usUnits FROM {self.table} ORDER BY dateTime LIMIT 1"
+            ).fetchone()
+            self._system = int(row[0]) if row and row[0] is not None                 else units.US
+        return self._system
 
     def has_daily(self, obs_type: str) -> bool:
         """Whether there is a daily summary table for this reading."""
@@ -212,19 +237,65 @@ class Reader:
         return out
 
     def aggregate(self, obs_type: str, start: float, stop: float,
-                  how: str) -> Any:
+                  how: str,
+                  bases: dict[str, tuple[float, str]] | None = None) -> Any:
         """One number for one span.
 
         Answered from the daily summaries when the span is whole days and they
         hold that aggregate -- thirty rows read by key instead of a month of
         records, and the extremes are the ones the live packets saw.
         """
+        if obs_type in DEGREE_DAY_BASES:
+            return self.degree_days(obs_type, start, stop, how, bases)
         if stop > start and is_midnight(start) and is_midnight(stop) \
                 and self.has_daily(obs_type):
             value = self._from_daily(obs_type, start, stop, how)
             if value is not _NOT_THERE:
                 return value
         return self._from_records(obs_type, start, stop, how)
+
+    # -- degree days -----------------------------------------------------
+
+    def degree_days(self, obs_type: str, start: float, stop: float,
+                    how: str,
+                    bases: dict[str, tuple[float, str]] | None = None) -> Any:
+        """Heating, cooling and growing degree days over a span.
+
+        Not a column and never was: a count of how far each day's mean
+        temperature sat from a base, added up. Transcribed from
+        `weewx.xtypes.AggregateHeatCool`, including the two things about it
+        that are easy to get wrong -- it walks whole calendar days whatever
+        the span's own edges are, and a day with no temperature is left out
+        of both the total and the count rather than counted as zero.
+        """
+        if how not in ("sum", "avg", "not_null"):
+            # A total and a mean are the only two that mean anything: the
+            # maximum of a set of degree days is a day, not a measurement.
+            raise ValueError(f"{how} is not an aggregate for {obs_type}")
+        amount, unit = (bases or {}).get(obs_type, DEGREE_DAY_BASES[obs_type])
+        # The base is written in whatever unit its author used, and the day
+        # means come out of the database in whatever the station wrote.
+        stored, _ = units.unit_of("outTemp", self.system)
+        base = units.convert(float(amount), unit, stored)
+
+        total, count = 0.0, 0
+        for begin, end in _day_spans(start, stop):
+            mean = self.aggregate("outTemp", begin, end, "avg")
+            if mean is None:
+                continue
+            if how == "not_null":
+                return True
+            if obs_type == "heatdeg":
+                total += max(base - mean, 0)
+            else:
+                total += max(mean - base, 0)
+            count += 1
+
+        if how == "not_null":
+            return False
+        if how == "sum":
+            return total
+        return total / count if count else None
 
     # -- raw records -----------------------------------------------------
 
@@ -721,6 +792,24 @@ def _fixed(start: float, stop: float,
             yield begin, end
             last = begin
         dt = nxt
+
+
+def _day_spans(start: float, stop: float) -> Iterator[tuple[int, int]]:
+    """Whole calendar days covering a span, ends included.
+
+    The day containing `start` through the day containing `stop`, except that
+    a `stop` landing exactly on midnight belongs to the day before it. What
+    `weeutil.genDaySpans` yields, and degree days are defined on it: half a
+    day of temperatures is not a degree day.
+    """
+    begin = _floor(start, "day")
+    last = _floor(stop, "day")
+    if last == stop:
+        last = _step(last, "day", -1)
+    while begin <= last:
+        end = _step(begin, "day")
+        yield begin, end
+        begin = end
 
 
 def _floor(ts: float, unit: str) -> int:

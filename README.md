@@ -214,6 +214,7 @@ python tools/export_test.py                       # FTP und rsync
 python tools/web_test.py                          # der lokale Webserver
 python tools/derive_test.py                       # die Ableitungen
 python tools/feeds_test.py                        # mehrere Feeds nebeneinander
+python tools/cheetah_test.py                      # eine WeeWX-Skin, unverändert
 python -m pytest tests/                           # der Ecowitt-Treiber
 python -m ruff check --select F src/ tools/       # undefinierte Namen
 ```
@@ -235,7 +236,7 @@ HOOK
 chmod +x .git/hooks/pre-commit
 ```
 
-Drei vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
+Vier vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
 im Pfad:
 
 ```bash
@@ -243,7 +244,7 @@ PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/seriestest.py \
     reference/weewx.sdb Europe/Berlin      # Zeitreihen gegen weewx.xtypes
 PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/unitcheck.py   # 147 Umrechnungen
 PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/suncheck.py    # Sonnenstand
-PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/tagcheck.py     reference/weewx.sdb Europe/Berlin      # die Tags, die ein Skin benutzt
+PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/tagcheck.py     reference/weewx.sdb Europe/Berlin      # die Tags, die eine Skin benutzt
 ```
 
 `PYTHONPATH` dabei **nicht** exportieren: die Ecowitt-Tests greifen sonst auf

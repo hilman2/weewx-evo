@@ -55,6 +55,13 @@ from .series import Reader
 
 log = logging.getLogger(__name__)
 
+#: The builtin, kept because `Tags.getattr` shadows the name inside the class.
+builtin_getattr = getattr
+
+#: When this process started, for `$station.uptime`. Taken at import rather
+#: than at the first call, so a page rendered an hour in reports the hour.
+STARTED = time.time()
+
 #: The builtin, kept because `Value.round` shadows the name inside the class.
 _round = round
 
@@ -64,6 +71,10 @@ IGNORE = {
     "__call__", "has_key", "__getstate__", "__setstate__", "__deepcopy__",
     "__len__", "__iter__", "__next__", "__reduce__", "__reduce_ex__",
     "__getitem__", "keys", "items", "values", "_no_aggregate",
+    # NameMapper walks these looking for a way in. Answering them with a
+    # database query is a query per attribute per tag.
+    "mro", "im_func", "func_code", "__members__", "__methods__",
+    "__class__", "__dict__", "__name__", "__module__", "__doc__",
 }
 
 #: How a time is printed, per span. WeeWX keeps these in a skin so they can be
@@ -74,6 +85,23 @@ TIME_FORMATS = {
     "ephem_day": "%X", "ephem_year": "%x %X",
 }
 DEFAULT_TIME_FORMAT = "%d-%b-%Y %H:%M"
+
+#: How a *length* of time is spelled out, per span. A day is measured in
+#: hours and minutes, a year in days: the same seconds, read differently.
+DELTATIME_FORMATS = {
+    "current": "%(minute)d%(minute_label)s, %(second)d%(second_label)s",
+    "hour": "%(minute)d%(minute_label)s, %(second)d%(second_label)s",
+    "day": "%(hour)d%(hour_label)s, %(minute)d%(minute_label)s, "
+           "%(second)d%(second_label)s",
+    "week": "%(day)d%(day_label)s, %(hour)d%(hour_label)s, "
+            "%(minute)d%(minute_label)s",
+    "month": "%(day)d%(day_label)s, %(hour)d%(hour_label)s, "
+             "%(minute)d%(minute_label)s",
+    "year": "%(day)d%(day_label)s, %(hour)d%(hour_label)s, "
+            "%(minute)d%(minute_label)s",
+}
+DEFAULT_DELTATIME_FORMAT = ("%(day)d%(day_label)s, %(hour)d%(hour_label)s, "
+                            "%(minute)d%(minute_label)s")
 
 #: The sixteen points, plus what to say when there is no direction at all.
 COMPASS = ("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -121,8 +149,8 @@ class Value:
         return f"<Value {self.value!r} {self.unit}>"
 
     def format(self, format_string: str | None = None,
-               none_string: str | None = None,
-               add_label: bool = True) -> str:
+               None_string: str | None = None,  # noqa: N803
+               add_label: bool = True, localize: bool = True) -> str:
         """The value as text.
 
         `format_string` is a printf format for a number and a strftime format
@@ -130,7 +158,7 @@ class Value:
         says `$day.outTemp.maxtime.format("%H:%M")` and means the clock.
         """
         if self.value is None:
-            return none_string if none_string is not None else "   N/A"
+            return None_string if None_string is not None else "   N/A"
 
         if self.unit in ("unix_epoch", "unix_epoch_ms", "unix_epoch_ns"):
             when = float(self.value)
@@ -138,18 +166,35 @@ class Value:
                 when /= 1000.0
             elif self.unit == "unix_epoch_ns":
                 when /= 1000000.0
-            shape = format_string or TIME_FORMATS.get(self.context,
-                                                      DEFAULT_TIME_FORMAT)
+            shape = format_string or self._time_format()
             return time.strftime(shape, time.localtime(when))
 
-        shape = format_string or units.FORMATS.get(self.unit or "", "%s")
+        shape = format_string or self._number_format()
         try:
             text = shape % self.value
         except (TypeError, ValueError):
             text = str(self.value)
         if add_label:
-            text += units.label(self.unit, plural=self.value != 1)
+            text += self._label()
         return text
+
+    # -- what the skin said, then what we ship ----------------------------
+
+    def _time_format(self) -> str:
+        if self.target and self.context in self.target.time_formats:
+            return self.target.time_formats[self.context]
+        return TIME_FORMATS.get(self.context, DEFAULT_TIME_FORMAT)
+
+    def _number_format(self) -> str:
+        if self.target:
+            return self.target.format_for(self.unit) or "%s"
+        return units.FORMATS.get(self.unit or "", "%s")
+
+    def _label(self) -> str:
+        plural = self.value != 1
+        if self.target:
+            return self.target.label_for(self.unit, plural)
+        return units.label(self.unit, plural)
 
     # WeeWX's spelling, so a template written for it works unchanged.
     def toString(self, addLabel: bool = True,  # noqa: N802, N803
@@ -164,11 +209,44 @@ class Value:
         return self.format(add_label=False)
 
     def nolabel(self, format_string: str,
-                none_string: str | None = None) -> str:
-        return self.format(format_string, none_string, add_label=False)
+                None_string: str | None = None) -> str:  # noqa: N803
+        return self.format(format_string, None_string, add_label=False)
 
-    def string(self, none_string: str | None = None) -> str:
-        return self.format(none_string=none_string)
+    def string(self, None_string: str | None = None) -> str:  # noqa: N803
+        return self.format(None_string=None_string)
+
+    def long_form(self, format_string: str | None = None,
+                  None_string: str | None = None) -> str:  # noqa: N803
+        """A length of time in words. "5 hours, 12 minutes, 3 seconds".
+
+        What `$almanac.sun.visible` wants: eighteen thousand seconds is not
+        an answer anybody reads. Which pieces appear is decided by the span
+        the value came from, so a day says hours and a year says days.
+        """
+        if self.value is None:
+            return None_string if None_string is not None else "   N/A"
+        shape = format_string
+        if not shape and self.target:
+            shape = self.target.deltatime_formats.get(self.context)
+        if not shape:
+            shape = DELTATIME_FORMATS.get(self.context,
+                                          DEFAULT_DELTATIME_FORMAT)
+        left = abs(units.convert(self.value, self.unit, "second") or 0.0)
+        pieces: dict[str, Any] = {}
+        for label, size in (("day", 86400), ("hour", 3600),
+                            ("minute", 60), ("second", 1)):
+            amount = int(left // size)
+            pieces[label] = amount
+            pieces[label + "_label"] = (
+                self.target.label_for(label, amount != 1) if self.target
+                else units.label(label, plural=amount != 1))
+            left %= size
+        if "day" not in shape:
+            # Days were asked to be left out, so they are counted as hours
+            # rather than dropped: "26 hours" beats "2 hours" for a value
+            # that is really more than a day.
+            pieces["hour"] += 24 * pieces["day"]
+        return shape % pieces
 
     @property
     def raw(self) -> Any:
@@ -473,26 +551,49 @@ class Station:
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_") or name in IGNORE:
             raise AttributeError(name)
+        # `$station.latitude` is three strings, not a number: degrees,
+        # minutes, and the direction. A NOAA report prints them one at a
+        # time as `$station.latitude[0]`, and a float there raises.
+        if name in ("latitude", "longitude") and name in self.values:
+            return _sexagesimal(self.values[name],
+                                "NS" if name == "latitude" else "EW")
         if name in self.values:
             return self.values[name]
-        # WeeWX spells the numbers with a suffix and the text without.
+        # WeeWX spells the number with a suffix and the text without.
         if name.endswith("_f") and name[:-2] in self.values:
-            try:
-                return float(self.values[name[:-2]])
-            except (TypeError, ValueError):
-                return None
+            return _number(self.values[name[:-2]])
+        if name == "uptime":
+            return Value(time.time() - STARTED, "second", "group_deltatime",
+                         "day", self.tags.target)
+        if name == "os_uptime":
+            return Value(_os_uptime(), "second", "group_deltatime", "day",
+                         self.tags.target)
         return self.tags.missed(f"station.{name}")
 
     def __str__(self) -> str:
         return str(self.values.get("location", ""))
 
 
+def _os_uptime() -> float | None:
+    """How long the machine has been up, in seconds.
+
+    Linux keeps it in a file, and nowhere else does. A skin printing it on a
+    Windows box gets N/A, which is the truth rather than a guess.
+    """
+    try:
+        with open("/proc/uptime", encoding="ascii") as handle:
+            return float(handle.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 class Labels:
     """`$obs.label.outTemp` -- what a reading is called, in words.
 
-    A skin prints these as table headings. They belong to the station's
-    language, not to this code, so whatever the operator configured wins and
-    the reading's own name is the fallback.
+    Deliberately *not* dict-like. Cheetah tries `obj[name]` on anything that
+    has `__getitem__`, so a namespace that also answered subscripts would
+    hand back the string "label" for `$obs.label` and the template would then
+    subscript a string.
     """
 
     __slots__ = ("tags", "labels")
@@ -502,16 +603,30 @@ class Labels:
         self.labels = labels
 
     @property
-    def label(self) -> "Labels":
-        return self
+    def label(self) -> "_LabelMap":
+        return _LabelMap(self.labels)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_") or name in IGNORE:
+            raise AttributeError(name)
+        return self.tags.missed(f"obs.{name}")
+
+
+class _LabelMap(dict):
+    """What each reading is called. `$obs.label.outTemp`, `$obs.label[$x]`.
+
+    A real dictionary, so both spellings work: subscripting is the mapping,
+    and an attribute falls through to it. A reading nobody named is called
+    by its own name, which is better than blank.
+    """
 
     def __getattr__(self, reading: str) -> str:
         if reading.startswith("_") or reading in IGNORE:
             raise AttributeError(reading)
-        return self.labels.get(reading, reading)
+        return self.get(reading, reading)
 
-    def __getitem__(self, reading: str) -> str:
-        return self.labels.get(reading, reading)
+    def __missing__(self, reading: str) -> str:
+        return reading
 
 
 class UnitInfo:
@@ -537,6 +652,19 @@ class UnitInfo:
 
     @property
     def format(self) -> "_UnitField":
+        return _UnitField(self.tags, "format")
+
+    @property
+    def unit_type_dict(self) -> "_UnitField":
+        """`$unit.unit_type_dict.outTemp` -- WeeWX's older spelling."""
+        return _UnitField(self.tags, "unit")
+
+    @property
+    def label_dict(self) -> "_UnitField":
+        return _UnitField(self.tags, "label")
+
+    @property
+    def format_dict(self) -> "_UnitField":
         return _UnitField(self.tags, "format")
 
     def __getattr__(self, name: str) -> Any:
@@ -684,16 +812,30 @@ class Almanac:
         return self.tags.missed(f"almanac.{name}")
 
 
+#: The long name of each angle, and the short one it is the same reading as.
+LONG_ANGLES = {"altitude": "alt", "azimuth": "az",
+               "topo_dec": "dec", "topo_ra": "ra"}
+
+
 class Body:
     """One thing in the sky. `$almanac.sun.rise`, `$almanac.moon.transit`."""
 
-    __slots__ = ("almanac", "which")
+    __slots__ = ("almanac", "which", "use_center")
 
-    def __init__(self, almanac: Almanac, which: str) -> None:
+    def __init__(self, almanac: Almanac, which: str,
+                 use_center: bool = False) -> None:
         self.almanac = almanac
         self.which = which
+        #: Whether a rising is the moment the middle of the disc crosses the
+        #: horizon rather than its upper edge. Twilight is defined on the
+        #: centre, so `$almanac(horizon=-6).sun(use_center=1)` is how a skin
+        #: asks for dawn.
+        self.use_center = use_center
 
-    def _events(self) -> dict[str, float | None]:
+    def __call__(self, use_center: bool = False) -> "Body":
+        return Body(self.almanac, self.which, bool(use_center))
+
+    def _events(self, when: float | None = None) -> dict[str, float | None]:
         """When this body rises and sets, on the day the page is for.
 
         Anchored at local midnight and asking for the *next* one, which is
@@ -703,16 +845,38 @@ class Body:
         tags = self.almanac.tags
         if not self.almanac._placed:
             return {}
+        moment = tags.when if when is None else when
         found = sun_module.rising_setting(
-            _midnight(tags.when), self.almanac.latitude,
+            _midnight(moment), self.almanac.latitude,
             self.almanac.longitude, body=self.which,
             horizon=self.almanac.horizon,
-            altitude_m=self.almanac.altitude or 0.0)
+            altitude_m=self.almanac.altitude or 0.0,
+            use_center=self.use_center)
         if self.which == "sun" and self.almanac.horizon is None:
-            twilight = sun_module.events(tags.when, self.almanac.latitude,
+            twilight = sun_module.events(moment, self.almanac.latitude,
                                          self.almanac.longitude)
             found["dawn"], found["dusk"] = twilight["dawn"], twilight["dusk"]
         return found
+
+    def _up_for(self, when: float | None = None) -> float | None:
+        """How long the body is above the horizon that day, in seconds."""
+        found = self._events(when)
+        rise, sets = found.get("rise"), found.get("set")
+        return None if rise is None or sets is None else sets - rise
+
+    def visible_change(self, days_ago: int = 1) -> "Value":
+        """How much longer the body is up today than it was `days_ago`.
+
+        The number behind "three minutes more daylight". The earlier day is
+        found by stepping the calendar back rather than by subtracting
+        86400 seconds, because across a clock change those are not the same
+        day and the answer would be off by an hour.
+        """
+        now = self._up_for()
+        then = self._up_for(_add_days(self.almanac.tags.when, -days_ago))
+        change = None if now is None or then is None else now - then
+        return Value(change, "second", "group_deltatime", "hour",
+                     self.almanac.tags.target)
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_") or name in IGNORE:
@@ -722,15 +886,30 @@ class Body:
             return self.almanac._time(self._events().get(name))
 
         if name == "visible":
-            found = self._events()
-            rise, sets = found.get("rise"), found.get("set")
-            length = None if rise is None or sets is None else sets - rise
-            return Value(length, "second", "group_deltatime", "day",
+            return Value(self._up_for(), "second", "group_deltatime", "day",
+                         self.almanac.tags.target)
+
+        # Every angle has two names in WeeWX, and they are not the same
+        # thing. The long one is a Value that formats itself, the short one
+        # is the bare number pyephem returned. A skin uses both --
+        # `$almanac.sun.altitude.format("%.1f")` to print it and `#if
+        # $almanac.sun.alt < 0` to decide with it -- so answering only one
+        # breaks a page either way round.
+        if name in LONG_ANGLES:
+            short = LONG_ANGLES[name]
+            degrees = _position(self, short)
+            if name == "azimuth":
+                return Value(degrees, "degree_compass", "group_direction",
+                             "ephem_day", self.almanac.tags.target)
+            return Value(None if degrees is None else math.radians(degrees),
+                         "radian", "group_angle", "ephem_day",
                          self.almanac.tags.target)
 
         if name in ("alt", "az", "dec", "ra"):
-            return Value(_position(self, name), "degree_compass",
-                         "group_direction", "current", self.almanac.tags.target)
+            # Radians and a plain float: what pyephem hands back, and what
+            # a template comparing it to zero was written against.
+            degrees = _position(self, name)
+            return None if degrees is None else math.radians(degrees)
 
         return self.almanac.tags.missed(f"almanac.{self.which}.{name}")
 
@@ -822,6 +1001,21 @@ class Tags:
         #: What the eight phases are called. A skin names its own, and the
         #: names go straight into a page, so this is the skin's to decide.
         self.moon_phases: tuple[str, ...] = ()
+        #: `[Extras]` and `[DisplayOptions]` from the skin: whatever its
+        #: author invented, and what the skin shows or hides.
+        self.extras: dict[str, Any] = {}
+        self.display: dict[str, Any] = {}
+        #: Which language the skin is being rendered in.
+        self.language: str = "en"
+        #: The charts there are, for `$getobs`. A template names one and asks
+        #: which readings it draws.
+        self.plots: Any = ()
+        #: What degree days are counted from. A skin may move them, and two
+        #: skins in one process may disagree, so they live here rather than
+        #: on the reader they share.
+        from .series import DEGREE_DAY_BASES
+
+        self.degree_day_bases = dict(DEGREE_DAY_BASES)
         self.rain_year_start = rain_year_start
         #: Which day a week starts on, as `time.localtime().tm_wday`: 6 is
         #: Sunday, which is WeeWX's default and not everybody's.
@@ -856,19 +1050,24 @@ class Tags:
         return units.unit_of(reading, self.unit_system, how, self.extra_groups)
 
     def exists(self, reading: str) -> bool:
-        from .series import VECTORS
+        from .series import DEGREE_DAY_BASES, VECTORS
 
         # `wind` and `windvec` are not columns. They are the pair of columns,
         # and which one is meant depends on the question -- the highest wind
         # of a day is the highest gust. series.py knows; this only has to
         # agree that they are real.
+        if reading in DEGREE_DAY_BASES:
+            # Worked out from the daily mean temperature, so they exist
+            # exactly where that does.
+            return "outTemp" in self.reader.columns
         return (reading in self.reader.columns or reading in VECTORS
                 or (reading == "wind" and "windSpeed" in self.reader.columns))
 
     def has_data(self, reading: str, span: tuple[float, float]) -> bool:
         try:
             return bool(self.reader.aggregate(reading, span[0], span[1],
-                                              "not_null"))
+                                              "not_null",
+                                              self.degree_day_bases))
         except Exception:  # noqa: BLE001
             return False
 
@@ -885,7 +1084,8 @@ class Tags:
             raise Missing(reading)
 
         try:
-            raw = self.reader.aggregate(reading, span[0], span[1], how)
+            raw = self.reader.aggregate(reading, span[0], span[1], how,
+                                        self.degree_day_bases)
         except ValueError:
             # Not an aggregate this knows. Raised as AttributeError, which is
             # what tells a renderer to leave the text alone rather than print
@@ -909,6 +1109,103 @@ class Tags:
 
     def _span(self, start: float, stop: float, context: str) -> Span:
         return Span(self, (start, stop), context)
+
+    @property
+    def Extras(self) -> "Section":  # noqa: N802 -- the tag's own spelling
+        """`$Extras.something` -- whatever the skin's author invented."""
+        return Section(self.extras)
+
+    @property
+    def DisplayOptions(self) -> "Section":  # noqa: N802
+        """`$DisplayOptions.get('...')` -- what the skin shows and hides."""
+        return Section(self.display)
+
+    @property
+    def lang(self) -> str:
+        """Which language the skin is being rendered in."""
+        return self.language
+
+    @staticmethod
+    def to_list(value: Any) -> list:
+        """`$to_list($DisplayOptions.get('x'))`.
+
+        A configuration file gives one string where there is one value and a
+        list where there are several, so a template that wants to walk them
+        has to say which it got. WeeWX has this helper for the same reason.
+        """
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [value]
+
+    @staticmethod
+    def getattr(obj: Any, name: str, default: Any = None) -> Any:
+        """`$getattr($current, $x)` -- a reading whose name is in a variable.
+
+        A template walking a list of readings cannot write `$current.outTemp`;
+        it has the name in hand and has to ask for it. Python's own getattr,
+        offered under the name WeeWX offers it under.
+        """
+        try:
+            found = builtin_getattr(obj, str(name))
+        except AttributeError:
+            return default
+        return default if found is None else found
+
+    def getobs(self, plot_name: str) -> set:
+        """`$getobs($plot_name)` -- which readings a chart draws.
+
+        A template asks so that it can say "temperature and dew point" under
+        a chart without the two being written down twice.
+        """
+        for plot in self.plots:
+            if plot.name == str(plot_name):
+                return plot.uses()
+        return set()
+
+    @staticmethod
+    def to_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def to_int(value: Any) -> int | None:
+        try:
+            return int(float(str(value).strip()))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def to_float(value: Any) -> float | None:
+        return _number(value)
+
+    @staticmethod
+    def jsonize(value: Any) -> str:
+        import json as _json
+
+        return _json.dumps(value)
+
+    @staticmethod
+    def rnd(value: Any, ndigits: int = 2) -> Any:
+        number = _number(value)
+        return "N/A" if number is None else _round(number, ndigits)
+
+    def season(self, seasons_ago: int = 0, **_kwargs: Any) -> Span:
+        """The meteorological season this moment is in.
+
+        Three months at a time, starting in December: what a forecaster means
+        by winter, not what an almanac does.
+        """
+        day = datetime.datetime.fromtimestamp(self.when)
+        first = ((day.month // 3) * 3) or 12
+        year = day.year if day.month >= 3 else day.year - 1
+        start = int(day.replace(year=year, month=first, day=1, hour=0,
+                                minute=0, second=0,
+                                microsecond=0).timestamp())
+        start = _month_start(start, -3 * seasons_ago)
+        return self._span(start, _month_start(start, 3), "month")
 
     @property
     def almanac(self) -> Almanac:
@@ -1106,6 +1403,51 @@ class Trend:
 
 
 # -- moments in local time -------------------------------------------------
+
+class Section(dict):
+    """A block of a skin's own configuration. `$Extras`, `$DisplayOptions`.
+
+    A real dictionary, deliberately. Cheetah's NameMapper tries `obj[name]`
+    on anything that looks like a mapping and only falls back to attributes
+    when that raises `KeyError`. A stand-in that answered every subscript --
+    returning None for a missing key, say -- swallows `$DisplayOptions.get`
+    itself, and the template then calls None.
+
+    Attribute access is the other half: `#if $Extras.radar_url` is how a
+    template asks whether the operator configured something, and the answer
+    when they did not is empty, not an error.
+    """
+
+    def __getattr__(self, key: str) -> Any:
+        if key.startswith("_") or key in IGNORE:
+            raise AttributeError(key)
+        found = self.get(key)
+        if isinstance(found, dict):
+            return Section(found)
+        # Not a miss worth reporting: most of these are questions whose
+        # answer is "not configured", asked once per page.
+        return "" if found is None else found
+
+    def __getitem__(self, key: str) -> Any:
+        found = super().__getitem__(key)
+        return Section(found) if isinstance(found, dict) else found
+
+
+def _sexagesimal(value: Any, directions: str) -> tuple[str, str, str]:
+    """A coordinate as degrees, minutes and a direction.
+
+    What `$station.latitude` is in WeeWX, and what a NOAA report prints one
+    piece at a time.
+    """
+    number = _number(value)
+    if number is None:
+        return ("", "", "")
+    sign = directions[0] if number >= 0 else directions[1]
+    number = abs(number)
+    degrees = int(number)
+    minutes = (number - degrees) * 60.0
+    return (f"{degrees:02d}", f"{minutes:05.2f}", sign)
+
 
 def _number(value: Any) -> float | None:
     """A number out of a setting, however it was written. `440 meter` is 440."""

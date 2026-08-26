@@ -71,6 +71,16 @@ def main() -> int:
                   " weewx-ecowitt checkout; this test needs it.")
             return 2
 
+        # The ecowitt driver remembers which consoles it has heard, and
+        # without a path it remembers them in /var/tmp -- outside this test's
+        # directory, so a real console heard on this machine once makes the
+        # test's own upload an unknown one and every packet is dropped. Every
+        # test here keeps its state where it can delete it.
+        drivers.DEFAULT.load()
+        drivers.DEFAULT.configure("ecowitt",
+                                  {"console_file": str(tmp / "consoles.txt"),
+                                   "report_file": str(tmp / "report.txt")})
+
         live = LiveStore(tmp / "live.sdb", interval_seconds=INTERVAL)
         archive = ArchiveStore(tmp / "weewx.sdb")
         archiver = Archiver(live, archive, interval_seconds=INTERVAL)
