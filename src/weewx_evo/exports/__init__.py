@@ -229,17 +229,15 @@ def kinds() -> list[str]:
 
 
 def _feed_choices() -> list[tuple[str, str]]:
-    """The feeds an export can point at.
+    """The feeds an export can point at, by name.
 
-    An export sends what something produced, so the list is the feeds and not
-    the filesystem. There are none yet; until there are, the form offers a
-    directory instead and says so.
+    One list, worked out in one place: `options.defined_feeds` reads the
+    configured feeds rather than the kinds that could be built. An export
+    aimed at a feed the operator named has to find it.
     """
-    from .. import feeds
+    from ..options import defined_feeds
 
-    return [(name, f"the {name} feed"
-             + (f" -- {feeds.describe(name)}" if feeds.describe(name) else ""))
-            for name in feeds.names()]
+    return [(name, f"the {label}") for name, label in defined_feeds()]
 
 
 def source_for(settings: dict[str, Any], feed_directory: Any = None) -> Path | None:

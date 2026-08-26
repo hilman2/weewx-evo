@@ -442,16 +442,35 @@ def _config_path() -> Any:
 
 
 def defined_feeds() -> list[tuple[str, str]]:
-    """The feeds that exist, for an export to point at.
+    """The feeds that exist, by the names the operator gave them.
 
-    An export can only send what something produced, so the list is the feeds
-    and not the filesystem.
+    Names, not kinds. Two sets of JSON in two unit systems are two feeds
+    with two names, and an export has to be able to point at one of them.
+    Reading the kinds back meant an export could be aimed at "json" and
+    never at "metric", and a feed the operator named was refused at startup
+    as though it did not exist.
     """
+    from . import config as config_file
     from . import feeds
+    from .cli import DEFAULT_FEEDS
 
-    return [(name, f"{name} -- {feeds.describe(name)}"
-             if feeds.describe(name) else name)
-            for name in feeds.names()]
+    try:
+        current = config_file.read(_config_path()) or {}
+    except Exception:  # noqa: BLE001
+        current = {}
+    configured = current.get("feeds") or {}
+    if not configured:
+        # A file that names none still gets the two that ship, so the list
+        # has to say the same thing the runner does.
+        configured = DEFAULT_FEEDS
+
+    out = []
+    for name in sorted(configured):
+        settings = configured[name]
+        kind = (settings.get("kind") if isinstance(settings, dict) else "") or ""
+        said = feeds.describe(str(kind))
+        out.append((name, f"{name} -- {said}" if said else name))
+    return out
 
 
 def website_options() -> list[Group]:

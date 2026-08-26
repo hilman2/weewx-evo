@@ -446,6 +446,15 @@ class Span:
             raise AttributeError(reading)
         return Reading(self.tags, reading, self.span, self.context)
 
+    def check_for_data(self, reading: str) -> bool:
+        """`#if $recent.check_for_data($obs)` -- is there anything to draw?
+
+        A template with the reading's name in a variable cannot write
+        `$recent.outTemp.has_data`, so it asks this way instead. Same
+        question, and Seasons decides whether to show a chart with it.
+        """
+        return self.tags.has_data(str(reading), self.span)
+
     # What a template asks about the span itself.
     @property
     def start(self) -> Value:
