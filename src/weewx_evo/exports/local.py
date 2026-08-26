@@ -129,8 +129,15 @@ class LocalExport(BaseExport):
                     result.failures.append((relative.as_posix(), str(exc)))
                     log.warning("could not publish %s: %s", relative, exc)
 
-            if self.delete:
+            if self.delete and files is None:
+                # Only against a full listing. Given the handful of files a
+                # feed says it just wrote, everything else looks gone --
+                # and "everything else" is the whole published site. That
+                # removed a manifest here before anybody noticed.
                 result.deleted = self._remove(target, tracker, candidates)
+            elif self.delete:
+                log.debug("not removing anything: this run was given a list "
+                          "of changed files, not the whole directory")
         finally:
             tracker.save()
 

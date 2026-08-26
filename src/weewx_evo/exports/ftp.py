@@ -115,7 +115,10 @@ class FtpExport(BaseExport):
                     result.failures.append((relative.as_posix(), str(exc)))
                     log.warning("could not send %s: %s", relative, exc)
 
-            if self.delete:
+            if self.delete and files is None:
+                # Only against a full listing, never against the changed
+                # files a feed reported: everything it did not mention would
+                # look gone, and this deletes from somebody's web host.
                 result.deleted = self._remove(connection, tracker, candidates)
         finally:
             tracker.save()

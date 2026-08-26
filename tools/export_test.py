@@ -138,6 +138,30 @@ def local_export(check) -> int:
         failures += not check("no leftover partial",
                               sorted(f.name for f in site.rglob("*.part")), [])
 
+        print("\ndeleting is decided against the whole directory")
+        # Given the handful of files a feed just wrote, everything else
+        # looks gone. It is not: it is the rest of the site. Worse, the
+        # record of what was sent forgets them too, so the next run sends
+        # them all again and the one after deletes them again.
+        mirror = LocalExport(directory=str(tmp / "mirror"), delete=True,
+                             tracker=str(tmp / "t4.json"))
+        (source / "one.json").write_text("{}", encoding="utf-8")
+        (source / "two.json").write_text("{}", encoding="utf-8")
+        full = mirror.send(source)
+        before = sorted(f.name for f in (tmp / "mirror").rglob("*")
+                        if f.is_file())
+        partial = mirror.send(source, files=[Path("one.json")])
+        after = sorted(f.name for f in (tmp / "mirror").rglob("*")
+                       if f.is_file())
+        failures += not check("a partial run deletes nothing",
+                              partial.deleted, 0)
+        failures += not check("and leaves the rest alone", after, before)
+
+        # A full run still mirrors.
+        (source / "two.json").unlink()
+        gone = mirror.send(source)
+        failures += not check("a full run still removes what went",
+                              gone.deleted, 1)
         print("\nsome things are refused rather than attempted")
         try:
             LocalExport(directory=str(source),
