@@ -1,0 +1,80 @@
+services:
+  weewx-evo:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: weewx-evo:local
+    container_name: weewx-evo
+    restart: unless-stopped
+
+    # A station in a shed shares its machine with other things. An unbounded
+    # container takes one of them into the OOM killer instead of failing
+    # itself. 256m is comfortable for a few hundred thousand records.
+    mem_limit: ${WEEWX_EVO_MEM:-256m}
+
+    # Localhost only. Caddy is the only way in, and it passes just the upload
+    # path -- the listener checks the token but nothing else.
+    ports:
+      - "127.0.0.1:${WEEWX_EVO_PORT:-3041}:8000"
+      # The settings page. Its own port, and a reverse proxy passes only its
+      # own token.
+      - "127.0.0.1:${WEEWX_EVO_ADMIN_PORT:-3042}:8080"
+
+    volumes:
+      - ${WEEWX_EVO_DATA:-../data}:/data
+
+    environment:
+      # The archive day boundary is local time, so this is part of the data
+      # and not a display setting. Set it to the station's own zone.
+      - TZ=${TZ:-Europe/Berlin}
+      - PYTHONDONTWRITEBYTECODE=1
+      - WEEWX_EVO_LIVE=/data/live.sdb
+      - WEEWX_EVO_ARCHIVE=/data/weewx.sdb
+      # Seconds. Match the WeeWX instance if you are running both against
+      # the same station, so the two archives compare record for record.
+      - WEEWX_EVO_INTERVAL=${WEEWX_EVO_INTERVAL:-300}
+      - WEEWX_EVO_DRIVER=${WEEWX_EVO_DRIVER:-ecowitt}
+      # What `weewx-evo url` should print. Behind a reverse proxy the outside
+      # address is not something the container can work out.
+      - WEEWX_EVO_PUBLIC_URL=${WEEWX_EVO_PUBLIC_URL:-}
+      # Third-party drivers, installed with `weewx-evo driver install`.
+      - WEEWX_EVO_DRIVER_DIR=/data/drivers
+      # How long every packet is kept, not just every archive record. This
+      # is what makes a statistic repairable after the fact.
+      - WEEWX_EVO_RETENTION_DAYS=${WEEWX_EVO_RETENTION_DAYS:-7}
+      # The token is the only thing between the open internet and the
+      # measurement series. It lives in .env, which is not in the repo.
+      - WEEWX_EVO_TOKEN=${WEEWX_EVO_TOKEN:?set WEEWX_EVO_TOKEN in .env}
+
+      # The settings page has its own token and its own port. It can point
+      # the archive at a different file, so it must not be reachable by
+      # anything that merely knows how to upload a reading.
+      - WEEWX_EVO_ADMIN_TOKEN=${WEEWX_EVO_ADMIN_TOKEN:?set WEEWX_EVO_ADMIN_TOKEN in .env}
+      - WEEWX_EVO_CONFIG=/data/evo.toml
+      # Inside the container, so Caddy can reach it. What keeps it private is
+      # the port binding above and the token, not the bind address.
+      - WEEWX_EVO_ADMIN_HOST=0.0.0.0
+      # Both services bind to everything and answer private networks only.
+      # That is the default and it is left alone here: Caddy connects from the
+      # Docker bridge, which is private, so the reverse proxy keeps working
+      # while nothing can reach the container directly.
+      - WEEWX_EVO_ALLOW=private
+      - WEEWX_EVO_ADMIN_ALLOW=private
+
+    command: ["serve", "--spool", "/data/packets"]
+
+    # `docker logs` by default. On a systemd host, set WEEWX_EVO_LOG_DRIVER
+    # to journald and the logs join everything else in journalctl.
+    logging:
+      driver: ${WEEWX_EVO_LOG_DRIVER:-json-file}
+      options:
+        tag: "weewx-evo"
+
+    healthcheck:
+      # The status endpoint sits behind the token, so the check carries it.
+      test: ["CMD", "python", "-c",
+             "import os,urllib.request as u; u.urlopen('http://127.0.0.1:8000/'+os.environ['WEEWX_EVO_TOKEN']+'/status', timeout=5).read()"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

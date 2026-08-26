@@ -1,0 +1,41 @@
+[project]
+name = "weewx-evo"
+version = "0.0.1"
+description = "A modular rewrite of the WeeWX core. Fully compatible with existing databases."
+requires-python = ">=3.11"
+dependencies = []
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+readme = "README.md"
+authors = [{name = "Manuel Hilgert"}]
+keywords = ["weewx", "weather", "weather-station", "ecowitt"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+]
+
+[project.urls]
+Homepage = "https://github.com/hilman2/weewx-evo"
+Issues = "https://github.com/hilman2/weewx-evo/issues"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tools", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.scripts]
+weewx-evo = "weewx_evo.cli:main"

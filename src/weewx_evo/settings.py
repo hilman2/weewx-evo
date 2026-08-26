@@ -1,0 +1,264 @@
+"""Where a value actually comes from.
+
+There are up to five places a setting can be, and without a stated order they
+fight. This is the order, strongest first:
+
+  1. **A command-line argument.** Somebody typed it just now, for this run.
+  2. **The environment.** How a container is configured, and how a systemd
+     unit overrides one thing without editing a file.
+  3. **The configuration file.** What the admin page writes, and what a person
+     edits. The normal place for a setting to live.
+  4. **weewx.conf**, if one was named. The settings both systems share --
+     latitude, altitude, the archive interval -- can go on living there, so
+     changing the altitude in one place changes it for both.
+  5. **The default** the component declared.
+
+Every layer is optional and each one only covers what it actually says. A
+value absent from the file is not "empty", it is "the layer below decides",
+which is why the file the admin page writes contains only what has been set.
+
+## One resolver, asked by everything
+
+Nothing reads the file for itself. `Settings` is built once for the process
+and passed around, so every component sees the same answer to the same
+question at the same moment. That matters more than it sounds: with each
+component resolving on its own, a file rewritten between two of them gives
+two different configurations to one running system, and the resulting bug is
+one nobody can reproduce.
+
+Drivers get a `view()` -- their own corner of the settings and nothing else.
+A driver has no business reading the upload token, and the way to make sure
+of that is not to hand it over. Same reasoning as `ingest.state`: the narrow
+thing, so the wide thing cannot be reached by accident.
+
+## Why this is not a service
+
+The next thought is a settings daemon, or a socket, that components query.
+That would be a mistake here, and the reason is not effort:
+
+  * The file already is what a daemon would be, minus the ways a daemon
+    fails. It is written atomically, it survives restarts in the right order,
+    it can be read with `cat` at three in the morning, and it cannot be down.
+  * The processes that would query it -- listener, archiver -- already
+    coordinate through the database and are deliberately unable to talk to
+    each other. Adding a channel between them would undo the property that
+    lets them be split across machines or run as one.
+  * A station in a shed does not need another process that can fail to come
+    back. It needs one fewer.
+
+What a service would genuinely offer is settings changing without a restart,
+and that needs no daemon: `reload()` rebuilds this object from the file, and
+anything holding it sees the new values. What cannot be changed while running
+says so on the admin page, which is honest about the difference rather than
+pretending everything is live.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
+from . import config as config_file
+from .options import Invalid, Schema
+
+log = logging.getLogger(__name__)
+
+
+#: Command-line names that differ from the setting they carry. Written out
+#: rather than guessed at: `--archive` is a path and `archive_db` is a
+#: setting, and a rule that turned one into the other would also turn
+#: `--allow` into something.
+ARGUMENT_NAMES = {
+    "archive": "archive_db",
+    "live": "live_db",
+    "retention_days": None,   # a duration in days, handled below
+    "raw_minutes": None,      # likewise, in minutes
+}
+
+#: Older environment variable names, with the factor that turns their unit
+#: into the setting's. Kept working: a container that has been running for
+#: months should not stop because a name got tidier, and the day somebody
+#: renames a variable is the day they find out how many places used it.
+ENV_ALIASES: dict[str, list[tuple[str, float]]] = {
+    "live_db": [("WEEWX_EVO_LIVE", 1.0)],
+    "archive_db": [("WEEWX_EVO_ARCHIVE", 1.0)],
+    "retention": [("WEEWX_EVO_RETENTION_DAYS", 86400.0)],
+    "raw_retention": [("WEEWX_EVO_RAW_MINUTES", 60.0)],
+}
+
+
+class Settings:
+    """One resolved view of the configuration."""
+
+    def __init__(self, schema: Schema, config: dict[str, Any] | None = None,
+                 args: Any = None, weewx: dict[str, Any] | None = None,
+                 prefix: str = "", path: str | Path | None = None) -> None:
+        self.schema = schema
+        self.config = config or {}
+        self.args = args
+        self.weewx = weewx or {}
+        self.prefix = prefix
+        self._path = Path(path) if path else None
+        self._sources: dict[str, str] = {}
+
+    # -- resolution ------------------------------------------------------
+
+    def get(self, name: str, default: Any = None) -> Any:
+        """The value of one setting, and remember where it came from."""
+        option = self.schema.option(name)
+
+        raw, source = self._raw(name)
+        if raw is None:
+            self._sources[name] = "default"
+            return option.default if option is not None else default
+
+        self._sources[name] = source
+        if option is None:
+            return raw
+        try:
+            return option.parse(raw)
+        except Invalid as exc:
+            log.warning("%s (from %s): %s. Using the default instead.",
+                        name, source, exc)
+            return option.default
+
+    def _raw(self, name: str) -> tuple[Any, str]:
+        # 1. the command line
+        if self.args is not None:
+            value = self._from_args(name)
+            if value is not None:
+                return value, "command line"
+
+        # 2. the environment
+        for env_name, scale in self._env_names(name):
+            raw = os.environ.get(env_name)
+            if raw:
+                if scale != 1:
+                    try:
+                        return float(raw) * scale, f"${env_name}"
+                    except ValueError:
+                        log.warning("$%s is %r, which is not a number", env_name, raw)
+                        continue
+                return raw, f"${env_name}"
+
+        # 3. the configuration file
+        dotted = f"{self.prefix}.{name}" if self.prefix else name
+        value = config_file.get(self.config, dotted)
+        if value is not None:
+            return value, "the configuration file"
+
+        # 4. weewx.conf, for the settings both systems share
+        if name in self.weewx:
+            return self.weewx[name], "weewx.conf"
+
+        return None, "default"
+
+    def _env_names(self, name: str) -> list[tuple[str, float]]:
+        """The environment variables that can carry this setting, best first.
+
+        Each with the factor that turns its unit into the setting's. The
+        aliases exist because names were given to environment variables before
+        they were given to settings, and a running installation should not
+        break because a name got tidier.
+        """
+        primary = "WEEWX_EVO_" + name.replace(".", "_").upper()
+        return [(primary, 1.0)] + ENV_ALIASES.get(name, [])
+
+    def _from_args(self, name: str) -> Any:
+        """The command-line value, if one was actually given.
+
+        Arguments default to None so that "not given" and "given the default"
+        are different things. Without that, a default in argparse would beat
+        the configuration file, and the admin page would appear to do nothing.
+        """
+        for argument, setting in ARGUMENT_NAMES.items():
+            if setting == name:
+                return getattr(self.args, argument, None)
+        return getattr(self.args, name.replace(".", "_"), None)
+
+    def source(self, name: str) -> str:
+        """Where the last-read value of this setting came from."""
+        return self._sources.get(name, "unknown")
+
+    def all(self) -> dict[str, Any]:
+        return {option.name: self.get(option.name) for _g, option in self.schema}
+
+    # -- the narrow view -------------------------------------------------
+
+    def view(self, prefix: str, schema: Schema) -> Settings:
+        """One component's corner of the settings, and nothing else.
+
+        A driver gets this rather than the whole thing. It can read what
+        belongs to it and cannot reach the upload token, the database paths,
+        or another driver's console list -- not because it is asked not to,
+        but because it was never handed them.
+
+        The same reasoning as `ingest.state`: give the narrow thing, and the
+        wide thing cannot be reached by accident or on purpose.
+        """
+        return Settings(schema, config=self.config, args=None,
+                        weewx={}, prefix=prefix)
+
+    # -- reloading -------------------------------------------------------
+
+    def reload(self, path: str | Path | None = None) -> bool:
+        """Re-read the file. Returns whether anything actually changed.
+
+        This is what a settings service would be for, without the service.
+        Anything holding this object sees the new values; anything that
+        latched a value at startup does not, which is why an option that
+        cannot be changed while running is marked `restart` and the admin page
+        says so.
+        """
+        if path is None:
+            path = self._path
+        if path is None:
+            return False
+        fresh = config_file.read(path)
+        if fresh == self.config:
+            return False
+        before = {name: self.get(name) for name in
+                  (o.name for _g, o in self.schema)}
+        self.config = fresh
+        self._path = Path(path)
+        changed = [name for name, was in before.items() if self.get(name) != was]
+        if changed:
+            log.info("configuration reloaded; changed: %s", ", ".join(changed))
+        return bool(changed)
+
+    def explain(self) -> list[str]:
+        """One line per setting, saying what it is and where it came from."""
+        lines = []
+        for _group, option in self.schema:
+            value = self.get(option.name)
+            shown = "(set)" if option.kind == "secret" and value else repr(value)
+            lines.append(f"  {option.name:<22} {shown:<28} {self.source(option.name)}")
+        return lines
+
+
+def load(schema: Schema, config_path: str | Path | None = None,
+         args: Any = None, weewx_conf: str | Path | None = None,
+         prefix: str = "") -> Settings:
+    """Build a Settings from the places there are.
+
+    A missing configuration file is not an error: a first start has nothing to
+    read, and everything falls through to the defaults.
+    """
+    config = config_file.read(config_path) if config_path else {}
+
+    shared: dict[str, Any] = {}
+    if weewx_conf:
+        from . import weewxconf
+
+        try:
+            imported = weewxconf.convert(weewxconf.read(weewx_conf))
+            shared = imported.values
+            log.info("weewx.conf at %s supplies %d setting(s) that are not set "
+                     "here", weewx_conf, len(shared))
+        except OSError as exc:
+            log.warning("cannot read %s: %s", weewx_conf, exc)
+
+    return Settings(schema, config=config, args=args, weewx=shared,
+                    prefix=prefix, path=config_path)

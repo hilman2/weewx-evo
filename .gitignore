@@ -1,0 +1,43 @@
+# Working notes for whoever is editing this, and whatever their tooling
+# leaves behind. Neither is part of the software.
+CLAUDE.md
+.claude/
+.cursor/
+.aider*
+.playwright-mcp/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+
+# Reference databases pulled off the live instance. Real measurements,
+# several megabytes, and reproducible with tools/pull-reference.sh.
+/reference/
+# Anything that is a credential. The listener's upload token, the settings
+# page's token, and whatever the compose file reads out of .env. These decide
+# who can write to the archive and who can point it at a different file, so
+# they are named individually rather than trusted to a pattern.
+deploy/.token
+deploy/.admin-token
+deploy/.env
+deploy/*.env
+!deploy/.env.example
+*.token
+!tools/*.token
+
+# The Caddy site file: it names a real host and this repository does not.
+deploy/weewx-evo.caddy
+
+# What a running instance produced. Configuration is per-installation and
+# the databases are the installation.
+/data/
+*.sdb
+*.sdb-shm
+*.sdb-wal
+evo.toml
+plots.toml
+*.bak
+*.part
