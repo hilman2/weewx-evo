@@ -22,7 +22,7 @@ from pathlib import Path
 from ..aggregate import Accumulator, start_of_archive_day
 from ..obstypes import DEFAULT_POLICY, Policy
 from .daily import IntervalError, day_accumulator, weight_of
-from .schema import DAY_COLUMNS, DAY_SUMMARY_VERSION, STATS_COLUMNS, Schema
+from .schema import DAY_COLUMNS, DAY_SUMMARY_VERSION, STATS_COLUMNS
 from .schema import read as read_schema
 from .wview import ARCHIVE_TABLE, DAY_SUMMARIES
 

@@ -352,6 +352,11 @@ def cmd_archive(args: argparse.Namespace) -> int:
              cfg.get("archive_db"))
 
     runner = None
+    # The feeds. This process has the archive, so in a split deployment it is
+    # the one that can produce anything at all -- the listener never sees the
+    # history.
+    feeds = start_feeds(args, cfg)
+
     # An export pointed at a feed has to be told where that feed writes.
     # Without this every one of them is left out at startup with "no feed and
     # no directory set", which reads like the export is wrong when it is not.
@@ -484,13 +489,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # a hundred charts is most of a second, and a second here is a second the
     # archiver is not archiving. What they produce is a directory of files;
     # who moves it anywhere is an export's business.
-    feeds = None
-    charts = load_plots(args, cfg)
-    if len(charts) and cfg.get("feeds.json.enabled") is not False:
-        feeds = feed_runner.Runner(
-            build_feeds(args, cfg, charts), archive_path=Path(cfg.get("archive_db")))
-        feeds.start()
-        log.info("%d chart(s) from %s", len(charts), plots_path(args, cfg))
+    feeds = start_feeds(args, cfg)
 
     # The local web server for whatever the feeds produced. Its own port:
     # the listener answers hardware behind a token and this answers browsers,
@@ -531,6 +530,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 n = archiver.process_due(grace=cfg.get("grace"))
                 if n:
                     log.info("archived %d interval(s)", n)
+                    if feeds is not None:
+                        # Sets a flag and returns, like the exports below. The
+                        # work happens on their own thread.
+                        feeds.record_written()
                     if runner is not None:
                         # Sets a flag and returns. Nothing about an upload
                         # happens on this thread.
@@ -1520,6 +1523,33 @@ def cmd_plots_run(args: argparse.Namespace) -> int:
         print(f"  {drawn.note}")
         print(f"  {drawn.files[0] if drawn.files else drawn.directory}")
     return 0
+
+
+def start_feeds(args: argparse.Namespace,
+                cfg: Settings) -> "feed_runner.Runner | None":
+    """Start the feed runner, or say why there is nothing to run.
+
+    One function for both loops. They had their own copies once and only one
+    of them ever told the runner that a record had landed, so the feeds never
+    produced anything and nothing said why.
+    """
+    charts = load_plots(args, cfg)
+    if not len(charts):
+        log.info("no charts are defined in %s, so no feeds are running. "
+                 "Bring some over with `weewx-evo plots import`.",
+                 plots_path(args, cfg))
+        return None
+    if cfg.get("feeds.json.enabled") is False:
+        log.info("the JSON feed is switched off, so no feeds are running")
+        return None
+
+    runner = feed_runner.Runner(build_feeds(args, cfg, charts),
+                                archive_path=Path(cfg.get("archive_db")))
+    runner.start()
+    where = feed_dirs(cfg)
+    log.info("%d chart(s) from %s, written to %s", len(charts),
+             plots_path(args, cfg), where["json"])
+    return runner
 
 
 def cmd_status(args: argparse.Namespace) -> int:

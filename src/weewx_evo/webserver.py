@@ -31,7 +31,6 @@ from __future__ import annotations
 import html
 import logging
 import mimetypes
-import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

@@ -160,7 +160,7 @@ def main() -> int:
     if schlyter is None or ephem is None:
         print("  skipped")
     else:
-        worst_ours = worst_theirs = 0.0
+        worst_theirs = 0.0
         for name, lat, lon in PLACES:
             for day in DAYS:
                 ts = stamp(day)

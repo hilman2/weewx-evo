@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 #: The kinds a setting can be. Each one is a parser, a check and a form field.

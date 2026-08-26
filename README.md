@@ -214,7 +214,12 @@ python tools/export_test.py                       # FTP und rsync
 python tools/web_test.py                          # der lokale Webserver
 python tools/derive_test.py                       # die Ableitungen
 python -m pytest tests/                           # der Ecowitt-Treiber
+python -m ruff check --select F src/ tools/       # undefinierte Namen
 ```
+
+`ruff` ist der einzige Punkt, an dem ein Werkzeug von außen gebraucht wird,
+und er verdient seinen Platz: ein Aufruf in einer Schleife, die selten läuft,
+wird sonst erst im Betrieb gefunden. Genau so ist es einmal passiert.
 
 Drei vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
 im Pfad:

@@ -67,7 +67,7 @@ def local_export(check) -> int:
     from weewx_evo.exports import ExportError
     from weewx_evo.exports.local import LocalExport
     from weewx_evo.netaccess import Access
-    from weewx_evo.webserver import Site, WebServer, site_from
+    from weewx_evo.webserver import WebServer, site_from
 
     failures = 0
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-local-"))

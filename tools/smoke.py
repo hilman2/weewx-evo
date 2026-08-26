@@ -97,7 +97,6 @@ def main() -> int:
 
         print("\nuploads with the token are stored")
         url = f"{base}/{TOKEN}/ecowitt/"
-        now = int(time.time())
         for i in range(6):
             body = UPLOAD.format(temp=70.0 + i, intemp=74.0 + i * 0.1,
                                  dir=240 + i * 2, wind=1.0 + i * 0.2, gust=2.0 + i * 0.3)

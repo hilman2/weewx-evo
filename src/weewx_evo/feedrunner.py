@@ -118,8 +118,11 @@ class Runner:
         self.runs += 1
         self.last_run = time.time()
         self.last_note = "; ".join(notes)
-        log.debug("feeds in %.2fs -- %s", time.time() - started,
-                  self.last_note)
+        # At info, like the exports. A feed that quietly does nothing is
+        # indistinguishable from one that is not running, and the difference
+        # took an hour to find once.
+        log.info("feeds in %.2fs -- %s", time.time() - started,
+                 self.last_note or "nothing to do")
         return self.last_note
 
     def status(self) -> dict[str, Any]:
