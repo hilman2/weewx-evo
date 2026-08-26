@@ -83,7 +83,7 @@ def archive(path: Path) -> None:
     conn = sqlite3.connect(path)
     conn.execute("CREATE TABLE archive (dateTime INTEGER PRIMARY KEY, "
                  "usUnits INTEGER, `interval` INTEGER, outTemp REAL, "
-                 "barometer REAL, rain REAL)")
+                 "barometer REAL, rain REAL, windDir REAL)")
     # Three days up to now, so `$day` has something in it. Whole days in
     # local time, because degree days are counted per calendar day and a
     # bucket of 86400 seconds is not one.
@@ -92,8 +92,12 @@ def archive(path: Path) -> None:
     while start < time.time():
         # Around 50 F, below the 65 F base, so there are heating degree days
         # and no cooling ones.
-        conn.execute("INSERT INTO archive VALUES (?, 1, 5, ?, ?, ?)",
-                     (start, 45.0 + (start % 28800) / 2880.0, 29.9, 0.0))
+        # 160 degrees is SSE, which is SSO in German -- a point whose name
+        # differs, so the test can tell a translated compass from an
+        # untranslated one.
+        conn.execute("INSERT INTO archive VALUES (?, 1, 5, ?, ?, ?, ?)",
+                     (start, 45.0 + (start % 28800) / 2880.0, 29.9, 0.0,
+                      160.0))
         start += 300
     conn.commit()
     conn.close()
@@ -135,15 +139,44 @@ SKIN_VERSION = 1.2.3
             stale_age = 86400
 """
 
+GERMAN = """
+unit_system = metricwx
+
+[Units]
+    [[Labels]]
+        degree_C = " Grad"
+    [[Ordinates]]
+        directions = N, NNO, NO, ONO, O, OSO, SO, SSO, S, SSW, SW, WSW, W, WNW, NW, NNW, keiner
+
+[Labels]
+    [[Generic]]
+        outTemp = Aussentemperatur
+        barometer = Luftdruck
+
+[Texts]
+    "Current Conditions" = "Aktuelle Werte"
+    "Sunrise" = "Sonnenaufgang"
+"""
+
+AUSTRIAN = """
+[Labels]
+    [[Generic]]
+        barometer = Luftdruck (AT)
+"""
+
 INDEX = """#include "header.inc"
 name=$SKIN_NAME/$SKIN_VERSION
 temp=$current.outTemp
 label=$obs.label.outTemp
+press_label=$obs.label.barometer
 press=$day.barometer.avg
 heat=$year.heatdeg.sum
 cool=$year.cooldeg.sum
 extras=$Extras.radar_url
 walk=#for $x in $observations#$getattr($current, $x) #end for#
+said=$gettext("Current Conditions")
+also=$gettext("Sunrise")
+point=$day.windDir.avg.ordinal_compass
 missing=$current.nosuchreading
 guarded=#if $day.nosuchreading.has_data#yes#else#no#end if#
 """
@@ -275,6 +308,78 @@ def main() -> int:
         failures += not check("but not its templates or its config",
                               (out / "index.html.tmpl").exists()
                               or (out / "skin.conf").exists(), False)
+
+        print("\nand it runs in the language the skin was translated into")
+        # A WeeWX skin keeps its translations in lang/de.conf, and those
+        # files are not word lists: they carry the unit system, the
+        # labels, the compass points and the texts together. Seasons
+        # ships eighteen of them. Reading `lang = de` and not loading
+        # the file is a page that renders perfectly and is entirely in
+        # English.
+        (skin / "lang").mkdir(exist_ok=True)
+        (skin / "lang" / "de.conf").write_text(GERMAN, encoding="utf-8")
+        (skin / "lang" / "de_AT.conf").write_text(AUSTRIAN,
+                                                  encoding="utf-8")
+
+        spoken = Tags(reader, target=units.Target(reader.system),
+                      unit_system=reader.system)
+        german = CheetahFeed(reader, skin, spoken, encoding="utf8",
+                             language="de")
+        german.produce(tmp / "de")
+        page = (tmp / "de" / "index.html").read_text(encoding="utf-8")
+        got = dict(line.split("=", 1) for line in page.splitlines()
+                   if "=" in line)
+        failures += not check("its texts are translated",
+                              got.get("said"), "Aktuelle Werte")
+        failures += not check("and so are its labels",
+                              got.get("press_label"), "Luftdruck")
+        failures += not check("and the points of the compass",
+                              got.get("point"), "SSO")
+
+        # `unit_system = metricwx` at the top of a translation is a
+        # shorthand for a whole [Units][[Groups]] section, and every
+        # German translation starts with one: somebody reading German
+        # almost certainly wants millimetres.
+        failures += not check("its unit system took effect",
+                              got.get("temp", "").endswith(" Grad"), True)
+
+        print("  and the skin still wins over its own translation")
+        # skin.conf says three decimals of Celsius; the translation says
+        # nothing about that, and its own label for degree_C is the same
+        # word. What the skin states explicitly stays stated.
+        failures += not check("three decimals, as skin.conf says",
+                              _decimals(got.get("temp")), 3)
+
+        print("  and a regional file is read on top of its language")
+        austrian = CheetahFeed(reader, skin,
+                               Tags(reader,
+                                    target=units.Target(reader.system),
+                                    unit_system=reader.system),
+                               encoding="utf8", language="de_AT")
+        austrian.produce(tmp / "at")
+        page = (tmp / "at" / "index.html").read_text(encoding="utf-8")
+        got = dict(line.split("=", 1) for line in page.splitlines()
+                   if "=" in line)
+        failures += not check("de_AT reads de.conf first",
+                              got.get("said"), "Aktuelle Werte")
+        # A key the skin does not set itself, so the regional file is the
+        # last word on it. `outTemp` would not do: skin.conf names that one,
+        # and skin.conf beats both translations, which is the point above.
+        failures += not check("then its own on top",
+                              got.get("press_label"), "Luftdruck (AT)")
+
+        print("  and a language with no file is said out loud, not guessed")
+        klingon = CheetahFeed(reader, skin,
+                              Tags(reader,
+                                   target=units.Target(reader.system),
+                                   unit_system=reader.system),
+                              encoding="utf8", language="tlh")
+        klingon.produce(tmp / "tlh")
+        page = (tmp / "tlh" / "index.html").read_text(encoding="utf-8")
+        got = dict(line.split("=", 1) for line in page.splitlines()
+                   if "=" in line)
+        failures += not check("it renders as written",
+                              got.get("label"), "Aussentemperatur")
 
         print("\nstale_age is honoured on the second run")
         again = CheetahFeed(reader, skin, tags, encoding="utf8")

@@ -959,14 +959,15 @@ class Target:
     """
 
     __slots__ = ("system", "overrides", "formats", "labels",
-                 "time_formats", "deltatime_formats")
+                 "time_formats", "deltatime_formats", "ordinals")
 
     def __init__(self, system: int | str = US,
                  overrides: dict[str, str] | None = None,
                  formats: dict[str, str] | None = None,
                  labels: dict[str, Any] | None = None,
                  time_formats: dict[str, str] | None = None,
-                 deltatime_formats: dict[str, str] | None = None) -> None:
+                 deltatime_formats: dict[str, str] | None = None,
+                 ordinals: tuple[str, ...] | None = None) -> None:
         self.system = system_from(system)
         self.overrides = dict(overrides or {})
         #: How many decimals, what to call a unit, and how to print a time.
@@ -976,6 +977,11 @@ class Target:
         self.labels = dict(labels or {})
         self.time_formats = dict(time_formats or {})
         self.deltatime_formats = dict(deltatime_formats or {})
+        #: The sixteen points of the compass and a word for "no wind at
+        #: all". A translation names its own -- N, NNO, NO in German -- and
+        #: they go straight into a sentence, so they are the skin's to
+        #: decide rather than ours.
+        self.ordinals: tuple[str, ...] = tuple(ordinals or ())
         for group, unit in self.overrides.items():
             if group not in SYSTEMS[US]:
                 raise ValueError(f"{group!r} is not a unit group")

@@ -260,12 +260,19 @@ class Value:
 
     @property
     def ordinal_compass(self) -> str:
-        """A bearing as a point of the compass. `$day.wind.vecdir`."""
+        """A bearing as a point of the compass. `$day.wind.vecdir`.
+
+        The skin's own words where it has them: a German page says NNO
+        where an English one says NNE, and the difference goes straight
+        into a sentence.
+        """
+        points = (self.target.ordinals if self.target
+                  and self.target.ordinals else COMPASS)
         if self.value is None:
-            return COMPASS[-1]
-        sector = 360.0 / (len(COMPASS) - 1)
+            return points[-1]
+        sector = 360.0 / (len(points) - 1)
         degrees = (float(self.value) + sector / 2.0) % 360.0
-        return COMPASS[int(degrees / sector)]
+        return points[int(degrees / sector)]
 
     def json(self, **_kwargs: Any) -> str:
         import json as _json

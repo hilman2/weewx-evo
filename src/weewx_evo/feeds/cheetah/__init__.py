@@ -80,13 +80,17 @@ class CheetahFeed:
     def __init__(self, reader: Reader, skin: Path, tags: Tags,
                  encoding: str = "html_entities",
                  copy_static: bool = True,
-                 stale_ok: bool = True) -> None:
+                 stale_ok: bool = True,
+                 language: str = "") -> None:
         self.reader = reader
         #: The skin's own directory, holding skin.conf and the templates.
         self.skin = Path(skin)
         self.tags = tags
         self.encoding = encoding
         self.copy_static = copy_static
+        #: Which of the skin's translations to run it in. Empty means what
+        #: the skin itself says, which is usually English.
+        self.language = str(language or "").strip()
         #: Honour a template's `stale_age`. A year page built from daily
         #: averages says the same thing at ten past as at ten o'clock.
         self.stale_ok = stale_ok
@@ -143,14 +147,39 @@ class CheetahFeed:
     # -- reading the skin -------------------------------------------------
 
     def _skin_conf(self) -> dict[str, Any] | None:
+        """The skin's configuration, in the language it is being run in.
+
+        A WeeWX skin keeps its translations in `lang/de.conf` and so on, and
+        those files are not word lists: they are whole skin configurations,
+        carrying the unit system, the labels, the compass points and the
+        texts together. `lang = de` in skin.conf selects one.
+
+        The language file goes *under* skin.conf, which is WeeWX's order and
+        the sensible one: the translation supplies everything, and anything
+        the skin's author said explicitly still wins.
+        """
         path = self.skin / "skin.conf"
         if not path.is_file():
             return None
         try:
-            return weewxconf.read(path)
+            conf = weewxconf.read(path)
         except OSError as exc:
             log.error("could not read %s: %s", path, exc)
             return None
+
+        code = self.language or str(conf.get("lang") or "").strip()
+        if not code:
+            return conf
+        spoken = _language_conf(self.skin / "lang", code)
+        if not spoken:
+            log.info("%s has no translation for %r; running it as written",
+                     self.skin.name, code)
+            return conf
+        merged = _merge(spoken, conf)
+        merged["lang"] = code
+        _apply_unit_system(merged)
+        log.info("%s is being rendered in %r", self.skin.name, code)
+        return merged
 
     def _extras(self, conf: dict[str, Any]) -> None:
         """Carry the skin's own settings and words into the tags.
@@ -232,6 +261,12 @@ class CheetahFeed:
             found = block.get(key)
             if isinstance(found, dict):
                 into.update(found)
+
+        ordinates = block.get("Ordinates")
+        if isinstance(ordinates, dict):
+            points = ordinates.get("directions")
+            if isinstance(points, (list, tuple)) and len(points) > 1:
+                target.ordinals = tuple(str(p) for p in points)
 
         degree = block.get("DegreeDays")
         if isinstance(degree, dict):
@@ -500,6 +535,14 @@ class CheetahFeed:
                        help="Where skins are looked for. A WeeWX "
                             "installation keeps them in `skins`; that "
                             "directory can be used directly."),
+                Option("lang", "Language", kind="choice", default="",
+                       choices=(("", "As the skin says"),),
+                       choices_from=_skin_languages,
+                       help="A WeeWX skin keeps its translations in its own "
+                            "lang directory, and those files carry the unit "
+                            "system, the labels and the points of the "
+                            "compass along with the words. The list is what "
+                            "the chosen skin has."),
                 Option("destination", "Directory", default="",
                        advanced=True,
                        help="Under the feed output directory. Empty means a "
@@ -609,6 +652,113 @@ def _find(name: str, base: Path, skin: Path) -> Path | None:
     return None
 
 
+#: What a language file is called, where a skin ships more than the code.
+#: Only the ones WeeWX's own skins carry; anything else is offered by its
+#: code, which is what the file is named anyway.
+LANGUAGE_NAMES = {
+    "ca": "Catalan", "cz": "Czech", "de": "German", "en": "English",
+    "en_AU": "English (Australia)", "en_CA": "English (Canada)",
+    "en_GB": "English (United Kingdom)", "en_NZ": "English (New Zealand)",
+    "es": "Spanish", "fi": "Finnish", "fr": "French", "gr": "Greek",
+    "it": "Italian", "nl": "Dutch", "no": "Norwegian", "th": "Thai",
+    "zh": "Chinese", "zh_CN": "Chinese (simplified)",
+}
+
+
+def _skin_languages() -> list[tuple[str, str]]:
+    """Which translations the chosen skin has, for the dropdown.
+
+    Read off the skin rather than listed here: a skin somebody wrote last
+    week with one extra language should offer it without anything being
+    told.
+    """
+    from ...options import running_config
+
+    current = running_config()
+    out: list[tuple[str, str]] = []
+    for settings in (current.get("feeds") or {}).values():
+        if not isinstance(settings, dict) or settings.get("kind") != "cheetah":
+            continue
+        skins = Path(str(settings.get("skins_dir") or "skins"))
+        chosen = str(settings.get("skin") or "").strip()
+        where = (skins / chosen / "lang") if chosen else None
+        if where is None or not where.is_dir():
+            continue
+        for path in sorted(where.glob("*.conf")):
+            code = path.stem
+            said = LANGUAGE_NAMES.get(code, code)
+            if (code, said) not in out:
+                out.append((code, said))
+    return out
+
+
+def _language_conf(where: Path, code: str) -> dict[str, Any]:
+    """A skin's translation, read from its `lang` directory.
+
+    `de_AT` reads `de.conf` and then `de_AT.conf` over it, so a regional
+    file only has to carry what it says differently. Any encoding suffix --
+    `de_AT.utf8` -- is dropped first. WeeWX's arrangement exactly, because
+    the files are WeeWX's.
+    """
+    if not where.is_dir():
+        return {}
+    country = str(code).split(".")[0]
+    parts = country.split("_")
+    wanted = [parts[0]] if len(parts) == 1 else [parts[0], country]
+
+    found: dict[str, Any] = {}
+    for name in wanted:
+        path = where / f"{name}.conf"
+        if not path.is_file():
+            continue
+        try:
+            found = _merge(found, weewxconf.read(path))
+        except OSError as exc:
+            log.warning("could not read %s: %s", path, exc)
+    return found
+
+
+def _merge(base: dict[str, Any], over: dict[str, Any]) -> dict[str, Any]:
+    """`over` on top of `base`, section by section.
+
+    Deep, because a skin that names one label must not lose the other
+    hundred the translation supplied.
+    """
+    out = dict(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _apply_unit_system(conf: dict[str, Any]) -> None:
+    """Honour `unit_system = metricwx` at the top of a skin or a translation.
+
+    It is a shorthand for a whole `[Units][[Groups]]` section, and the
+    German translations of every WeeWX skin start with it -- somebody
+    reading German almost certainly wants millimetres. Written underneath
+    the groups the skin names itself, which stay.
+    """
+    name = str(conf.get("unit_system") or "").strip()
+    if not name:
+        return
+    try:
+        system = units.system_from(name)
+    except (KeyError, ValueError):
+        log.warning("unit_system = %r is not one this knows", name)
+        return
+    block = conf.setdefault("Units", {})
+    if not isinstance(block, dict):
+        return
+    groups = block.setdefault("Groups", {})
+    if not isinstance(groups, dict):
+        return
+    for group, unit in units.SYSTEMS.get(system, {}).items():
+        groups.setdefault(group, unit)
+
+
 def _filename(template: str, when: float) -> str:
     """`index.html.tmpl` becomes `index.html`; `NOAA-%Y-%m.txt.tmpl` a month.
 
@@ -682,6 +832,7 @@ def from_settings(settings: Any, reader: Reader,
         encoding=str(option("encoding") or "html_entities"),
         copy_static=option("copy_static") is not False,
         stale_ok=option("stale_ok") is not False,
+        language=str(option("lang") or "").strip(),
     )
     # An explicit choice on the feed's page beats what the skin asked for.
     # Left empty, the skin decides, which is the point of running it at all.

@@ -464,6 +464,15 @@ def _current_config() -> dict:
         return {}
 
 
+def running_config() -> dict:
+    """What the configuration says, for a list that has to name reality.
+
+    The same answer `_current_config` works out; named without the
+    underscore because feeds outside this module need it too.
+    """
+    return _current_config()
+
+
 def defined_feeds() -> list[tuple[str, str]]:
     """The feeds that exist, by the names the operator gave them.
 

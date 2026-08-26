@@ -71,7 +71,16 @@ def parse(text: str) -> dict[str, Any]:
         entry = _ENTRY.match(line)
         if entry:
             key, value = entry.groups()
-            stack[-1][key.strip()] = _value(value)
+            # A quoted key is how a name with spaces in it is written, and
+            # a `[Texts]` section is nothing but those:
+            #
+            #     "Current Conditions" = "Aktuelle Werte"
+            #
+            # ConfigObj takes the quotes off and so must this, or every
+            # translated string in every skin is filed under a name no
+            # template ever asks for -- which is a page that renders
+            # perfectly and is entirely in English.
+            stack[-1][_key(key)] = _value(value)
 
     root.pop("__orphan__", None)
     return root
@@ -115,6 +124,14 @@ def _split_outside(text: str) -> list[str]:
             current.append(char)
     parts.append("".join(current))
     return parts
+
+
+def _key(text: str) -> str:
+    """A key as it is meant, with any quotes around it taken off."""
+    name = text.strip()
+    if len(name) > 1 and name[0] == name[-1] and name[0] in "\"'":
+        return name[1:-1]
+    return name
 
 
 def _value(text: str) -> Any:
