@@ -116,6 +116,41 @@ class _FunctionDriver(BaseDriver):
         return self._fn(body, meta)
 
 
+def _parsed(factory: Callable[..., object],
+            options: dict[str, Any]) -> dict[str, Any]:
+    """Options in the shape the driver declared, not the shape the file had.
+
+    A driver says `kind="duration"` and then gets handed the string `"4h"`,
+    because that is what is written in the configuration file. Every driver
+    parsing its own values again is the thing the option schema exists to
+    stop, and one that forgets gets a `ValueError` at startup -- caught, and
+    then quietly running on its default.
+
+    So the driver's own declaration is applied here, once. Anything the schema
+    cannot make sense of is dropped rather than passed on, so the driver
+    falls back to its own default and the station keeps recording. Said
+    loudly, because the setting is not doing what whoever wrote it thinks.
+    """
+    from ..options import schema_of
+
+    schema = schema_of(factory, name="driver", label="driver")
+    if schema is None:
+        return options
+
+    out = dict(options)
+    for _group, option in schema:
+        if option.name not in out:
+            continue
+        try:
+            out[option.name] = option.parse(out[option.name])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("driver setting %s = %r is not usable (%s);"
+                        " falling back to the default, %r", option.name,
+                        out[option.name], exc, option.default)
+            del out[option.name]
+    return out
+
+
 class Registry:
     """The drivers this installation has.
 
@@ -156,6 +191,7 @@ class Registry:
         factory = self._factories.get(name)
         if factory is None:
             return self._drivers.get(name)
+        options = _parsed(factory, options)
         try:
             driver = factory(**options)
         except Exception:

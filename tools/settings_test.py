@@ -149,6 +149,30 @@ def main() -> int:
         failures += not check("and the new value is there", live.get("port"), 8200)
         failures += not check("what the file dropped went back to its default",
                               live.get("interval"), 300)
+        print("\na driver gets its options in the shape it declared them")
+        # A driver declares kind="duration" and the file holds "4h". Handed
+        # the string, `int("4h")` raises at startup, the exception is caught,
+        # and the driver runs on its default. Nothing in a log reads as a
+        # wrong setting, and the option silently does nothing.
+        from weewx_evo.ingest import drivers as driver_registry
+
+        registry = driver_registry.DEFAULT
+        registry.load()
+        built = registry.configure("ecowitt", {"max_behind": "4h",
+                                               "max_ahead": "5m"})
+        failures += not check("a duration arrives as seconds",
+                              getattr(built, "max_behind", None), 14400)
+        failures += not check("and so does the other one",
+                              getattr(built, "max_ahead", None), 300)
+
+        # And a value nothing can read must not take the station down with
+        # it: the driver falls back to its own default and keeps recording.
+        built = registry.configure("ecowitt", {"max_behind": "gestern"})
+        failures += not check("an unreadable one falls back",
+                              getattr(built, "max_behind", None), 3600)
+        failures += not check("rather than leaving no driver at all",
+                              built is not None, True)
+
     finally:
         os.environ.clear()
         os.environ.update(saved_env)
