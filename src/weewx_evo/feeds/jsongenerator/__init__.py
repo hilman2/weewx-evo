@@ -422,7 +422,11 @@ def _document(chart: chartdata.Chart, generated: float) -> dict[str, Any]:
             entry["vector_x"] = line.vector_x
             entry["vector_y"] = line.vector_y
             if line.vector_rotate is not None:
-                entry["vector_rotate"] = line.vector_rotate
+                # Negated on the way out, as the ImageGenerator has it: a
+                # client draws where y grows downwards, and without the
+                # minus the arrows come out mirrored against the PNG of the
+                # same data.
+                entry["vector_rotate"] = -line.vector_rotate
             entry["rose_label"] = "N"
         if line.marker:
             entry["marker"] = line.marker

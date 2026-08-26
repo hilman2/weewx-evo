@@ -476,6 +476,7 @@ class ImageGenerator:
         per_unit = box.height / (high - low)
         rotate = math.radians(line.vector_rotate or 0.0)
         step = max(1, len(line.time) // 48)
+        drawn = None
 
         for i in range(0, len(line.time), step):
             east = line.vector_x[i] if line.vector_x else None
@@ -483,17 +484,13 @@ class ImageGenerator:
             if east is None or north is None:
                 continue
             x = self._x(line.time[i], box, chart)
-            dx = east * per_unit
-            dy = north * per_unit
-            if rotate:
-                dx, dy = (dx * math.cos(rotate) - dy * math.sin(rotate),
-                          dx * math.sin(rotate) + dy * math.cos(rotate))
-            # Screen y grows downwards; north is up.
-            tip = (x + dx, middle - dy)
+            tip = _turned(x, middle, east * per_unit, north * per_unit, rotate)
             sheet.line([(x, middle), tip], color, look.line_width * 0.8)
             self._arrow_head(sheet, (x, middle), tip, color, look)
+            drawn = True
 
-        self._draw_rose(sheet, box, look, color, rotate)
+        if drawn:
+            self._draw_rose(sheet, box, look, color, rotate)
 
     def _draw_rose(self, sheet: drawing.Canvas, box: drawing.Box,
                    look: theming.Theme, color: str, rotate: float) -> None:
@@ -509,14 +506,12 @@ class ImageGenerator:
         centre_y = box.bottom - size * 0.75
         reach = size * 0.5
 
-        # Straight up before the rotation, which is what north is on a chart
-        # nobody has turned.
-        dx, dy = 0.0, -reach
-        if rotate:
-            dx, dy = (dx * math.cos(rotate) - dy * math.sin(rotate),
-                      dx * math.sin(rotate) + dy * math.cos(rotate))
-        tip = (centre_x + dx, centre_y + dy)
-        tail = (centre_x - dx, centre_y - dy)
+        # A pure northerly, put through the same turn as every arrow on the
+        # chart. Drawn that way rather than rotated on its own so that the
+        # two cannot come apart: a rose pointing somewhere the data does not
+        # is worse than no rose, because it is believed.
+        tip = _turned(centre_x, centre_y, 0.0, reach, rotate)
+        tail = (2 * centre_x - tip[0], 2 * centre_y - tip[1])
         sheet.line([tail, tip], color, look.line_width * 0.8, 0.9)
         self._arrow_head(sheet, tail, tip, color, look)
         # The middle is filled with the page before the ring goes on it.
@@ -692,6 +687,25 @@ def _target(settings: Any, option: Any) -> units.Target:
         # than stopping a station from drawing anything at all.
         log.error("%s -- the overrides are being ignored", exc)
         return units.Target(wanted)
+
+
+def _turned(x: float, y: float, east: float, north: float,
+            rotate: float) -> tuple[float, float]:
+    """Where an arrow of this much east and this much north ends up.
+
+    In screen pixels, from a point. Two turns of the handle, and both are
+    easy to get backwards, so they happen here once:
+
+    - `rotate` is WeeWX's `vector_rotate`, positive anticlockwise, applied
+      to the value before anything is drawn. A skin sets it to ninety, and
+      with the sign the wrong way round every arrow on the chart points
+      exactly opposite to the PNG WeeWX would have drawn.
+    - Screen y grows downwards and north does not.
+    """
+    if rotate:
+        east, north = (east * math.cos(rotate) - north * math.sin(rotate),
+                       east * math.sin(rotate) + north * math.cos(rotate))
+    return x + east, y - north
 
 
 def _number(value: Any) -> float | None:

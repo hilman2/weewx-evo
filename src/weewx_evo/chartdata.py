@@ -72,6 +72,9 @@ class Line:
     #: A vector series split into how far east and how far north.
     vector_x: list[Any] | None = None
     vector_y: list[Any] | None = None
+    #: How far to turn the arrows, in degrees, positive anticlockwise. A
+    #: skin sets it so that a chart reads with north up the page even where
+    #: the plot is drawn sideways.
     vector_rotate: float | None = None
     aggregate_type: str = ""
     aggregate_interval: Any = None
@@ -231,9 +234,12 @@ def _line(definition: Any, reader: Reader, start: int, stop: int,
         line.vector_x, line.vector_y = components(
             line.values, line.directions, rounding)
         if definition.rotate is not None:
-            # Negated, as the ImageGenerator has it. Without the minus the
-            # arrows come out mirrored against the PNG of the same data.
-            line.vector_rotate = -float(definition.rotate)
+            # As the plot defines it, positive anticlockwise, which is what
+            # WeeWX's `vector_rotate` means. Not negated: the negation
+            # belongs to the JSON document, whose readers draw in screen
+            # coordinates where y grows downwards, and burying it here made
+            # every arrow on a rotated chart point the opposite way.
+            line.vector_rotate = float(definition.rotate)
 
     drop_empty(line, definition.gap_fraction, stop - start,
                aggregated=bool(definition.aggregate))

@@ -25,6 +25,7 @@ The rest are the ones that look fine in a browser and are wrong:
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -248,6 +249,41 @@ def main() -> int:
         large = blind.measure("Outside Temperature", 20)[0]
         failures += not check("even without one installed",
                               large > small * 1.5, True)
+
+        print("\nan arrow points where WeeWX points it")
+        # Two sign conventions meet here and both are easy to invert.
+        # WeeWX builds the components the same way we do:
+        #
+        #     east  = mag * cos(radians(90 - direction))
+        #     north = mag * sin(radians(90 - direction))
+        #
+        # then draws with a NEGATIVE yscale and subtracts the x term
+        # (weeplot/utilities.py, ScaledDraw.vector). Worked through,
+        # that comes to:
+        #
+        #     screen_dx =  east*cos(r) - north*sin(r)
+        #     screen_dy = -east*sin(r) - north*cos(r)
+        #
+        # with r the plot's vector_rotate, positive anticlockwise. The
+        # rotation used to be stored already negated, so at r = 90 --
+        # which is WeeWX's own default -- every arrow pointed exactly
+        # the opposite way, and nothing about one chart looked wrong.
+        from weewx_evo.feeds.imagegenerator import _turned
+
+        def weewx_says(east, north, degrees):
+            r = math.radians(degrees)
+            return (east * math.cos(r) - north * math.sin(r),
+                    -east * math.sin(r) - north * math.cos(r))
+
+        for degrees in (0, 90, 180, -90, 37):
+            for east, north in ((0.0, 1.0), (1.0, 0.0), (0.6, -0.8)):
+                want = weewx_says(east, north, degrees)
+                got = _turned(0.0, 0.0, east, north,
+                              math.radians(degrees))
+                failures += not check(
+                    f"east {east}, north {north}, turned {degrees}",
+                    (round(got[0], 9), round(got[1], 9)),
+                    (round(want[0], 9), round(want[1], 9)))
 
         print("\na wind chart says which way is north")
         # Without it a field of arrows has no key, and a plot may turn
