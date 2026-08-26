@@ -1433,10 +1433,11 @@ def feed_dirs(cfg: Settings) -> dict[str, Path]:
     root = Path(cfg.get("feeds_dir") or "data/feeds")
     return {
         "json": root / (cfg.get("feeds.json.destination") or "json"),
-        # The diagnostic page sits above the JSON rather than beside it: it
-        # draws what is in there, and an export pointed at it gets the page
-        # and the data it draws from in one directory.
-        "diagnostic": root,
+        # Its own directory, not the root. Putting it above the JSON meant
+        # an export pointed at the page published the whole data directory
+        # with it -- a second copy of every file, for a page that carries
+        # its data inside itself.
+        "diagnostic": root / "diagnostic",
     }
 
 
