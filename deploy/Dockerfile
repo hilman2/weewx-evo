@@ -1,7 +1,12 @@
-# weewx-evo has no dependencies outside the standard library, so there is
-# nothing to install and nothing to pin. That is worth keeping: a weather
-# station runs for years without being touched, and every dependency is a
-# thing that can stop working while nobody is looking.
+# weewx-evo itself has no dependencies outside the standard library. That is
+# worth keeping: a weather station runs for years without being touched, and
+# every dependency is a thing that can stop working while nobody is looking.
+#
+# One feed is the exception, and it has to be. The Cheetah feed runs an
+# existing WeeWX skin, unchanged -- Cheetah *is* what such a skin is written
+# in, so there is no version of that feed without it. It is imported where it
+# is used, so a station that runs no skin never loads it, and the core stays
+# what it says it is.
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -11,6 +16,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # The archive day boundary is local time, so the container's timezone is part
 # of the data, not a display setting.
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# CT3 is the maintained Cheetah, and the one WeeWX 5 depends on. Pinned,
+# because a template language that changes under a skin is exactly the fault
+# this project exists to avoid.
+RUN pip install --no-cache-dir "CT3==3.4.0.post5"
 
 WORKDIR /app
 # The bundled drivers come with the source; weewx-ecowitt is one of them.
