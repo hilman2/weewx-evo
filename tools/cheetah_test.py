@@ -164,7 +164,9 @@ AUSTRIAN = """
         barometer = Luftdruck (AT)
 """
 
-INDEX = """#include "header.inc"
+INDEX = """#from datetime import datetime
+#include "header.inc"
+year=$datetime(2021, 3, 4).year
 name=$SKIN_NAME/$SKIN_VERSION
 temp=$current.outTemp
 label=$obs.label.outTemp
@@ -181,7 +183,10 @@ missing=$current.nosuchreading
 guarded=#if $day.nosuchreading.has_data#yes#else#no#end if#
 """
 
-HEADER = '#include "deeper.inc"\nheader=yes\n'
+HEADER = ('#import datetime' + chr(10)
+          + '#include "deeper.inc"' + chr(10)
+          + 'header=yes' + chr(10)
+          + 'stamped=$datetime.datetime(2020, 1, 2).year' + chr(10))
 DEEPER = "deeper=yes\n"
 FRESH = "fresh=$current.outTemp\n"
 
@@ -227,11 +232,21 @@ def main() -> int:
         page = (out / "index.html").read_text(encoding="utf-8")
         got = dict(line.split("=", 1) for line in page.splitlines() if "=" in line)
 
-        print("\nan include is spliced in, however deep")
+        print("\nan include is included, however deep")
         # Cheetah would resolve these against the process's directory. If
         # that ever comes back, this is where it shows.
         failures += not check("one level", got.get("header"), "yes")
         failures += not check("two levels", got.get("deeper"), "yes")
+        # And each part keeps its own imports. Splicing them into one file
+        # was the first way this worked, and it puts two meanings of the
+        # name `datetime` in one namespace: one file says `#import
+        # datetime` and another `#from datetime import datetime`, and
+        # whichever loses takes the page down with "module 'datetime' has
+        # no attribute 'now'". Both spellings are here on purpose.
+        failures += not check("the includer's import still means what it did",
+                              got.get("year"), "2021")
+        failures += not check("and so does the included file's",
+                              got.get("stamped"), "2020")
 
         print("\nthe skin's own file decides how a page reads")
         failures += not check("its name", got.get("name"), "Testing/1.2.3")

@@ -38,6 +38,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import tempfile
 import time
 import unicodedata
 from pathlib import Path
@@ -102,6 +103,11 @@ class CheetahFeed:
         self.summaries: dict[str, list[str]] = {}
         #: The plain values at the top of skin.conf, for `$SKIN_NAME`.
         self.skin_values: dict[str, Any] = {}
+        #: Where the prepared templates live -- the skin's own, with their
+        #: includes made absolute. Made on the first run and refreshed only
+        #: where a file has changed, so a station rewrites nothing per
+        #: interval.
+        self.work: Path = Path(tempfile.gettempdir()) / _work_name(self.skin)
         #: Whether the skin decides which units it is shown in. False once
         #: the operator has picked a system on the feed's own page.
         self.skin_units = True
@@ -116,6 +122,7 @@ class CheetahFeed:
         self.failed = []
         self.summaries = {name: [] for name in SUMMARIES}
 
+        prepare(self.skin, self.work)
         conf = self._skin_conf()
         if conf is None:
             return Produced(directory=into,
@@ -401,11 +408,12 @@ class CheetahFeed:
             return None
 
         try:
-            source = expand_includes(
-                template.read_text(encoding="utf-8"), template.parent,
-                self.skin)
+            # From the prepared copy, so Cheetah does its own including and
+            # each part keeps its own imports. `file=` rather than
+            # `source=`: that is what makes an include an include.
+            prepared = self.work / template.relative_to(self.skin)
             rendered = Cheetah.Template.Template(
-                source=source,
+                file=str(prepared),
                 searchList=self._search_list(span, page, relative,
                                              encoding)).respond()
         except Exception as exc:
@@ -597,50 +605,116 @@ _INCLUDE = re.compile(r'^([ \t]*)#include\s+(raw\s+)?"([^"]+)"[ \t]*$',
 #: far past any real nesting and stops the recursion being a hang.
 MAX_INCLUDE_DEPTH = 10
 
+#: Where preparing starts. Anything one of these includes is prepared too,
+#: whatever it is called -- wdc includes `icons/wdc.svg`, and an SVG in a
+#: template is still template source. Everything a skin ships that nothing
+#: includes stays where it is and is published from there.
+TEMPLATE_SUFFIXES = (".tmpl", ".inc")
 
-def expand_includes(text: str, base: Path, skin: Path,
-                    depth: int = 0) -> str:
-    """Splice `#include`d files in, recursively.
 
-    Cheetah resolves an include against the process's current directory, so a
-    skin only works if something has changed into its directory first. WeeWX
-    does exactly that -- `os.chdir` from inside the report thread -- and it
-    works there because nothing else in the process uses a relative path.
+def prepare(skin: Path, work: Path) -> Path:
+    """A copy of the skin's templates whose includes point at each other.
 
-    Here a listener is answering hardware on other threads while this runs,
-    and a directory that moves under them is the kind of fault that happens
-    once a month and cannot be reproduced. `#include` is a textual include at
-    compile time, so splicing the text in is the same thing done without
-    touching the process.
+    Cheetah resolves `#include "layout/head.inc"` against the process's
+    *current directory*, so a skin only works if something has changed into
+    its directory first. WeeWX does exactly that -- `os.chdir` from inside
+    the report thread -- and it gets away with it because nothing else in
+    the process uses a relative path. Here a listener is answering hardware
+    on other threads, and a directory that moves under them is the fault
+    that happens once a month and cannot be reproduced.
 
-    A file is looked for beside the one including it, then in the skin's own
-    directory, which is what a chdir to the skin root would have found.
+    So the paths are made absolute instead, in a copy. The obvious cheaper
+    thing -- splicing each included file into the text of the one that
+    includes it -- was what this did first, and it is wrong: Cheetah
+    compiles an include as its *own unit*, so each part keeps its own
+    imports. Glued together, one file's `#from datetime import datetime`
+    and another's `#import datetime` are the same name twice, and whichever
+    loses takes the page down with `module 'datetime' has no attribute
+    'now'`. Measured: two files that render correctly through Cheetah's own
+    include raise a TypeError spliced.
     """
-    if depth > MAX_INCLUDE_DEPTH:
-        log.warning("giving up on #include past %d deep in %s",
-                    MAX_INCLUDE_DEPTH, base)
-        return text
+    work.mkdir(parents=True, exist_ok=True)
+    done: set[Path] = set()
+    for source in sorted(skin.rglob("*")):
+        if source.is_file() and source.suffix.lower() in TEMPLATE_SUFFIXES:
+            _prepare_one(source, skin, work, done)
+    return work
 
-    def splice(match: re.Match) -> str:
+
+def _prepare_one(source: Path, skin: Path, work: Path,
+                 done: set[Path], depth: int = 0) -> None:
+    """One file, and then whatever it includes."""
+    if source in done or depth > MAX_INCLUDE_DEPTH:
+        return
+    done.add(source)
+    try:
+        text = source.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        log.debug("not preparing %s: %s", source, exc)
+        return
+
+    target = work / source.relative_to(skin)
+    try:
+        if not (target.is_file()
+                and target.stat().st_mtime >= source.stat().st_mtime):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                _absolute_includes(text, source.parent, skin, work),
+                encoding="utf-8")
+    except OSError as exc:
+        log.warning("could not prepare %s: %s", source, exc)
+        return
+
+    for match in _INCLUDE.finditer(text):
+        if match.group(2):
+            # `raw` is read from the skin itself and never rewritten.
+            continue
+        found = _find(match.group(3), source.parent, skin)
+        if found is not None and _inside(found, skin):
+            _prepare_one(found, skin, work, done, depth + 1)
+
+
+def _inside(path: Path, skin: Path) -> bool:
+    """Whether a file is part of the skin, so a copy of it makes sense."""
+    try:
+        path.relative_to(skin)
+    except ValueError:
+        return False
+    return True
+
+
+def _absolute_includes(text: str, base: Path, skin: Path, work: Path) -> str:
+    """Point every `#include` at a full path, so no directory has to move."""
+    def rewrite(match: re.Match) -> str:
         indent, raw, name = match.group(1), match.group(2), match.group(3)
         found = _find(name, base, skin)
         if found is None:
             log.warning("%s includes %r, which is not there", base, name)
             # Left as it was, so Cheetah reports it against the real line
-            # rather than this quietly rendering a page with a hole in it.
+            # rather than this rendering a page with a hole in it.
             return match.group(0)
         if raw:
-            # Raw means "do not parse this". Splicing it would parse it, so
-            # the path is made absolute and Cheetah reads it itself.
+            # Raw means "do not parse this", so it comes from the skin
+            # itself: there is nothing in it for us to have rewritten.
             return f'{indent}#include raw "{found.as_posix()}"'
-        try:
-            inner = found.read_text(encoding="utf-8")
-        except OSError as exc:
-            log.warning("could not read %s: %s", found, exc)
-            return match.group(0)
-        return expand_includes(inner, found.parent, skin, depth + 1)
+        here = work / found.relative_to(skin)
+        return f'{indent}#include "{here.as_posix()}"'
 
-    return _INCLUDE.sub(splice, text)
+    return _INCLUDE.sub(rewrite, text)
+
+
+def _work_name(skin: Path) -> str:
+    """A directory name that says which skin it belongs to.
+
+    Readable, then eight hex characters of the whole path: two skins called
+    Seasons in two installations must not share a working directory.
+    """
+    import hashlib
+
+    text = str(skin)
+    name = "".join(c if c.isalnum() else "-" for c in skin.name)[:32]
+    stamp = hashlib.sha1(text.encode()).hexdigest()[:8]  # noqa: S324
+    return f"weewx-evo-skin-{name or 'skin'}-{stamp}"
 
 
 def _find(name: str, base: Path, skin: Path) -> Path | None:

@@ -65,6 +65,25 @@ STARTED = time.time()
 #: The builtin, kept because `Value.round` shadows the name inside the class.
 _round = round
 
+#: Names a template imports rather than asks us for.
+#:
+#: Cheetah looks a `$name` up in the search list *before* the frame the
+#: template was compiled in, so an object that answers everything -- which
+#: `Tags` deliberately is -- swallows the template's own imports. A skin
+#: writing `#import datetime` and then `$datetime.now()` gets our polite
+#: `?'datetime'?` where WeeWX hands it the module, because WeeWX's search
+#: list does not answer for a name it has never heard of.
+#:
+#: Declining these by name is the narrow fix. The wide one -- answer only
+#: what we know about -- is exactly what must not happen: the whole point
+#: of the tag layer is that `$day.<anything>` works for a sensor nobody
+#: wrote down.
+IMPORTED = {
+    "datetime", "date", "timedelta", "time", "calendar", "math", "os",
+    "sys", "json", "random", "re", "string", "itertools", "collections",
+    "strftime", "strptime", "locale", "decimal", "operator", "Decimal",
+}
+
 #: Attributes Cheetah's NameMapper probes for on every lookup. Answering them
 #: with a database query would be a query per attribute per tag.
 IGNORE = {
@@ -1484,7 +1503,10 @@ class Tags:
 
     def __getattr__(self, name: str) -> Any:
         """Anything not defined above. Counted, and reported afterwards."""
-        if name.startswith("_") or name in IGNORE:
+        if name.startswith("_") or name in IGNORE or name in IMPORTED:
+            # IMPORTED raises rather than misses: raising is what sends
+            # Cheetah on to the frame the template was compiled in, where
+            # its own `#import datetime` is waiting.
             raise AttributeError(name)
         return self.missed(name)
 
