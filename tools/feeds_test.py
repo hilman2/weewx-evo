@@ -81,7 +81,26 @@ feeds.imperial.units = "US"
 
 feeds.page.kind = "diagnostic"
 feeds.page.source = "metric"
+
+feeds.theme.kind = "cheetah"
+feeds.theme.skin = "Tiny"
+feeds.theme.skins_dir = "{(tmp / "skins").as_posix()}"
+feeds.theme.encoding = "utf8"
 ''', encoding="utf-8")
+
+        # A skin is a directory of templates, and a feed of this kind runs
+        # one. Two of them side by side is the case WeeWX cannot do without
+        # running its whole report cycle twice.
+        skin = tmp / "skins" / "Tiny"
+        skin.mkdir(parents=True)
+        (skin / "skin.conf").write_text(
+            "[CheetahGenerator]\n"
+            "    [[ToDate]]\n"
+            "        [[[index]]]\n"
+            "            template = index.html.tmpl\n",
+            encoding="utf-8")
+        (skin / "index.html.tmpl").write_text(
+            "temp=$current.outTemp\n", encoding="utf-8")
 
         charts = plot_defs.PlotSet([
             plot_defs.Plot("daytemp", "day", 86400,
@@ -92,25 +111,25 @@ feeds.page.source = "metric"
         args = argparse.Namespace(config=config, weewx_conf=None)
         cfg = settings_for(args)
 
-        print("three feeds, two kinds")
+        print("four feeds, three kinds")
         found = configured_feeds(args)
-        failures += not check("all three are configured", sorted(found),
-                              ["imperial", "metric", "page"])
+        failures += not check("all four are configured", sorted(found),
+                              ["imperial", "metric", "page", "theme"])
         failures += not check("two of them are the same kind",
                               sorted(f["kind"] for f in found.values()),
-                              ["diagnostic", "json", "json"])
+                              ["cheetah", "diagnostic", "json", "json"])
 
         print("\neach writes its own directory")
         where = feed_dirs(cfg, args)
-        failures += not check("three directories, no two the same",
-                              len(set(where.values())), 3)
+        failures += not check("four directories, no two the same",
+                              len(set(where.values())), 4)
         failures += not check("named after the feed",
                               where["metric"].name, "metric")
 
         print("\nand each reads its own settings")
         runner = Runner(build_feeds(args, cfg, charts), archive_path=db)
         note = runner.run_once()
-        failures += not check("all three ran", note.count(":"), 3)
+        failures += not check("all four ran", note.count(":"), 4)
 
         metric = json.loads((where["metric"] / "daytemp.json")
                             .read_text(encoding="utf-8"))
@@ -131,6 +150,19 @@ feeds.page.source = "metric"
         failures += not check("and drew what the metric feed wrote",
                               "daytemp.json" in page.read_text(
                                   encoding="utf-8"), True)
+
+        print("\nthe skin ran too, on the same database")
+        rendered = where["theme"] / "index.html"
+        failures += not check("its page was written", rendered.exists(),
+                              True)
+        page_text = rendered.read_text(encoding="utf-8")
+        failures += not check("with a reading in it",
+                              page_text.startswith("temp="), True)
+        # Stored in Fahrenheit, and nobody overruled it: this feed was
+        # told nothing and the skin says nothing, so the archive's own
+        # unit stands.
+        failures += not check("in what the archive holds",
+                              "°F" in page_text, True)
 
         print("\nand a file that names no feeds still gets some")
         bare = tmp / "bare.toml"

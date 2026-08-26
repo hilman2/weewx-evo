@@ -44,6 +44,18 @@ except AttributeError:  # pragma: no cover - Windows
     pass
 
 
+def _decimals(text: object) -> int:
+    """How many digits are printed after the point. "12.758 Grad" is three."""
+    head, _, tail = str(text or "").partition(".")
+    del head
+    count = 0
+    for char in tail:
+        if not char.isdigit():
+            break
+        count += 1
+    return count
+
+
 def _number(text: object) -> float:
     """The number in front of a label. "60.1 F-day" is 60.1."""
     digits = ""
@@ -174,7 +186,7 @@ def main() -> int:
                     station={"location": "Nowhere"})
         out = tmp / "public"
         feed = CheetahFeed(reader, skin, tags, encoding="utf8")
-        made = feed.produce(out)
+        feed.produce(out)
 
         print("\nthe pages are written")
         failures += not check("nothing failed", feed.failed, [])
@@ -193,16 +205,17 @@ def main() -> int:
         # Stored in Fahrenheit, shown in Celsius because the skin says so,
         # with the skin's three decimals and the skin's own word for it.
         temp = got.get("temp", "")
-        failures += not check("converted, and to the skin's decimals",
-                              temp.count(".") == 1 and len(temp.split(".")[1]) == 8,
-                              True)
-        failures += not check("the skin's label", temp.endswith(" Grad"), True)
+        failures += not check("in Celsius, because the skin asked",
+                              _number(temp) < 30.0, True)
+        failures += not check("to the skin's three decimals",
+                              _decimals(temp), 3)
+        failures += not check("and the skin's own word for the unit",
+                              temp.endswith(" Grad"), True)
         failures += not check("what the skin calls the reading",
                               got.get("label"), "Aussentemperatur")
         press = got.get("press", "")
-        failures += not check("millibars, and one decimal of them",
-                              press.endswith(" mbar")
-                              and len(press.split(".")[1].split()[0]), 1)
+        failures += not check("millibars", press.endswith(" mbar"), True)
+        failures += not check("and one decimal of them", _decimals(press), 1)
         failures += not check("a section of its own", got.get("extras"),
                               "https://example.org/radar.png")
         # `$observations` with no `$DisplayOptions.` in front of it: WeeWX
@@ -242,11 +255,18 @@ def main() -> int:
         failures += not check("by five a day, on every day there is data",
                               round(higher - lower, 6), 5.0 * days)
 
-        print("\na tag nothing can answer is named, not swallowed")
-        failures += not check("counted", tags.missing.get("nosuchreading"), 1)
+        print("\na reading the station never had reads as WeeWX reads it")
+        # Two different behaviours, and a skin is written against both:
+        # `$current.foo` prints and carries on, `$day.foo.max` raises.
+        # Getting either one wrong takes a page down that works in WeeWX.
+        failures += not check("printed, not blank", got.get("missing"),
+                              "?\'nosuchreading\'?")
+        failures += not check("and the guard says no", got.get("guarded"),
+                              "no")
+        failures += not check("counted", tags.missing.get("nosuchreading"),
+                              1)
         failures += not check("and reported",
-                              "nosuchreading" in (made.note or "")
-                              or "nosuchreading" in tags.report(), True)
+                              "nosuchreading" in tags.report(), True)
         failures += not check("the page still got written",
                               (out / "index.html").exists(), True)
 
@@ -275,9 +295,11 @@ def main() -> int:
         # "%.3f for Celsius" says nothing about Fahrenheit and the default
         # applies. That is WeeWX's arrangement, and it is the honest one: a
         # skin cannot have an opinion about a unit it never expected.
+        forced_temp = dict(
+            line.split("=", 1) for line in forced_page.splitlines()
+            if "=" in line).get("temp", "")
         failures += not check("and the decimals are ours again, not its",
-                              forced_page.split("temp=")[1]
-                              .split("°F")[0].split(".")[1], "8")
+                              _decimals(forced_temp), 1)
 
         conn.close()
     finally:
