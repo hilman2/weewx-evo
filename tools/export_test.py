@@ -119,6 +119,25 @@ def local_export(check) -> int:
         failures += not check("and the other one stayed",
                               (site / "by-hand.html").exists(), True)
 
+        print("\nnothing half-written is ever published")
+        # A feed writes beside and moves into place. The .part in between is
+        # a file somebody is in the middle of writing, and publishing one
+        # leaves half a page under a name nothing will overwrite.
+        (source / "index.html.part").write_text("<h1>hal", encoding="utf-8")
+        export.send(source)
+        failures += not check("the half-written file stayed behind",
+                              (site / "index.html.part").exists(), False)
+        (source / "index.html.part").unlink()
+
+        print("\nand a hard link is not renamed onto itself")
+        # Rename between two hard links to one file is a no-op that reports
+        # success. Done blindly, the partial survives every run for ever.
+        again = LocalExport(directory=str(site), tracker=str(tmp / "t3.json"))
+        again.send(source)
+        again.send(source)
+        failures += not check("no leftover partial",
+                              sorted(f.name for f in site.rglob("*.part")), [])
+
         print("\nsome things are refused rather than attempted")
         try:
             LocalExport(directory=str(source),

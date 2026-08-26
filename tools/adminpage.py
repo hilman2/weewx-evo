@@ -384,6 +384,30 @@ def main() -> int:
         failures += not check("as .bak",
                               path.with_suffix(".toml.bak").exists(), True)
 
+        print("\na choice that offers 'none' can be set back to it")
+        # Every dropdown with an empty entry was one way: an empty value
+        # parsed to the option's default, so the old choice stayed. Nobody
+        # could undo picking one, on any page, for any setting.
+        from weewx_evo.options import Invalid, Option
+
+        offering_none = Option("example", "Example", kind="choice",
+                               choices=(("", "-- none --"), ("a", "A")))
+        failures += not check("empty is the empty choice, not the default",
+                              offering_none.parse(""), "")
+        failures += not check("and a real one still parses",
+                              offering_none.parse("a"), "a")
+        try:
+            offering_none.parse("nonsense")
+            failures += not check("a wrong one is refused", "accepted", "refused")
+        except Invalid as exc:
+            failures += not check("a wrong one is named by its label",
+                                  "-- none --" in str(exc), True)
+
+        without_none = Option("other", "Other", kind="choice", default="a",
+                              choices=(("a", "A"), ("b", "B")))
+        failures += not check("a choice with no empty entry still defaults",
+                              without_none.parse(""), "a")
+
         print("\ncharts come in from a file, or pasted, or from a path")
         # The path is the one that does not work in a container: the skin is
         # in a different one. So the page takes a file and takes pasted text,

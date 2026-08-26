@@ -148,6 +148,12 @@ class LocalExport(BaseExport):
         destination.parent.mkdir(parents=True, exist_ok=True)
         partial = destination.with_name(destination.name + ".part")
         partial.unlink(missing_ok=True)
+        if _same_file(source, destination):
+            # Already the same file: this was published as a hard link and
+            # the feed has not replaced it since. Renaming one hard link onto
+            # another is a no-op that reports success, which would leave the
+            # partial behind for ever. There is nothing to do.
+            return destination.stat().st_size
         try:
             if self.link:
                 try:
@@ -287,6 +293,14 @@ class LocalExport(BaseExport):
                             "losing it costs one full copy."),
             )),
         ]
+
+
+def _same_file(one: Path, other: Path) -> bool:
+    """Whether two paths are the same file, hard links included."""
+    try:
+        return one.stat().st_ino == other.stat().st_ino             and one.stat().st_dev == other.stat().st_dev
+    except OSError:
+        return False
 
 
 def _slug(text: str) -> str:

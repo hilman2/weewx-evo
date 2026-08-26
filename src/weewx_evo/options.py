@@ -118,6 +118,13 @@ class Option:
         if raw is None or (isinstance(raw, str) and not raw.strip()):
             if self.required and self.default is None:
                 raise Invalid(f"{self.label} is required")
+            # A choice that offers an empty entry means it: "-- none --" is
+            # one of the answers, not the absence of one. Falling back to the
+            # default here made every such setting impossible to clear once
+            # it had been set.
+            if self.kind == "choice" and any(
+                    value == "" for value, _label in self.options()):
+                return ""
             return self.default
 
         if self.kind == "bool":
@@ -151,7 +158,12 @@ class Option:
                 # was uninstalled, which is worse than keeping it.
                 return value
             if value not in allowed:
-                raise Invalid(f"{self.label} must be one of: {', '.join(allowed)}")
+                # By their labels: an empty choice is a real answer and its
+                # value is the empty string, which reads as a missing word in
+                # a list of names.
+                named = ", ".join(label if not option else option
+                                  for option, label in self.options())
+                raise Invalid(f"{self.label} must be one of: {named}")
             return value
 
         if self.kind == "list":

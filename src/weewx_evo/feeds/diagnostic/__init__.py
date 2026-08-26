@@ -69,7 +69,14 @@ class Diagnostic:
         found = self.read()
         page = self.render(found, now or time.time())
         path = into / "index.html"
-        path.write_text(page, encoding="utf-8")
+        # Written beside and moved into place, like every other file this
+        # project writes. Not only so a browser never reads half a page: an
+        # export that hard links the result would otherwise be linking the
+        # very file being rewritten, and the published page would change
+        # underneath whoever is reading it.
+        partial = path.with_name(path.name + ".part")
+        partial.write_text(page, encoding="utf-8")
+        partial.replace(path)
 
         faults = sum(len(f["faults"]) for f in found)
         note = (f"{len(found)} file(s), {sum(1 for f in found if f['charts'])}"

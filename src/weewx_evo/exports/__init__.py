@@ -274,12 +274,18 @@ def walk(source: Path, files: list[Path] | None = None) -> list[Path]:
         return [f if not f.is_absolute() else f.relative_to(source) for f in files]
 
     skip_dirs = {".git", ".svn", "__pycache__", ".DS_Store", "node_modules"}
+    # A `.part` is by definition a file somebody is in the middle of writing.
+    # Uploading one publishes half a page and, worse, leaves it there under a
+    # name nothing will ever overwrite.
+    skip_suffixes = (".part", ".tmp", ".swp")
     found = []
     for path in sorted(source.rglob("*")):
         if not path.is_file():
             continue
         parts = set(path.relative_to(source).parts)
         if parts & skip_dirs or path.name.startswith(".~"):
+            continue
+        if path.name.endswith(skip_suffixes):
             continue
         found.append(path.relative_to(source))
     return found
