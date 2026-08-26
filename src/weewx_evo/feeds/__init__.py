@@ -136,6 +136,8 @@ BUNDLED = (
      "one page that draws whatever JSON is on disk"),
     ("cheetah", "weewx_evo.feeds.cheetah", "CheetahFeed",
      "a skin written for WeeWX, rendered unchanged"),
+    ("images", "weewx_evo.feeds.imagegenerator", "ImageGenerator",
+     "the same charts as PNG files, for a page or a forum post"),
 )
 
 

@@ -215,6 +215,7 @@ python tools/web_test.py                          # der lokale Webserver
 python tools/derive_test.py                       # die Ableitungen
 python tools/feeds_test.py                        # mehrere Feeds nebeneinander
 python tools/cheetah_test.py                      # eine WeeWX-Skin, unverändert
+python tools/image_test.py                        # die Diagramme als PNG
 python -m pytest tests/                           # der Ecowitt-Treiber
 python -m ruff check --select F src/ tools/       # undefinierte Namen
 ```

@@ -57,10 +57,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ... import sun, units
+from ... import chartdata, units
 from ...options import Group, Option
 from ...plots import Plot, PlotSet
-from ...series import Reader, Series, VECTORS
+from ...series import Reader
 from .. import Produced
 
 log = logging.getLogger(__name__)
@@ -71,21 +71,9 @@ log = logging.getLogger(__name__)
 FORMAT = 1
 
 #: How many decimals. Three is well past any weather sensor's resolution and
-#: takes about a third off the size of the file.
-ROUNDING = 3
-
-#: A run of readings this many times the usual spacing apart is a gap in the
-#: data rather than its rhythm. Judged from the readings themselves, because
-#: ten minutes between them is a break for a station reporting every eight
-#: seconds and business as usual for one reporting every ten.
-GAP_FACTOR = 3.0
-
-#: How far back `skip_if_empty` looks. A sensor with nothing over its span is
-#: one this station does not have.
-SPAN_LENGTHS = {
-    "hour": 3600, "day": 86400, "week": 604800,
-    "month": 2592000, "year": 31536000,
-}
+#: takes about a third off the size of the file. Defined where the rounding
+#: happens; named here because the settings page offers it.
+ROUNDING = chartdata.ROUNDING
 
 
 class JSONGenerator:
@@ -250,164 +238,19 @@ class JSONGenerator:
     def build(self, plot: Plot, generated: float) -> dict[str, Any] | None:
         """One plot's payload, or None if there is nothing in it.
 
-        Every line is fetched, converted, and trimmed of the points that carry
-        nothing. A plot where every line came back empty is not written at
-        all: the shipped set covers sensors most stations do not have, and a
-        hundred files of nulls help nobody.
+        The numbers come from `chartdata`, which the image feed reads too.
+        Working them out here as well is how two renderers of the same plot
+        come to disagree in the third decimal place.
         """
-        stop = int(generated)
-        start = stop - int(plot.time_length)
-
-        entries = []
-        covered_from, covered_to = start, stop
-        for line in plot.drawn:
-            entry = self._line(line, start, stop, plot.skip_if_empty)
-            if entry is None:
-                continue
-            # A bucket is drawn as what it covers, and the last one of a
-            # daily chart covers the whole of today -- so it ends at
-            # tomorrow's midnight, after the moment the file was written.
-            # The span has to hold what is in it or the last bar falls off
-            # the edge of the chart.
-            reach = entry.pop("_reach", None)
-            if reach:
-                covered_from = min(covered_from, reach[0])
-                covered_to = max(covered_to, reach[1])
-            entries.append(entry)
-
-        # One axis, so one unit: the first line that has one decides. WeeWX
-        # refuses outright to draw two units together. This reports the first
-        # and leaves the rest on the lines, so a client can at least see the
-        # disagreement rather than being told the plot is impossible.
-        unit = next((e["unit"] for e in entries if e.get("unit")), "")
-        unit_label = units.label(unit).strip()
-        for entry in entries:
-            if entry.get("unit") == unit:
-                entry.pop("unit", None)
-
-        if not entries:
+        chart = chartdata.build(
+            plot, self.reader, generated, target=self.target,
+            unit_system=self.unit_system, extra_groups=self.extra_groups,
+            labels=self.labels, rounding=self.rounding,
+            latitude=self.latitude, longitude=self.longitude,
+            twilight=self.twilight)
+        if chart is None:
             return None
-
-        payload: dict[str, Any] = {
-            "name": plot.name,
-            "format": FORMAT,
-            "generated": int(generated),
-            "start": int(covered_from),
-            "stop": int(covered_to),
-            "asked": [start, stop],
-            "unit": unit,
-            "unit_label": unit_label,
-            "series": entries,
-        }
-        if plot.title:
-            payload["title"] = plot.title
-        if any(v is not None for v in plot.yscale):
-            payload["yscale"] = list(plot.yscale)
-
-        if plot.show_daynight:
-            try:
-                bands = sun.day_night(start, stop, self.latitude,
-                                      self.longitude)
-                if bands:
-                    if not self.twilight:
-                        bands.pop("twilight", None)
-                    payload["daynight"] = bands
-            except Exception as exc:  # noqa: BLE001
-                # Shading is decorative and must never break a report. But a
-                # silent failure here once hid a real bug, so say something.
-                log.warning("could not work out day and night for %r: %s",
-                            plot.name, exc)
-        return payload
-
-    def _line(self, line: Any, start: int, stop: int,
-              skip_if_empty: str = "") -> dict[str, Any] | None:
-        """One reading, fetched and made ready to write.
-
-        None where this station does not have the sensor at all. A sensor it
-        does have but which reported nothing over this span comes back as a
-        series with no points: the client keeps its layout, and the gap is
-        visible as a gap rather than as a chart that quietly disappeared.
-        """
-        series = self.reader.series(line.obs, start, stop,
-                                    aggregate=line.aggregate or None,
-                                    interval=line.interval)
-        if not len(series) or series.empty:
-            if not self._exists(line.obs, start, stop, skip_if_empty):
-                return None
-            series = Series(obs_type=line.obs, aggregate=line.aggregate or None,
-                            interval=line.interval,
-                            directions=[] if series.directions is not None
-                            else None)
-
-        values, unit, _group = self.target.convert(
-            series.values, line.obs, self.unit_system,
-            aggregate=line.aggregate or None, extra=self.extra_groups)
-
-        entry: dict[str, Any] = {
-            "obs_type": line.obs,
-            "label": line.label or self.labels.get(line.obs, ""),
-            "plot_type": line.kind,
-            "color": line.color,
-            "unit": unit,
-            "time": [int(t) for t in series.time],
-            "values": _round(values, self.rounding),
-        }
-        if line.fill_color:
-            entry["fill_color"] = line.fill_color
-        if line.aggregate:
-            entry["aggregate_type"] = line.aggregate
-            entry["aggregate_interval"] = line.interval
-        if series.directions is not None:
-            # One decimal is already finer than any wind vane.
-            entry["directions"] = _round(series.directions, 1)
-        if line.kind == "bar":
-            # In seconds, so a client can size the bars. A month of daily
-            # bars is not a month of equal ones -- the change to summer time
-            # makes one of them an hour shorter.
-            entry["bar_width"] = [int(b - a) for a, b
-                                  in zip(series.start, series.stop)]
-        if line.kind == "vector":
-            entry["vector_x"], entry["vector_y"] = _components(
-                entry["values"], entry.get("directions"), self.rounding)
-            if line.rotate is not None:
-                # Negated, as the ImageGenerator has it. Without the minus the
-                # arrows come out mirrored against the PNG of the same data.
-                entry["vector_rotate"] = -float(line.rotate)
-            entry["rose_label"] = "N"
-        if line.marker:
-            entry["marker"] = line.marker
-            if line.marker_size is not None:
-                entry["marker_size"] = line.marker_size
-        if line.width is not None:
-            entry["width"] = line.width
-
-        _drop_empty(entry, line.gap_fraction, stop - start,
-                    aggregated=bool(line.aggregate))
-        if series.start and series.stop:
-            entry["_reach"] = (int(min(series.start)), int(max(series.stop)))
-        return entry
-
-    def _exists(self, obs_type: str, start: int, stop: int,
-                skip_if_empty: str) -> bool:
-        """Whether this station has this sensor at all.
-
-        The difference between a reading that is missing today and one that
-        has never existed. WeeWX's `skip_if_empty = year` says exactly this,
-        and it is why the shipped Seasons plot set does not litter a
-        two-sensor station with ninety files of nulls.
-        """
-        if not skip_if_empty:
-            return True
-        length = SPAN_LENGTHS.get(skip_if_empty)
-        if length is None:
-            # `plot`, or anything unrecognised: the plot's own span, which is
-            # the one just looked at and found empty.
-            return False
-        try:
-            return bool(self.reader.aggregate(
-                _column(obs_type), stop - length, stop, "not_null"))
-        except Exception:  # noqa: BLE001
-            return True
+        return _document(chart, generated)
 
     # -- what the admin page asks for -------------------------------------
 
@@ -540,100 +383,73 @@ class JSONGenerator:
 
 # -- trimming --------------------------------------------------------------
 
-def _column(obs_type: str) -> str:
-    """The column behind a reading, for asking whether it exists.
+def _document(chart: chartdata.Chart, generated: float) -> dict[str, Any]:
+    """A chart as the document a client reads.
 
-    `windvec` is not a column; the speed it is made of is.
+    Only the shape lives here. Anything that decides a *number* belongs in
+    `chartdata`, where the other renderer can reach it too.
     """
-    return VECTORS[obs_type][0] if obs_type in VECTORS else obs_type
+    series = []
+    for line in chart.lines:
+        entry: dict[str, Any] = {
+            "obs_type": line.obs_type,
+            "label": line.label,
+            "plot_type": line.plot_type,
+            "color": line.color,
+        }
+        # The chart's own unit is stated once at the top; a line repeats it
+        # only when it disagrees, which is a plot with two units in it. Two
+        # details are kept exactly as they were, deliberately: a line with no
+        # unit still carries the key, and the key sits here rather than at
+        # the end. Both would be small improvements, and an improvement
+        # smuggled into a move is one nobody can check -- and the second one
+        # would make every file on every station count as changed and go up
+        # the wire once for nothing.
+        if line.unit != chart.unit:
+            entry["unit"] = line.unit
+        entry["time"] = line.time
+        entry["values"] = line.values
+        if line.fill_color:
+            entry["fill_color"] = line.fill_color
+        if line.aggregate_type:
+            entry["aggregate_type"] = line.aggregate_type
+            entry["aggregate_interval"] = line.aggregate_interval
+        if line.directions is not None:
+            entry["directions"] = line.directions
+        if line.bar_width is not None:
+            entry["bar_width"] = line.bar_width
+        if line.plot_type == "vector":
+            entry["vector_x"] = line.vector_x
+            entry["vector_y"] = line.vector_y
+            if line.vector_rotate is not None:
+                entry["vector_rotate"] = line.vector_rotate
+            entry["rose_label"] = "N"
+        if line.marker:
+            entry["marker"] = line.marker
+            if line.marker_size is not None:
+                entry["marker_size"] = line.marker_size
+        if line.width is not None:
+            entry["width"] = line.width
+        series.append(entry)
 
-
-def _round(values: list, places: int | None) -> list:
-    """Round a sequence, leaving the gaps in the data alone."""
-    if places is None:
-        return list(values)
-    return [v if not isinstance(v, float) else round(v, places)
-            for v in values]
-
-
-def _components(magnitudes: list, directions: list | None,
-                places: int | None) -> tuple[list, list]:
-    """A vector series split into how far east and how far north.
-
-    A chart drawing arrows scales and offsets the components; handing them
-    over saves rebuilding them from magnitude and bearing at the far end, and
-    saves getting the sign of the rotation wrong while doing it.
-    """
-    import math
-
-    east: list[Any] = []
-    north: list[Any] = []
-    for i, magnitude in enumerate(magnitudes):
-        direction = directions[i] if directions and i < len(directions) else None
-        if magnitude is None or direction is None:
-            east.append(None if magnitude is None else 0.0)
-            north.append(None if magnitude is None else 0.0)
-            continue
-        angle = math.radians(90.0 - direction)
-        east.append(magnitude * math.cos(angle))
-        north.append(magnitude * math.sin(angle))
-    return _round(east, places), _round(north, places)
-
-
-def _drop_empty(entry: dict[str, Any], gap_fraction: float | None,
-                span: float, aggregated: bool = False) -> None:
-    """Leave out the points that carry nothing, keeping real gaps visible.
-
-    A sensor reporting every ten minutes fills one archive record in ten, and
-    the rest hold null for it. Sent as they are, a client draws a line broken
-    in hundreds of places and the file is far larger than the data in it.
-
-    What counts as a gap comes from the readings' own rhythm rather than the
-    width of the chart. `gap_fraction` still wins where a plot sets it, for
-    anyone who wants the ImageGenerator's fixed threshold.
-    """
-    times, values = entry["time"], entry["values"]
-    if len(times) != len(values):
-        return
-    kept = [i for i, v in enumerate(values) if v is not None]
-    if not kept or len(kept) == len(values):
-        return
-
-    threshold = None
-    if gap_fraction and span and not aggregated:
-        # WeeWX's own measure, and it belongs only to a series of raw
-        # readings. On an aggregated one the bucket *is* the spacing, so a
-        # threshold of a twentieth of the span marks every daily bar on a week
-        # chart as a break in the data.
-        threshold = float(gap_fraction) * float(span)
-    if threshold is None and len(kept) >= 3:
-        spacings = sorted(times[b] - times[a] for a, b in zip(kept, kept[1:]))
-        usual = spacings[len(spacings) // 2]
-        if usual > 0:
-            threshold = GAP_FACTOR * usual
-
-    keep: list[int] = []
-    for position, i in enumerate(kept):
-        if position and threshold is not None:
-            previous = kept[position - 1]
-            middle = previous + (i - previous) // 2
-            # `middle` is only a real point between the two when they are not
-            # already neighbours. Without this it lands back on `previous`,
-            # and the series comes out with every timestamp twice.
-            if times[i] - times[previous] >= threshold and middle > previous:
-                # Long enough to be a break in the readings rather than their
-                # rhythm. One null says so; the rest of the run is noise.
-                keep.append(middle)
-        keep.append(i)
-
-    if len(keep) == len(values):
-        return
-    entry["time"] = [times[i] for i in keep]
-    entry["values"] = [values[i] for i in keep]
-    for extra in ("directions", "bar_width", "vector_x", "vector_y"):
-        sequence = entry.get(extra)
-        if isinstance(sequence, list) and len(sequence) == len(values):
-            entry[extra] = [sequence[i] for i in keep]
+    payload: dict[str, Any] = {
+        "name": chart.name,
+        "format": FORMAT,
+        "generated": int(generated),
+        "start": chart.start,
+        "stop": chart.stop,
+        "asked": list(chart.asked),
+        "unit": chart.unit,
+        "unit_label": chart.unit_label,
+        "series": series,
+    }
+    if chart.title:
+        payload["title"] = chart.title
+    if any(v is not None for v in chart.yscale):
+        payload["yscale"] = list(chart.yscale)
+    if chart.daynight:
+        payload["daynight"] = chart.daynight
+    return payload
 
 
 def from_settings(settings: Any, reader: Reader, plots: PlotSet,
