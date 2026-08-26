@@ -46,7 +46,8 @@ class Scheduled:
     """One export, and when it is next due."""
 
     __slots__ = ("name", "export", "source", "last", "running", "skipped",
-                 "runs", "failures", "last_summary", "feed", "changed")
+                 "runs", "failures", "last_summary", "feed", "changed",
+                 "caught_up")
 
     def __init__(self, name: str, export: Any, source: Path,
                  feed: str = "") -> None:
@@ -57,10 +58,15 @@ class Scheduled:
         # feed and no other: two feeds writing two sites must not each
         # trigger both uploads.
         self.feed = feed
-        # What the feed said it wrote. An export given this sends those files
-        # rather than scanning the directory, which is both faster and the
-        # only way to be sure a file written a moment ago is included.
+        # What the feed said it wrote, if it said. Used as a guarantee that a
+        # file written a second ago is included, not as the whole list: an
+        # export only ever given the changed files can never send one that
+        # changed before it existed. Adding an export to a station that had
+        # been running for a week published one file out of seventy, and the
+        # missing ones would never have appeared.
         self.changed: list[Path] | None = None
+        # Set once the first run has been through the whole directory.
+        self.caught_up = False
         self.last: float = 0.0
         self.running = False
         self.skipped = 0
@@ -91,6 +97,12 @@ class Scheduled:
         self.running = True
         self.last = time.monotonic()
         changed, self.changed = self.changed, None
+        if not self.caught_up:
+            # The first run looks at everything. The export's own record of
+            # what it has sent decides what actually moves, so this costs one
+            # directory walk and nothing else.
+            changed = None
+            self.caught_up = True
         try:
             result = self.export.send(self.source, changed)
             self.runs += 1

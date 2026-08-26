@@ -259,8 +259,12 @@ def feed_to_export(check) -> int:
             trigger = "feed"
 
             def send(self, source, files=None):
-                published.append((str(source), len(files or [])))
-                return Sent(sent=len(files or []))
+                # Like a real export: `None` means look at the directory.
+                from weewx_evo.exports import walk
+
+                sending = walk(Path(source), files)
+                published.append((str(source), len(sending)))
+                return Sent(sent=len(sending))
 
         scheduled = [export_runner.Scheduled(
             name="site", export=Destination(), source=work, feed="json")]
@@ -282,12 +286,25 @@ def feed_to_export(check) -> int:
             time.sleep(0.1)
         exports.stop()
 
+        # An export added to a station that has been running catches up.
+        # Given only the feed's changed list it would send one file and
+        # never the sixty-nine that changed before it existed.
+        first = published[0][1] if published else 0
         failures += not check("the export ran", bool(published), True)
         if published:
             failures += not check("with the feed's directory",
                                   published[0][0], str(work))
-            failures += not check("and the file the feed named",
-                                  published[0][1], 1)
+            failures += not check("and the whole directory the first time",
+                                  first, 1)
+
+        # A file that was there before the export existed is still sent.
+        (work / "older.json").write_text("{}", encoding="utf-8")
+        scheduled[0].caught_up = False
+        scheduled[0].changed = [Path("index.html")]
+        published.clear()
+        scheduled[0].run()
+        failures += not check("a first run looks at everything",
+                              published[0][1] if published else 0, 2)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return failures
@@ -402,13 +419,22 @@ def runner_tests(tmp: Path) -> int:
         failures += not check("the feed's export ran", site.runs, 1)
         failures += not check("the other feed's did not", csv.runs, 0)
         failures += not check("nor the record one", backup.runs, 0)
-        failures += not check("it was given what the feed wrote",
-                              site.export.calls, [[Path("index.html")]])
+        # The first run looks at the whole directory: an export added to a
+        # station that has been going for a week has never sent any of it,
+        # and the feed only ever names what changed this minute.
+        failures += not check("the first run looks at everything",
+                              site.export.calls, [None])
+
+        runner.feed_produced("website", [Path("index.html")])
+        time.sleep(0.5)
+        failures += not check("and after that, what the feed wrote",
+                              site.export.calls, [None, [Path("index.html")]])
+        failures += not check("which is one more run", site.runs, 2)
 
         runner.record_written()
         time.sleep(0.5)
         failures += not check("a record runs the record one", backup.runs, 1)
-        failures += not check("and not the feed ones", site.runs, 1)
+        failures += not check("and not the feed ones", site.runs, 2)
         failures += not check("the manual one never runs by itself",
                               asked.runs, 0)
     finally:
