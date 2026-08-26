@@ -381,7 +381,8 @@ class JSONGenerator:
         if line.width is not None:
             entry["width"] = line.width
 
-        _drop_empty(entry, line.gap_fraction, stop - start)
+        _drop_empty(entry, line.gap_fraction, stop - start,
+                    aggregated=bool(line.aggregate))
         if series.start and series.stop:
             entry["_reach"] = (int(min(series.start)), int(max(series.stop)))
         return entry
@@ -581,7 +582,7 @@ def _components(magnitudes: list, directions: list | None,
 
 
 def _drop_empty(entry: dict[str, Any], gap_fraction: float | None,
-                span: float) -> None:
+                span: float, aggregated: bool = False) -> None:
     """Leave out the points that carry nothing, keeping real gaps visible.
 
     A sensor reporting every ten minutes fills one archive record in ten, and
@@ -600,7 +601,11 @@ def _drop_empty(entry: dict[str, Any], gap_fraction: float | None,
         return
 
     threshold = None
-    if gap_fraction and span:
+    if gap_fraction and span and not aggregated:
+        # WeeWX's own measure, and it belongs only to a series of raw
+        # readings. On an aggregated one the bucket *is* the spacing, so a
+        # threshold of a twentieth of the span marks every daily bar on a week
+        # chart as a break in the data.
         threshold = float(gap_fraction) * float(span)
     if threshold is None and len(kept) >= 3:
         spacings = sorted(times[b] - times[a] for a, b in zip(kept, kept[1:]))
@@ -612,10 +617,14 @@ def _drop_empty(entry: dict[str, Any], gap_fraction: float | None,
     for position, i in enumerate(kept):
         if position and threshold is not None:
             previous = kept[position - 1]
-            if times[i] - times[previous] >= threshold:
+            middle = previous + (i - previous) // 2
+            # `middle` is only a real point between the two when they are not
+            # already neighbours. Without this it lands back on `previous`,
+            # and the series comes out with every timestamp twice.
+            if times[i] - times[previous] >= threshold and middle > previous:
                 # Long enough to be a break in the readings rather than their
                 # rhythm. One null says so; the rest of the run is noise.
-                keep.append(previous + (i - previous) // 2)
+                keep.append(middle)
         keep.append(i)
 
     if len(keep) == len(values):

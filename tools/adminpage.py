@@ -12,6 +12,7 @@ Nothing outside a temporary directory is touched.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -61,6 +62,67 @@ def post(url: str, form: dict) -> tuple[int, str]:
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
         return None
+
+
+SKIN = b"""[ImageGenerator]
+    image_width = 500
+    chart_line_colors = "#4282b4", "#b44242"
+    show_daynight = true
+    skip_if_empty = year
+    aggregate_type = none
+
+    [[day_images]]
+        time_length = 27h
+        [[[daytempdew]]]
+            [[[[outTemp]]]]
+            [[[[dewpoint]]]]
+        [[[dayrain]]]
+            plot_type = bar
+            [[[[rain]]]]
+                aggregate_type = sum
+                aggregate_interval = 1h
+                label = Rain (hourly total)
+
+    [[year_images]]
+        time_length = 365d
+        [[[yearrain]]]
+            plot_type = bar
+            [[[[rain]]]]
+                aggregate_type = sum
+                aggregate_interval = 1w
+"""
+
+
+def multipart(fields: dict, files: dict) -> tuple[str, bytes]:
+    """A form the way a browser posts one with a file in it."""
+    boundary = "----weewxevotest"
+    out = []
+    for key, value in fields.items():
+        out.append(f"--{boundary}\r\nContent-Disposition: form-data; "
+                   f'name="{key}"\r\n\r\n{value}\r\n'.encode())
+    for key, (name, data) in files.items():
+        out.append(f"--{boundary}\r\nContent-Disposition: form-data; "
+                   f'name="{key}"; filename="{name}"\r\n'
+                   "Content-Type: text/plain\r\n\r\n".encode()
+                   + data + b"\r\n")
+    out.append(f"--{boundary}--\r\n".encode())
+    return f"multipart/form-data; boundary={boundary}", b"".join(out)
+
+
+def upload(url: str, fields: dict, files: dict) -> str:
+    ctype, body = multipart(fields, files)
+    request = urllib.request.Request(url, data=body,
+                                     headers={"Content-Type": ctype})
+    try:
+        with urllib.request.urlopen(request, timeout=20) as r:
+            return r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.read().decode("utf-8", "replace")
+
+
+def said(html: str, kind: str = "ok") -> str:
+    found = re.search(f'<p class="{kind}">([^<]*)', html)
+    return found.group(1) if found else ""
 
 
 def main() -> int:
@@ -322,6 +384,61 @@ def main() -> int:
         print("\nthe previous version is kept")
         failures += not check("as .bak",
                               path.with_suffix(".toml.bak").exists(), True)
+
+        print("\ncharts come in from a file, or pasted, or from a path")
+        # The path is the one that does not work in a container: the skin is
+        # in a different one. So the page takes a file and takes pasted text,
+        # and this drives both the way a browser would.
+        from weewx_evo import plots as plot_defs
+
+        where = f"{base}/{TOKEN}/import-plots"
+        html = upload(where, {}, {"upload": ("skin.conf", SKIN)})
+        message = said(html)
+        failures += not check("an uploaded file is read", "3 chart(s)" in message,
+                              True)
+        failures += not check("and it says where they came from",
+                              "uploaded file" in message, True)
+        charts = plot_defs.load(path.parent / "plots.toml")
+        failures += not check("three charts landed", len(charts), 3)
+
+        # WeeWX's suffixes are not ours: there, 1w is a week and 1h an hour.
+        # Read by our rules 1w would be a day, and a year of weekly rainfall
+        # would come out with 365 bars instead of 52.
+        year = charts.get("yearrain")
+        failures += not check("a weekly total stayed weekly",
+                              year.lines[0].interval if year else None, "week")
+        failures += not check("and the bar is still a bar",
+                              year.lines[0].kind if year else None, "bar")
+        day = charts.get("dayrain")
+        failures += not check("an hourly one stayed hourly",
+                              day.lines[0].interval if day else None, "hour")
+        failures += not check("skip_if_empty is a span, not a yes or no",
+                              day.skip_if_empty if day else None, "year")
+
+        print("\n  and importing again does not double them")
+        html = upload(where, {}, {"upload": ("skin.conf", SKIN)})
+        failures += not check("nothing added the second time",
+                              len(plot_defs.load(path.parent / "plots.toml")), 3)
+        failures += not check("and it says so",
+                              "left alone" in said(html), True)
+
+        print("\n  pasted text works the same way")
+        (path.parent / "plots.toml").unlink()
+        html = upload(where, {"pasted": SKIN.decode()}, {})
+        failures += not check("read", "3 chart(s)" in said(html), True)
+        failures += not check("and named as pasted, not as a file",
+                              "pasted text" in said(html), True)
+
+        print("\n  and what is not a skin.conf is refused, not half-imported")
+        html = upload(where, {}, {"upload": ("notes.txt", b"milk\nbread\n")})
+        failures += not check("named", "No [ImageGenerator]" in said(html, "err"),
+                              True)
+        failures += not check("nothing was written",
+                              len(plot_defs.load(path.parent / "plots.toml")), 3)
+
+        html = upload(where, {"pasted": "", "source": ""}, {"upload": ("", b"")})
+        failures += not check("an empty form says what to do",
+                              "Choose a file" in said(html, "err"), True)
 
         server.stop()
     finally:

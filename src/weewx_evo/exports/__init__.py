@@ -202,10 +202,14 @@ class Registry:
             except Exception:
                 log.exception("could not load the export %r; carrying on", entry.name)
 
-        from . import ftp, rsync
+        from . import ftp, local, rsync
 
         self.register_factory("ftp", ftp.FtpExport)
         self.register_factory("rsync", rsync.RsyncExport)
+        # A directory on this machine. The one most stations want: the
+        # built-in web server serves it and the feed is on the local network
+        # without anything else being installed.
+        self.register_factory("local", local.LocalExport)
 
 
 #: The registry the CLI and the admin page use.
@@ -233,7 +237,9 @@ def _feed_choices() -> list[tuple[str, str]]:
     """
     from .. import feeds
 
-    return [(name, f"the {name} feed") for name in feeds.names()]
+    return [(name, f"the {name} feed"
+             + (f" -- {feeds.describe(name)}" if feeds.describe(name) else ""))
+            for name in feeds.names()]
 
 
 def source_for(settings: dict[str, Any], feed_directory: Any = None) -> Path | None:

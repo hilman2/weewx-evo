@@ -317,17 +317,35 @@ class WebServer:
 
 
 def site_from(settings: object, feeds: dict[str, Path] | None = None) -> Site:
-    """Build the site from the configuration.
+    """What this server hands out, and under which names.
 
-    Feeds do not exist yet, so what is served comes from `[web.serve]`: names
-    pointing at directories. When feeds arrive they fill the same map and this
-    keeps working.
+    Mostly the local exports: an export named `site` publishing to a
+    directory appears at `/site/`. That is the whole configuration -- you say
+    where an export puts things, and it is served from there. Nobody has to
+    say the same path twice.
+
+    `[web.serve]` still names directories directly, for something this did
+    not produce: a hand-written page, a directory another program fills.
     """
-    configured = getattr(settings, "config", {}).get("web", {}) or {}
+    config = getattr(settings, "config", {}) or {}
+    configured = config.get("web", {}) or {}
     served = dict(feeds or {})
+
+    for name, options in sorted((config.get("exports") or {}).items()):
+        if not isinstance(options, dict):
+            continue
+        if str(options.get("kind", "")).strip() != "local":
+            continue
+        where = str(options.get("directory", "")).strip()
+        if where:
+            served[name] = Path(where)
+
+    # Named directly, and last, so an entry here wins over an export of the
+    # same name. Somebody who wrote a path down meant it.
     for name, where in (configured.get("serve") or {}).items():
         if isinstance(where, str) and where.strip():
             served[name] = Path(where)
+
     return Site(served,
                 default=str(configured.get("default", "")),
                 title=str(settings.get("station.name") or "weewx-evo"))

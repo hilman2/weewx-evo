@@ -664,6 +664,13 @@ _PAGE = """<!doctype html>
   .row > label.tick > input {{ margin-right: .4rem; }}
   .row input[type=color] {{ padding: 0; height: 2.1rem; width: 3rem;
       display: inline-block; }}
+  .row > label > textarea {{ display: block; width: 100%; margin-top: .25rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .8125rem; resize: vertical; }}
+  .row > label > input[type=file] {{ display: block; margin-top: .35rem;
+      font-size: .8125rem; }}
+  details > summary {{ cursor: pointer; color: var(--dim); font-size: .8125rem;
+      margin: .2rem 0 .6rem; }}
   .hint {{ display: block; color: var(--dim); font-size: .75rem;
       margin-top: .25rem; line-height: 1.4; }}
   fieldset.line {{ border: 1px solid var(--line); border-radius: .4rem;
@@ -724,6 +731,49 @@ _PAGE = """<!doctype html>
 </body>
 </html>
 """
+
+
+def _form(content_type: str, body: bytes) -> dict[str, str]:
+    """A posted form, whether it carries a file or not.
+
+    Ordinary settings arrive urlencoded. The importer needs a file as well,
+    which means multipart, and `cgi.FieldStorage` was removed in Python 3.13.
+    The email parser does the same job and has not gone anywhere.
+
+    A file comes back as its text under its own field name. Nothing here
+    handles anything but text, and a skin.conf is text.
+    """
+    if not content_type.lower().startswith("multipart/form-data"):
+        return {k: v[-1] for k, v in
+                parse_qs(body.decode("utf-8", "replace"),
+                         keep_blank_values=True).items()}
+
+    from email.parser import BytesParser
+    from email.policy import default as default_policy
+
+    header = (f"Content-Type: {content_type}\r\n"
+              "MIME-Version: 1.0\r\n\r\n").encode()
+    try:
+        message = BytesParser(policy=default_policy).parsebytes(header + body)
+    except Exception:  # noqa: BLE001
+        log.warning("a posted form could not be read", exc_info=True)
+        return {}
+
+    out: dict[str, str] = {}
+    for part in message.iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if not name:
+            continue
+        payload = part.get_payload(decode=True)
+        if payload is None:
+            continue
+        # A file input that was left empty still posts, with no filename and
+        # no content. It must not win over the field somebody did fill in.
+        text = payload.decode("utf-8", "replace")
+        if part.get_filename() and not text.strip():
+            continue
+        out[str(name)] = text
+    return out
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -818,9 +868,17 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
-        body = self.rfile.read(min(length, MAX_FORM)) if length else b""
-        form = {k: v[-1] for k, v in
-                parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True).items()}
+
+        # Refused, not truncated. Reading the first quarter of a megabyte of
+        # an uploaded skin and importing whatever plots happened to fit is
+        # the worst of the three possible outcomes.
+        if length > MAX_FORM:
+            self._reply(413, b"that is larger than this page accepts",
+                        "text/plain")
+            return
+
+        body = self.rfile.read(length) if length else b""
+        form = _form(self.headers.get("Content-Type", ""), body)
 
         parts = self._parts(parsed.path)
         action = parts[-1] if parts else ""
@@ -839,8 +897,11 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         if action == "import-plots":
+            uploaded, pasted = form.get("upload", ""), form.get("pasted", "")
             said, error = adminplots.bring_over(
-                self.admin, form.get("source", ""), bool(form.get("replace")))
+                self.admin, form.get("source", ""), bool(form.get("replace")),
+                text=uploaded or pasted or "",
+                origin="the uploaded file" if uploaded else "the pasted text")
             self._reply(200, page(self.admin, "import-plots",
                                   errors={"": error} if error else None,
                                   message=said, form=form))

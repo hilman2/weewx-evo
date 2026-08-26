@@ -52,6 +52,16 @@ Codeänderung. Das ist keine Zierde, sondern die Eigenschaft, die
 
 **Ich suche eine Funktion** → [API-Index](API-Index)
 
+## Lizenz
+
+**GPL-3.0-or-later.** Der Ecowitt-Treiber stammt über
+[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) vom
+`ecowittcustom`-Treiber von Werner Krenn ab, der wiederum vom `interceptor` von
+Matthew Wall — beide GPLv3, und das ist der Grund.
+
+Das uPlot in `feeds/diagnostic/vendor/` ist MIT und hat seine eigene
+Lizenzdatei daneben liegen.
+
 ## Die Seiten
 
 ### Aufnahme
@@ -104,5 +114,8 @@ Codeänderung. Das ist keine Zierde, sondern die Eigenschaft, die
 README.md
 CLAUDE.md
 src/weewx_evo/__init__.py
+src/weewx_evo/db/__init__.py
+src/weewx_evo/ingest/__init__.py
 pyproject.toml
+LICENSE
 -->

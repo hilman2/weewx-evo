@@ -71,6 +71,20 @@ def options():
 
 → [Configuration](Configuration)
 
+### Die Deklaration wird angewandt, nicht nur dokumentiert
+
+Ein Treiber sagt `kind="duration"` und bekäme dann den String `"4h"` gereicht,
+weil das ist, was in der Konfigurationsdatei steht. **Dass jeder Treiber seine
+Werte noch einmal selbst parst, ist genau das, was das Options-Schema verhindern
+soll** — und einer, der es vergisst, bekommt beim Start ein `ValueError`,
+abgefangen, und läuft danach still auf seinem Default.
+
+`drivers._parsed()` wendet deshalb die Deklaration des Treibers **einmal** an,
+bevor er gebaut wird. Was das Schema nicht verstehen kann, wird verworfen statt
+weitergereicht: der Treiber fällt auf seinen eigenen Default zurück und die
+Station zeichnet weiter auf. **Laut gesagt**, weil die Einstellung dann nicht
+tut, was derjenige denkt, der sie geschrieben hat.
+
 ## Die Registry
 
 `drivers.Registry` hält **Instanzen, keine Klassen**: ein Treiber hält
@@ -82,6 +96,7 @@ zu welcher gehört — und das muss zwischen zwei Uploads überleben.
 | `register(name, driver, replace=False)` | Eine fertige Instanz |
 | `register_factory(name, factory, aliases=())` | Etwas, das gebaut wird, sobald seine Konfiguration bekannt ist |
 | `configure(name, options)` | Die Factory mit ihren Optionen bauen und installieren |
+| `_parsed(factory, options)` | Die Optionen in der Form, die der Treiber deklariert hat |
 | `get(name)`, `known(name)`, `names()` | |
 | `canonical_names()` | Namen, die kein Alias eines anderen Treibers sind |
 | `aliases_of(name)` | |

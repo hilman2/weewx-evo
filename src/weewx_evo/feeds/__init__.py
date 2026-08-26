@@ -50,6 +50,7 @@ well.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -63,6 +64,8 @@ from typing import Any, Protocol, runtime_checkable
 TRIGGERS = ("record", "packet", "schedule")
 
 ENTRY_POINT_GROUP = "weewx_evo.feeds"
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -88,20 +91,80 @@ class Produced:
 def names() -> list[str]:
     """The feeds that exist.
 
-    Empty until the first one is written. It is a function rather than a list
-    so that an export's dropdown fills itself the moment a feed appears --
-    the export does not have to be told, and nobody has to restart anything.
+    A function rather than a list, so that an export's dropdown fills itself
+    the moment a feed appears. The export does not have to be told and nobody
+    has to restart anything.
     """
+    load()
     return sorted(_FEEDS)
 
 
-#: Registered feeds, by name. Filled the way drivers are: from entry points
-#: and from what ships here.
+def describe(name: str) -> str:
+    """One line about a feed, for a form that offers it."""
+    load()
+    return DESCRIPTIONS.get(name, "")
+
+
+#: Registered feeds, by name. Filled the way drivers are: from what ships
+#: here, then from entry points.
 _FEEDS: dict[str, Any] = {}
+_LOADED = False
+
+#: What each one is, in a few words. The dropdown that offers them is a list
+#: of names otherwise, and "json" does not say what is in it.
+DESCRIPTIONS: dict[str, str] = {}
+
+#: What ships. Named here rather than discovered by walking the package: a
+#: half-written feed in the directory should not appear in a form.
+BUNDLED = (
+    ("json", "weewx_evo.feeds.jsongenerator", "JSONGenerator",
+     "the time series everything else draws from"),
+    ("diagnostic", "weewx_evo.feeds.diagnostic", "Diagnostic",
+     "one page that draws whatever JSON is on disk"),
+)
 
 
-def register(name: str, feed: Any) -> None:
+def load() -> None:
+    """Pull in the feeds. A broken one is reported, never fatal.
+
+    Same arrangement as the drivers: one feed that will not import must not
+    cost the others. A station whose diagnostic page is broken should still
+    be writing its time series.
+    """
+    global _LOADED
+    if _LOADED:
+        return
+    _LOADED = True
+
+    from importlib import import_module
+
+    for name, module_name, attribute, what in BUNDLED:
+        try:
+            module = import_module(module_name)
+            register(name, getattr(module, attribute), what)
+        except Exception:
+            log.exception("the feed %r could not be loaded; leaving it out",
+                          name)
+
+    from importlib.metadata import entry_points
+
+    for entry in entry_points(group=ENTRY_POINT_GROUP):
+        try:
+            register(entry.name, entry.load())
+        except Exception:
+            log.exception("the feed %r could not be loaded; leaving it out",
+                          entry.name)
+
+
+def register(name: str, feed: Any, description: str = "") -> None:
     _FEEDS[name] = feed
+    if description:
+        DESCRIPTIONS[name] = description
+
+
+def get(name: str) -> Any:
+    load()
+    return _FEEDS.get(name)
 
 
 @runtime_checkable

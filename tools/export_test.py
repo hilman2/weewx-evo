@@ -50,6 +50,134 @@ def make_site(root: Path) -> Path:
     return site
 
 
+
+def local_export(check) -> int:
+    """Publishing to a directory, and the web server picking it up.
+
+    The destination most stations actually use. Its failure modes are not
+    FTP's: a hard link that quietly shares an inode, a delete that takes
+    somebody else's file, a directory published into itself.
+    """
+    import shutil
+    import tempfile
+    import time
+    import urllib.request
+    from pathlib import Path
+
+    from weewx_evo.exports import ExportError
+    from weewx_evo.exports.local import LocalExport
+    from weewx_evo.netaccess import Access
+    from weewx_evo.webserver import Site, WebServer, site_from
+
+    failures = 0
+    tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-local-"))
+    try:
+        source = tmp / "feed"
+        (source / "css").mkdir(parents=True)
+        (source / "index.html").write_text("<h1>21.4</h1>", encoding="utf-8")
+        (source / "css" / "a.css").write_text("body{}", encoding="utf-8")
+        (source / "data.json").write_text('{"a":1}', encoding="utf-8")
+        site = tmp / "site"
+
+        export = LocalExport(directory=str(site), source="json",
+                             tracker=str(tmp / "sent.json"))
+
+        print("\nit publishes what the feed wrote")
+        result = export.send(source)
+        failures += not check("three files", result.sent, 3)
+        failures += not check("the structure is kept",
+                              (site / "css" / "a.css").exists(), True)
+        failures += not check("and the content arrives",
+                              (site / "index.html").read_text(encoding="utf-8"),
+                              "<h1>21.4</h1>")
+
+        print("\nand does nothing at all the second time")
+        result = export.send(source)
+        failures += not check("nothing sent", result.sent, 0)
+        failures += not check("everything skipped", result.skipped, 3)
+        failures += not check("and it says so", result.note, "nothing had changed")
+
+        print("\none changed file is one file")
+        (source / "index.html").write_text("<h1>22.9</h1>", encoding="utf-8")
+        result = export.send(source)
+        failures += not check("sent", result.sent, 1)
+        failures += not check("skipped", result.skipped, 2)
+        failures += not check("the new content is out there",
+                              (site / "index.html").read_text(encoding="utf-8"),
+                              "<h1>22.9</h1>")
+
+        print("\nwhat it did not put there is not its to delete")
+        # The failure that cannot be undone: a directory holds a
+        # hand-written page as well, and mirroring takes it away.
+        (site / "by-hand.html").write_text("mine", encoding="utf-8")
+        (source / "data.json").unlink()
+        export.delete = True
+        result = export.send(source)
+        failures += not check("the feed's file went", (site / "data.json").exists(),
+                              False)
+        failures += not check("it was counted", result.deleted, 1)
+        failures += not check("and the other one stayed",
+                              (site / "by-hand.html").exists(), True)
+
+        print("\nsome things are refused rather than attempted")
+        try:
+            LocalExport(directory=str(source),
+                        tracker=str(tmp / "t2.json")).send(source)
+            failures += not check("publishing into itself", "allowed", "refused")
+        except ExportError as exc:
+            failures += not check("publishing into itself",
+                                  "source directory" in str(exc), True)
+        try:
+            LocalExport().send(source)
+            failures += not check("with no destination", "allowed", "refused")
+        except ExportError as exc:
+            failures += not check("with no destination",
+                                  "no directory" in str(exc), True)
+
+        print("\nand it says whether it can write before it tries")
+        said = export.check()
+        failures += not check("names the directory", str(site.resolve()) in said,
+                              True)
+        failures += not check("and says it is writable", "writable" in said, True)
+
+        print("\nthe web server serves what a local export published")
+        # Nobody says the path twice: an export named `site` is at /site/.
+        class Settings:
+            def __init__(self, config):
+                self.config = config
+
+            def get(self, key):
+                return {"station.name": "Kirchdorf"}.get(key)
+
+        built = site_from(Settings({
+            "exports": {
+                "site": {"kind": "local", "directory": str(site)},
+                "away": {"kind": "ftp", "host": "ftp.example.org"},
+            },
+            "web": {"default": "site"},
+        }))
+        failures += not check("the local export is served",
+                              "site" in built.feeds, True)
+        failures += not check("the FTP one is not", "away" in built.feeds, False)
+        failures += not check("and it can be the default", built.default, "site")
+
+        server = WebServer(built, "127.0.0.1", 0, access=Access.parse("any"))
+        server.start()
+        time.sleep(0.2)
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{server.port}/", timeout=5) as reply:
+                body = reply.read().decode("utf-8", "replace")
+            failures += not check("and it answers at /", body, "<h1>22.9</h1>")
+        except Exception as exc:  # noqa: BLE001
+            failures += not check("and it answers at /", str(exc), "no error")
+        finally:
+            server.stop()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return failures
+
+
 def main() -> int:
     failures = 0
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-export-"))
@@ -108,6 +236,8 @@ def main() -> int:
         failures += rsync_tests(tmp, site)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    failures += local_export(check)
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")
     return 1 if failures else 0

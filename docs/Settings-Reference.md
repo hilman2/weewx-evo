@@ -92,7 +92,7 @@ Legende: **A** = advanced (auf der Admin-Seite hinter einem Schalter),
 |---|---|---|---|---|
 | `web.enabled` | bool | `false` | R | Ein kleiner Web-Server für das, was die Feeds schreiben. Genug, um die eigenen Seiten im lokalen Netz anzusehen, ohne nginx zu installieren |
 | `web.port` | int | `8081` | R | Eigener Port, getrennt von Upload und Einstellungsseite. Die beiden antworten Hardware und einem Betreiber; dieser antwortet Browsern |
-| `web.default` | choice | — | | Mit einem gewählten Feed ist `/` dieser Feed und die anderen bleiben unter `/<name>/`. Ohne listet `/` auf, was es gibt |
+| `web.default` | choice | — | | Was unter `/` liegt; die anderen bleiben unter `/<name>/`. Ohne listet `/` auf, was es gibt. Die Auswahl sind die `local`-Exports und was `[web.serve]` direkt benennt |
 | `web.allow` | text | `private` | | Wie sonst. Eine Wetterseite ist kein Geheimnis, aber diese Maschine antwortet trotzdem Fremden |
 | `web.host` | text | `0.0.0.0` | A R | |
 
@@ -152,20 +152,33 @@ Präfix `feeds.json`. Deklariert in
 
 ## Exports
 
-Präfix `exports.<name>`. Deklariert in `exports/ftp.py` und `exports/rsync.py`.
-Gemeinsam für beide:
+Präfix `exports.<name>`. Deklariert in `exports/local.py`, `exports/ftp.py` und
+`exports/rsync.py`. Gemeinsam für alle drei:
 
 | Name | Kind | Default | Bedeutung |
 |---|---|---|---|
-| `kind` | choice | — | `ftp` oder `rsync` |
-| `host` | text | — | Der Server. Kein URL, nur der Name |
-| `user` | text | — | |
-| `directory` | text | `/` (ftp), — (rsync) | Wohin auf dem Server. Bei Shared Hosting meist `/httpdocs` oder `/public_html`, selten das Login-Verzeichnis |
+| `kind` | choice | — | `local`, `ftp` oder `rsync` |
+| `directory` | text/path | siehe unten | Wohin. Bei Shared Hosting meist `/httpdocs` oder `/public_html`, selten das Login-Verzeichnis |
 | `source` | choice | — | Welchen Feed dieser Export sendet |
 | `directory_source` | path | — | Oder ein Verzeichnis, wenn kein Feed gewählt ist |
 | `delete` | bool | `false` | Entfernt Dateien, die nicht mehr erzeugt werden. Nur, was dieser Export selbst dorthin gebracht hat — er führt Buch |
 | `trigger` | choice | `feed` | `feed` · `record` · `interval` · `manual` |
 | `every` | duration | `900` (60–86400) | Nur mit `interval`. Unter dem Archivintervall liefe er ohne Neues |
+| `tracker` | path | — | Wo vermerkt wird, was schon gesendet wurde. Leer heißt: neben dem Quellverzeichnis. Das verhindert, dass jedes Mal alles hochgeht; es zu verlieren kostet einen vollen Lauf |
+
+Nur `local`:
+
+| Name | Kind | Default | Bedeutung |
+|---|---|---|---|
+| `directory` | path | `data/site` **!** | Ein Verzeichnis auf dieser Maschine. Unter das gelegt, was der eingebaute Web-Server ausliefert, ist der Feed sofort im lokalen Netz. Ein Verzeichnis, das nginx schon ausliefert, oder eine eingehängte Freigabe funktioniert genauso |
+| `link` | bool | `true` | **A** — Hardlink statt Kopie. Auf einem Dateisystem kostet ein Link einen Verzeichniseintrag statt einer zweiten Kopie jeder Datei. Fällt von selbst aufs Kopieren zurück, wo das Dateisystem nicht linkt |
+
+Für `ftp` und `rsync` zusätzlich:
+
+| Name | Kind | Default | Bedeutung |
+|---|---|---|---|
+| `host` | text | — | Der Server. Kein URL, nur der Name |
+| `user` | text | — | |
 | `timeout` | duration | `30` (ftp) / `600` (rsync) | Ein toter Host darf das nächste Intervall nicht aufhalten |
 
 Nur FTP:
@@ -176,7 +189,6 @@ Nur FTP:
 | `port` | int | `21` | |
 | `tls` | bool | `true` | FTPS. Aus nur, wenn der Host kein TLS hat — dann geht das Passwort als lesbarer Text übers Netz |
 | `passive` | bool | `true` | Fast immer richtig. Aktiv verlangt, dass der Server zurück verbindet, was kein Heimrouter erlaubt |
-| `tracker` | path | — | Wo vermerkt wird, was schon gesendet wurde. Leer heißt: neben dem Quellverzeichnis. Das ist, was verhindert, dass jedes Mal alles hochgeht; es zu verlieren kostet einen vollen Upload |
 
 Nur rsync:
 
@@ -195,4 +207,5 @@ src/weewx_evo/ingest/plugins/ecowitt/driver.py
 src/weewx_evo/feeds/jsongenerator/__init__.py
 src/weewx_evo/exports/ftp.py
 src/weewx_evo/exports/rsync.py
+src/weewx_evo/exports/local.py
 -->

@@ -338,16 +338,52 @@ def installed_drivers() -> list[tuple[str, str]]:
     return [(name, name) for name in drivers.names()]
 
 
+def published_names() -> list[tuple[str, str]]:
+    """What the built-in web server has to hand out.
+
+    The local exports, by name: an export is where somebody said a feed's
+    files should end up, so it is also the thing that has an address. Reading
+    the exports rather than the feeds is the difference between offering what
+    exists and offering what might.
+    """
+    from . import config as config_file
+
+    try:
+        current = config_file.read(_config_path())
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for name, options in sorted((current.get("exports") or {}).items()):
+        if isinstance(options, dict) and options.get("kind") == "local":
+            where = str(options.get("directory", "")).strip()
+            out.append((name, f"{name} -- {where}" if where else name))
+    for name in sorted((current.get("web", {}) or {}).get("serve", {}) or {}):
+        out.append((name, f"{name} -- named directly"))
+    return out
+
+
+def _config_path() -> Any:
+    """Which file the forms are being built for.
+
+    The admin page knows; a form generated for a different file would offer
+    exports that are not in it.
+    """
+    from .cli import _ARGS
+
+    return getattr(_ARGS, "config", None) if _ARGS else None
+
+
 def defined_feeds() -> list[tuple[str, str]]:
     """The feeds that exist, for an export to point at.
 
     An export can only send what something produced, so the list is the feeds
-    and not the filesystem. There are none yet, which the form says rather
-    than showing an empty dropdown.
+    and not the filesystem.
     """
     from . import feeds
 
-    return [(name, name) for name in feeds.names()]
+    return [(name, f"{name} -- {feeds.describe(name)}"
+             if feeds.describe(name) else name)
+            for name in feeds.names()]
 
 
 def core_options() -> list[Group]:
@@ -522,11 +558,12 @@ def core_options() -> list[Group]:
                    help="Its own, separate from the upload port and the "
                         "settings page. Those two answer hardware and an "
                         "operator; this answers browsers."),
-            Option("web.default", "Show this feed at /", kind="choice",
-                   choices=(("", "-- a list of the feeds --"),),
-                   choices_from=defined_feeds,
-                   help="With one chosen, / is that feed and the others stay "
-                        "at /<name>/. Without, / lists what there is."),
+            Option("web.default", "Show this at /", kind="choice",
+                   choices=(("", "-- a list of what there is --"),),
+                   choices_from=published_names,
+                   help="What appears at the address itself. With one chosen, "
+                        "/ is that one and the rest stay at /<name>/. Without, "
+                        "/ lists them."),
             Option("web.allow", "Answer", default="private",
                    suggestions=(("private", "the local network"),
                                 ("any", "anywhere, including the internet")),

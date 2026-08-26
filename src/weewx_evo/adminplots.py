@@ -230,33 +230,49 @@ def _count(form: dict[str, Any]) -> int:
     return highest + 1
 
 
-def bring_over(admin: Any, source: str, replace: bool) -> tuple[str, str]:
-    """Import from a WeeWX skin. Returns (message, error)."""
+def bring_over(admin: Any, source: str, replace: bool,
+               text: str = "", origin: str = "the uploaded file") -> tuple[str, str]:
+    """Import from a WeeWX skin. Returns (message, error).
+
+    From a file that was uploaded, from text that was pasted, or from a path
+    on this machine. The path is the least useful of the three and is offered
+    last: run weewx-evo in a container and the skin is in a different one,
+    with no path that reaches it from here.
+    """
     from . import weewxconf
 
     source = (source or "").strip()
-    if not source:
-        return "", "Say which file to read."
-    try:
-        conf = weewxconf.read(source)
-    except OSError as exc:
-        return "", f"Cannot read {source}: {exc}"
+    text = text or ""
+    if text.strip():
+        where = origin
+        try:
+            conf = weewxconf.parse(text)
+        except Exception as exc:  # noqa: BLE001
+            return "", f"That could not be read as a skin.conf: {exc}"
+    elif source:
+        where = source
+        try:
+            conf = weewxconf.read(source)
+        except OSError as exc:
+            return "", f"Cannot read {source}: {exc}"
+    else:
+        return "", ("Choose a file, paste one in, or give a path on this "
+                    "machine.")
 
     section = conf.get("ImageGenerator")
     if not isinstance(section, dict):
         inside = [k for k, v in conf.items()
                   if isinstance(v, dict) and "ImageGenerator" in v]
         if inside:
-            return "", (f"No [ImageGenerator] at the top of {source}. It is "
+            return "", (f"No [ImageGenerator] at the top of {where}. It is "
                         f"inside: {', '.join(inside)}.")
-        return "", (f"No [ImageGenerator] section in {source}. Charts live in "
-                    "a skin's skin.conf, not in weewx.conf -- try "
-                    "skins/Seasons/skin.conf.")
+        return "", (f"No [ImageGenerator] section in {where}. Charts live in "
+                    "a skin's own skin.conf, not in weewx.conf.")
 
     found = plot_defs.from_image_generator(section,
                                            plot_defs.labels_from(conf))
     if not len(found.plots):
-        return "", f"Nothing that looked like a chart in {source}."
+        return "", f"Nothing that looked like a chart in {where}."
 
     charts = found.plots if replace else load(admin)
     added = kept = 0
@@ -272,11 +288,11 @@ def bring_over(admin: Any, source: str, replace: bool) -> tuple[str, str]:
     else:
         added = len(charts)
 
-    problem = store(admin, charts, f"Imported from {source}.")
+    problem = store(admin, charts, f"Imported from {where}.")
     if problem:
         return "", problem
 
-    said = f"Took {added} chart(s) from {source}."
+    said = f"Took {added} chart(s) from {where}."
     if kept:
         said += f" {kept} were already here and were left alone."
     if found.drawing:
@@ -531,38 +547,66 @@ def new(admin: Any, columns: set[str], error: str = "",
 
 def importer(admin: Any, message: str = "", error: str = "",
              form: dict[str, Any] | None = None) -> str:
-    """The bring-it-over-from-WeeWX form."""
+    """The bring-it-over-from-WeeWX form.
+
+    Three ways in, and the order matters. A file is the one that works from
+    anywhere: the skin is on the machine somebody is sitting at, not
+    necessarily on the machine this is running on. Run weewx-evo in a
+    container and there is no path from here that reaches the skin at all.
+    """
     form = form or {}
-    guesses = [
-        "/etc/weewx/skins/Seasons/skin.conf",
-        "/home/weewx/skins/Seasons/skin.conf",
-        "~/weewx-data/skins/Seasons/skin.conf",
-    ]
     return f'''
 <section class="group">
   <h3>Import from a WeeWX skin</h3>
   <p class="lede">Reads an <code>[ImageGenerator]</code> section and makes the
-     same charts. Everything about drawing a picture -- fonts, image sizes,
-     background colours -- is left behind, and it says what it left.</p>
+     same charts. Everything about drawing a picture is left behind, and it
+     says what it left. Nothing is overwritten unless you ask.</p>
   {f'<p class="err">{html.escape(error)}</p>' if error else ""}
   {f'<p class="ok">{html.escape(message)}</p>' if message else ""}
-  <form method="post" action="./import-plots">
+
+  <form method="post" action="./import-plots" enctype="multipart/form-data">
+    <fieldset class="line">
+      <legend>A file</legend>
+      <div class="row">
+        <label>skin.conf
+          <input type="file" name="upload" accept=".conf,.txt,text/plain">
+          <span class="hint">Usually <code>skins/Seasons/skin.conf</code> in a
+            WeeWX installation. It is read here and not kept.</span>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset class="line">
+      <legend>Or paste it</legend>
+      <div class="row">
+        <label>The text of a skin.conf
+          <textarea name="pasted" rows="8" spellcheck="false"
+                    placeholder="[ImageGenerator]&#10;    [[day_images]]&#10;        [[[daytempdew]]]&#10;            [[[[outTemp]]]]&#10;            [[[[dewpoint]]]]"
+                    >{html.escape(str(form.get("pasted", "")))}</textarea>
+          <span class="hint">The whole file, or just the
+            <code>[ImageGenerator]</code> part of it.</span>
+        </label>
+      </div>
+    </fieldset>
+
+    <details>
+      <summary>Or a path on the machine this is running on</summary>
+      <div class="row">
+        <label>Path
+          <input name="source" value="{html.escape(str(form.get("source", "")))}"
+                 placeholder="/etc/weewx/skins/Seasons/skin.conf">
+          <span class="hint">Only useful where weewx-evo and WeeWX share a
+            filesystem. In a container they do not.</span>
+        </label>
+      </div>
+    </details>
+
     <div class="row">
-      <label>skin.conf
-        <input name="source" list="guesses" required
-               value="{html.escape(str(form.get("source", "")))}"
-               placeholder="/etc/weewx/skins/Seasons/skin.conf">
-        <datalist id="guesses">
-          {"".join(f'<option value="{html.escape(g)}">' for g in guesses)}
-        </datalist>
-        <span class="hint">The path on this machine. The charts are in the
-          skin, not in weewx.conf.</span>
-      </label>
       <label class="tick">
         <input type="checkbox" name="replace" value="1">
         Replace everything
         <span class="hint">Off, it adds what is not already here and leaves
-          your own charts alone.</span>
+          charts you have changed alone.</span>
       </label>
     </div>
     <div class="actions"><button type="submit">Read it</button></div>
