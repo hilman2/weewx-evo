@@ -559,12 +559,18 @@ def to_bool(value: Any) -> bool:
 
 
 def to_int(value: Any) -> Any:
+    # A boolean first: `int(float("False"))` raises, and `to_int(to_bool(x))`
+    # is how a template turns a setting into a 0 or a 1.
+    if isinstance(value, bool):
+        return int(value)
     if value is None or str(value).strip().lower() in ("none", ""):
         return None
     return int(float(str(value).strip()))
 
 
 def to_float(value: Any) -> Any:
+    if isinstance(value, bool):
+        return float(value)
     if value is None or str(value).strip().lower() in ("none", ""):
         return None
     return float(str(value).strip())

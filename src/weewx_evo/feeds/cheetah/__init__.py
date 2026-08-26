@@ -617,7 +617,17 @@ class CheetahFeed:
                 if not named:
                     continue
                 for pattern in (named if isinstance(named, list) else [named]):
-                    wanted += sorted(self.skin.glob(str(pattern)))
+                    for found in sorted(self.skin.glob(str(pattern).strip())):
+                        if found.is_dir():
+                            # A directory named in `copy_once` means all of
+                            # it. weewx-wdc names `dist/assets`, which is
+                            # where its typefaces live -- skipped, the page
+                            # loads and asks the browser for four fonts
+                            # that are not there.
+                            wanted += sorted(x for x in found.rglob("*")
+                                             if x.is_file())
+                        else:
+                            wanted.append(found)
         if not wanted:
             wanted = [p for p in self.skin.rglob("*")
                       if p.is_file() and p.suffix.lower() in COPY_SUFFIXES]

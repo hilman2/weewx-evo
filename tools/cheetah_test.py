@@ -147,6 +147,9 @@ SKIN_VERSION = 1.2.3
 [DisplayOptions]
     observations = outTemp, barometer
 
+[CopyGenerator]
+    copy_once = site.css, assets
+
 [CheetahGenerator]
     encoding = utf8
     [[ToDate]]
@@ -323,6 +326,11 @@ def main() -> int:
         (skin / "deeper.inc").write_text(DEEPER, encoding="utf-8")
         (skin / "fresh.html.tmpl").write_text(FRESH, encoding="utf-8")
         (skin / "site.css").write_text("body{}", encoding="utf-8")
+        # A whole directory, which is how a skin ships its typefaces.
+        (skin / "assets").mkdir(exist_ok=True)
+        (skin / "assets" / "face.woff2").write_bytes(b"not really a font")
+        (skin / "assets" / "deeper").mkdir(exist_ok=True)
+        (skin / "assets" / "deeper" / "more.woff").write_bytes(b"nor this")
 
         conn = sqlite3.connect(db)
         reader = Reader(conn)
@@ -426,7 +434,16 @@ def main() -> int:
                               (out / "index.html").exists(), True)
 
         print("\nwhat the skin ships alongside comes too")
-        failures += not check("its stylesheet", (out / "site.css").exists(), True)
+        failures += not check("its stylesheet", (out / "site.css").exists(),
+                              True)
+        # `copy_once = assets` names a directory, and a directory means all
+        # of it. Taking only the files that matched directly left weewx-wdc
+        # asking the browser for four typefaces that were never published.
+        failures += not check("a whole directory it named",
+                              (out / "assets" / "face.woff2").exists(), True)
+        failures += not check("and what is under that",
+                              (out / "assets" / "deeper" / "more.woff")
+                              .exists(), True)
         failures += not check("but not its templates or its config",
                               (out / "index.html.tmpl").exists()
                               or (out / "skin.conf").exists(), False)

@@ -1357,6 +1357,14 @@ class Tags:
 
     @staticmethod
     def to_int(value: Any) -> int | None:
+        # A boolean first, because `int(float("False"))` raises and a
+        # template writes `$to_int($to_bool($x))` to get a 0 or a 1 out of
+        # a setting. Coming back as None, that printed as nothing at all --
+        # and in weewx-wdc it printed into the middle of a JavaScript
+        # object, where `color_temperature: ,` is a syntax error that takes
+        # every script after it down with it.
+        if isinstance(value, bool):
+            return int(value)
         try:
             return int(float(str(value).strip()))
         except (TypeError, ValueError):
