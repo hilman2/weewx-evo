@@ -448,11 +448,19 @@ def _where_it_lands(admin: Admin, name: str) -> str:
 
     web = config.get("web", {}) or {}
     directory = str(settings.get("directory") or "")
+    # As typed, and as it actually lands. A relative path is resolved against
+    # the configuration file, so `data/json` beside `/data/evo.toml` is
+    # `/data/data/json` -- correct, surprising, and worth showing rather than
+    # leaving somebody to find out from a 404.
+    resolved = ""
+    if directory and not Path(directory).is_absolute():
+        resolved = str((Path(admin.path).parent / directory).resolve())
     if not web.get("enabled"):
         return f'''
 <section class="group">
   <h3>Where it lands</h3>
-  <p class="lede">In <code>{html.escape(directory or "-- no directory set --")}</code>
+  <p class="lede">In
+     <code>{html.escape(resolved or directory or "-- no directory set --")}</code>
      on this machine. Point a web server at it, or
      <a href="./website">turn the built-in one on</a> and it is readable
      straight away.</p>
@@ -464,8 +472,9 @@ def _where_it_lands(admin: Admin, name: str) -> str:
     return f'''
 <section class="group">
   <h3>Where it lands</h3>
-  <p class="lede">In <code>{html.escape(directory)}</code>, and the built-in
-     server hands it out at
+  <p class="lede">In <code>{html.escape(resolved or directory)}</code>
+     {f'(you wrote <code>{html.escape(directory)}</code>, which is relative to the settings file)' if resolved else ''},
+     and the built-in server hands it out at
      <a href="http://{html.escape(host)}:{port}{path}">http://{html.escape(host)}:{port}{path}</a>.
      The name in the address is this export's name.</p>
 </section>'''

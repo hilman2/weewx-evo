@@ -20,10 +20,16 @@ set of rules for two audiences, and the stricter one would have to lose.
 
 ## What it will not do
 
-No directory listing inside a feed, no symlinks followed out of it, no path
-that resolves above the feed's own directory. A feed's directory is generated
-from a template, and a template that can be made to write `../../etc` is a
-template somebody will eventually write by accident.
+No symlinks followed out of a feed, and no path that resolves above the feed's
+own directory. A feed's directory is generated from a template, and a template
+that can be made to write `../../etc` is a template somebody will eventually
+write by accident. That check is the whole of the protection here.
+
+A directory with no index page *is* listed. Refusing one was the first
+instinct and it was wrong: a feed that writes seventy JSON files and no
+`index.html` answered 404 at its own address, which reads as "nothing here"
+and is the opposite of true. These files are published on purpose. What
+protects them is the boundary above, not silence about what they are called.
 """
 
 from __future__ import annotations
@@ -44,6 +50,9 @@ log = logging.getLogger(__name__)
 
 #: Tried in order when a directory is asked for.
 INDEXES = ("index.html", "index.htm")
+
+#: A newline, for joining inside an f-string.
+NEWLINE = chr(10)
 
 #: Files worth telling a browser to keep. A weather site rewrites its pages
 #: every interval, so those must not be cached; the things around them --
@@ -121,8 +130,52 @@ class Site:
                 candidate = target / name
                 if candidate.is_file():
                     return candidate
-            return None
+            # No index page. The caller lists it rather than pretending the
+            # directory is not there.
+            return target
         return target if target.is_file() else None
+
+
+def listing_page(site: Site, directory: Path, path: str) -> bytes:
+    """What is in a directory that has no index page of its own.
+
+    Deliberately plain. This is not a page anybody designed; it is an answer
+    to "what is actually in here", which is the question somebody has when
+    they typed the address by hand.
+    """
+    rows = []
+    try:
+        entries = sorted(directory.iterdir(),
+                         key=lambda p: (p.is_file(), p.name.lower()))
+    except OSError:
+        entries = []
+
+    for entry in entries:
+        if entry.name.endswith((".part", ".tmp")) or entry.name.startswith("."):
+            continue
+        name = entry.name + ("/" if entry.is_dir() else "")
+        try:
+            size = ("" if entry.is_dir()
+                    else f"{entry.stat().st_size / 1024:.1f} KB")
+            when = time.strftime("%Y-%m-%d %H:%M",
+                                 time.localtime(entry.stat().st_mtime))
+        except OSError:
+            size = when = ""
+        rows.append(f'<li><a href="{html.escape(name)}">{html.escape(name)}</a>'
+                    f"<span>{html.escape(size)}"
+                    f"{'  &middot;  ' if size and when else ''}"
+                    f"{html.escape(when)}</span></li>")
+
+    if not rows:
+        rows.append('<li class="empty">This directory is empty.</li>')
+
+    up = ""
+    if path.strip("/").count("/") >= 1:
+        up = '<li><a href="../">../</a><span>up one</span></li>'
+
+    return _INDEX.format(
+        title=html.escape(f"{site.title} {path}"),
+        items=up + NEWLINE.join(rows)).encode("utf-8")
 
 
 def index_page(site: Site) -> bytes:
@@ -248,6 +301,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._not_found(body)
             return
 
+        if target.is_dir():
+            # The request's own path, not one rebuilt from the parts: the
+            # trailing slash is the whole question here, and rebuilding it
+            # loses exactly that and redirects the address to itself.
+            path = urlparse(self.path).path
+            if not path.endswith("/"):
+                # So that relative links in the listing resolve against this
+                # directory rather than against its parent.
+                self._reply_redirect(path + "/")
+                return
+            page = listing_page(self.site, target, path)
+            self._head(200, len(page), "text/html; charset=utf-8")
+            if body:
+                self.wfile.write(page)
+            return
+
         try:
             size = target.stat().st_size
             mtime = target.stat().st_mtime
@@ -282,6 +351,12 @@ class _Handler(BaseHTTPRequestHandler):
         except (OSError, BrokenPipeError, ConnectionResetError):
             # A browser that navigated away mid-download. Ordinary.
             pass
+
+    def _reply_redirect(self, where: str) -> None:
+        self.send_response(301)
+        self.send_header("Location", where)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _not_found(self, body: bool) -> None:
         page = b"<h1>404</h1><p>Nothing here.</p>"

@@ -78,6 +78,23 @@ def main() -> int:
             failures += not check("something that is not a feed",
                                   get("/nothing/")[0], 404)
 
+            print("\na directory of files is listed, not refused")
+            # A feed that writes seventy JSON files and no index.html
+            # answered 404 at its own address. That reads as "nothing
+            # here" and is the opposite of true.
+            (site_dir / "data").mkdir()
+            for name in ("index.json", "daytempdew.json"):
+                (site_dir / "data" / name).write_text(
+                    "{}", encoding="utf-8")
+            code, body = get("/website/data/")
+            failures += not check("it answers", code, 200)
+            failures += not check(
+                "and names what is in it",
+                "daytempdew.json" in body and "index.json" in body, True)
+            failures += not check("the files themselves still work",
+                                  get("/website/data/index.json")[1], "{}")
+            failures += not check("one that is not there is still 404",
+                                  get("/website/data/nope.json")[0], 404)
             print("\nnothing gets out of a feed's directory")
             # Every shape of it. All must fail the same way, and the file
             # outside must never appear in a body.
