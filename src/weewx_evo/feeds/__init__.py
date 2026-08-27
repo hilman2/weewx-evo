@@ -138,6 +138,8 @@ BUNDLED = (
      "a skin written for WeeWX, rendered unchanged"),
     ("images", "weewx_evo.feeds.imagegenerator", "ImageGenerator",
      "the same charts as PNG files, for a page or a forum post"),
+    ("realtime", "weewx_evo.feeds.realtime", "RealtimeFeed",
+     "one line of current conditions, in Cumulus's realtime.txt format"),
 )
 
 
