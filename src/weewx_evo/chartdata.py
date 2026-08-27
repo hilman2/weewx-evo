@@ -212,7 +212,16 @@ def _line(definition: Any, reader: Reader, start: int, stop: int,
 
     line = Line(
         obs_type=definition.obs,
-        label=definition.label or labels.get(definition.obs, ""),
+        # The plot's own name, then the skin's, then what the core calls the
+        # reading in the language the page is written in. Never nothing: a
+        # chart published as a file has to say what is in it, because the
+        # thing drawing it has no other source. The image generator already
+        # ended on `obs_label`; the JSON did not, so every series in every
+        # published file came out unnamed and a page built from them showed
+        # "outTemp".
+        label=(definition.label or labels.get(definition.obs, "")
+               or units.obs_label(definition.obs,
+                                  getattr(target, "language", None))),
         plot_type=definition.kind,
         color=definition.color,
         fill_color=definition.fill_color,
