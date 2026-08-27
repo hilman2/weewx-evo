@@ -132,7 +132,7 @@ class ArchiveStore:
         if row is None:
             return None
         cols = [d[0] for d in cursor.description]
-        return {c: v for c, v in zip(cols, row) if v is not None}
+        return {c: v for c, v in zip(cols, row, strict=True) if v is not None}
 
     # -- writing ---------------------------------------------------------
 
@@ -358,7 +358,7 @@ class ArchiveStore:
             accum.set_stats(obs_type)
         n = 0
         for row in cursor:
-            record = {c: v for c, v in zip(cols, row) if v is not None}
+            record = {c: v for c, v in zip(cols, row, strict=True) if v is not None}
             try:
                 accum.add_record(record, weight=weight_of(record))
             except IntervalError:

@@ -36,8 +36,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -45,9 +46,20 @@ log = logging.getLogger(__name__)
 class Scheduled:
     """One export, and when it is next due."""
 
-    __slots__ = ("name", "export", "source", "last", "running", "skipped",
-                 "runs", "failures", "last_summary", "feed", "changed",
-                 "caught_up")
+    __slots__ = (
+        "caught_up",
+        "changed",
+        "export",
+        "failures",
+        "feed",
+        "last",
+        "last_summary",
+        "name",
+        "running",
+        "runs",
+        "skipped",
+        "source",
+    )
 
     def __init__(self, name: str, export: Any, source: Path,
                  feed: str = "") -> None:

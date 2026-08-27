@@ -1,0 +1,60 @@
+#errorCatcher Echo
+
+<!--prettier-ignore-->
+#encoding UTF-8
+#attr $context = 'year'
+#attr $use_parameter_year = True
+#attr $use_parameter_month = False
+#set $NOAA_PATH = "NOAA/NOAA-" + $year.start.format('%Y') + ".txt"
+
+<!DOCTYPE html>
+<html lang="$lang">
+  <head>
+    #include "includes/html-head.inc"
+    <title>$station.location - $gettext("Yearly Weather Conditions")</title>
+  </head>
+
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+    #include "includes/ui-shell.inc"
+
+    <main class="main" id="main">
+      <div class="wrap">
+<header class="page-head">
+              <h1>$gettext("Yearly Weather Conditions")</h1>
+              <h2>$year_name</h2>
+              <h3>
+                <a
+                  class="noaa-report-link"
+                  target="_blank"
+                  href="$get_base_path(path=$NOAA_PATH)"
+                >
+                  NOAA Report
+                </a>
+              </h3>
+            </header>
+
+          <!--prettier-ignore-->
+          #if len($DisplayOptions.get('climatological_days', [])) > 0
+          <div>
+            <div>
+              <!--prettier-ignore-->
+              #include "includes/climatological-days.inc"
+            </div>
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if $DisplayOptions.get('layout', 'alternative') == 'alternative'
+            #include 'includes/body-alternative.inc'
+          #else
+            #include 'includes/body-classic.inc'
+          #end if
+<!--Stat tile Modals-->
+    #if $DisplayOptions.get('layout', 'alternative') == 'alternative'
+      #include "includes/stat-tile-modals.inc"
+    #end if
+
+    #include "includes/footer.inc"
+
+</body>
+</html>

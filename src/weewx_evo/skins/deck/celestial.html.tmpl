@@ -1,0 +1,65 @@
+<!--prettier-ignore-->
+#errorCatcher Echo
+#encoding UTF-8
+#from datetime import datetime
+#set $now = $spell($current.dateTime, "%x")
+#attr $use_parameter_month = False
+#attr $use_parameter_year = False
+
+<!DOCTYPE html>
+<html lang="$lang">
+  <head>
+    #include "includes/html-head.inc"
+    <title>$station.location - $gettext("Almanac")</title>
+  </head>
+
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+    #include "includes/ui-shell.inc"
+
+    <main class="main" id="main">
+      <div class="wrap">
+<header class="page-head">
+              <h1>$gettext("Almanac")</h1>
+              <h2>$now</h2>
+            </header>
+          <!--prettier-ignore-->
+          #if $almanac.hasExtras
+          <div class="grid grid--wide">
+            <!--prettier-ignore-->
+            #attr $labels_almanac = ["Sun", "Moon"]
+            #for $label in $labels_almanac
+            #set global $label_almanac = $label
+            #include "includes/almanac-tile.inc"
+            #end for
+          </div>
+          <div class="grid" style="margin-top: var(--s-4)">
+            <!--prettier-ignore-->
+            #attr $labels_almanac2 = ["Venus", "Mars", "Jupiter", "Saturn"]
+            #for $label in $labels_almanac2
+            #set global $label_almanac = $label
+            #include "includes/almanac-tile.inc"
+            #end for
+          </div>
+          <div class="grid grid--wide" style="margin-top: var(--s-4)">
+            <!--prettier-ignore-->
+            #include "includes/almanac-sun-detail-tile.inc"
+            #include "includes/almanac-moon-detail-tile.inc"
+          </div>
+          #else
+          <div>
+            <!--prettier-ignore-->
+            #set global $label_almanac = $gettext("Sun")
+            #include "includes/almanac-tile-simple.inc"
+          </div>
+          <div>
+            <div>
+              <p class="pyephem">
+                Please install <em>pyephem</em> for detailed celestial timings.
+              </p>
+            </div>
+          </div>
+          #end if
+#include "includes/footer.inc"
+
+</body>
+</html>

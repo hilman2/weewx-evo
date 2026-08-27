@@ -50,7 +50,7 @@ class Bucket:
     at the rate.
     """
 
-    __slots__ = ("tokens", "last")
+    __slots__ = ("last", "tokens")
 
     def __init__(self, burst: float, now: float) -> None:
         self.tokens = burst

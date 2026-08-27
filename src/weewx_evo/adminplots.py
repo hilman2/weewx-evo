@@ -70,8 +70,8 @@ EMPTY = (("", "always produce it"),
          ("day", "not if there is nothing in a day"),
          ("week", "not if there is nothing in a week"),
          ("month", "not if there is nothing in a month"),
-         ("year", "not if there is nothing in a year -- this station has no "
-                  "such sensor"))
+         ("year", ("not if there is nothing in a year -- this station has no "
+                  "such sensor")))
 
 
 # -- what the admin object does -------------------------------------------
@@ -91,7 +91,7 @@ def store(admin: Any, charts: plot_defs.PlotSet, note: str = "") -> str:
         return "This settings page was started read-only."
     try:
         plot_defs.save(path_for(admin), charts, note)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("could not write the plots")
         return f"Could not write {path_for(admin)}: {exc}"
     return ""
@@ -211,7 +211,7 @@ def save(admin: Any, name: str, form: dict[str, Any],
     problem = store(admin, charts)
     if problem:
         return {"": problem}
-    return {k: v for k, v in errors.items()}
+    return dict(errors.items())
 
 
 def plot_defs_vectors() -> set[str]:
@@ -247,7 +247,7 @@ def bring_over(admin: Any, source: str, replace: bool,
         where = origin
         try:
             conf = weewxconf.parse(text)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return "", f"That could not be read as a skin.conf: {exc}"
     elif source:
         where = source
@@ -435,8 +435,8 @@ def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
       <input name="time_length" list="lengths"
              value="{html.escape(format_duration(plot.time_length))}">
       <datalist id="lengths">
-        {"".join(f'<option value="{v}">{html.escape(l)}</option>'
-                 for v, l in LENGTHS)}
+        {"".join(f'<option value="{v}">{html.escape(said)}</option>'
+                 for v, said in LENGTHS)}
       </datalist>
       <span class="hint">27h on a day chart, so last night is still on it.</span>
       {err("time_length")}
@@ -581,7 +581,11 @@ def importer(admin: Any, message: str = "", error: str = "",
       <div class="row">
         <label>The text of a skin.conf
           <textarea name="pasted" rows="8" spellcheck="false"
-                    placeholder="[ImageGenerator]&#10;    [[day_images]]&#10;        [[[daytempdew]]]&#10;            [[[[outTemp]]]]&#10;            [[[[dewpoint]]]]"
+                    placeholder="[ImageGenerator]&#10;"
+                                "    [[day_images]]&#10;"
+                                "        [[[daytempdew]]]&#10;"
+                                "            [[[[outTemp]]]]&#10;"
+                                "            [[[[dewpoint]]]]"
                     >{html.escape(str(form.get("pasted", "")))}</textarea>
           <span class="hint">The whole file, or just the
             <code>[ImageGenerator]</code> part of it.</span>

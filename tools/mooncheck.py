@@ -184,7 +184,7 @@ def main() -> int:
 
 
 def _utc(year: int, day: int, hour: int) -> float:
-    return datetime.datetime(year, 1, 1, hour, tzinfo=datetime.timezone.utc) \
+    return datetime.datetime(year, 1, 1, hour, tzinfo=datetime.UTC) \
         .timestamp() + (day - 1) * 86400
 
 

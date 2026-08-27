@@ -5,9 +5,10 @@
 #
 """Test the report the driver leaves behind."""
 
-from ecowitt import report
 from ecowitt.mapping import Mapper
 from ecowitt.protocol import redact
+
+from ecowitt import report
 
 
 def test_the_passkey_is_replaced(payload):

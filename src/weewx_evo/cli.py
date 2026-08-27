@@ -31,30 +31,30 @@ import sys
 import threading
 import time
 from pathlib import Path
-
 from typing import Any
 
 from . import config as config_file
-from . import options as option_defs
 from . import exports as export_registry
-from .exports import runner as export_runner
+from . import feedrunner as feed_runner
+from . import options as option_defs
+from . import plots as plot_defs
+from . import settings as settings_state
 from . import weewxconf
 from .admin import Admin, AdminServer
-from .netaccess import Access, warn_if_open
-from .ratelimit import Limits, announce
 from .archiver import Archiver
 from .db.archive import ArchiveStore
 from .db.live import LiveStore
 from .derive import from_settings as deriver_from
+from .exports import runner as export_runner
 from .ingest import drivers, userdrivers
 from .ingest import state as state_module
 from .ingest.listener import HttpListener, Ingest, UdpListener
-from . import settings as settings_state
-from .settings import Settings, load as load_settings
-from . import feedrunner as feed_runner
-from . import plots as plot_defs
-from .webserver import WebServer, site_from
+from .netaccess import Access, warn_if_open
+from .ratelimit import Limits, announce
+from .settings import Settings
+from .settings import load as load_settings
 from .sources import Policy as SourcePolicy
+from .webserver import WebServer, site_from
 
 log = logging.getLogger("weewx_evo")
 
@@ -415,7 +415,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if args.explain:
         print(f"Settings for {args.config or '(no configuration file)'}")
         print()
-        for line in cfg.explain():
+        # Everything that is not the core: each driver, feed and export the
+        # file names. They are named instances, so the core schema cannot
+        # list them and only the file knows how many there are.
+        others = [schema for schema in all_schemas(
+            Path(args.config) if args.config else None)
+            if schema.kind != "core"]
+        for line in cfg.explain(others):
             print(line)
         return 0
 
@@ -860,7 +866,7 @@ def _qr(text: str) -> None:
     package for it. Falls back to saying so if the encoder is not there.
     """
     try:
-        import qrcode  # noqa: PLC0415 - optional convenience
+        import qrcode
     except ImportError:
         print()
         print("(--qr needs the 'qrcode' package, which weewx-evo does not require)",
@@ -951,7 +957,13 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         factory = feed_registry.factory_for(kind)
         if factory is None:
             continue
-        groups = factory.options() if hasattr(factory, "options") else []
+        groups = list(factory.options()) if hasattr(factory, "options") else []
+        # A skin declares its own settings, and they belong on the page of
+        # the feed that runs it -- there is no separate skin page, because a
+        # skin is only ever configured through the feed it belongs to.
+        if hasattr(factory, "skin_options"):
+            groups += factory.skin_options(str(settings.get("skin") or ""),
+                                           settings.get("skins_dir"))
         if not groups:
             continue
         schemas.append(option_defs.Schema(
@@ -1784,7 +1796,7 @@ def cmd_plots_run(args: argparse.Namespace) -> int:
 
 
 def start_feeds(args: argparse.Namespace,
-                cfg: Settings) -> "feed_runner.Runner | None":
+                cfg: Settings) -> feed_runner.Runner | None:
     """Start the feed runner, or say why there is nothing to run.
 
     One function for both loops. They had their own copies once and only one

@@ -72,7 +72,8 @@ def build(records: Iterator[dict], policy: Policy = DEFAULT_POLICY,
                 raise
             continue
 
-        assert accum is not None
+        if accum is None:
+            continue
         accum.add_record(record, weight=weight)
 
     if accum is not None:
@@ -112,4 +113,4 @@ def read_records(conn: sqlite3.Connection, schema: Schema,
     )
     columns = [d[0] for d in cursor.description]
     for row in cursor:
-        yield {col: val for col, val in zip(columns, row) if val is not None}
+        yield {col: val for col, val in zip(columns, row, strict=True) if val is not None}

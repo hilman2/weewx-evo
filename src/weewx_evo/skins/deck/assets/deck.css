@@ -1,0 +1,1356 @@
+/* Deck — the stylesheet.
+ *
+ * Written here rather than pulled in, and that is the whole point: what
+ * replaced it was 658 KB of the Carbon Design System plus twenty-one
+ * <script> tags to somebody else's CDN, in five different versions of the
+ * same components. A weather station in a house should not need a company's
+ * servers to be up in order to draw its own temperature.
+ *
+ * Everything below is one of four things: tokens, layout, components, or a
+ * handful of overrides for the chart library. Nothing here needs a build
+ * step -- it is a file, you can open it, change a number and reload.
+ *
+ * The dark theme is not a second stylesheet. Every colour is a token, and
+ * the theme swaps the tokens. That is why it cannot half-apply: there is no
+ * rule anywhere that names a colour directly.
+ */
+
+/* ---------------------------------------------------------------- tokens */
+
+:root {
+  /* One hue carries the whole page: a cold blue for the surface, warmed
+   * slightly as it comes forward, so a card reads as nearer without a
+   * heavy shadow doing the work. */
+  --hue: 222;
+  --accent-hue: 205;
+
+  --bg: hsl(var(--hue) 30% 97%);
+  --bg-sunk: hsl(var(--hue) 28% 94%);
+  --surface: hsl(0 0% 100%);
+  --surface-2: hsl(var(--hue) 30% 98%);
+  --surface-hover: hsl(var(--hue) 34% 96%);
+
+  --line: hsl(var(--hue) 20% 88%);
+  --line-soft: hsl(var(--hue) 20% 92%);
+
+  --ink: hsl(var(--hue) 32% 14%);
+  --ink-2: hsl(var(--hue) 14% 38%);
+  --ink-3: hsl(var(--hue) 12% 52%);
+
+  --accent: hsl(var(--accent-hue) 82% 42%);
+  --accent-ink: hsl(0 0% 100%);
+  --accent-soft: hsl(var(--accent-hue) 84% 96%);
+  --accent-line: hsl(var(--accent-hue) 70% 84%);
+
+  /* The readings that carry meaning of their own. Used by the tiles and
+   * handed to the charts, so a temperature is the same red in both. */
+  --warm: hsl(8 72% 52%);
+  --cool: hsl(205 78% 46%);
+  --wet: hsl(200 72% 44%);
+  --wind: hsl(168 58% 38%);
+  --sun: hsl(42 92% 48%);
+  --good: hsl(148 52% 38%);
+  --warn: hsl(32 88% 46%);
+  --bad: hsl(2 72% 50%);
+
+  --shadow-1: 0 1px 2px hsl(var(--hue) 30% 20% / 0.06),
+              0 1px 1px hsl(var(--hue) 30% 20% / 0.04);
+  --shadow-2: 0 2px 4px hsl(var(--hue) 30% 20% / 0.05),
+              0 8px 24px -8px hsl(var(--hue) 30% 20% / 0.12);
+  --shadow-3: 0 2px 6px hsl(var(--hue) 30% 20% / 0.06),
+              0 20px 48px -16px hsl(var(--hue) 30% 20% / 0.2);
+
+  /* A scale rather than a set of numbers: every gap on the page is one of
+   * these, so nothing is 13px because it looked right that afternoon. */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 3rem;
+  --s-8: 4rem;
+
+  --r-1: 6px;
+  --r-2: 10px;
+  --r-3: 14px;
+  --r-4: 20px;
+  --r-full: 999px;
+
+  /* The system stack. 556 KB of IBM Plex went with the rest: a font that
+   * has to arrive before the page reads is a page that flashes, and every
+   * machine already has a good one. */
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+  --font-num: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+              sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Segoe UI Mono",
+               "Roboto Mono", Menlo, Consolas, monospace;
+
+  --step--1: clamp(0.78rem, 0.76rem + 0.1vw, 0.84rem);
+  --step-0: clamp(0.92rem, 0.89rem + 0.14vw, 1rem);
+  --step-1: clamp(1.06rem, 1rem + 0.3vw, 1.2rem);
+  --step-2: clamp(1.28rem, 1.16rem + 0.6vw, 1.6rem);
+  --step-3: clamp(1.6rem, 1.36rem + 1.1vw, 2.2rem);
+  --step-4: clamp(2rem, 1.5rem + 2.2vw, 3.2rem);
+
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --fast: 120ms;
+  --slow: 260ms;
+
+  --header-h: 3.5rem;
+  --nav-w: 15rem;
+  --page-max: 108rem;
+
+  color-scheme: light;
+}
+
+/* The dark theme. Same names, different values, and that is the only
+ * difference between the two -- which is why one cannot get half-applied
+ * while the other does not.
+ *
+ * Three selectors, because there are three states: chosen light, chosen
+ * dark, and "whatever the browser says", which is the default and stamps
+ * no attribute at all. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: hsl(var(--hue) 24% 9%);
+    --bg-sunk: hsl(var(--hue) 26% 7%);
+    --surface: hsl(var(--hue) 20% 13%);
+    --surface-2: hsl(var(--hue) 20% 16%);
+    --surface-hover: hsl(var(--hue) 20% 18%);
+
+    --line: hsl(var(--hue) 16% 24%);
+    --line-soft: hsl(var(--hue) 16% 19%);
+
+    --ink: hsl(var(--hue) 22% 94%);
+    --ink-2: hsl(var(--hue) 12% 72%);
+    --ink-3: hsl(var(--hue) 10% 58%);
+
+    --accent: hsl(var(--accent-hue) 84% 64%);
+    --accent-ink: hsl(var(--hue) 30% 10%);
+    --accent-soft: hsl(var(--accent-hue) 50% 18%);
+    --accent-line: hsl(var(--accent-hue) 50% 30%);
+
+    --warm: hsl(10 78% 62%);
+    --cool: hsl(205 82% 62%);
+    --wet: hsl(198 74% 58%);
+    --wind: hsl(168 52% 52%);
+    --sun: hsl(44 88% 60%);
+    --good: hsl(148 48% 52%);
+    --warn: hsl(34 88% 58%);
+    --bad: hsl(4 76% 62%);
+
+    --shadow-1: 0 1px 2px hsl(0 0% 0% / 0.4);
+    --shadow-2: 0 2px 4px hsl(0 0% 0% / 0.3), 0 8px 24px -8px hsl(0 0% 0% / 0.5);
+    --shadow-3: 0 2px 6px hsl(0 0% 0% / 0.4), 0 20px 48px -16px hsl(0 0% 0% / 0.6);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: hsl(var(--hue) 24% 9%);
+  --bg-sunk: hsl(var(--hue) 26% 7%);
+  --surface: hsl(var(--hue) 20% 13%);
+  --surface-2: hsl(var(--hue) 20% 16%);
+  --surface-hover: hsl(var(--hue) 20% 18%);
+
+  --line: hsl(var(--hue) 16% 24%);
+  --line-soft: hsl(var(--hue) 16% 19%);
+
+  --ink: hsl(var(--hue) 22% 94%);
+  --ink-2: hsl(var(--hue) 12% 72%);
+  --ink-3: hsl(var(--hue) 10% 58%);
+
+  --accent: hsl(var(--accent-hue) 84% 64%);
+  --accent-ink: hsl(var(--hue) 30% 10%);
+  --accent-soft: hsl(var(--accent-hue) 50% 18%);
+  --accent-line: hsl(var(--accent-hue) 50% 30%);
+
+  --warm: hsl(10 78% 62%);
+  --cool: hsl(205 82% 62%);
+  --wet: hsl(198 74% 58%);
+  --wind: hsl(168 52% 52%);
+  --sun: hsl(44 88% 60%);
+  --good: hsl(148 48% 52%);
+  --warn: hsl(34 88% 58%);
+  --bad: hsl(4 76% 62%);
+
+  --shadow-1: 0 1px 2px hsl(0 0% 0% / 0.4);
+  --shadow-2: 0 2px 4px hsl(0 0% 0% / 0.3), 0 8px 24px -8px hsl(0 0% 0% / 0.5);
+  --shadow-3: 0 2px 6px hsl(0 0% 0% / 0.4), 0 20px 48px -16px hsl(0 0% 0% / 0.6);
+
+  color-scheme: dark;
+}
+
+/* ----------------------------------------------------------------- reset */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+* { margin: 0; }
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  min-height: 100dvh;
+  font-family: var(--font);
+  font-size: var(--step-0);
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+img, svg, video, canvas { display: block; max-width: 100%; }
+input, button, textarea, select { font: inherit; color: inherit; }
+p, h1, h2, h3, h4 { overflow-wrap: break-word; }
+
+h1, h2, h3, h4 {
+  line-height: 1.2;
+  font-weight: 640;
+  letter-spacing: -0.015em;
+}
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-1);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Every number on this page is compared with the one under it. Tabular
+ * figures keep the columns straight, and the browser has them. */
+.num, .tile__value, .stat__value, table td, table th, time {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  height: var(--header-h);
+  padding-inline: var(--s-4);
+  background: hsl(from var(--surface) h s l / 0.86);
+  backdrop-filter: saturate(1.6) blur(12px);
+  -webkit-backdrop-filter: saturate(1.6) blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+
+/* `hsl(from ...)` is recent. Where it is not understood the whole
+ * declaration is dropped, and an opaque header is the right fallback --
+ * so it is stated first and the translucent one overrides it. */
+@supports not (background: hsl(from red h s l)) {
+  .header { background: var(--surface); }
+}
+
+.header__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-weight: 640;
+  color: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.header__brand svg, .header__brand img { width: 1.5rem; height: 1.5rem; }
+.header__station { color: var(--ink-2); font-weight: 500; }
+
+.header__end { margin-inline-start: auto; display: flex; gap: var(--s-1); }
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 2.25rem; height: 2.25rem;
+  border: 1px solid transparent;
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.icon-button:hover { background: var(--surface-hover); color: var(--ink); }
+.icon-button svg { width: 1.15rem; height: 1.15rem; fill: currentColor; }
+
+/* The toggle shows the theme you would switch *to*, not the one you are
+ * in -- a button says what it does. */
+[data-theme="dark"] .theme-toggle__dark,
+.theme-toggle__light { display: none; }
+[data-theme="dark"] .theme-toggle__light { display: block; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .theme-toggle__dark { display: none; }
+  :root:not([data-theme="light"]) .theme-toggle__light { display: block; }
+}
+:root[data-theme="light"] .theme-toggle__light { display: none; }
+:root[data-theme="light"] .theme-toggle__dark { display: block; }
+
+.header__menu { display: none; }
+
+/* ------------------------------------------------------------ side panel */
+
+.layout {
+  display: grid;
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
+  align-items: start;
+}
+
+.sidenav {
+  position: sticky;
+  top: var(--header-h);
+  max-height: calc(100dvh - var(--header-h));
+  overflow-y: auto;
+  padding: var(--s-5) var(--s-3);
+  border-inline-end: 1px solid var(--line);
+}
+
+.sidenav__group + .sidenav__group { margin-top: var(--s-5); }
+
+.sidenav__title {
+  padding-inline: var(--s-3);
+  margin-bottom: var(--s-2);
+  font-size: var(--step--1);
+  font-weight: 640;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.sidenav a {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.sidenav a:hover { background: var(--surface-hover); color: var(--ink); }
+
+.sidenav a[aria-current="page"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 560;
+}
+
+.sidenav svg { width: 1.05rem; height: 1.05rem; fill: currentColor; flex: none; }
+
+.main { min-width: 0; padding: var(--s-6) var(--s-5) var(--s-8); }
+.wrap { max-width: var(--page-max); margin-inline: auto; }
+
+/* ----------------------------------------------------------- page header */
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-3) var(--s-5);
+  margin-bottom: var(--s-6);
+}
+
+.page-head h1 { font-size: var(--step-3); }
+.page-head__meta { color: var(--ink-3); font-size: var(--step--1); }
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-3);
+  margin: var(--s-7) 0 var(--s-4);
+}
+
+.section-head:first-child { margin-top: 0; }
+.section-head h2 { font-size: var(--step-2); }
+.section-head__note { color: var(--ink-3); font-size: var(--step--1); }
+
+/* ------------------------------------------------------------------ grid */
+
+/* `auto-fit` and `minmax`, not twelve columns. A tile says how narrow it
+ * may get and the browser decides how many fit -- which is the same answer
+ * at every width, including the ones nobody thought to test. */
+.grid {
+  display: grid;
+  gap: var(--s-4);
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+}
+
+.grid--tiles {
+  grid-template-columns: repeat(auto-fit, minmax(min(13rem, 100%), 1fr));
+}
+
+.grid--wide {
+  grid-template-columns: repeat(auto-fit, minmax(min(26rem, 100%), 1fr));
+}
+
+.span-2 { grid-column: span 2; }
+.span-full { grid-column: 1 / -1; }
+
+@media (max-width: 40rem) {
+  .span-2 { grid-column: span 1; }
+}
+
+/* ------------------------------------------------------------------ card */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-1);
+  overflow: clip;
+}
+
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-4) var(--s-4) 0;
+}
+
+.card__head h3 {
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.card__head svg { width: 1.1rem; height: 1.1rem; fill: var(--ink-3); flex: none; }
+.card__body { padding: var(--s-4); }
+.card__foot {
+  padding: var(--s-3) var(--s-4);
+  border-top: 1px solid var(--line-soft);
+  background: var(--surface-2);
+  font-size: var(--step--1);
+  color: var(--ink-3);
+}
+
+/* ------------------------------------------------------------------ tile */
+
+/* The reason the page exists: one reading, big enough to read across a
+ * kitchen, with its context underneath in a size that does not compete. */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-1);
+  transition: box-shadow var(--slow) var(--ease),
+              transform var(--slow) var(--ease),
+              border-color var(--slow) var(--ease);
+}
+
+.tile:hover {
+  box-shadow: var(--shadow-2);
+  border-color: var(--line-soft);
+  transform: translateY(-1px);
+}
+
+.tile__head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 560;
+}
+
+.tile__head svg { width: 1rem; height: 1rem; fill: var(--ink-3); flex: none; }
+
+.tile__value {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15em;
+  font-size: var(--step-4);
+  font-weight: 660;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  font-family: var(--font-num);
+}
+
+.tile__unit {
+  font-size: 0.42em;
+  font-weight: 560;
+  color: var(--ink-3);
+  letter-spacing: 0;
+}
+
+.tile__detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-4);
+  margin-top: var(--s-1);
+  font-size: var(--step--1);
+  color: var(--ink-3);
+}
+
+.tile__detail b { font-weight: 600; color: var(--ink-2); }
+
+/* A tinted tile: the colour is set from the reading itself, so the tint is
+ * the value rather than a decoration. */
+.tile[style*="--tint"], .stat-tile[style*="--tint"] {
+  background:
+    linear-gradient(160deg,
+      hsl(from var(--tint) h s l / var(--tint-strength, 0.14)),
+      transparent 62%),
+    var(--surface);
+}
+
+/* --------------------------------------------------------------- sparkline */
+
+.tile__spark { margin-top: var(--s-2); height: 2.5rem; }
+
+/* ---------------------------------------------------------------- charts */
+
+.chart {
+  width: 100%;
+  height: clamp(16rem, 30vh, 24rem);
+}
+
+.chart--tall { height: clamp(20rem, 42vh, 32rem); }
+.chart--square { aspect-ratio: 1; height: auto; }
+.chart--gauge { height: 11rem; }
+
+.chart-card .card__body { padding: var(--s-3) var(--s-2) var(--s-2); }
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-4);
+  padding: 0 var(--s-2) var(--s-2);
+  font-size: var(--step--1);
+  color: var(--ink-2);
+}
+
+.chart-legend__key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.chart-legend__swatch {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 3px;
+  flex: none;
+}
+
+/* ----------------------------------------------------------------- table */
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--s-3) var(--s-4);
+  text-align: start;
+  font-weight: 600;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+tbody td {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line-soft);
+  vertical-align: baseline;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: var(--surface-hover); }
+
+td.num, th.num { text-align: end; }
+td.name { font-weight: 560; color: var(--ink); white-space: nowrap; }
+td .sub { display: block; color: var(--ink-3); font-size: 0.92em; }
+
+/* A sortable column says so, and says which way it is sorted. */
+th[aria-sort] { cursor: pointer; user-select: none; }
+th[aria-sort]:hover { color: var(--ink); }
+th[aria-sort]::after {
+  content: "";
+  display: inline-block;
+  width: 0.6em; height: 0.6em;
+  margin-inline-start: 0.4em;
+  opacity: 0.3;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+th[aria-sort="descending"]::after { transform: rotate(180deg); opacity: 1; }
+th[aria-sort="ascending"]::after { opacity: 1; }
+
+/* ------------------------------------------------------------------ tabs */
+
+.tabs {
+  display: flex;
+  gap: var(--s-1);
+  padding: var(--s-1);
+  margin-bottom: var(--s-4);
+  background: var(--bg-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-full);
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar { display: none; }
+
+.tabs button {
+  padding: var(--s-2) var(--s-4);
+  border: none;
+  border-radius: var(--r-full);
+  background: none;
+  color: var(--ink-2);
+  font-weight: 560;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+
+.tabs button:hover { color: var(--ink); }
+
+.tabs button[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+[role="tabpanel"][hidden] { display: none; }
+
+/* ----------------------------------------------------------------- badge */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 0.15em var(--s-2);
+  border-radius: var(--r-full);
+  font-size: var(--step--1);
+  font-weight: 560;
+  line-height: 1.6;
+  background: var(--surface-2);
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+}
+
+.badge--good { background: hsl(from var(--good) h 60% 94%); color: var(--good);
+                border-color: hsl(from var(--good) h 40% 84%); }
+.badge--warn { background: hsl(from var(--warn) h 80% 94%); color: var(--warn);
+                border-color: hsl(from var(--warn) h 60% 84%); }
+.badge--bad  { background: hsl(from var(--bad) h 70% 95%); color: var(--bad);
+                border-color: hsl(from var(--bad) h 50% 86%); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .badge--good,
+  :root:not([data-theme="light"]) .badge--warn,
+  :root:not([data-theme="light"]) .badge--bad {
+    background: hsl(from currentColor h 40% 16%);
+    border-color: hsl(from currentColor h 40% 28%);
+  }
+}
+:root[data-theme="dark"] .badge--good,
+:root[data-theme="dark"] .badge--warn,
+:root[data-theme="dark"] .badge--bad {
+  background: hsl(from currentColor h 40% 16%);
+  border-color: hsl(from currentColor h 40% 28%);
+}
+
+/* ---------------------------------------------------------------- notice */
+
+.notice {
+  display: flex;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-inline-start: 3px solid var(--accent);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.notice--warn { border-inline-start-color: var(--warn); }
+.notice--bad { border-inline-start-color: var(--bad); }
+.notice svg { width: 1.2rem; height: 1.2rem; flex: none; fill: var(--accent); }
+.notice--warn svg { fill: var(--warn); }
+.notice--bad svg { fill: var(--bad); }
+.notice__title { font-weight: 620; }
+.notice__body { color: var(--ink-2); font-size: var(--step--1); }
+
+/* --------------------------------------------------------------- tooltip */
+
+/* `<abbr>` with a title works everywhere and needs no script. This adds a
+ * readable bubble on top of it for pointers, and leaves the native one for
+ * everybody else. */
+.hint {
+  position: relative;
+  border-bottom: 1px dotted var(--ink-3);
+  cursor: help;
+  text-decoration: none;
+}
+
+.hint::after {
+  content: attr(data-hint);
+  position: absolute;
+  bottom: calc(100% + var(--s-2));
+  left: 50%;
+  translate: -50% 0;
+  z-index: 30;
+  width: max-content;
+  max-width: 18rem;
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+  background: var(--ink);
+  color: var(--bg);
+  font-size: var(--step--1);
+  font-weight: 500;
+  line-height: 1.4;
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--fast) var(--ease), visibility var(--fast);
+}
+
+.hint:hover::after, .hint:focus-visible::after { opacity: 1; visibility: visible; }
+
+/* ---------------------------------------------------------------- dialog */
+
+dialog {
+  width: min(40rem, calc(100vw - 2rem));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-3);
+}
+
+dialog::backdrop {
+  background: hsl(var(--hue) 30% 10% / 0.5);
+  backdrop-filter: blur(2px);
+}
+
+dialog .card__head { justify-content: space-between; padding: var(--s-4); }
+
+/* ------------------------------------------------------------ almanac art */
+
+/* The sun and moon panels: a strip that shows where in the day we are,
+ * drawn from two numbers rather than as a picture. */
+.daylight {
+  position: relative;
+  height: 0.5rem;
+  border-radius: var(--r-full);
+  background: var(--bg-sunk);
+  overflow: hidden;
+}
+
+.daylight__span {
+  position: absolute;
+  inset-block: 0;
+  border-radius: var(--r-full);
+  background: linear-gradient(90deg, var(--sun), hsl(from var(--sun) h s 62%));
+}
+
+.daylight__now {
+  position: absolute;
+  inset-block: -0.2rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ink);
+}
+
+.moon-disc {
+  width: 4.5rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--bg-sunk);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* ------------------------------------------------------------------ misc */
+
+.muted { color: var(--ink-3); }
+.stack > * + * { margin-top: var(--s-4); }
+.row { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; }
+.row--between { justify-content: space-between; }
+.spacer { flex: 1; }
+
+.footer {
+  margin-top: var(--s-8);
+  padding: var(--s-5) 0;
+  border-top: 1px solid var(--line);
+  color: var(--ink-3);
+  font-size: var(--step--1);
+}
+
+.footer .row { gap: var(--s-4); }
+
+/* --------------------------------------------------------------- narrow */
+
+@media (max-width: 64rem) {
+  :root { --nav-w: 0px; }
+
+  .layout { grid-template-columns: minmax(0, 1fr); }
+
+  .header__menu { display: grid; }
+
+  /* Off-canvas rather than hidden: the links are the same ones, they just
+   * arrive from the side. `inert` while closed keeps them out of the tab
+   * order without a script deciding that separately. */
+  .sidenav {
+    position: fixed;
+    inset-block: var(--header-h) 0;
+    inset-inline-start: 0;
+    z-index: 45;
+    width: min(20rem, 82vw);
+    padding-block: var(--s-4);
+    background: var(--surface);
+    border-inline-end: 1px solid var(--line);
+    box-shadow: var(--shadow-3);
+    translate: -100% 0;
+    transition: translate var(--slow) var(--ease);
+  }
+
+  .sidenav[data-open] { translate: 0 0; }
+
+  .scrim {
+    position: fixed;
+    inset: var(--header-h) 0 0;
+    z-index: 44;
+    background: hsl(var(--hue) 30% 10% / 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--slow) var(--ease);
+  }
+
+  .scrim[data-open] { opacity: 1; pointer-events: auto; }
+
+  .main { padding: var(--s-5) var(--s-4) var(--s-7); }
+  .header__station { display: none; }
+}
+
+@media (max-width: 40rem) {
+  .tile__value { font-size: var(--step-3); }
+  .main { padding-inline: var(--s-3); }
+  .card__body, .card__head { padding: var(--s-3); }
+}
+
+/* ----------------------------------------------------------------- print */
+
+@media print {
+  .header, .sidenav, .scrim, .tabs { display: none; }
+  .layout { grid-template-columns: 1fr; }
+  .card, .tile { break-inside: avoid; box-shadow: none; }
+  body { background: white; }
+}
+
+/* ------------------------------------------------- the skin's own names */
+
+/* Below here the selectors are the class names the templates already
+ * carried -- `stat-tile`, `value-min`, `diagram-tile`. They were being
+ * styled by 658 KB of Carbon; they say what they are, so they are worth
+ * keeping and worth addressing directly.
+ *
+ * The structure of a tile, which the selectors below depend on:
+ *
+ *   .stat-tile
+ *     div > div > p.label            the reading's name
+ *                 p.value            icon + span.stat-title-obs-value
+ *     div > .value-min > p.stat-label
+ *                        p.stat-value > span.value
+ *           .value-max > ...
+ *
+ * `.value` appears at both levels. The figure is addressed as a direct
+ * child of the tile's first block rather than as `.stat-tile .value` --
+ * that made every minimum and maximum as large as the reading itself and
+ * pushed the tiles off the side of the page.
+ */
+
+.stat-tile {
+  gap: var(--s-3);
+  padding: var(--s-4);
+  min-width: 0;
+}
+
+.stat-tile > div { min-width: 0; }
+
+.stat-tile .label {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 560;
+  letter-spacing: 0.01em;
+}
+
+/* The figure, sized against the tile rather than against the page. A
+ * container query, because the tile is what it has to fit inside and the
+ * page can be any width at all. */
+[class*="stat-tile-wrap-"] { container-type: inline-size; }
+
+.stat-tile > div > div > p.value {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: var(--s-1) 0 0;
+  font-size: clamp(1.15rem, 9.5cqi, 2.4rem);
+  font-weight: 660;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  min-width: 0;
+}
+
+@supports not (width: 1cqi) {
+  .stat-tile > div > div > p.value { font-size: var(--step-2); }
+}
+
+.stat-tile > div > div > p.value > svg,
+.stat-tile > div > div > p.value > img {
+  width: 1.4rem;
+  height: 1.4rem;
+  fill: var(--ink-3);
+  flex: none;
+}
+
+.stat-title-obs-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s-2);
+  min-width: 0;
+  /* The figure and its unit are one thing. Without this, `1014.5 mbar`
+     put `mbar` on a line of its own the moment the tile got narrow. The
+     words that follow -- "Total", "Avg" -- may still wrap, which is what
+     `flex-wrap` above is for. */
+  white-space: nowrap;
+}
+
+.stat-title-obs-value .raw { white-space: nowrap; }
+
+/* "Total", "Sum", the compass point: whatever the template puts beside the
+ * figure. Not the figure, so not the figure's size -- at 2.4rem it made
+ * `0.30 mm Gesamt` wider than any tile could be and the grid overflowed. */
+.stat-title-obs-value > span:not(.raw),
+.stat-title-obs-value > .stat-detail {
+  font-size: var(--step--1);
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+/* Everything under the figure: minimum, maximum, total, and when. Side by
+ * side, so a tile with three of them is not three times as tall as its
+ * neighbour. */
+.stat-tile > div:has(.value-min),
+.stat-tile > div:has(.value-max),
+.stat-tile > div:has(.value-total-week),
+.stat-tile > div:has(.value-rain-rate-max),
+.stat-tile > div:has(.value-rain-rate-current) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2) var(--s-5);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line-soft);
+}
+
+.stat-tile .stat-label {
+  margin: 0;
+  font-size: var(--step--1);
+  font-weight: 500;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.stat-tile .stat-value {
+  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 620;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.stat-tile .stat-value .value { font-size: inherit; font-weight: inherit; }
+
+@supports not selector(:has(*)) {
+  .value-min, .value-max, .value-total-week {
+    display: inline-block;
+    margin-inline-end: var(--s-5);
+  }
+}
+
+.stat-wind-dir {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--step--1);
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.stat-wind-dir svg { width: 0.9rem; height: 0.9rem; fill: var(--wind); }
+.value-detail { font-size: var(--step--1); color: var(--ink-2); font-weight: 560; }
+.unit-label { font-size: 0.5em; font-weight: 560; color: var(--ink-3); }
+.stat-detail { font-size: var(--step--1); color: var(--ink-3); }
+
+.stat-tile-link { text-decoration: none; color: inherit; display: block; height: 100%; }
+.stat-tile .icon-link {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  width: 0.85rem;
+  height: 0.85rem;
+  fill: var(--ink-3);
+}
+
+[class*="stat-tile-wrap-"] { position: relative; display: flex; min-width: 0; }
+[class*="stat-tile-wrap-"] > * { flex: 1; min-width: 0; }
+
+/* A tile that names its own reading gets that reading's colour on the
+ * icon. One rule per family rather than a class per observation. */
+.stat-tile-wrap-outTemp p.value > svg,
+.stat-tile-wrap-appTemp p.value > svg,
+.stat-tile-wrap-heatindex p.value > svg { fill: var(--warm); }
+.stat-tile-wrap-dewpoint p.value > svg,
+.stat-tile-wrap-windchill p.value > svg,
+.stat-tile-wrap-outHumidity p.value > svg { fill: var(--cool); }
+.stat-tile-wrap-rain p.value > svg,
+.stat-tile-wrap-rainRate p.value > svg,
+.stat-tile-wrap-cloudbase p.value > svg { fill: var(--wet); }
+.stat-tile-wrap-windSpeed p.value > svg,
+.stat-tile-wrap-windGust p.value > svg,
+.stat-tile-wrap-windrun p.value > svg { fill: var(--wind); }
+.stat-tile-wrap-UV p.value > svg,
+.stat-tile-wrap-radiation p.value > svg { fill: var(--sun); }
+
+/* --------------------------------------------------------- diagram tile */
+
+.diagram-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-4);
+  min-width: 0;
+}
+
+.diagram-tile > div { min-width: 0; }
+
+.diagram-tile .label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.diagram-tile .label svg,
+.diagram-tile .label img {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: var(--ink-3);
+  flex: none;
+}
+
+.diagram-tile .value { display: block; margin: 0; font-size: inherit; }
+
+/* The chart element. Sized here and never inline, because ECharts measures
+ * the box it is handed. */
+.diagram, .chart { width: 100%; height: clamp(15rem, 26vh, 20rem); }
+.diagram.windrose { height: clamp(20rem, 34vh, 26rem); }
+/* A calendar and a month grid are each as tall as their own contents --
+   the number of years, the orientation -- so the height is set by the
+   drawing code and this is only what stands before it has run. */
+.diagram.calendar { height: 15rem; }
+
+/* -------------------------------------------------------------- gauges */
+
+.gauge-tile { padding: var(--s-3); }
+.gauge-tile .diagram { height: 10rem; }
+.gauge-tile .label { text-align: center; justify-content: center; }
+
+/* -------------------------------------------------------- almanac tiles */
+
+.almanac-wrap { display: flex; min-width: 0; }
+.almanac-wrap > * { flex: 1; min-width: 0; }
+
+.almanac-tile { display: grid; gap: var(--s-3); padding: var(--s-4); }
+
+/* The tile's heading: the body it is about, with its symbol. */
+.almanac-tile > div > div > .label {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--step-0);
+  font-weight: 620;
+  color: var(--ink);
+}
+
+.almanac-tile > div > div > .label svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  fill: var(--ink-3);
+}
+
+/* Rise, transit, set: three of the same thing, so a row of three rather
+   than a column of six alternating labels and times. */
+.almanac-tile > div > div > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-5);
+  margin-top: var(--s-3);
+}
+
+.almanac-tile .value {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin: 0;
+  font-size: var(--step-1);
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.almanac-tile .value > svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: var(--ink-3);
+  flex: none;
+}
+
+.almanac-tile .value-col { display: grid; gap: 2px; }
+
+.almanac-tile .value-col .label {
+  margin: 0;
+  font-size: var(--step--1);
+  font-weight: 500;
+  color: var(--ink-3);
+}
+
+.almanac-tile .value-col .value {
+  font-size: var(--step-1);
+  font-weight: 640;
+  color: var(--ink);
+}
+
+.almanac-tile .pyephem { color: var(--ink-3); font-size: var(--step--1); }
+
+/* --------------------------------------------------------------- lists */
+
+.forecast-list {
+  display: flex;
+  gap: var(--s-3);
+  overflow-x: auto;
+  padding-bottom: var(--s-2);
+}
+
+.forecast-list > * { flex: 0 0 auto; min-width: 6rem; text-align: center; }
+
+.custom-content { margin-block: var(--s-5); }
+.section-header { margin: var(--s-7) 0 var(--s-4); }
+.section-header h2 { font-size: var(--step-2); }
+.section-header:first-child { margin-top: 0; }
+
+.noaa-report-link { display: inline-flex; gap: var(--s-2); align-items: center; }
+
+.statistics-day-select {
+  display: flex;
+  gap: var(--s-3);
+  flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: var(--s-5);
+}
+
+.statistics-day-select input,
+.statistics-day-select select {
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+}
+
+.small { font-size: var(--step--1); color: var(--ink-3); }
+.cell-value { font-variant-numeric: tabular-nums; }
+.cell-label { font-weight: 560; }
+
+/* Nothing on the page may push it sideways. A chart that has not been laid
+ * out yet, a table wider than its column: they scroll inside their own box,
+ * and the page does not. */
+.main, .wrap, .grid, .card, .tile { min-width: 0; }
+body { overflow-x: clip; }
+
+/* A table wider than the screen scrolls inside its own box. The page
+ * cannot scroll sideways, so without this a fourteen-column year table is
+ * simply cut off at the edge of a phone. */
+.table-scroll {
+  position: relative;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: var(--s-4);
+  border-radius: var(--r-3);
+}
+
+/* A shadow at the edge while there is more to the right, and none once
+ * there is not: a table that scrolls with no sign of it reads as a table
+ * with three columns. */
+.table-scroll::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 2rem;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--fast) var(--ease);
+  background: linear-gradient(to left,
+              hsl(from var(--surface) h s l / 0.95), transparent);
+}
+
+.table-scroll[data-more]::after { opacity: 1; }
+
+/* The first column stays while the rest moves, so a row keeps its name.
+ * Only where there is room for it to be worth doing. */
+@media (min-width: 26rem) {
+  .table-scroll td:first-child,
+  .table-scroll th:first-child {
+    position: sticky;
+    inset-inline-start: 0;
+    z-index: 2;
+    background: var(--surface);
+  }
+
+  .table-scroll thead th:first-child { background: var(--surface-2); }
+
+  .table-scroll[data-scrolled] td:first-child,
+  .table-scroll[data-scrolled] th:first-child {
+    box-shadow: 1px 0 0 var(--line);
+  }
+}
+
+/* A bare table on a page needs the same frame a card has, or it floats
+ * between the tabs above it and the tiles below with nothing holding it. */
+.main table:not(.card table) {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+  margin-bottom: var(--s-4);
+}
+
+.table-scroll > table {
+  margin-bottom: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.table-scroll:has(> table) {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+/* The panels the tabs switch between. */
+[role="tabpanel"] { margin-top: var(--s-2); }
+[role="tabpanel"] > .grid { margin-top: var(--s-4); }
+
+/* --------------------------------------------------------- fact lists */
+
+/* "Here is a thing, here is its value", a few times over: the rain
+ * statistics, the almanac details. A table needs a header row to mean
+ * anything and offers to sort itself, neither of which applies. */
+
+.factlist { padding: var(--s-4); }
+
+.factlist__title {
+  margin: 0 0 var(--s-3);
+  font-size: var(--step-0);
+  font-weight: 620;
+  color: var(--ink-2);
+}
+
+.factlist dl {
+  display: grid;
+  grid-template-columns: minmax(12rem, auto) 1fr;
+  gap: var(--s-2) var(--s-5);
+  margin: 0;
+}
+
+.factlist dt {
+  color: var(--ink-2);
+  font-size: var(--step--1);
+}
+
+.factlist dd {
+  margin: 0;
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One column when there is no room for two: the label above its value
+ * rather than a value squeezed into three characters. */
+@media (max-width: 42rem) {
+  .factlist dl { grid-template-columns: 1fr; gap: var(--s-1); }
+  .factlist dd { margin-bottom: var(--s-3); }
+}
+
+/* The row under a stat table is a different kind of thing from the years
+ * above it: not another year, but what they come to. */
+tr.summary td {
+  border-top: 2px solid var(--line);
+  background: var(--surface-2);
+  font-weight: 600;
+}

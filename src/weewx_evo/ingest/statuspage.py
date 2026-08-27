@@ -196,7 +196,8 @@ _PAGE = """<!doctype html>
 <div class="wrap">
   <header>
     <h1>{{TITLE}}</h1>
-    <span class="pulse"><span class="dot" id="dot"></span><span id="pulse">connecting...</span></span>
+    <span class="pulse"><span class="dot" id="dot"></span>
+      <span id="pulse">connecting...</span></span>
   </header>
 
   <div class="cards" id="cards"></div>

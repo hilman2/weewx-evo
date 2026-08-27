@@ -34,6 +34,95 @@ where = ["src"]
 line-length = 100
 src = ["src", "tools", "tests"]
 
+# Named rather than left to the default. ruff's default set grows between
+# releases, and a check that changes underneath the repository is one that
+# either blocks a commit for a rule nobody chose or stops finding what it
+# used to. This list is the choice; an update to it is a decision.
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes: the findings that are always a bug
+    "E", "W", # pycodestyle
+    "I",      # import order
+    "N",      # naming
+    "UP",     # what this Python version does better
+    "B",      # bugbear: the traps that look fine
+    "C4",     # comprehensions
+    "SIM",    # simplifications
+    "ISC",    # implicit string concatenation
+    "PIE",
+    "BLE",    # bare and blind excepts
+    "S",      # bandit
+    "PLE", "PLW",  # pylint, the errors and warnings -- not its metrics
+    "FURB",
+    "RUF",
+]
+
+# Each of these is a decision this project already made, and a check that
+# argues with it every commit is a check people learn to skip.
+ignore = [
+    # An isolation boundary catches everything by design. A driver that
+    # raises must not take the listener with it, an export that cannot
+    # reach its host is not the archiver's problem, and pyephem's
+    # "never rises" cannot be named without importing an optional package.
+    # Twenty-eight of those, each with the reason on the line above it.
+    "BLE001",
+    # Bound to 0.0.0.0, answered only to private networks. That is the
+    # arrangement, written down, and `netaccess.py` is what enforces it.
+    "S104",
+    # The schema comes from the file, so table and column names are
+    # interpolated into SQL. That is the one rule this project has. The
+    # names come out of the database's own schema, never from a request.
+    "S608",
+    # WeeWX's names, which are not ours to change: `dateTime` and
+    # `usUnits` are columns, `windSpeed_vt` is a reading, and
+    # `UnknownAggregation` is caught by name in skin code.
+    "N806", "N815", "N818",
+    # `/var/tmp/weewx-evo-ecowitt-report.txt` is where the driver's report
+    # goes, and it is a setting -- `report_file` -- for the installation
+    # that wants it elsewhere.
+    "S108",
+    # WeeWX's names again, this time as arguments: `outTemp`, `windGust`.
+    "N803",
+    # `global` for the one lazily-filled registry, and for the one resolved
+    # Settings. That arrangement is deliberate and written down: a module
+    # is imported once, so there is exactly one of it, which is what makes
+    # `settings.running()` work where `from .cli import _RESOLVED` did not.
+    "PLW0603",
+    # Rebinding the loop variable is how a packet gets its raw body back
+    # and how a vector gets normalised. A second name for the same thing
+    # one line later is not clearer.
+    "PLW2901",
+    # `subprocess.run` with the command built here and `check=False`,
+    # because the return code is read rather than raised on -- rsync
+    # answering 24 ("files vanished") is not a failure.
+    "S603",
+    # These say "write it differently", not "this is wrong", and each one
+    # here would cost something: `contextlib.suppress` for a bare
+    # try/except/pass hides which line may raise, a collapsed `if` loses
+    # the comment between the two conditions, and `[*a, *b]` for `a + b`
+    # pushed three lines over the limit the first time it was applied.
+    "SIM102", "SIM103", "SIM105", "SIM108", "RUF005",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The test tools assert, hold made-up tokens, run subprocesses and talk to
+# the server they just started on loopback. All four are what they are for.
+# A test tool that swallows an exception and moves on to the next case is
+# doing its job: the run has to reach the end to report a count.
+"tools/*" = ["S101", "S105", "S106", "S112", "S310", "S603", "S607"]
+"tests/*" = ["S101", "S105", "S106", "S112", "S310", "S603", "S607"]
+# The Ecowitt driver and its tests came from weewx-ecowitt, which is still
+# its own repository, and a fix should be able to travel either way. That
+# is worth more than `"%s" % x` becoming an f-string in 57 places: a
+# reformatted file makes every future diff between the two unreadable.
+#
+# The Deck skin was under the same rule and is not any more -- see its
+# README. The difference is that upstream there is gone, and this one is
+# not.
+"src/weewx_evo/ingest/plugins/ecowitt/*" = ["UP031", "ISC004", "SIM115",
+                                            "PLW1641", "E501"]
+"tests/ecowitt/*" = ["UP031", "ISC004", "SIM115", "B017", "E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

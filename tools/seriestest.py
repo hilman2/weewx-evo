@@ -92,6 +92,16 @@ def close(a: object, b: object) -> bool:
     return a == b
 
 
+def same(got: list, want: list) -> bool:
+    """Two sequences of times, compared including their length.
+
+    The length is the point: `zip` stops at the shorter one, so a series
+    with three buckets missing off the end compared as equal to a full one.
+    """
+    return len(got) == len(want) and all(
+        close(a, b) for a, b in zip(got, want, strict=True))
+
+
 class Tally:
     def __init__(self) -> None:
         self.checked = self.points = self.bad = self.skipped = 0
@@ -102,7 +112,7 @@ def compare(tally: Tally, label: str, mine: object, their_values: list,
             expected: str = "") -> None:
     """One series against one series."""
     values = mine.values  # type: ignore[attr-defined]
-    wrong = [(i, a, b) for i, (a, b) in enumerate(zip(values, their_values))
+    wrong = [(i, a, b) for i, (a, b) in enumerate(zip(values, their_values, strict=False))
              if not close(a, b)]
     length_ok = len(values) == len(their_values)
     ok = length_ok and not wrong
@@ -180,8 +190,7 @@ def main() -> int:
     for obs in ("outTemp", "barometer", "windSpeed", "rain", "radiation"):
         theirs = weewx.xtypes.get_series(obs, whole, manager)
         mine = reader.series(obs, whole.start, whole.stop)
-        stops_ok = all(close(a, b) for a, b in zip(mine.stop,
-                                                   list(theirs[1][0])))
+        stops_ok = same(mine.stop, list(theirs[1][0]))
         compare(tally, obs, mine, list(theirs[2][0]))
         if not stops_ok:
             print("       the point boundaries differ")
@@ -196,7 +205,7 @@ def main() -> int:
             theirs = weewx.xtypes.get_series(obs, whole, manager,
                                              aggregate_type=how,
                                              aggregate_interval=interval)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  --   {label:<28} WeeWX will not: {type(exc).__name__}:"
                   f" {exc}")
             tally.skipped += 1
@@ -213,7 +222,7 @@ def main() -> int:
             theirs = weewx.xtypes.get_series(obs, days, manager,
                                              aggregate_type=how,
                                              aggregate_interval=interval)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  --   {label:<28} WeeWX will not: {type(exc).__name__}:"
                   f" {exc}")
             tally.skipped += 1
@@ -223,7 +232,7 @@ def main() -> int:
         compare(tally, label, mine, list(theirs[2][0]))
         # The bucket boundaries have to line up too, or the values are right
         # and drawn in the wrong place.
-        if not all(close(a, b) for a, b in zip(mine.start, list(theirs[0][0]))):
+        if not same(mine.start, list(theirs[0][0])):
             print("       the bucket boundaries differ:"
                   f" evo {[int(x) for x in mine.start[:3]]}"
                   f" weewx {[int(x) for x in list(theirs[0][0])[:3]]}")
@@ -244,7 +253,7 @@ def main() -> int:
             try:
                 theirs = weewx.xtypes.get_aggregate(
                     obs, TimeSpan(begin, end), how, manager)[0]
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             n += 1
             if not close(reader.aggregate(obs, begin, end, how), theirs):
@@ -277,7 +286,7 @@ def main() -> int:
             theirs = weewx.xtypes.get_series(obs, span, manager,
                                              aggregate_type=how,
                                              aggregate_interval=unit)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  --   {label:<28} WeeWX will not: {exc}")
             tally.skipped += 1
             continue
@@ -296,7 +305,8 @@ def main() -> int:
                 mags.append(v)
                 dirs.append(None)
         note = ""
-        if how is None and len(mags) == len(mine) + 1                 and int(theirs[1][0][0]) == int(span.start):
+        if (how is None and len(mags) == len(mine) + 1
+                and int(theirs[1][0][0]) == int(span.start)):
             # WeeWX's unaggregated wind vector query uses `dateTime >= ?`
             # where every other series in WeeWX uses `>`, so it has one extra
             # point at the very start. Dropped here, and noted rather than
@@ -305,7 +315,7 @@ def main() -> int:
             note = "WeeWX includes one extra point at dateTime == start"
         compare(tally, label, mine, mags, expected=note)
         wrong = [(i, a, b) for i, (a, b) in
-                 enumerate(zip(mine.directions or [], dirs)) if not close(a, b)]
+                 enumerate(zip(mine.directions or [], dirs, strict=False)) if not close(a, b)]
         if wrong:
             print(f"       {len(wrong)} bearing(s) differ, first:"
                   f" evo={wrong[0][1]!r} weewx={wrong[0][2]!r}")
@@ -324,7 +334,7 @@ def main() -> int:
             theirs = weewx.xtypes.get_series(obs, whole, manager,
                                              aggregate_type=how,
                                              aggregate_interval=unit)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  --   {label:<28} WeeWX will not: {exc}")
             tally.skipped += 1
             continue
@@ -333,7 +343,7 @@ def main() -> int:
         compare(tally, label, mine, list(theirs[2][0]))
         for what, got, want in (("start", mine.start, list(theirs[0][0])),
                                 ("stop", mine.stop, list(theirs[1][0]))):
-            if not all(close(a, b) for a, b in zip(got, want)):
+            if not same(got, want):
                 print(f"       the bucket {what}s differ:"
                       f" evo {[int(x) for x in got[:3]]}"
                       f" weewx {[int(x) for x in want[:3]]}")
@@ -345,7 +355,7 @@ def main() -> int:
         shown = ", ".join(
             time.strftime("%Y-%m-%d %H:%M", time.localtime(b))
             for b, _ in got[:3])
-        print(f"  {str(name):<8} {len(got):>4} bucket(s)   {shown}")
+        print(f"  {name!s:<8} {len(got):>4} bucket(s)   {shown}")
     aligned = all(is_midnight(b) and is_midnight(e)
                   for b, e in reader.buckets(start, stop, "day"))
     tally.checked += 1

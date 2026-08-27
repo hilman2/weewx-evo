@@ -44,9 +44,10 @@ color.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .options import parse_duration
 
@@ -356,7 +357,7 @@ def render(plots: PlotSet, note: str = "") -> str:
             lines.append(f"skip_if_empty = {_toml(plot.skip_if_empty)}")
         # Three named values rather than one array: TOML has no null, and an
         # axis where only the bottom is fixed is the common case.
-        for key, value in zip(("ymin", "ymax", "ystep"), plot.yscale):
+        for key, value in zip(("ymin", "ymax", "ystep"), plot.yscale, strict=True):
             if value is not None:
                 lines.append(f"{key} = {_toml(value)}")
         lines.append("")
@@ -728,8 +729,7 @@ def _color(value: Any) -> str:
     if text.lower().startswith("0x"):
         try:
             bgr = int(text, 16)
-            return "#%02x%02x%02x" % (bgr & 0xFF, (bgr >> 8) & 0xFF,
-                                      (bgr >> 16) & 0xFF)
+            return f"#{bgr & 0xFF:02x}{(bgr >> 8) & 0xFF:02x}{(bgr >> 16) & 0xFF:02x}"
         except ValueError:
             return text
     return text

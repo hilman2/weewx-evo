@@ -22,8 +22,9 @@ FIXTURE_PASSKEY = '0000000000000000000000000000AAAA'
 
 weewx = pytest.importorskip('weewx', reason="WeeWX is not installed")
 
-from ecowitt import mapping                                  # noqa: E402
-from ecowitt.driver import EcowittDriver                     # noqa: E402
+from ecowitt.driver import EcowittDriver  # noqa: E402
+
+from ecowitt import mapping  # noqa: E402
 
 
 @pytest.fixture

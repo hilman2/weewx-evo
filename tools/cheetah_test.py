@@ -105,7 +105,7 @@ def archive(path: Path) -> None:
     # Three days up to now, so `$day` has something in it. Whole days in
     # local time, because degree days are counted per calendar day and a
     # bucket of 86400 seconds is not one.
-    midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
+    midnight = int(time.mktime((*time.localtime()[:3], 0, 0, 0, 0, 0, -1)))
     start = midnight - 2 * 86400
     while start < time.time():
         # Around 50 F, below the 65 F base, so there are heating degree days
@@ -627,10 +627,100 @@ def main() -> int:
                               got.get("label"), "Aussentemperatur")
 
         print("\nstale_age is honoured on the second run")
+        # The steps above wrote language files into the skin, which makes
+        # the skin newer than the pages -- and a page older than the skin
+        # it came from is rebuilt whatever its stale_age says. That is the
+        # rule being tested next; here the pages have to start out newer
+        # than the skin, the way they would on a station nobody is editing.
+        now = time.time()
+        for page in out.glob("*.html"):
+            os.utime(page, (now, now))
         again = CheetahFeed(reader, skin, tags, encoding="utf8")
         again.produce(out)
         failures += not check("the fresh page was skipped", again.skipped, 1)
         failures += not check("the other one was not", again.rendered, 1)
+
+        # ...but only while the page is newer than what it was built from.
+        # Without this, editing a template does nothing: the page is still
+        # inside its stale_age and is skipped. That happened on a live
+        # site -- the skin was rewritten and one page stayed four hours
+        # old, with the previous version of everything in it, while every
+        # other page updated.
+        print("\nand a page is rebuilt when its template changes under it")
+        stale_template = skin / "fresh.html.tmpl"
+        # Set both times explicitly. `touch` and the write that just
+        # happened land in the same second on a filesystem with one-second
+        # resolution, and the test would then pass or fail by luck.
+        now = time.time()
+        os.utime(out / "fresh.html", (now - 60, now - 60))
+        os.utime(stale_template, (now, now))
+        third = CheetahFeed(reader, skin, tags, encoding="utf8")
+        third.produce(out)
+        failures += not check("the touched template was rendered again",
+                              third.rendered, 2)
+        failures += not check("and nothing was skipped", third.skipped, 0)
+
+        # An include counts too. A page cannot say which ones it uses --
+        # a skin may compute one -- so the newest include in the skin is
+        # the answer, and it is the conservative one.
+        print("  an edited include counts as well")
+        (skin / "includes").mkdir(exist_ok=True)
+        shared = skin / "includes" / "shared.inc"
+        shared.write_text("x\n", encoding="utf-8")
+        now = time.time()
+        for page in out.glob("*.html"):
+            os.utime(page, (now - 60, now - 60))
+        os.utime(shared, (now, now))
+        fourth = CheetahFeed(reader, skin, tags, encoding="utf8")
+        fourth.produce(out)
+        failures += not check("both pages were rendered again",
+                              fourth.rendered, 2)
+
+        print("\na page whose template is gone is removed")
+        # `about.html.tmpl` was deleted from the Deck skin and its page
+        # stayed on the live site for hours, exported on every run, still
+        # carrying the previous version of the whole skin.
+        orphan = out / "gone.html"
+        orphan.write_text("<p>from a template that no longer exists</p>",
+                          encoding="utf-8")
+        keeper = out / "NOAA"
+        keeper.mkdir(exist_ok=True)
+        (keeper / "NOAA-2026.txt").write_text("a report", encoding="utf-8")
+        mine = out / "notes.txt"
+        mine.write_text("something a person put here", encoding="utf-8")
+
+        fifth = CheetahFeed(reader, skin, tags, encoding="utf8")
+        fifth.produce(out)
+        failures += not check("the orphan is gone", orphan.exists(), False)
+        failures += not check("a directory is left alone",
+                              (keeper / "NOAA-2026.txt").exists(), True)
+        failures += not check("and so is anything that is not a page",
+                              mine.exists(), True)
+        failures += not check("the pages themselves are still there",
+                              (out / "index.html").exists(), True)
+
+        # And the condition that keeps this from being dangerous: after a
+        # page fails, nothing is swept. Its page produced nothing this run,
+        # which is not a reason to delete the last good copy of it.
+        #
+        # Checked on the rule rather than by breaking a template: Cheetah
+        # caches a compiled template by path and modification time, so a
+        # rewrite inside the same second renders the old one, and the test
+        # would pass while proving nothing.
+        print("  but nothing is swept after a page fails")
+        survivor = out / "survives.html"
+        survivor.write_text("<p>still here</p>", encoding="utf-8")
+        after_failure = CheetahFeed(reader, skin, tags, encoding="utf8")
+        after_failure.failed = [("index.html.tmpl", "boom")]
+        failures += not check("nothing was removed",
+                              after_failure._sweep(out, []), 0)
+        failures += not check("and the orphan is still there",
+                              survivor.exists(), True)
+        # Without the failure it does go -- which is what makes the guard
+        # worth having rather than a line nobody would miss.
+        after_failure.failed = []
+        failures += not check("without the failure it does go",
+                              after_failure._sweep(out, []) > 0, True)
 
         print("\nand the operator can overrule the skin's units")
         chosen = Tags(reader, target=units.Target(units.US),

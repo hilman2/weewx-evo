@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import weewx_evo.units as ours  # noqa: E402
+import weewx_evo.units as ours
 
 #: Where a conversion could go wrong differently: zero (an offset shows up
 #: here and nowhere else), small, ordinary, large, negative.
@@ -29,8 +29,8 @@ SAMPLES = (0.0, 1.0, -1.0, 7.5, 100.0, -40.0, 1013.25, 0.001, 98765.4321)
 
 
 def main() -> int:
-    import weewx.units as theirs
     import weewx.defaults
+    import weewx.units as theirs
 
     failures = 0
 

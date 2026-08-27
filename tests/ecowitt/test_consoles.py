@@ -19,9 +19,10 @@ import pytest
 
 weewx = pytest.importorskip('weewx', reason="WeeWX is not installed")
 
-from ecowitt import consoles                        # noqa: E402
-from ecowitt.driver import EcowittDriver            # noqa: E402
-from ecowitt.protocol import station_id             # noqa: E402
+from ecowitt.driver import EcowittDriver  # noqa: E402
+from ecowitt.protocol import station_id  # noqa: E402
+
+from ecowitt import consoles  # noqa: E402
 
 GARDEN = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 ROOF = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB'

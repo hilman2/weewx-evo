@@ -324,10 +324,12 @@ def _render(expression: str, spans: object, current: object,
         # finally raises.
         names = {"_spans": spans, "_current": _current_of(current)}
         names.update(extra or {})
-        return str(eval(code, names))
+        # Evaluating a tag is what this tool is: the expressions come
+        # from the list at the top of this file, not from anywhere else.
+        return str(eval(code, names))  # noqa: S307
     except AttributeError as exc:
         return f"<no such tag: {exc}>"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return f"<{type(exc).__name__}: {exc}>"
 
 

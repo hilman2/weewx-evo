@@ -31,11 +31,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.archiver import Archiver  # noqa: E402
-from weewx_evo.db.archive import ArchiveStore  # noqa: E402
-from weewx_evo.db.live import LiveStore, Packet  # noqa: E402
-from weewx_evo.sources import Policy  # noqa: E402
-from weewx_evo.units import US  # noqa: E402
+from weewx_evo.archiver import Archiver
+from weewx_evo.db.archive import ArchiveStore
+from weewx_evo.db.live import LiveStore, Packet
+from weewx_evo.sources import Policy
+from weewx_evo.units import US
 
 INTERVAL = 300
 

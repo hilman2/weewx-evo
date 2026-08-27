@@ -1,0 +1,73 @@
+<!--prettier-ignore-->
+#errorCatcher Echo
+#encoding UTF-8
+
+<!DOCTYPE html>
+<html lang="$lang">
+  <head>
+    #include "includes/html-head.inc"
+    <title>$station.location - $gettext("Webcams/Externals")</title>
+</head>
+
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+    #include "includes/ui-shell.inc"
+
+    <!--@see https://github.com/carbon-design-system/carbon/blob/v10/packages/type/scss/modules/_styles.scss#L628-->
+    <main class="main" id="main">
+      <div class="wrap">
+<header class="page-head">
+              <h1>$gettext($get_static_page_title("externals"))</h1>
+            </header>
+
+          #if 'description' in $Extras['externals']
+          <div>
+            <div>
+              <p>
+                $Extras['externals'].description
+              </p>
+            </div>
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if 'externals' in $Extras
+          <!--prettier-ignore-->
+          <div>
+            <!--prettier-ignore-->
+            #for $external in $Extras['externals']
+            #if $external == 'description'
+              #continue
+            #end if
+            #if $to_bool($Extras['externals'][$external].show_on_page)
+            <div
+              style="margin-bottom: 1.25rem"
+            >
+              <!--prettier-ignore-->
+              <div class="card webcam-tile">
+                  <h5 style="margin-bottom: 0">
+                    #if 'title_long' in $Extras['externals'][$external]
+                      $Extras['externals'][$external].title_long
+                    #end if
+                  </h5>
+
+                  <h3
+                    style="margin-bottom: 1.25rem; font-weight: bold"
+                  >
+                    $Extras['externals'][$external].title
+                  </h3>
+
+                  $Extras['externals'][$external].source
+
+                  <p style="margin-top: 0.75rem; margin-bottom: 0;">
+                    $Extras['externals'][$external].description
+                  </p>
+                </div>
+            </div>
+            #end if
+            #end for
+          </div>
+          #end if
+#include "includes/footer.inc"
+
+</body>
+</html>

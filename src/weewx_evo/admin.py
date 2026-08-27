@@ -34,8 +34,8 @@ from urllib.parse import parse_qs, urlparse
 from . import adminplots
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
-from .ratelimit import Limits
 from .options import UNITS, Group, Option, Schema, split_duration
+from .ratelimit import Limits
 
 log = logging.getLogger(__name__)
 
@@ -266,7 +266,7 @@ class Admin:
             with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
                 return {row[1] for row in conn.execute("PRAGMA table_info(archive)")
                         if row[1] not in ("dateTime", "usUnits", "interval")}
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("could not read the archive columns", exc_info=True)
             return set()
 
@@ -585,7 +585,8 @@ def _where_it_lands(admin: Admin, name: str) -> str:
 <section class="group">
   <h3>Where it lands</h3>
   <p class="lede">In <code>{html.escape(resolved or directory)}</code>
-     {f'(you wrote <code>{html.escape(directory)}</code>, which is relative to the settings file)' if resolved else ''},
+     {f'(you wrote <code>{html.escape(directory)}</code>, which is'
+      f' relative to the settings file)' if resolved else ''},
      and the built-in server hands it out at
      <a href="http://{html.escape(host)}:{port}{path}">http://{html.escape(host)}:{port}{path}</a>.
      The name in the address is this export's name.</p>
@@ -1086,7 +1087,7 @@ def _form(content_type: str, body: bytes) -> dict[str, str]:
               "MIME-Version: 1.0\r\n\r\n").encode()
     try:
         message = BytesParser(policy=default_policy).parsebytes(header + body)
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.warning("a posted form could not be read", exc_info=True)
         return {}
 
@@ -1174,7 +1175,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return part
         return self.admin.schemas[0].name
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if not self._permitted():
             return
         parsed = urlparse(self.path)
@@ -1187,7 +1188,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._reply(200, page(self.admin, self._which(parsed.path)))
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         if not self._permitted():
             return
         parsed = urlparse(self.path)
@@ -1326,7 +1327,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _redirect(self, where: str) -> None:
         self._reply(303, b"", "text/plain", {"Location": where})
 
-    def do_HEAD(self) -> None:  # noqa: N802
+    def do_HEAD(self) -> None:
         self.do_GET()
 
 

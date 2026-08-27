@@ -130,6 +130,8 @@ ARCHIVE_TABLE: tuple[tuple[str, str], ...] = (
 # vector one, which is where the mean direction comes from.
 _NOT_OBSERVATIONS = frozenset({'dateTime', 'usUnits', 'interval'})
 
-DAY_SUMMARIES: tuple[tuple[str, str], ...] = tuple(
-    (name, 'scalar') for name, _ in ARCHIVE_TABLE if name not in _NOT_OBSERVATIONS
-) + (('wind', 'vector'),)
+DAY_SUMMARIES: tuple[tuple[str, str], ...] = (
+    *tuple((name, 'scalar') for name, _ in ARCHIVE_TABLE
+           if name not in _NOT_OBSERVATIONS),
+    ('wind', 'vector'),
+)

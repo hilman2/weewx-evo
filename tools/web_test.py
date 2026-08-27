@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.netaccess import Access  # noqa: E402
-from weewx_evo.webserver import Site, WebServer  # noqa: E402
+from weewx_evo.netaccess import Access
+from weewx_evo.webserver import Site, WebServer
 
 
 def check(label: str, got: object, want: object) -> bool:

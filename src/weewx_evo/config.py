@@ -193,7 +193,7 @@ def _option_lines(option: Option, dotted: str, value: Any) -> list[str]:
         # Something the schema cannot make sense of. Written back as it was
         # found: it is the operator's, and losing it would be worse than
         # leaving it for them to fix.
-        return out + [f"{dotted} = {_toml(value)}", ""]
+        return [*out, f"{dotted} = {_toml(value)}", ""]
 
     if option.kind == "duration":
         rendered = _toml(format_duration(int(value)))

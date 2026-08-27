@@ -255,10 +255,10 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         log.debug("%s %s", self.address_string(), fmt % args)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         self._serve(body=True)
 
-    def do_HEAD(self) -> None:  # noqa: N802
+    def do_HEAD(self) -> None:
         self._serve(body=False)
 
     def _serve(self, body: bool) -> None:

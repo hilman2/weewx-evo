@@ -24,10 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.archiver import Archiver  # noqa: E402
-from weewx_evo.db.archive import ArchiveStore  # noqa: E402
-from weewx_evo.db.live import LiveStore  # noqa: E402
-from weewx_evo.ingest.listener import HttpListener, Ingest  # noqa: E402
+from weewx_evo.archiver import Archiver
+from weewx_evo.db.archive import ArchiveStore
+from weewx_evo.db.live import LiveStore
+from weewx_evo.ingest.listener import HttpListener, Ingest
 
 TOKEN = "smoke-token"
 INTERVAL = 60

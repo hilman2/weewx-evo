@@ -1,0 +1,151 @@
+#errorCatcher Echo
+#encoding UTF-8
+#attr $context = 'day'
+#attr $daily_archive = False
+#attr $use_parameter_month = False
+#attr $use_parameter_year = False
+
+<!DOCTYPE html>
+<html lang="$lang">
+  <head>
+    #include "includes/html-head.inc"
+    <title>$station.location - $gettext("Current Weather Conditions")</title>
+    #if 'refresh_interval' in $Extras
+    <meta http-equiv="refresh" content="$Extras.refresh_interval" />
+    #end if
+  </head>
+
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+    #include "includes/ui-shell.inc"
+
+    <main class="main" id="main">
+      <div class="wrap">
+<header class="page-head">
+              <h1>$gettext("Current Weather Conditions")</h1>
+              <h2>$current.dateTime</h2>
+              #if $to_bool($Extras['mqtt']['mqtt_websockets_enabled'])
+              #if $DisplayOptions.get('layout', 'alternative') == 'alternative'
+                #set $mqtt_notfication_classes = "    "
+              #else
+                #set $mqtt_notfication_classes = "    "
+              #end if
+<div
+                id="notification-container-mqtt"
+                style="display: none"
+              >
+                <div class="$mqtt_notfication_classes">
+                  <div class="notice"><div><p class="notice__title">Connected to live weather station.</p></div></div>
+                </div>
+              </div>
+              #end if
+            </header>
+
+          #if $DisplayOptions.get('layout', 'alternative') == 'alternative'
+            #include 'includes/body-alternative.inc'
+          #else
+            #include 'includes/body-classic.inc'
+          #end if
+<!--Stat tile Modals-->
+    #if $DisplayOptions.get('layout', 'alternative') == 'alternative'
+      #include "includes/stat-tile-modals.inc"
+    #end if
+
+    <!--Externals Modals-->
+    #set $externals_list = []
+    #if 'externals' in $Extras and $len($Extras['externals']) > 0
+      #for $external in $Extras['externals']
+        #if $external == 'description'
+          #continue
+        #end if
+        #if $to_bool($Extras['externals'][$external].show_on_front)
+          #silent $externals_list.append($external)
+        #end if
+      #end for
+    #end if
+
+    #if ('radar_html' in $Extras or $len($externals_list) > 0) and 'open_radar_and_externals_modal' in $Extras and $to_bool($Extras['open_radar_and_externals_modal'])
+      #if 'radar_html' in $Extras
+        <dialog id="modal-radar-default" size="md" fullWidth>
+          <div class="card__head">
+            <button type="button" class="icon-button" data-dialog-close aria-label="Close" style="margin-inline-start:auto"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M24 9.4 22.6 8 16 14.6 9.4 8 8 9.4l6.6 6.6L8 22.6 9.4 24l6.6-6.6 6.6 6.6 1.4-1.4-6.6-6.6z"/></svg></button>
+            <!-- <span class="muted">Label (Optional)</span> -->
+            <h3>$gettext("Recent radar")</h3>
+          </div>
+          <div class="card__body">
+            $Extras.radar_html
+          </div>
+        </dialog>
+
+        <script type="text/javascript">
+          document
+            .getElementById("panel-radar")
+            .addEventListener("click", () => {
+              document.getElementById("modal-radar-default").open = true;
+            });
+
+          if (document .querySelector("#panel-radar a")) {
+            document
+              .querySelector("#panel-radar a")
+              .addEventListener("click", (event) => {
+                event.preventDefault();
+              });
+          }
+        </script>
+        <style>
+          #panel-radar {
+            cursor: pointer;
+          }
+        </style>
+      #end if
+
+      #for $external in externals_list
+        <dialog id="modal-$external" size="md" fullWidth>
+          <div class="card__head">
+            <button type="button" class="icon-button" data-dialog-close aria-label="Close" style="margin-inline-start:auto"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M24 9.4 22.6 8 16 14.6 9.4 8 8 9.4l6.6 6.6L8 22.6 9.4 24l6.6-6.6 6.6 6.6 1.4-1.4-6.6-6.6z"/></svg></button>
+            <span class="muted">$Extras['externals'][$external].title_long</span>
+            <h3>$Extras['externals'][$external].title</h3>
+          </div>
+          <div class="card__body">
+            $Extras['externals'][$external].source
+          </div>
+        </dialog>
+
+        <script type="text/javascript">
+          document
+            .getElementById("panel-$external")
+            .addEventListener("click", () => {
+              document.getElementById("modal-$external").open = true;
+            });
+
+          if (document .querySelector("#panel-$external a")) {
+            document
+              .querySelector("#panel-$external a")
+              .addEventListener("click", (event) => {
+                event.preventDefault();
+              });
+          }
+        </script>
+        <style>
+          #panel-$external {
+            cursor: pointer;
+          }
+        </style>
+      #end for
+    #end if
+
+    #include "includes/footer.inc"
+
+
+#if $to_bool($Extras['mqtt']['mqtt_websockets_enabled'])
+    <script>
+      var mqtt_host = "$Extras['mqtt']['mqtt_websockets_host']";
+      var mqtt_port = "$Extras['mqtt']['mqtt_websockets_port']";
+      var mqtt_topic = "$Extras['mqtt']['mqtt_websockets_topic']";
+      var mqtt_ssl = "$Extras['mqtt']['mqtt_websockets_ssl']";
+      var mqtt_username = "$Extras['mqtt']['mqtt_websockets_username']";
+      var mqtt_password = "$Extras['mqtt']['mqtt_websockets_password']";
+    </script>
+    <script src="$get_base_path(path='assets/live-updates.js')" defer></script>
+    #end if
+  </body>
+</html>

@@ -34,6 +34,7 @@ registered: the file being there is what makes the language available, and
 from __future__ import annotations
 
 import logging
+import time
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,50 @@ class Language:
 
     def days(self, long: bool = False) -> tuple[str, ...]:
         return self._sequence("days", "long" if long else "short", 7)
+
+    def date_shape(self, which: str = "date") -> str:
+        """This language's `%x`, `%X` or `%c`, as a plain strftime format.
+
+        Empty where the language file says nothing, and then the caller
+        leaves the code alone for `strftime` to answer out of the process
+        locale -- which is the old behaviour, and right for English.
+        """
+        found = self.values.get("formats")
+        if not isinstance(found, dict):
+            found = ENGLISH.get("formats") or {}
+        return str(found.get(which) or "")
+
+    def spell(self, shape: str, when: float) -> str:
+        """A moment, written out in this language.
+
+        Two substitutions before `strftime` gets it, both for the same
+        reason: the answer would otherwise come from the process locale.
+
+        `%b` and friends are the names of months and days. `%x`, `%X` and
+        `%c` are whole formats -- "the local way of writing a date" -- and
+        what is local is the reader's language, not the container's
+        environment, which is unset.
+        """
+        when_local = time.localtime(when)
+
+        for code, which in (("%c", "datetime"), ("%x", "date"),
+                            ("%X", "time")):
+            if code in shape:
+                said = self.date_shape(which)
+                if said:
+                    shape = shape.replace(code, said)
+
+        for code, words, monthly in (("%b", self.months(), True),
+                                     ("%B", self.months(long=True), True),
+                                     ("%a", self.days(), False),
+                                     ("%A", self.days(long=True), False)):
+            if code not in shape:
+                continue
+            at = (when_local.tm_mon - 1) if monthly else when_local.tm_wday
+            if 0 <= at < len(words):
+                shape = shape.replace(code, words[at])
+
+        return time.strftime(shape, when_local)
 
     def unit_labels(self) -> dict[str, Any]:
         """The words inside a unit, where this language has different ones.

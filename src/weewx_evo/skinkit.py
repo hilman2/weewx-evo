@@ -1,44 +1,21 @@
-"""Enough of WeeWX's API for a skin's own Python to run.
+"""What a skin needs, and what a WeeWX skin thinks it needs.
 
-A WeeWX skin may ship code. `search_list_extensions` in its `skin.conf`
-names classes, each one is handed the generator and asked for a dictionary,
-and the templates then use what came back. weewx-wdc ships eight of them and
-2851 lines; Belchertown ships one and a thousand. Without this, those skins
-do not render at all -- not "render with gaps", not at all -- so the promise
-that an existing skin keeps working needs it.
+Two things live here and they are not the same.
 
-What they import is not a small surface:
+**The toolkit.** `SearchList`, `ValueHelper`, `TimeSpan`, a database an
+extension can run SQL against, the small helpers every skin uses. These are
+built on `tags`, `series` and `units` -- `ValueHelper` *is* our `Value`,
+`TimespanBinder` *is* our `Span` -- and the skins that ship import them
+straight from here, by name, like any other module.
 
-    weewx.cheetahgenerator.SearchList     the base class
-    weewx.units.ValueHelper               a number that knows how to print
-    weewx.units.ValueTuple                a number, its unit and its group
-    weewx.units.UnitInfoHelper, ObsInfoHelper, Converter
-    weewx.tags.TimespanBinder             $day, handed over as an object
-    weewx.xtypes.get_series               a time series
-    weewx.wxformulas.beaufort
-    weeutil.weeutil.TimeSpan, rounder, to_bool, to_int, startOfDay
-    weeutil.config.search_up, accumulateLeaves
+**The shim.** `install_weewx_names()` puts those same objects into
+`sys.modules` under WeeWX's names, so that a skin written for WeeWX --
+Belchertown, or whatever somebody downloads tomorrow -- runs unaltered. It
+is only called when a skin that needs it is loaded, and the skins that ship
+never do: they import from here directly, because they are ours.
 
-So this module builds those names on top of what weewx-evo already has, and
-puts them in `sys.modules` under WeeWX's names. It is a translation layer,
-not a reimplementation: `ValueHelper` *is* our `Value`, `TimespanBinder` *is*
-our `Span`, and `get_series` calls `series.Reader.series`.
-
-## The line this does not cross
-
-Only what a search list extension touches. Not the report engine, not the
-database managers, not the driver API. An extension that reaches past this
-gets an ImportError naming what it wanted, which is a message somebody can
-act on -- better than a half-working object that returns wrong numbers.
-
-## Installing over the real WeeWX
-
-`install()` puts these in `sys.modules` whether or not WeeWX is installed,
-and that is deliberate. An extension is handed *our* generator, with our
-converter and our formatter; real WeeWX classes given those would fail in a
-much more confusing way. A process that needs both is a process doing two
-different things, and our own checking tools that compare against WeeWX
-never load a skin.
+That split is the point. A skin from outside gets a translation layer and
+keeps working; a skin from inside gets a normal import and no magic.
 """
 
 from __future__ import annotations
@@ -46,10 +23,12 @@ from __future__ import annotations
 import logging
 import sys
 import types
+from collections.abc import Sequence
 from typing import Any
 
 from . import units
 from .series import Reader
+from .tags import COMPASS, Span, Value
 
 log = logging.getLogger(__name__)
 
@@ -68,11 +47,11 @@ class ValueTuple(tuple):
     pressure.
     """
 
-    def __new__(cls, *args: Any) -> "ValueTuple":
+    def __new__(cls, *args: Any) -> ValueTuple:
         if len(args) == 1 and isinstance(args[0], (tuple, list)):
             args = tuple(args[0])
         while len(args) < 3:
-            args = args + (None,)
+            args = (*args, None)
         return super().__new__(cls, args[:3])
 
     @property
@@ -87,7 +66,7 @@ class ValueTuple(tuple):
     def group(self) -> Any:
         return self[2]
 
-    def _arith(self, other: Any, how: Any) -> "ValueTuple":
+    def _arith(self, other: Any, how: Any) -> ValueTuple:
         if isinstance(other, (tuple, list)):
             if other[1] != self[1] or other[2] != self[2]:
                 raise TypeError(f"cannot combine {self[1]} and {other[1]}")
@@ -96,40 +75,51 @@ class ValueTuple(tuple):
             return ValueTuple(None, self[1], self[2])
         return ValueTuple(how(self[0], other), self[1], self[2])
 
-    def __add__(self, other: Any) -> "ValueTuple":  # type: ignore[override]
+    def __add__(self, other: Any) -> ValueTuple:  # type: ignore[override]
         return self._arith(other, lambda a, b: a + b)
 
-    def __sub__(self, other: Any) -> "ValueTuple":
+    def __sub__(self, other: Any) -> ValueTuple:
         return self._arith(other, lambda a, b: a - b)
 
-    def __mul__(self, other: Any) -> "ValueTuple":  # type: ignore[override]
+    def __mul__(self, other: Any) -> ValueTuple:  # type: ignore[override]
         return self._arith(other, lambda a, b: a * b)
 
-    def __truediv__(self, other: Any) -> "ValueTuple":
+    def __truediv__(self, other: Any) -> ValueTuple:
         return self._arith(other, lambda a, b: a / b)
 
 
-def _value_helper(tags_module: Any) -> type:
-    """Build `ValueHelper` on top of our own `Value`.
+class ValueHelper(Value):
+    """A number that knows how to print itself.
 
-    A closure because `tags` imports this module's neighbours, and importing
-    it at the top would be a circle.
+    Our `Value`, with the constructor a skin's code writes: a value
+    tuple, a context, and the formatter and converter it was handed.
     """
-    class ValueHelper(tags_module.Value):
-        """WeeWX's ValueHelper. Ours, with WeeWX's constructor."""
 
-        def __init__(self, value_t: Any = None, context: str = "current",
-                     formatter: Any = None, converter: Any = None) -> None:
-            value, unit, group = ValueTuple(value_t or (None, None, None))
-            target = getattr(converter, "target", None) \
-                or getattr(formatter, "target", None)
-            super().__init__(value, unit, group, context, target)
+    def __init__(self, value_t: Any = None, context: str = "current",
+                 formatter: Any = None, converter: Any = None) -> None:
+        value, unit, group = ValueTuple(value_t or (None, None, None))
+        target = (getattr(converter, "target", None)
+                  or getattr(formatter, "target", None))
 
-        @property
-        def value_t(self) -> ValueTuple:
-            return ValueTuple(self.value, self.unit, self.group)
+        # Converted here, because that is where WeeWX does it: a skin adds
+        # up rain in whatever the database stores and hands the total over
+        # with a converter attached, expecting the printing to deal with
+        # it. Our own tags convert at the source instead, so `Value.format`
+        # prints what it is given -- right for those, and the reason a
+        # skin's own total came out as `1.11 in` on a page in millimetres.
+        wanted = target.unit(group) if (target and group) else None
+        if wanted and unit and wanted != unit and value is not None:
+            try:
+                value = units.convert(value, unit, wanted)
+                unit = wanted
+            except (KeyError, TypeError, ValueError):
+                pass
 
-    return ValueHelper
+        super().__init__(value, unit, group, context, target)
+
+    @property
+    def value_t(self) -> ValueTuple:
+        return ValueTuple(self.value, self.unit, self.group)
 
 
 class UnitInfoHelper:
@@ -141,7 +131,9 @@ class UnitInfoHelper:
     """
 
     def __init__(self, formatter: Any = None, converter: Any = None) -> None:
-        target = getattr(converter, "target", None)             or getattr(formatter, "target", None) or units.Target()
+        target = (getattr(converter, "target", None)
+                  or getattr(formatter, "target", None)
+                  or units.Target())
         self.target = target
         self.label = _UnitLookup(target, "label")
         self.unit_type = _UnitLookup(target, "unit")
@@ -205,27 +197,26 @@ class _ObsLabels(dict):
         return units.obs_label(obs_type)
 
 
-def _timespan_binder(tags_module: Any) -> Any:
-    """`TimespanBinder(timespan, db_lookup, formatter=..., converter=...)`.
+def timespan_binder(timespan: Any, db_lookup: Any = None,
+                    context: str = "current", formatter: Any = None,
+                    converter: Any = None, **_options: Any) -> Any:
+    """A span, as a skin hands one back to a template.
 
-    An extension builds one to hand a span back to a template -- weewx-wdc
-    returns `$month` for a page about a particular month that way. WeeWX's
-    constructor takes a formatter and a converter; ours takes the tag layer
-    and works both of those out of it, so the extras are accepted and
-    ignored rather than being a TypeError halfway down a page.
+    WeeWX's `TimespanBinder`, built from a formatter and a converter; ours
+    is a `Span` built from the tag layer, and both of those are in the
+    converter already. The extras are accepted and ignored rather than
+    being a TypeError halfway down a page.
     """
-    def build(timespan: Any, db_lookup: Any = None, context: str = "current",
-              formatter: Any = None, converter: Any = None,
-              **_options: Any) -> Any:
-        manager = getattr(db_lookup, "manager", None)             or (db_lookup() if callable(db_lookup) else None)
-        reader = getattr(manager, "reader", None)
-        target = getattr(converter, "target", None)             or getattr(formatter, "target", None)
-        tags = tags_module.Tags(reader, target=target,
-                                unit_system=reader.system if reader
-                                else units.US)
-        return tags_module.Span(tags, (timespan[0], timespan[1]), context)
+    from .tags import Tags
 
-    return build
+    manager = (getattr(db_lookup, "manager", None)
+               or (db_lookup() if callable(db_lookup) else None))
+    reader = getattr(manager, "reader", None)
+    target = (getattr(converter, "target", None)
+              or getattr(formatter, "target", None))
+    tags = Tags(reader, target=target,
+                unit_system=reader.system if reader else units.US)
+    return Span(tags, (timespan[0], timespan[1]), context)
 
 
 class SearchList:
@@ -278,15 +269,23 @@ class Reports(dict):
 class Generator:
     """What an extension is handed. WeeWX calls this the report generator.
 
-    Five attributes, which is what the extensions actually reach for:
-    `converter` and `formatter` to turn numbers into text, `skin_dict` and
-    `config_dict` to read their own settings out of, and `db_binder` to get
-    at the archive.
+    Two audiences, and they read different halves of it.
+
+    A skin from outside reaches for what WeeWX gave it: `converter` and
+    `formatter` to turn numbers into text, `skin_dict` and `config_dict` to
+    read its settings out of, and `db_binder` to get at the archive through
+    a binding name.
+
+    A skin of ours has no bindings to look up and no `weewx.conf` to search:
+    `db_manager` is the database, `language` is the language, `derived` is
+    what was computed rather than measured. Same object, the short way.
     """
 
     def __init__(self, skin_dict: dict[str, Any],
                  config_dict: dict[str, Any], reader: Reader,
-                 target: units.Target, tags: Any) -> None:
+                 target: units.Target, tags: Any,
+                 language: str | None = None,
+                 derived: Sequence[str] = ()) -> None:
         self.skin_dict = skin_dict
         #: What weewx.conf would have been. `StdReport` answers for any
         #: report name with this skin's own settings; the rest is what the
@@ -299,6 +298,17 @@ class Generator:
         self.formatter = Formatter(skin_dict, target)
         self.converter = Converter(target)
         self.db_binder = DbBinder(reader)
+        #: The database. One archive, so no binding to resolve -- WeeWX's
+        #: `db_binder.get_manager(search_up(config["StdReport"][report],
+        #: "data_binding", "wx_binding"))` is four lookups to arrive here.
+        self.db_manager = self.db_binder.manager
+        #: What the pages are written in, as a POSIX code (`de`, `en_GB`).
+        #: Empty when the operator has not chosen one.
+        self.language = language or ""
+        #: Readings this installation computes rather than reads off the
+        #: hardware. A skin marks them, because a dewpoint that came out of
+        #: a formula is a different claim than one off a sensor.
+        self.derived = tuple(derived)
         #: WeeWX puts the moment the report is for here, and an extension
         #: that wants "now" reads it rather than asking the clock -- which
         #: is what makes two pages of one run agree with each other.
@@ -312,37 +322,35 @@ class Formatter:
                  target: units.Target | None = None) -> None:
         self.skin_dict = skin_dict or {}
         self.target = target or units.Target()
-        self.unit_label_dict = dict(self.target.labels)
-        self.unit_format_dict = dict(self.target.formats)
+        # The built-in table underneath, the skin's own words on top. A
+        # skin that names no `[Units][[Labels]]` at all is the normal case,
+        # and with only the overrides here every chart was labelled
+        # `degree_C` instead of the degree sign.
+        self.unit_label_dict = {**units.LABELS, **self.target.labels}
+        self.unit_format_dict = {**units.FORMATS, **self.target.formats}
         self.time_format_dict = dict(self.target.time_formats)
         # Never empty. An extension does `ordinate_names.index(direction)`
         # to turn a compass point back into a bearing, and an empty list
         # makes that a ValueError saying only "'N/A' is not in list".
-        from .tags import COMPASS
-
         self.ordinate_names = list(self.target.ordinals or COMPASS)
 
     def toString(self, val_t: Any, context: str = "current",  # noqa: N802
-                 addLabel: bool = True,  # noqa: N803
-                 useThisFormat: Any = None,  # noqa: N803
-                 None_string: Any = None,  # noqa: N803
+                 addLabel: bool = True,
+                 useThisFormat: Any = None,
+                 None_string: Any = None,
                  localize: bool = True) -> str:
-        from . import tags as tags_module
-
+        del localize
         value, unit, group = ValueTuple(val_t or (None, None, None))
-        return tags_module.Value(value, unit, group, context,
-                                 self.target).format(useThisFormat,
-                                                     None_string, addLabel)
+        return Value(value, unit, group, context, self.target).format(
+            useThisFormat, None_string, addLabel)
 
     def get_label_string(self, unit: Any, plural: bool = True) -> str:
         return self.target.label_for(unit, plural)
 
     def to_ordinal_compass(self, val_t: Any) -> str:
-        from . import tags as tags_module
-
         value, unit, group = ValueTuple(val_t or (None, None, None))
-        return tags_module.Value(value, unit, group, "current",
-                                 self.target).ordinal_compass
+        return Value(value, unit, group, "current",
+                     self.target).ordinal_compass
 
 
 class Converter:
@@ -412,10 +420,10 @@ class DbBinder:
         self.reader = reader
         self.manager = Manager(reader)
 
-    def get_manager(self, *_args: Any, **_kwargs: Any) -> "Manager":
+    def get_manager(self, *_args: Any, **_kwargs: Any) -> Manager:
         return self.manager
 
-    def __call__(self, *_args: Any, **_kwargs: Any) -> "Manager":
+    def __call__(self, *_args: Any, **_kwargs: Any) -> Manager:
         return self.manager
 
 
@@ -446,14 +454,14 @@ class Manager:
         """One row, or None. WeeWX's own name for it."""
         try:
             return self.reader.conn.execute(sql, params or ()).fetchone()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.debug("a skin's SQL did not run: %s -- %s", sql, exc)
             return None
 
     def genSql(self, sql: str, params: Any = ()) -> Any:  # noqa: N802
         try:
             yield from self.reader.conn.execute(sql, params or ())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.debug("a skin's SQL did not run: %s -- %s", sql, exc)
 
     def has_data(self, obs_type: str, timespan: Any) -> bool:
@@ -461,7 +469,7 @@ class Manager:
             start, stop = timespan[0], timespan[1]
             return bool(self.reader.aggregate(obs_type, start, stop,
                                               "not_null"))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     def getAggregate(self, timespan: Any, obs_type: str,  # noqa: N802
@@ -476,7 +484,7 @@ class Manager:
 class TimeSpan(tuple):
     """A start and a stop. WeeWX's `weeutil.weeutil.TimeSpan`."""
 
-    def __new__(cls, start: Any, stop: Any) -> "TimeSpan":
+    def __new__(cls, start: Any, stop: Any) -> TimeSpan:
         return super().__new__(cls, (start, stop))
 
     @property
@@ -503,18 +511,17 @@ class TimeSpan(tuple):
 def search_up(section: Any, key: str, *default: Any) -> Any:
     """Look for a key here, then in the section above, and so on.
 
-    A ConfigObj section knows its parent. Ours are plain dictionaries, so
-    the walk stops at the first one -- which is right for a skin's own
-    configuration, where everything a template reads has already been
-    flattened by `accumulateLeaves`.
+    A section knows its parent (`weewxconf.Section`), and the root is its
+    own -- so the walk ends there, not by falling off.
     """
-    if isinstance(section, dict) and key in section:
-        return section[key]
-    parent = getattr(section, "parent", None)
-    while isinstance(parent, dict):
-        if key in parent:
-            return parent[key]
-        parent = getattr(parent, "parent", None)
+    node = section
+    while isinstance(node, dict):
+        if key in node:
+            return node[key]
+        parent = getattr(node, "parent", None)
+        if parent is node or not isinstance(parent, dict):
+            break
+        node = parent
     if default:
         return default[0]
     raise KeyError(key)
@@ -522,17 +529,24 @@ def search_up(section: Any, key: str, *default: Any) -> Any:
 
 def accumulateLeaves(section: Any,  # noqa: N802
                      max_level: int = 99) -> dict[str, Any]:
-    """Every scalar in a section and the ones above it, flattened.
+    """Every scalar in a section and in the ones above it, flattened.
 
-    WeeWX walks upwards through ConfigObj's parents. A plain dictionary has
-    none, so this returns the section's own scalars -- which is what a skin
-    gets after the merging in `cheetah/__init__.py` has already happened.
+    WeeWX's, transcribed. `max_level` counts how far up to go, so a skin can
+    say "this observation and its context, not the whole file".
+
+    What it is for: `[[[day]]]` sets `aggregate_interval` once and every
+    observation under it inherits it, unless it names its own.
     """
-    del max_level
     if not isinstance(section, dict):
         return {}
-    return {key: value for key, value in section.items()
-            if not isinstance(value, dict)}
+    own = {key: value for key, value in section.items()
+           if not isinstance(value, dict)}
+    parent = getattr(section, "parent", None)
+    if max_level <= 0 or parent is section or not isinstance(parent, dict):
+        return own
+    merged = accumulateLeaves(parent, max_level - 1)
+    merged.update(own)
+    return merged
 
 
 def rounder(value: Any, ndigits: Any) -> Any:
@@ -623,6 +637,55 @@ def archiveDaySpan(when: Any, days_ago: int = 0) -> TimeSpan:  # noqa: N802
     return TimeSpan(start, startOfDay(start + 86400 + 3600))
 
 
+def mph_to_knot(value: Any) -> Any:
+    """Miles an hour to knots. WeeWX's factor, not a recomputed one."""
+    return None if value is None else value * 0.868976242
+
+
+def kph_to_knot(value: Any) -> Any:
+    return None if value is None else value * 0.539956803
+
+
+def mps_to_knot(value: Any) -> Any:
+    return None if value is None else value * 1.94384449
+
+
+def get_series(obs_type: str, timespan: Any, db_manager: Any,
+               aggregate_type: Any = None, aggregate_interval: Any = None,
+               **_kwargs: Any) -> tuple:
+    """A reading over a span, as three value tuples.
+
+    When each bucket starts, when it stops, and what is in it. WeeWX's
+    `xtypes.get_series`, which is what a skin's code calls it.
+    """
+    reader = getattr(db_manager, "reader", None)
+    if reader is None:
+        raise ValueError("get_series was handed something that is not a "
+                         "database")
+    found = reader.series(obs_type, timespan[0], timespan[1],
+                          aggregate=aggregate_type,
+                          interval=aggregate_interval)
+    unit, group = units.unit_of(obs_type, reader.system, aggregate_type)
+    starts = found.start or found.time
+    stops = found.stop or found.time
+    return (ValueTuple(list(starts), "unix_epoch", "group_time"),
+            ValueTuple(list(stops), "unix_epoch", "group_time"),
+            ValueTuple(list(found.values), unit, group))
+
+
+def get_aggregate(obs_type: str, timespan: Any, aggregate_type: str,
+                  db_manager: Any, **_kwargs: Any) -> ValueTuple:
+    """One number for one span."""
+    reader = getattr(db_manager, "reader", None)
+    if reader is None:
+        raise ValueError("get_aggregate was handed something that is not a "
+                         "database")
+    value = reader.aggregate(obs_type, timespan[0], timespan[1],
+                             aggregate_type)
+    unit, group = units.unit_of(obs_type, reader.system, aggregate_type)
+    return ValueTuple(value, unit, group)
+
+
 def beaufort(knots: Any) -> Any:
     """The Beaufort number for a wind speed in knots."""
     if knots is None:
@@ -636,10 +699,6 @@ def beaufort(knots: Any) -> Any:
 
 def _install_modules() -> None:
     """Put the names in `sys.modules`, so `import weewx.units` finds them."""
-    from . import tags as tags_module
-
-    value_helper = _value_helper(tags_module)
-
     weewx = types.ModuleType("weewx")
     weewx.__path__ = []  # type: ignore[attr-defined]
     weewx.US = units.US
@@ -663,7 +722,7 @@ def _install_modules() -> None:
 
     unit_module = types.ModuleType("weewx.units")
     unit_module.ValueTuple = ValueTuple
-    unit_module.ValueHelper = value_helper
+    unit_module.ValueHelper = ValueHelper
     unit_module.Converter = Converter
     unit_module.Formatter = Formatter
     unit_module.UnitInfoHelper = UnitInfoHelper
@@ -678,13 +737,13 @@ def _install_modules() -> None:
     unit_module.std_groups = units.SYSTEMS
     unit_module.unit_constants = {"US": units.US, "METRIC": units.METRIC,
                                   "METRICWX": units.METRICWX}
-    unit_module.mph_to_knot = lambda x: None if x is None else x * 0.868976242
-    unit_module.kph_to_knot = lambda x: None if x is None else x * 0.539956803
-    unit_module.mps_to_knot = lambda x: None if x is None else x * 1.94384449
+    unit_module.mph_to_knot = mph_to_knot
+    unit_module.kph_to_knot = kph_to_knot
+    unit_module.mps_to_knot = mps_to_knot
     unit_module.SECS_PER_DAY = 86400
 
     tags_shim = types.ModuleType("weewx.tags")
-    tags_shim.TimespanBinder = _timespan_binder(tags_module)
+    tags_shim.TimespanBinder = timespan_binder
 
     cheetah = types.ModuleType("weewx.cheetahgenerator")
     cheetah.SearchList = SearchList
@@ -697,8 +756,8 @@ def _install_modules() -> None:
         None if t is None else max(t - base, 0))
 
     xtypes = types.ModuleType("weewx.xtypes")
-    xtypes.get_series = _get_series
-    xtypes.get_aggregate = _get_aggregate
+    xtypes.get_series = get_series
+    xtypes.get_aggregate = get_aggregate
 
     weeutil = types.ModuleType("weeutil")
     weeutil.__path__ = []  # type: ignore[attr-defined]
@@ -736,43 +795,12 @@ def _install_modules() -> None:
             setattr(sys.modules[parent], child, module)
 
 
-def _get_series(obs_type: str, timespan: Any, db_manager: Any,
-                aggregate_type: Any = None, aggregate_interval: Any = None,
-                **_kwargs: Any) -> tuple:
-    """A time series, as `weewx.xtypes.get_series` gives one.
+def install_weewx_names() -> None:
+    """Make `import weewx` work, once per process.
 
-    Three value tuples: when each bucket starts, when it stops, and what is
-    in it.
+    For a skin written for WeeWX. The skins that ship here import from this
+    module by name and never need it.
     """
-    reader = getattr(db_manager, "reader", None)
-    if reader is None:
-        raise ValueError("get_series was handed something that is not a "
-                         "database")
-    found = reader.series(obs_type, timespan[0], timespan[1],
-                          aggregate=aggregate_type,
-                          interval=aggregate_interval)
-    unit, group = units.unit_of(obs_type, reader.system, aggregate_type)
-    starts = found.start or found.time
-    stops = found.stop or found.time
-    return (ValueTuple(list(starts), "unix_epoch", "group_time"),
-            ValueTuple(list(stops), "unix_epoch", "group_time"),
-            ValueTuple(list(found.values), unit, group))
-
-
-def _get_aggregate(obs_type: str, timespan: Any, aggregate_type: str,
-                   db_manager: Any, **_kwargs: Any) -> ValueTuple:
-    reader = getattr(db_manager, "reader", None)
-    if reader is None:
-        raise ValueError("get_aggregate was handed something that is not a "
-                         "database")
-    value = reader.aggregate(obs_type, timespan[0], timespan[1],
-                             aggregate_type)
-    unit, group = units.unit_of(obs_type, reader.system, aggregate_type)
-    return ValueTuple(value, unit, group)
-
-
-def install() -> None:
-    """Make `import weewx` work, once per process."""
     global _INSTALLED
     if _INSTALLED:
         return

@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo import derive  # noqa: E402
-from weewx_evo.units import US  # noqa: E402
+from weewx_evo import derive
+from weewx_evo.units import US
 
 
 def check(label: str, got: object, want: object) -> bool:

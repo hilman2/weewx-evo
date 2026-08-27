@@ -29,7 +29,8 @@ does not. See `unit_groups()` on the Ecowitt driver.
 from __future__ import annotations
 
 import math
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 #: Written into every archive record's `usUnits` column, stable since WeeWX 3.
 #: Not ours to change.
@@ -966,9 +967,16 @@ class Target:
     Target is built rather than halfway through a report.
     """
 
-    __slots__ = ("system", "overrides", "formats", "labels",
-                 "time_formats", "deltatime_formats", "ordinals",
-                 "language")
+    __slots__ = (
+        "deltatime_formats",
+        "formats",
+        "labels",
+        "language",
+        "ordinals",
+        "overrides",
+        "system",
+        "time_formats",
+    )
 
     def __init__(self, system: int | str = US,
                  overrides: dict[str, str] | None = None,

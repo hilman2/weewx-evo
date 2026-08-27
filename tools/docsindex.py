@@ -68,7 +68,7 @@ INTERESTING = {".py", ".yml", ".yaml", ".toml", ".md", ".caddy", ""}
 GENERATED = {"Index.md", "API-Index.md"}
 FURNITURE = {"_Sidebar.md", "_Footer.md", "_Header.md"}
 
-COVERS = re.compile(r"<!--\s*covers\s*(.*?)-->", re.S)
+COVERS = re.compile(r"<!--\s*covers\s*(.*?)-->", re.DOTALL)
 
 
 def stamp(path: Path) -> float:
@@ -427,7 +427,7 @@ def accept(names: list[str]) -> int:
     """Mark pages as looked at: set their mtime to now."""
     now = dt.datetime.now().timestamp()
     for name in names:
-        path = DOCS / name if not name.endswith(".md") else DOCS / name
+        path = DOCS / name
         if not path.exists():
             path = DOCS / f"{name}.md"
         if not path.exists():

@@ -36,9 +36,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.aggregate import start_of_archive_day  # noqa: E402
-from weewx_evo.db import schema as schema_mod  # noqa: E402
-from weewx_evo.db.archive import ArchiveStore  # noqa: E402
+from weewx_evo.aggregate import start_of_archive_day
+from weewx_evo.db import schema as schema_mod
+from weewx_evo.db.archive import ArchiveStore
 
 SUM_COLUMNS = frozenset({"sum", "count", "wsum", "sumtime",
                          "xsum", "ysum", "dirsumtime", "squaresum", "wsquaresum"})
@@ -47,7 +47,7 @@ SUM_COLUMNS = frozenset({"sum", "count", "wsum", "sumtime",
 def table_rows(conn: sqlite3.Connection, table: str) -> dict:
     cursor = conn.execute(f"SELECT * FROM {table} ORDER BY dateTime")
     cols = [d[0] for d in cursor.description]
-    return {row[0]: dict(zip(cols, row)) for row in cursor}
+    return {row[0]: dict(zip(cols, row, strict=True)) for row in cursor}
 
 
 class Tally:
@@ -186,7 +186,8 @@ def main() -> int:
         cursor = conn.execute(
             f"SELECT * FROM {args.table} WHERE dateTime > ? ORDER BY dateTime", (cutoff,))
         cols = [d[0] for d in cursor.description]
-        records = [{c: v for c, v in zip(cols, row) if v is not None} for row in cursor]
+        records = [{c: v for c, v in zip(cols, row, strict=True)
+                    if v is not None} for row in cursor]
 
         print(f"{args.database}")
         print(f"  rewriting {len(records)} records from {args.days} day(s) after {cutoff}")

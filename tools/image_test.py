@@ -69,7 +69,7 @@ def archive(path: Path) -> int:
                  "usUnits INTEGER, `interval` INTEGER, outTemp REAL, "
                  "dewpoint REAL, rain REAL, windSpeed REAL, windDir REAL, "
                  "windGust REAL, windGustDir REAL, radiation REAL)")
-    midnight = int(time.mktime(time.localtime()[:3] + (0, 0, 0, 0, 0, -1)))
+    midnight = int(time.mktime((*time.localtime()[:3], 0, 0, 0, 0, 0, -1)))
     when = midnight - 86400
     last = when
     while when < time.time():
@@ -87,7 +87,8 @@ def archive(path: Path) -> int:
 
 
 def main() -> int:
-    from weewx_evo import chartdata, plots as plot_defs, units
+    from weewx_evo import chartdata, units
+    from weewx_evo import plots as plot_defs
     from weewx_evo.feeds.imagegenerator import ImageGenerator
     from weewx_evo.feeds.jsongenerator import JSONGenerator
     from weewx_evo.series import Reader

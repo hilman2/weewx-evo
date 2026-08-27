@@ -143,7 +143,7 @@ def _parsed(factory: Callable[..., object],
             continue
         try:
             out[option.name] = option.parse(out[option.name])
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("driver setting %s = %r is not usable (%s);"
                         " falling back to the default, %r", option.name,
                         out[option.name], exc, option.default)

@@ -23,10 +23,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo import config as config_file  # noqa: E402
-from weewx_evo.admin import MARKER, Admin, AdminServer  # noqa: E402
-from weewx_evo.ratelimit import Limits  # noqa: E402
-from weewx_evo.cli import all_schemas  # noqa: E402
+from weewx_evo import config as config_file
+from weewx_evo.admin import MARKER, Admin, AdminServer
+from weewx_evo.cli import all_schemas
+from weewx_evo.ratelimit import Limits
 
 TOKEN = "admin-token-for-the-test"
 

@@ -40,8 +40,7 @@ def parse(text):
     """
     if not text:
         return {}
-    if text.startswith('?'):
-        text = text[1:]
+    text = text.removeprefix('?')
     return dict(urllib.parse.parse_qsl(text, keep_blank_values=False))
 
 

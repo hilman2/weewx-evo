@@ -318,7 +318,8 @@ class LocalExport(BaseExport):
 def _same_file(one: Path, other: Path) -> bool:
     """Whether two paths are the same file, hard links included."""
     try:
-        return one.stat().st_ino == other.stat().st_ino             and one.stat().st_dev == other.stat().st_dev
+        return (one.stat().st_ino == other.stat().st_ino
+                and one.stat().st_dev == other.stat().st_dev)
     except OSError:
         return False
 
@@ -327,7 +328,7 @@ def _slug(text: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in text).strip("-")[:40] or "site"
 
 
-def _tracker_path(source: "Path", target: str, kind: str) -> "Path":
+def _tracker_path(source: Path, target: str, kind: str) -> Path:
     """Where an export remembers what it has already sent.
 
     Named after *both* ends. Two exports publishing into one directory is a
@@ -343,9 +344,8 @@ def _tracker_path(source: "Path", target: str, kind: str) -> "Path":
     whichever asks first and gives the other an empty record, and an empty
     record deletes nothing.
     """
-    from pathlib import Path
-
     import hashlib
+    from pathlib import Path
 
     where = Path(source).parent
     # Readable name, then eight hex characters of both paths. `_slug` cuts

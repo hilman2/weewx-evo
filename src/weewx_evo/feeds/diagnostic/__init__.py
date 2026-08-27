@@ -32,6 +32,7 @@ import html
 import json
 import logging
 import time
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -167,7 +168,7 @@ class Diagnostic:
             # The faults that draw a chart rather than raising anything.
             if all(v is None for v in values):
                 faults.append(f"{name}: every value is null")
-            if any(b <= a for a, b in zip(times, times[1:])):
+            if any(b <= a for a, b in pairwise(times)):
                 faults.append(f"{name}: the timestamps do not always go "
                               f"forwards")
             if start is not None and stop is not None:
@@ -285,8 +286,9 @@ class Diagnostic:
             slug=html.escape(entry["name"].replace(".", "-")),
             bits=html.escape(" &middot; ".join(bits)).replace(
                 "&amp;middot;", "&middot;"),
-            chart=('<div class="chart" data-file="%s"></div>'
-                   % html.escape(entry["name"])) if entry["charts"] else "",
+            chart=(f'<div class="chart" data-file='
+                   f'"{html.escape(entry["name"])}"></div>')
+            if entry["charts"] else "",
             table=("<table><thead><tr><th>reading</th><th>as</th>"
                    "<th class='n'>points</th><th></th></tr></thead><tbody>"
                    + "".join(rows) + "</tbody></table>") if rows else "",

@@ -24,10 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.exports import walk  # noqa: E402
-from weewx_evo.exports.ftp import FtpExport  # noqa: E402
-from weewx_evo.exports.rsync import RsyncExport  # noqa: E402
-from weewx_evo.exports.tracker import Fingerprint, Tracker  # noqa: E402
+from weewx_evo.exports import walk
+from weewx_evo.exports.ftp import FtpExport
+from weewx_evo.exports.rsync import RsyncExport
+from weewx_evo.exports.tracker import Fingerprint, Tracker
 
 
 def check(label: str, got: object, want: object) -> bool:
@@ -306,7 +306,7 @@ def local_export(check) -> int:
                     f"http://127.0.0.1:{server.port}/", timeout=5) as reply:
                 body = reply.read().decode("utf-8", "replace")
             failures += not check("and it answers at /", body, "<h1>22.9</h1>")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             failures += not check("and it answers at /", str(exc), "no error")
         finally:
             server.stop()

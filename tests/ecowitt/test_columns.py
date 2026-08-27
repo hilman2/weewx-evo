@@ -6,9 +6,9 @@
 """Test which columns a station turns out to need."""
 
 import pytest
+from ecowitt.mapping import Mapper
 
 from ecowitt import columns
-from ecowitt.mapping import Mapper
 
 SCHEMA = {'dateTime', 'usUnits', 'interval', 'outTemp', 'soilTemp1', 'soilTemp2'}
 

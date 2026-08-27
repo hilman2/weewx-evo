@@ -124,7 +124,7 @@ class Theme:
     def color(self, position: int) -> str:
         return self.palette[position % len(self.palette)]
 
-    def scaled(self, factor: float) -> "Theme":
+    def scaled(self, factor: float) -> Theme:
         """The same theme in a bigger coordinate system.
 
         Everything with a size grows; nothing with a colour changes. This is
@@ -145,9 +145,9 @@ class Theme:
             heading_height=up(self.heading_height),
             rose_size=up(self.rose_size),
             line_width=self.line_width * factor,
-            font_size=max(1, int(round(self.font_size * factor))),
-            unit_size=max(1, int(round(self.unit_size * factor))),
-            title_size=max(1, int(round(self.title_size * factor))),
+            font_size=max(1, round(self.font_size * factor)),
+            unit_size=max(1, round(self.unit_size * factor)),
+            title_size=max(1, round(self.title_size * factor)),
         )
 
 
@@ -187,7 +187,7 @@ def _first_readable(candidates: tuple[str, ...]) -> str:
 
                 ImageFont.truetype(name, 10)
                 return name
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: S112 -- a name not installed here
                 continue
         if Path(name).is_file():
             return name
@@ -201,7 +201,7 @@ def rgba(color: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
     Pillow knows is passed through to it.
     """
     text = str(color or "").strip()
-    alpha = max(0, min(255, int(round(opacity * 255))))
+    alpha = max(0, min(255, round(opacity * 255)))
     if text.startswith("#"):
         digits = text[1:]
         if len(digits) == 3:
@@ -210,7 +210,7 @@ def rgba(color: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
             # `#rrggbbaa`. The opacity asked for still applies on top, so a
             # translucent colour under a fill stays translucent.
             r, g, b, a = (int(digits[i:i + 2], 16) for i in (0, 2, 4, 6))
-            return r, g, b, int(round(a * opacity))
+            return r, g, b, round(a * opacity)
         if len(digits) == 6:
             r, g, b = (int(digits[i:i + 2], 16) for i in (0, 2, 4))
             return r, g, b, alpha
@@ -220,6 +220,6 @@ def rgba(color: str, opacity: float = 1.0) -> tuple[int, int, int, int]:
 
             r, g, b = ImageColor.getrgb(text)[:3]
             return r, g, b, alpha
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: S110 -- a colour name Pillow lacks
             pass
     return 0, 0, 0, alpha

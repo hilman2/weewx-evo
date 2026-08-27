@@ -26,11 +26,12 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Any
 
 from . import sun, units
 from .plots import Plot
-from .series import Reader, Series, VECTORS
+from .series import VECTORS, Reader, Series
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +175,7 @@ def build(plot: Plot, reader: Reader, generated: float,
                 if not twilight:
                     bands.pop("twilight", None)
                 chart.daynight = bands
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             # Shading is decorative and must never break a report. But a
             # silent failure here once hid a real bug, so say something.
             log.warning("could not work out day and night for %r: %s",
@@ -229,7 +230,7 @@ def _line(definition: Any, reader: Reader, start: int, stop: int,
         line.directions = round_all(series.directions, 1)
     if definition.kind == "bar":
         line.bar_width = [int(b - a) for a, b
-                          in zip(series.start, series.stop)]
+                          in zip(series.start, series.stop, strict=True)]
     if definition.kind == "vector":
         line.vector_x, line.vector_y = components(
             line.values, line.directions, rounding)
@@ -267,7 +268,7 @@ def _exists(reader: Reader, obs_type: str, stop: int,
     try:
         return bool(reader.aggregate(column_of(obs_type), stop - length, stop,
                                      "not_null"))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return True
 
 
@@ -336,7 +337,7 @@ def drop_empty(line: Line, gap_fraction: float | None, span: float,
         # chart as a break in the data.
         threshold = float(gap_fraction) * float(span)
     if threshold is None and len(kept) >= 3:
-        spacings = sorted(times[b] - times[a] for a, b in zip(kept, kept[1:]))
+        spacings = sorted(times[b] - times[a] for a, b in pairwise(kept))
         usual = spacings[len(spacings) // 2]
         if usual > 0:
             threshold = GAP_FACTOR * usual

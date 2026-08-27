@@ -44,7 +44,7 @@ KINDS = ("text", "secret", "int", "float", "bool", "choice", "path",
 
 #: Durations are written the way people say them. Seconds are the unit
 #: everything is stored in, but nobody configures a retention of 604800.
-_DURATION = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*$", re.I)
+_DURATION = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smhd]?)\s*$", re.IGNORECASE)
 _DURATION_SCALE = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
@@ -168,7 +168,7 @@ class Option:
                 # By their labels: an empty choice is a real answer and its
                 # value is the empty string, which reads as a missing word in
                 # a list of names.
-                named = ", ".join(label if not option else option
+                named = ", ".join(option or label
                                   for option, label in self.options())
                 raise Invalid(f"{self.label} must be one of: {named}")
             return value
@@ -372,6 +372,8 @@ def installed_skins() -> list[tuple[str, str]]:
             roots.append(str(settings.get("skins_dir") or "skins"))
     roots.append("skins")
 
+    from .skins import bundled
+
     found: dict[str, str] = {}
     for root in roots:
         where = Path(root)
@@ -380,6 +382,10 @@ def installed_skins() -> list[tuple[str, str]]:
         for entry in sorted(where.iterdir()):
             if (entry / "skin.conf").is_file() and entry.name not in found:
                 found[entry.name] = entry.name
+    # The ones that ship, last: a skin of the same name that somebody
+    # installed themselves is the one they meant.
+    for name in bundled():
+        found.setdefault(name, f"{name} (shipped)")
     return sorted(found.items())
 
 
@@ -450,7 +456,7 @@ def _current_config() -> dict:
     if _FOR_FILE is not None:
         try:
             return config_file.read(_FOR_FILE) or {}
-        except Exception:  # noqa: BLE001
+        except Exception:
             return {}
 
     from .settings import running
@@ -460,7 +466,7 @@ def _current_config() -> dict:
         return found.config or {}
     try:
         return config_file.read(_config_path()) or {}
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {}
 
 

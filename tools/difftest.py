@@ -32,7 +32,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.db import daily, schema as schema_mod  # noqa: E402
+from weewx_evo.db import daily
+from weewx_evo.db import schema as schema_mod
 
 SUM_COLUMNS = frozenset({"sum", "count", "wsum", "sumtime",
                          "xsum", "ysum", "dirsumtime", "squaresum", "wsquaresum"})
@@ -87,7 +88,8 @@ def main() -> int:
                 continue
 
             computed = accum[obs_type].stats_tuple()
-            for col, want, got in zip(schema_mod.STATS_COLUMNS[kind], stored, computed):
+            for col, want, got in zip(schema_mod.STATS_COLUMNS[kind],
+                                      stored, computed, strict=True):
                 checked += 1
                 if close_enough(want, got, args.rel_tol):
                     exact += 1

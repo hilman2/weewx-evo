@@ -115,7 +115,7 @@ class Scalar(FirstLast):
     records at different archive intervals still average correctly.
     """
 
-    __slots__ = ("min", "mintime", "max", "maxtime", "sum", "count", "wsum", "sumtime")
+    __slots__ = ("count", "max", "maxtime", "min", "mintime", "sum", "sumtime", "wsum")
 
     def __init__(self, stats_tuple: tuple | None = None) -> None:
         super().__init__(stats_tuple)
@@ -124,7 +124,7 @@ class Scalar(FirstLast):
     def set_stats(self, stats_tuple: tuple | None = None) -> None:
         (self.min, self.mintime, self.max, self.maxtime,
          self.sum, self.count, self.wsum, self.sumtime) = (
-            stats_tuple if stats_tuple else FirstLast.default_stats
+            stats_tuple or FirstLast.default_stats
         )
 
     def stats_tuple(self) -> tuple:
@@ -183,9 +183,24 @@ class Vector:
     stretch of missing directions does not drag the mean towards north.
     """
 
-    __slots__ = ("min", "mintime", "max", "maxtime", "sum", "count", "wsum", "sumtime",
-                 "max_dir", "xsum", "ysum", "dirsumtime", "squaresum", "wsquaresum",
-                 "last", "lasttime")
+    __slots__ = (
+        "count",
+        "dirsumtime",
+        "last",
+        "lasttime",
+        "max",
+        "max_dir",
+        "maxtime",
+        "min",
+        "mintime",
+        "squaresum",
+        "sum",
+        "sumtime",
+        "wsquaresum",
+        "wsum",
+        "xsum",
+        "ysum",
+    )
 
     default_stats = (None, None, None, None, 0.0, 0, 0.0, 0, None, 0.0, 0.0, 0, 0.0, 0.0)
 
@@ -199,7 +214,7 @@ class Vector:
          self.sum, self.count, self.wsum, self.sumtime,
          self.max_dir, self.xsum, self.ysum, self.dirsumtime,
          self.squaresum, self.wsquaresum) = (
-            stats_tuple if stats_tuple else Vector.default_stats
+            stats_tuple or Vector.default_stats
         )
 
     def stats_tuple(self) -> tuple:
@@ -303,7 +318,7 @@ class Accumulator:
     at `start` belongs to the previous span.
     """
 
-    __slots__ = ("start", "stop", "unit_system", "_stats", "_policy")
+    __slots__ = ("_policy", "_stats", "start", "stop", "unit_system")
 
     def __init__(self, start: float, stop: float, unit_system: int | None = None,
                  policy: Policy = DEFAULT_POLICY) -> None:

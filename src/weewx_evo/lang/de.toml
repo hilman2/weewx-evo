@@ -12,6 +12,14 @@ name = "Deutsch"
 # Wer Deutsch liest, will fast sicher Millimeter.
 unit_system = "METRICWX"
 
+# Wie ein Datum hier geschrieben wird. `%x` und `%X` beantwortet strftime
+# sonst aus der Locale des Prozesses -- und im Image ist keine gesetzt,
+# also kaeme "08/27/26" auf einer deutschen Seite heraus.
+[formats]
+date = "%d.%m.%Y"
+time = "%H:%M:%S"
+datetime = "%d.%m.%Y %H:%M"
+
 [obs]
 outTemp = "Aussentemperatur"
 inTemp = "Innentemperatur"

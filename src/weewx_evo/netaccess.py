@@ -53,7 +53,7 @@ LOOPBACK = tuple(ipaddress.ip_network(n) for n in ("127.0.0.0/8", "::1/128"))
 class Access:
     """Which addresses are answered."""
 
-    __slots__ = ("networks", "everyone", "described")
+    __slots__ = ("described", "everyone", "networks")
 
     def __init__(self, networks: tuple = PRIVATE, everyone: bool = False,
                  described: str = "private networks") -> None:

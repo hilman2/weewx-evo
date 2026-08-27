@@ -27,10 +27,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.db.live import LiveStore  # noqa: E402
-from weewx_evo.ingest import userdrivers  # noqa: E402
-from weewx_evo.ingest.drivers import Registry  # noqa: E402
-from weewx_evo.ingest.listener import HttpListener, Ingest  # noqa: E402
+from weewx_evo.db.live import LiveStore
+from weewx_evo.ingest import userdrivers
+from weewx_evo.ingest.drivers import Registry
+from weewx_evo.ingest.listener import HttpListener, Ingest
 
 # A whole driver. This is the entire contract: a package with load(registry),
 # and an object with packets(). Nothing is inherited, nothing is registered

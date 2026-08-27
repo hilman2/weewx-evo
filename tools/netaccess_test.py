@@ -25,11 +25,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.admin import Admin, AdminServer  # noqa: E402
-from weewx_evo.cli import all_schemas  # noqa: E402
-from weewx_evo.db.live import LiveStore  # noqa: E402
-from weewx_evo.ingest.listener import HttpListener, Ingest  # noqa: E402
-from weewx_evo.netaccess import PRIVATE_ONLY, Access  # noqa: E402
+from weewx_evo.admin import Admin, AdminServer
+from weewx_evo.cli import all_schemas
+from weewx_evo.db.live import LiveStore
+from weewx_evo.ingest.listener import HttpListener, Ingest
+from weewx_evo.netaccess import PRIVATE_ONLY, Access
 
 TOKEN = "a-token"
 

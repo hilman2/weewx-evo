@@ -47,10 +47,11 @@ import datetime
 import logging
 import math
 import time
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
+from . import planets, units
 from . import sun as sun_module
-from . import units
 from .series import Reader
 
 log = logging.getLogger(__name__)
@@ -160,7 +161,7 @@ class Value:
     without asking for anything more.
     """
 
-    __slots__ = ("value", "unit", "group", "context", "target")
+    __slots__ = ("context", "group", "target", "unit", "value")
 
     def __init__(self, value: Any, unit: str | None, group: str | None,
                  context: str = "current",
@@ -182,7 +183,7 @@ class Value:
         return f"<Value {self.value!r} {self.unit}>"
 
     def format(self, format_string: str | None = None,
-               None_string: str | None = None,  # noqa: N803
+               None_string: str | None = None,
                add_label: bool = True, localize: bool = True) -> str:
         """The value as text.
 
@@ -200,6 +201,12 @@ class Value:
             elif self.unit == "unix_epoch_ns":
                 when /= 1000000.0
             shape = format_string or self._time_format()
+            # Through the language, not straight to strftime: `%x` and
+            # `%b` are both answered out of the process locale otherwise,
+            # and the container has none set.
+            spoken = getattr(self.target, "language", None)
+            if spoken is not None:
+                return spoken.spell(shape, when)
             return time.strftime(shape, time.localtime(when))
 
         shape = format_string or self._number_format()
@@ -230,9 +237,9 @@ class Value:
         return units.label(self.unit, plural)
 
     # WeeWX's spelling, so a template written for it works unchanged.
-    def toString(self, addLabel: bool = True,  # noqa: N802, N803
-                 useThisFormat: str | None = None,  # noqa: N803
-                 None_string: str | None = None,  # noqa: N803
+    def toString(self, addLabel: bool = True,  # noqa: N802
+                 useThisFormat: str | None = None,
+                 None_string: str | None = None,
                  localize: bool = True) -> str:
         return self.format(useThisFormat, None_string, addLabel)
 
@@ -242,14 +249,14 @@ class Value:
         return self.format(add_label=False)
 
     def nolabel(self, format_string: str,
-                None_string: str | None = None) -> str:  # noqa: N803
+                None_string: str | None = None) -> str:
         return self.format(format_string, None_string, add_label=False)
 
-    def string(self, None_string: str | None = None) -> str:  # noqa: N803
+    def string(self, None_string: str | None = None) -> str:
         return self.format(None_string=None_string)
 
     def long_form(self, format_string: str | None = None,
-                  None_string: str | None = None) -> str:  # noqa: N803
+                  None_string: str | None = None) -> str:
         """A length of time in words. "5 hours, 12 minutes, 3 seconds".
 
         What `$almanac.sun.visible` wants: eighteen thousand seconds is not
@@ -396,9 +403,9 @@ class Aggregate:
     it prints anything. The query happens when somebody wants the answer.
     """
 
-    __slots__ = ("tags", "reading", "how", "span", "context", "options")
+    __slots__ = ("context", "how", "options", "reading", "span", "tags")
 
-    def __init__(self, tags: "Tags", reading: str, how: str,
+    def __init__(self, tags: Tags, reading: str, how: str,
                  span: tuple[float, float], context: str) -> None:
         self.tags = tags
         self.reading = reading
@@ -436,9 +443,9 @@ class Reading:
     aggregate in practice, and that one comes from `Current` instead.
     """
 
-    __slots__ = ("tags", "reading", "span", "context")
+    __slots__ = ("context", "reading", "span", "tags")
 
-    def __init__(self, tags: "Tags", reading: str,
+    def __init__(self, tags: Tags, reading: str,
                  span: tuple[float, float], context: str) -> None:
         self.tags = tags
         self.reading = reading
@@ -473,9 +480,9 @@ class Span:
     code has never heard of.
     """
 
-    __slots__ = ("tags", "span", "context")
+    __slots__ = ("context", "span", "tags")
 
-    def __init__(self, tags: "Tags", span: tuple[float, float],
+    def __init__(self, tags: Tags, span: tuple[float, float],
                  context: str) -> None:
         self.tags = tags
         self.span = span
@@ -498,20 +505,22 @@ class Span:
     # What a template asks about the span itself.
     @property
     def start(self) -> Value:
-        return Value(self.span[0], "unix_epoch", "group_time", self.context)
+        return Value(self.span[0], "unix_epoch", "group_time",
+                     self.context, self.tags.target)
 
-    dateTime = start  # noqa: N815 -- WeeWX's spelling
+    dateTime = start
 
     @property
     def end(self) -> Value:
-        return Value(self.span[1], "unix_epoch", "group_time", self.context)
+        return Value(self.span[1], "unix_epoch", "group_time",
+                     self.context, self.tags.target)
 
     stop = end
 
     @property
     def length(self) -> Value:
-        return Value(self.span[1] - self.span[0], "second", "group_deltatime",
-                     self.context)
+        return Value(self.span[1] - self.span[0], "second",
+                     "group_deltatime", self.context, self.tags.target)
 
     # Walking a span in smaller pieces: `for m in $year.months`.
     @property
@@ -554,15 +563,15 @@ class Current:
     aggregate over anything.
     """
 
-    __slots__ = ("tags", "record", "when")
+    __slots__ = ("record", "tags", "when")
 
-    def __init__(self, tags: "Tags", record: dict[str, Any],
+    def __init__(self, tags: Tags, record: dict[str, Any],
                  when: float) -> None:
         self.tags = tags
         self.record = record
         self.when = when
 
-    def __call__(self, *_args: Any, **_kwargs: Any) -> "Current":
+    def __call__(self, *_args: Any, **_kwargs: Any) -> Current:
         """`$current($data_binding='wx_binding')`. The same readings again.
 
         WeeWX lets a template switch databases here. There is one archive
@@ -576,11 +585,13 @@ class Current:
         if reading.startswith("_") or reading in IGNORE:
             raise AttributeError(reading)
         if reading == "dateTime":
-            return Value(self.when, "unix_epoch", "group_time", "current")
+            return Value(self.when, "unix_epoch", "group_time", "current",
+                         self.tags.target)
         if reading not in self.record:
             if reading not in self.tags.reader.columns:
                 return self.tags.missed(reading)
-            return Value(None, *self.tags.units_of(reading), "current")
+            return Value(None, *self.tags.units_of(reading), "current",
+                         self.tags.target)
         stored = self.record.get(reading)
         unit, group = self.tags.units_of(reading)
         shown = self.tags.target.unit(group)
@@ -603,7 +614,7 @@ class Station:
 
     __slots__ = ("tags", "values")
 
-    def __init__(self, tags: "Tags", values: dict[str, Any]) -> None:
+    def __init__(self, tags: Tags, values: dict[str, Any]) -> None:
         self.tags = tags
         self.values = values
 
@@ -655,14 +666,14 @@ class Labels:
     subscript a string.
     """
 
-    __slots__ = ("tags", "labels")
+    __slots__ = ("labels", "tags")
 
-    def __init__(self, tags: "Tags", labels: dict[str, str]) -> None:
+    def __init__(self, tags: Tags, labels: dict[str, str]) -> None:
         self.tags = tags
         self.labels = labels
 
     @property
-    def label(self) -> "_LabelMap":
+    def label(self) -> _LabelMap:
         return _LabelMap(self.labels)
 
     def __getattr__(self, name: str) -> Any:
@@ -698,32 +709,32 @@ class UnitInfo:
 
     __slots__ = ("tags",)
 
-    def __init__(self, tags: "Tags") -> None:
+    def __init__(self, tags: Tags) -> None:
         self.tags = tags
 
     @property
-    def label(self) -> "_UnitField":
+    def label(self) -> _UnitField:
         return _UnitField(self.tags, "label")
 
     @property
-    def unit_type(self) -> "_UnitField":
+    def unit_type(self) -> _UnitField:
         return _UnitField(self.tags, "unit")
 
     @property
-    def format(self) -> "_UnitField":
+    def format(self) -> _UnitField:
         return _UnitField(self.tags, "format")
 
     @property
-    def unit_type_dict(self) -> "_UnitField":
+    def unit_type_dict(self) -> _UnitField:
         """`$unit.unit_type_dict.outTemp` -- WeeWX's older spelling."""
         return _UnitField(self.tags, "unit")
 
     @property
-    def label_dict(self) -> "_UnitField":
+    def label_dict(self) -> _UnitField:
         return _UnitField(self.tags, "label")
 
     @property
-    def format_dict(self) -> "_UnitField":
+    def format_dict(self) -> _UnitField:
         return _UnitField(self.tags, "format")
 
     def __getattr__(self, name: str) -> Any:
@@ -737,7 +748,7 @@ class _UnitField:
 
     __slots__ = ("tags", "which")
 
-    def __init__(self, tags: "Tags", which: str) -> None:
+    def __init__(self, tags: Tags, which: str) -> None:
         self.tags = tags
         self.which = which
 
@@ -773,9 +784,9 @@ class Almanac:
     in -- which is the same question WeeWX answers with the same tag.
     """
 
-    __slots__ = ("tags", "latitude", "longitude", "altitude", "horizon")
+    __slots__ = ("altitude", "horizon", "latitude", "longitude", "tags")
 
-    def __init__(self, tags: "Tags", latitude: float | None,
+    def __init__(self, tags: Tags, latitude: float | None,
                  longitude: float | None, altitude: float = 0.0,
                  horizon: float | None = None) -> None:
         self.tags = tags
@@ -785,7 +796,7 @@ class Almanac:
         self.horizon = horizon
 
     def __call__(self, almanac_time: float | None = None,
-                 horizon: float | None = None, **_kwargs: Any) -> "Almanac":
+                 horizon: float | None = None, **_kwargs: Any) -> Almanac:
         """`$almanac(horizon=-6)` -- the same sky, a different threshold."""
         return Almanac(self.tags, self.latitude, self.longitude,
                        self.altitude,
@@ -825,11 +836,11 @@ class Almanac:
         return self.sun.set
 
     @property
-    def sun(self) -> "Body":
+    def sun(self) -> Body:
         return Body(self, "sun")
 
     @property
-    def moon(self) -> "Body":
+    def moon(self) -> Body:
         return Body(self, "moon")
 
     # -- the moon ---------------------------------------------------------
@@ -866,18 +877,14 @@ class Almanac:
         if found is not None:
             return self._time(found, "ephem_year")
         if name in BODIES:
-            # A planet. pyephem knows where they are; nothing here does,
-            # and putting VSOP87 in would be another `moon.py` for four
-            # readings nobody checks against a clock. With pyephem
-            # installed these answer properly; without it they answer
-            # "N/A", which is the truth and lets the page render.
-            return Body(self.almanac, name)
+            return Body(self, name)
         return self.tags.missed(f"almanac.{name}")
 
 
-#: The bodies an almanac can be asked about. The sun and the moon are
-#: worked out here; the planets need pyephem, and a skin that asks for one
-#: gets an honest "N/A" rather than a broken page when it is not installed.
+#: The bodies an almanac can be asked about. All of them are worked out
+#: here -- the sun in `sun.py`, the moon in `moon.py`, the rest in
+#: `planets.py` -- so nothing on this list depends on a package that may
+#: not be installed. That is what makes `$almanac.hasExtras` honestly true.
 BODIES = frozenset({
     "sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn",
     "uranus", "neptune", "pluto",
@@ -891,7 +898,7 @@ LONG_ANGLES = {"altitude": "alt", "azimuth": "az",
 class Body:
     """One thing in the sky. `$almanac.sun.rise`, `$almanac.moon.transit`."""
 
-    __slots__ = ("almanac", "which", "use_center")
+    __slots__ = ("almanac", "use_center", "which")
 
     def __init__(self, almanac: Almanac, which: str,
                  use_center: bool = False) -> None:
@@ -903,7 +910,7 @@ class Body:
         #: asks for dawn.
         self.use_center = use_center
 
-    def __call__(self, use_center: bool = False) -> "Body":
+    def __call__(self, use_center: bool = False) -> Body:
         return Body(self.almanac, self.which, bool(use_center))
 
     def _events(self, when: float | None = None) -> dict[str, float | None]:
@@ -917,6 +924,15 @@ class Body:
         if not self.almanac._placed:
             return {}
         moment = tags.when if when is None else when
+        if self.which in planets.PLANETS:
+            # Our own arithmetic even where pyephem is installed. For the
+            # sun and the moon the rule is the other way round -- a skin
+            # that printed sunrise to the second should keep printing the
+            # same second -- but no page here has ever printed a planet, so
+            # there is nothing to stay faithful to. The two agree to two
+            # seconds anyway (`tools/planetcheck.py`).
+            return planets.events(_midnight(moment), self.almanac.latitude,
+                                  self.almanac.longitude, self.which)
         found = sun_module.rising_setting(
             _midnight(moment), self.almanac.latitude,
             self.almanac.longitude, body=self.which,
@@ -935,7 +951,7 @@ class Body:
         rise, sets = found.get("rise"), found.get("set")
         return None if rise is None or sets is None else sets - rise
 
-    def visible_change(self, days_ago: int = 1) -> "Value":
+    def visible_change(self, days_ago: int = 1) -> Value:
         """How much longer the body is up today than it was `days_ago`.
 
         The number behind "three minutes more daylight". The earlier day is
@@ -1000,6 +1016,19 @@ def _position(body: Body, what: str) -> float | None:
     """
     tags = body.almanac.tags
     if not body.almanac._placed:
+        return None
+
+    if body.which in planets.PLANETS:
+        right_ascension, declination, _distance = planets.equatorial(
+            tags.when, body.which)
+        if what == "ra":
+            return right_ascension
+        if what == "dec":
+            return declination
+        if what in ("alt", "az"):
+            return planets.horizontal(tags.when, body.almanac.latitude,
+                                      body.almanac.longitude,
+                                      body.which)[what == "az"]
         return None
 
     if sun_module._ephem is not None:
@@ -1193,12 +1222,20 @@ class Tags:
         #: reproduced.
         self.missing: dict[str, int] = {}
         self.asked = 0
+        #: Whether an unanswered name goes into the report. Off while
+        #: something is only asking whether a name exists.
+        self.counting = True
         self._current: Current | None = None
 
     # -- the record of what did not work ---------------------------------
 
     def missed(self, what: str) -> Unknown:
-        self.missing[what] = self.missing.get(what, 0) + 1
+        # `$varExists('x')` is a question, not a miss, and the renderer
+        # turns the count off around one. Without that, a template that
+        # checks before it reaches fills the report with names that were
+        # never missing -- and a report full of those gets ignored.
+        if self.counting:
+            self.missing[what] = self.missing.get(what, 0) + 1
         return Unknown(what)
 
     def report(self) -> str:
@@ -1236,11 +1273,11 @@ class Tags:
             return bool(self.reader.aggregate(reading, span[0], span[1],
                                               "not_null",
                                               self.degree_day_bases))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     def shown(self, value: Any, unit: str | None, group: str | None,
-              context: str = "current") -> "Value":
+              context: str = "current") -> Value:
         """A number worked out in one unit, wrapped in what to show it in.
 
         Everything the database answers goes through `answer`, which does
@@ -1296,12 +1333,12 @@ class Tags:
         return Span(self, (start, stop), context)
 
     @property
-    def Extras(self) -> "Section":  # noqa: N802 -- the tag's own spelling
+    def Extras(self) -> Section:  # noqa: N802 -- the tag's own spelling
         """`$Extras.something` -- whatever the skin's author invented."""
         return Section(self.extras)
 
     @property
-    def DisplayOptions(self) -> "Section":  # noqa: N802
+    def DisplayOptions(self) -> Section:  # noqa: N802
         """`$DisplayOptions.get('...')` -- what the skin shows and hides."""
         return Section(self.display)
 
@@ -1449,8 +1486,8 @@ class Tags:
             row = cursor.fetchone()
             if row is None:
                 return {}
-            return dict(zip([c[0] for c in cursor.description], row))
-        except Exception:  # noqa: BLE001
+            return dict(zip([c[0] for c in cursor.description], row, strict=True))
+        except Exception:
             log.exception("could not read the latest record")
             return {}
 
@@ -1538,7 +1575,7 @@ class Tags:
         return self._span(start, self.when, "current")
 
     @property
-    def trend(self) -> "Trend":
+    def trend(self) -> Trend:
         """`$trend.barometer`, and `$trend($time_delta=7200).barometer`.
 
         Both spellings, because templates use both. A property that returns
@@ -1579,7 +1616,7 @@ class Trend:
     means by rising or falling.
     """
 
-    __slots__ = ("tags", "delta", "grace")
+    __slots__ = ("delta", "grace", "tags")
 
     def __init__(self, tags: Tags, delta: float, grace: float) -> None:
         self.tags = tags
@@ -1588,7 +1625,7 @@ class Trend:
 
     def __call__(self, time_delta: float | None = None,
                  time_grace: float | None = None,
-                 data_binding: str | None = None) -> "Trend":
+                 data_binding: str | None = None) -> Trend:
         return Trend(self.tags,
                      self.delta if time_delta is None else time_delta,
                      self.grace if time_grace is None else time_grace)

@@ -191,7 +191,9 @@ def _clone(url: str, into: Path) -> Path:
             "git is not installed, so a repository cannot be cloned. Download the "
             "zip and install that instead.")
     try:
-        subprocess.run(["git", "clone", "--depth", "1", url, str(into)],
+        # `git` off the PATH, checked for three lines above. A full path
+        # would have to be guessed, and it differs on every system.
+        subprocess.run(["git", "clone", "--depth", "1", url, str(into)],  # noqa: S607
                        check=True, capture_output=True, text=True, timeout=120)
     except subprocess.CalledProcessError as exc:
         raise InstallError(f"git clone failed: {exc.stderr.strip()}") from exc
@@ -201,10 +203,19 @@ def _clone(url: str, into: Path) -> Path:
 
 
 def _download(url: str, to: Path) -> Path:
+    import urllib.parse
     import urllib.request
 
+    # http and https only. `urlopen` also speaks `file:`, `ftp:` and
+    # whatever else is registered, so a "driver URL" could read a local
+    # file and hand it back as a download -- which is not what the word
+    # means and not what the operator would expect it to have done.
+    scheme = urllib.parse.urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        raise InstallError(f"{url}: only http and https can be downloaded")
+
     try:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
             to.write_bytes(response.read())
     except Exception as exc:
         raise InstallError(f"could not download {url}: {exc}") from exc

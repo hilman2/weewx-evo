@@ -81,7 +81,7 @@ class Guess:
             whoever has to decide whether to keep it.
     """
 
-    __slots__ = ('raw', 'field', 'group', 'unit', 'certain', 'why')
+    __slots__ = ('certain', 'field', 'group', 'raw', 'unit', 'why')
 
     def __init__(self, raw, field, group, unit, certain, why):
         self.raw = raw

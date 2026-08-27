@@ -41,6 +41,7 @@ import shutil
 import threading
 import time
 import unicodedata
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +85,7 @@ class CheetahFeed:
                  copy_static: bool = True,
                  stale_ok: bool = True,
                  language: str = "",
+                 derived: Sequence[str] = (),
                  extras: dict[str, Any] | None = None) -> None:
         self.reader = reader
         #: The skin's own directory, holding skin.conf and the templates.
@@ -97,9 +99,17 @@ class CheetahFeed:
         #: the things an operator is meant to change, and editing the skin
         #: to change them means losing it at the next update.
         self.extras = dict(extras or {})
+        #: What the operator set on the skin's own settings page, going into
+        #: `[DisplayOptions]` over what the skin says. Empty for a skin that
+        #: declares no options, which is every skin from outside.
+        self.display: dict[str, Any] = {}
         #: Which of the skin's translations to run it in. Empty means what
         #: the skin itself says, which is usually English.
         self.language = str(language or "").strip()
+        #: Readings this installation works out rather than reads off the
+        #: hardware. A skin says so on the page, and it should: a dewpoint
+        #: out of a formula and one off a sensor are different claims.
+        self.derived = tuple(derived)
         #: Honour a template's `stale_age`. A year page built from daily
         #: averages says the same thing at ten past as at ten o'clock.
         self.stale_ok = stale_ok
@@ -117,6 +127,10 @@ class CheetahFeed:
         #: Whether the skin decides which units it is shown in. False once
         #: the operator has picked a system on the feed's own page.
         self.skin_units = True
+        #: When the skin last changed. Filled on the first page of a run
+        #: and cleared at the start of the next, so an edit is picked up
+        #: without stat-ing the whole skin forty times per run.
+        self._skin_mtime: float | None = None
 
     # -- the feed ---------------------------------------------------------
 
@@ -126,6 +140,9 @@ class CheetahFeed:
         into.mkdir(parents=True, exist_ok=True)
         self.rendered = self.skipped = 0
         self.failed = []
+        # Asked again this run: a template edited between two runs has to
+        # be seen, and stat-ing the skin once per run is the price.
+        self._skin_mtime = None
         self.summaries = {name: [] for name in SUMMARIES}
 
         conf = self._skin_conf()
@@ -153,9 +170,12 @@ class CheetahFeed:
         if self.copy_static:
             files += self._copy(conf, into)
 
+        swept = self._sweep(into, files)
+
         note = (f"{self.rendered} page(s) in {time.time() - started:.2f}s"
                 + (f", {self.skipped} still fresh" if self.skipped else "")
-                + (f", {len(self.failed)} failed" if self.failed else ""))
+                + (f", {len(self.failed)} failed" if self.failed else "")
+                + (f", {swept} removed" if swept else ""))
         missing = self.tags.report()
         if self.tags.missing:
             # The whole reason this is worth building rather than guessing at:
@@ -190,17 +210,19 @@ class CheetahFeed:
 
         code = self.language or str(conf.get("lang") or "").strip()
         if not code:
-            return conf
+            return weewxconf.reparent(conf)
         spoken = _language_conf(self.skin / "lang", code)
         if not spoken:
             log.info("%s has no translation for %r; running it as written",
                      self.skin.name, code)
-            return conf
+            return weewxconf.reparent(conf)
         merged = _merge(spoken, conf)
         merged["lang"] = code
         _apply_unit_system(merged)
         log.info("%s is being rendered in %r", self.skin.name, code)
-        return merged
+        # Once, at the end: every merge above built plain dictionaries, and
+        # a section without its parent breaks inheritance silently.
+        return weewxconf.reparent(merged)
 
     def _extras(self, conf: dict[str, Any]) -> None:
         """Carry the skin's own settings and words into the tags.
@@ -230,6 +252,14 @@ class CheetahFeed:
             found = conf.get(name)
             if isinstance(found, dict):
                 getattr(self.tags, into).update(found)
+        # What the operator set on the skin's own page, over what the skin
+        # says itself. A skin of ours declares those as `Option`s; one from
+        # outside declares none and this does nothing.
+        if self.display:
+            block = conf.setdefault("DisplayOptions", {})
+            if isinstance(block, dict):
+                block.update(self.display)
+            self.tags.display.update(self.display)
         # The operator's own, last: they are the reason this setting exists.
         if self.extras:
             self.tags.extras.update(self.extras)
@@ -269,13 +299,21 @@ class CheetahFeed:
         if not wanted:
             return []
 
-        from ... import weewxapi
+        from ... import skinkit
 
-        weewxapi.install()
+        # A skin from outside expects `import weewx` to work. The ones that
+        # ship import from `skinkit` by name and this does nothing for
+        # them, which is the difference between a skin we carry and one
+        # somebody downloaded.
+        if any(not name.startswith("weewx_evo.") for name in wanted):
+            skinkit.install_weewx_names()
         span = self.reader.span()
-        timespan = weewxapi.TimeSpan(span[0], span[1]) if span else             weewxapi.TimeSpan(0, 0)
-        generator = weewxapi.Generator(conf, {}, self.reader,
-                                       self.tags.target, self.tags)
+        timespan = (skinkit.TimeSpan(span[0], span[1]) if span
+                    else skinkit.TimeSpan(0, 0))
+        generator = skinkit.Generator(conf, {}, self.reader,
+                                      self.tags.target, self.tags,
+                                      language=self.language,
+                                      derived=self.derived)
         lookup = generator.db_binder
 
         found: list[Any] = []
@@ -291,7 +329,7 @@ class CheetahFeed:
                 # of those, and the page said "'Unknown' object is not
                 # iterable" without saying why.
                 found.extend(extension.get_extension_list(timespan, lookup))
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Named, and then left out. An extension that raises should
                 # cost its own names rather than the whole site, and the
                 # message says which one so it can be reported upstream.
@@ -364,8 +402,9 @@ class CheetahFeed:
                     log.debug("%s names %r, which is not a unit group",
                               self.skin.name, group)
                     continue
-                if not units.can_convert(units.SYSTEMS[units.US][group],
-                                         unit)                         and unit != units.SYSTEMS[units.US][group]:
+                if (not units.can_convert(units.SYSTEMS[units.US][group],
+                                          unit)
+                        and unit != units.SYSTEMS[units.US][group]):
                     # Named and skipped rather than raised: one bad line in
                     # a skin should cost that line, not the whole site.
                     log.warning("%s wants %s in %r, which it cannot be shown "
@@ -387,6 +426,16 @@ class CheetahFeed:
             points = ordinates.get("directions")
             if isinstance(points, (list, tuple)) and len(points) > 1:
                 target.ordinals = tuple(str(p) for p in points)
+        if target.ordinals and not (
+                isinstance(ordinates, dict)
+                and ordinates.get("directions")):
+            # The skin did not name its own, so it will fall back to the
+            # English ones written into its code -- while everything we
+            # print uses the station's language. A skin that reads a
+            # bearing back out of that list then looks up "NO" among N,
+            # NNE, NE and raises. Written in so that both sides agree.
+            block.setdefault("Ordinates", {})["directions"] = list(
+                target.ordinals)
 
         degree = block.get("DegreeDays")
         if isinstance(degree, dict):
@@ -475,7 +524,7 @@ class CheetahFeed:
                     made.append(target)
                     continue
 
-            if self._fresh(target, options):
+            if self._fresh(target, options, template):
                 self.skipped += 1
                 made.append(target)
                 continue
@@ -493,8 +542,53 @@ class CheetahFeed:
             return list(self.reader.buckets(span[0], span[1], unit))
         return [(span[0], span[1])]
 
-    def _fresh(self, target: Path, options: dict[str, Any]) -> bool:
-        """Whether this file is young enough to leave alone."""
+    def _sweep(self, into: Path, made: list[Path]) -> int:
+        """Remove pages this skin no longer produces.
+
+        A template that is deleted leaves its page behind, and the export
+        keeps sending it: `about.html` was served for hours after the file
+        that made it was gone, still carrying the previous version of the
+        whole skin.
+
+        Only `.html` at the top level of the output -- what this feed
+        writes. Not the assets, not `NOAA/`, not `day-archive/`, and
+        nothing a person put there themselves.
+
+        Not at all after a failed page: a template that raises produces
+        nothing this run, and its page must not be swept away for that.
+        """
+        if self.failed:
+            return 0
+        keep = {path.resolve() for path in made}
+        removed = []
+        for path in into.glob("*.html"):
+            if path.resolve() in keep:
+                continue
+            try:
+                path.unlink()
+                removed.append(path.name)
+            except OSError as exc:
+                log.warning("could not remove %s: %s", path, exc)
+        if removed:
+            # Said out loud. A file vanishing without a word is what makes
+            # somebody stop trusting a tool.
+            log.info("%s: removed %d page(s) no longer in the skin: %s",
+                     self.skin.name, len(removed), ", ".join(sorted(removed)))
+        return len(removed)
+
+    def _fresh(self, target: Path, options: dict[str, Any],
+               template: Path | None = None) -> bool:
+        """Whether this file is young enough to leave alone.
+
+        Two questions, and the second one is the one that bites. Is the
+        page younger than its `stale_age` -- and is it younger than the
+        things it was built from?
+
+        Without the second, editing a template does nothing: the page is
+        still "fresh" and is skipped, for hours, on a site where every
+        other page updated. That was real, and it is why `make` has
+        compared timestamps since 1976.
+        """
         if not self.stale_ok:
             return False
         try:
@@ -502,9 +596,40 @@ class CheetahFeed:
         except (TypeError, ValueError):
             return False
         try:
-            return time.time() - target.stat().st_mtime < stale
+            written = target.stat().st_mtime
         except OSError:
             return False
+        if time.time() - written >= stale:
+            return False
+        return written >= self._skin_changed(template)
+
+    def _skin_changed(self, template: Path | None = None) -> float:
+        """When the skin last changed: its newest template or config file.
+
+        Computed once per run -- a forty-page skin would otherwise stat the
+        same directory forty times.
+
+        Every include counts, not only the ones this page uses. A page
+        cannot easily say which those are (a skin may compute one:
+        `#include $get_celestial_icon($body, 'rise')`), and rebuilding a
+        page because a sibling's include moved costs one render. Not
+        rebuilding it costs a page that is quietly out of date.
+        """
+        if self._skin_mtime is None:
+            newest = 0.0
+            for path in self.skin.rglob("*"):
+                if path.suffix in (".tmpl", ".inc", ".conf", ".py"):
+                    try:
+                        newest = max(newest, path.stat().st_mtime)
+                    except OSError:
+                        continue
+            self._skin_mtime = newest
+        if template is not None:
+            try:
+                return max(self._skin_mtime, template.stat().st_mtime)
+            except OSError:
+                pass
+        return self._skin_mtime
 
     # -- one page ---------------------------------------------------------
 
@@ -521,6 +646,7 @@ class CheetahFeed:
 
         _teach_cheetah()
         _CURRENT.skin = self.skin
+        _CURRENT.tags = self.tags
         try:
             # `file=`, not `source=`: that is what makes an include an
             # include, and an include is its own compilation unit with its
@@ -542,7 +668,7 @@ class CheetahFeed:
 
         try:
             data = _encode(str(rendered), encoding)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.error("%s could not be written as %s: %s", template.name,
                       encoding, exc)
             self.failed.append((template.name, str(exc)))
@@ -595,9 +721,9 @@ class CheetahFeed:
         # The skin's own code before its own sections, and both before the
         # tags: an extension is written to add names, and a name it adds
         # must not be swallowed by the layer that answers everything.
-        return ([about, summaries, here] + list(self.contributed)
-                + [self.skin_values, dict(self.tags.display),
-                   dict(self.tags.extras), self.tags])
+        return [about, summaries, here, *self.contributed,
+                self.skin_values, dict(self.tags.display),
+                dict(self.tags.extras), self.tags]
 
     # -- everything that is not a template --------------------------------
 
@@ -655,6 +781,20 @@ class CheetahFeed:
         return made
 
     # -- what the settings page asks for ----------------------------------
+
+    @staticmethod
+    def skin_options(skin: str, skins_dir: Any = None) -> list:
+        """What the chosen skin lets an operator set, for the feed's page.
+
+        A skin of ours ships an `options.py` next to its templates, the way
+        a driver ships one next to its parser. One entry there makes the
+        form field, the validation and the `--explain` line at once.
+
+        A skin from outside has none, and its settings stay in its own
+        `skin.conf` -- where its author put them, and where its own
+        documentation says they are.
+        """
+        return skin_options(skin, skins_dir)
 
     @staticmethod
     def options() -> list:
@@ -824,6 +964,26 @@ def _teach_cheetah() -> None:
         return original(self, path, **kwargs)
 
     Cheetah.Template.Template.serverSidePath = serverSidePath
+
+    # `$varExists('x')` asks whether a name is there. The tag layer counts
+    # every name it cannot answer, and reports the list at the end -- so a
+    # template that politely checks first was filling that report with
+    # things that were never missing. Twenty-eight of them on a page with
+    # nothing wrong with it, which makes the report worth ignoring, which
+    # is the same as not having one.
+    asked = Cheetah.Template.Template.varExists
+
+    def varExists(self: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: N802
+        tags = getattr(_CURRENT, "tags", None)
+        if tags is None:
+            return asked(self, *args, **kwargs)
+        tags.counting = False
+        try:
+            return asked(self, *args, **kwargs)
+        finally:
+            tags.counting = True
+
+    Cheetah.Template.Template.varExists = varExists
     Cheetah.Template.Template._weewx_evo_taught = True
 
 
@@ -949,7 +1109,7 @@ def _filename(template: str, when: float) -> str:
 
     The date comes from the span, so a summary names itself.
     """
-    name = template[:-5] if template.endswith(".tmpl") else template
+    name = template.removesuffix(".tmpl")
     return time.strftime(name, time.localtime(when))
 
 
@@ -1016,20 +1176,128 @@ def from_settings(settings: Any, reader: Reader,
 
     skins = Path(str(option("skins_dir") or "skins"))
     skin = str(option("skin") or "").strip()
+    where = skins / skin if skin else skins
+    if skin and not (where / "skin.conf").is_file():
+        # Not in the directory this feed points at. One of the shipped ones
+        # then, which is what a fresh installation has and no `skins_dir`
+        # of its own.
+        from ...skins import bundled
+
+        where = bundled().get(skin, where)
+
     feed = CheetahFeed(
         reader=reader,
-        skin=skins / skin if skin else skins,
+        skin=where,
         tags=tags,
         encoding=str(option("encoding") or "html_entities"),
         copy_static=option("copy_static") is not False,
         stale_ok=option("stale_ok") is not False,
         language=spoken.code,
+        derived=_derived(settings),
         extras=_settings_block(option("extras")),
     )
     # An explicit choice on the feed's page beats what the skin asked for.
     # Left empty, the skin decides, which is the point of running it at all.
     feed.skin_units = not chosen
+    feed.display = _display(settings, prefix, skin, skins)
     return feed
+
+
+def skin_options(skin: str, skins_dir: Any = None) -> list[Group]:
+    """What the named skin lets an operator set, or nothing.
+
+    A skin of ours ships an `options.py` next to its templates, the way a
+    driver ships one next to its parser. The admin page asks for it by name
+    and builds a form; nothing else has to know the skin exists.
+
+    A skin from outside has no such file, and its settings stay in its own
+    `skin.conf` -- which is where its author put them and where its
+    documentation says they are.
+    """
+    if not skin:
+        return []
+    where = Path(str(skins_dir or "skins")) / skin
+    if not (where / "options.py").is_file():
+        from ...skins import bundled
+
+        found = bundled().get(skin)
+        if found is None or not (found / "options.py").is_file():
+            return []
+        module_name = f"weewx_evo.skins.{skin}.options"
+    else:
+        module_name = None
+
+    try:
+        if module_name:
+            import importlib
+
+            module = importlib.import_module(module_name)
+        else:
+            module = _module_from(where / "options.py", f"skin_{skin}_options")
+        return list(module.groups())
+    except Exception as exc:  # a skin's own file, so anything can be in it
+        log.warning("could not read the settings of skin %r: %s", skin, exc)
+        return []
+
+
+def _module_from(path: Path, name: str) -> Any:
+    """Load one file as a module, without it having to be on the path."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _display(settings: Any, prefix: str, skin: str,
+             skins_dir: Any) -> dict[str, Any]:
+    """The skin's own settings, as the operator set them.
+
+    Only the ones actually set. A value left alone must fall through to what
+    `skin.conf` says, and writing the schema default over it replaces the
+    skin's own choice with ours -- the same trap as a default in argparse,
+    in a different place.
+
+    `get` alone cannot tell the two apart: it answers with the default and
+    looks like an answer. `source` is what knows, and it has to be asked
+    after the `get` that filled it in.
+
+    What that cost, before `source` was consulted: `outTemp_stat_tile_color`
+    came back as the boolean False, went into `[DisplayOptions]` as a
+    boolean where the skin had written the string "False", and the template
+    put nothing at all in `color_temperature: ,`. One comma, and every page
+    lost its whole configuration block -- the theme, the translations, the
+    charts. It rendered fine locally, where the test settings answer None
+    for anything not set, and only broke where the real ones answer with a
+    default.
+    """
+    found: dict[str, Any] = {}
+    for group in skin_options(skin, skins_dir):
+        for option in group.options:
+            name = f"{prefix}.{option.name}"
+            value = settings.get(name)
+            if settings.source(name) == "default":
+                continue
+            if value is not None and value != "":
+                found[option.name] = value
+    return found
+
+
+def _derived(settings: Any) -> tuple[str, ...]:
+    """Readings this installation computes instead of reading.
+
+    `[derive]` in the configuration, with the same defaults the archiver
+    runs on -- so the page agrees with what actually happened to the record.
+    """
+    from ...derive import DEFAULTS
+
+    how = dict(DEFAULTS)
+    how.update(getattr(settings, "config", {}).get("derive") or {})
+    return tuple(sorted(name for name, choice in how.items()
+                        if choice in ("software", "prefer_hardware")))
 
 
 def _version() -> str:

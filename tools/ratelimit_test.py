@@ -21,10 +21,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.db.live import LiveStore  # noqa: E402
-from weewx_evo.ingest.listener import HttpListener, Ingest  # noqa: E402
-from weewx_evo.netaccess import Access  # noqa: E402
-from weewx_evo.ratelimit import Limiter, Limits  # noqa: E402
+from weewx_evo.db.live import LiveStore
+from weewx_evo.ingest.listener import HttpListener, Ingest
+from weewx_evo.netaccess import Access
+from weewx_evo.ratelimit import Limiter, Limits
 
 TOKEN = "the-real-token"
 

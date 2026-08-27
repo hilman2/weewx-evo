@@ -1,0 +1,210 @@
+<!--prettier-ignore-->
+#errorCatcher Echo
+#encoding UTF-8
+#from datetime import datetime, timedelta
+
+#attr $use_parameter_month = False
+#attr $use_parameter_year = False
+#attr $daily_archive = False
+
+#set $layout = $DisplayOptions.get('layout', 'alternative')
+#set $diagrams_config = $DisplayOptions.get("diagrams", {})
+
+#set $now = $spell($current.dateTime, "%x %X")
+#set $sensor_stat_tile_observations = $to_list($DisplayOptions.get('sensor_stat_tile_observations', ['rxCheckPercent', 'consBatteryVoltage']))
+#set $sensor_diagram_observations = $to_list($DisplayOptions.get('sensor_diagram_observations', ['rxCheckPercent', 'consBatteryVoltage']))
+#set $sensor_batteries = $to_list($DisplayOptions.get('sensor_battery_status', ['outTempBatteryStatus', 'inTempBatteryStatus', 'rainBatteryStatus', 'windBatteryStatus', 'uvBatteryStatus', 'txBatteryStatus']))
+#set $sensor_diagram_period = $DisplayOptions.get('sensor_diagram_period', 'month')
+
+<!--prettier-ignore-->
+#def diagrams($context, $diagrams_config, $diagram_obs)
+  #set $diagram_index = 0
+  #if "combined_observations" in $diagrams_config
+    #set $combined = $diagrams_config.combined_observations
+  #else
+    #set $combined = {}
+  #end if
+
+  #for $skin_obs in $diagram_obs
+    #if $skin_obs in $combined.keys()
+      #set $combined_diagram = $combined[$skin_obs]
+      #for $combined_obs in $combined_diagram.obs.keys()
+
+        ## ValueError: start time (1654034700) is greater than stop time (1640991600)
+        #set $alltime_tag = $alltime if $context == 'alltime' else None
+
+        #if $getattr($get_time_span_from_context($context, $day, $week, $month, $year, $alltime_tag, $yesterday), $combined_diagram.obs[$combined_obs].observation).has_data
+          #set global $comb_obs = $skin_obs
+          #set global $combined_diagram = $combined_diagram
+          #set global $diagram_index = $diagram_index
+          #include "includes/combined-diagram-tile.inc"
+          #set $diagram_index = $diagram_index + 1
+          #break
+        #end if
+      #end for
+    #else
+      #set $alltime_tag = $alltime if $context == 'alltime' else None
+      #if $getattr($get_time_span_from_context($context, $day, $week, $month, $year, $alltime_tag, $yesterday), $skin_obs).has_data or (($skin_obs == 'windDir' or $skin_obs == 'windRose') and $getattr($get_time_span_from_context($context, $day, $week, $month, $year, $alltime, $yesterday), 'windSpeed').has_data)
+        #set global $partial_obs = $skin_obs
+        #set global $diagram_index = $diagram_index
+        #if $skin_obs == 'windRose'
+          #include "includes/diagram-tile-wind-rose.inc"
+        #else
+          #include "includes/diagram-tile.inc"
+        #end if
+        #set $diagram_index = $diagram_index + 1
+      #end if
+    #end if
+  #end for
+#end def
+
+<!--prettier-ignore-->
+#def get_battery_binary($battery_raw, $battery)
+#if $battery_raw == 1
+<div class="notice notice--warn"><div><p class="notice__title">$obs.label[$battery]</p><p class="notice__body">$gettext('Low')</p></div></div>
+#else if $battery_raw is None
+<div class="notice"><div><p class="notice__title">$obs.label[$battery]</p><p class="notice__body">$gettext('Unknown')</p></div></div>
+#else
+<div class="notice notice--good"><div><p class="notice__title">$obs.label[$battery]</p><p class="notice__body">$gettext('Ok')</p></div></div>
+<!--prettier-ignore-->
+#end if
+#end def
+
+<!--prettier-ignore-->
+#def get_battery_multi($battery_raw, $battery)
+#if $battery_raw <= 1
+<div class="notice notice--warn"><div><p class="notice__title">$obs.label[$battery]</p><p class="notice__body">$gettext('Low')</p></div></div>
+#else if $battery_raw <= 5
+<div class="notice"><div><p class="notice__title">$obs.label[$battery]</p><p class="notice__body">$gettext('OK')</p></div></div>
+#else if $battery_raw == 6
+<div class="notice notice--good"><div><p class="notice__title">$obs.label[$battery]</p><p class="notice__body">$gettext('DC')</p></div></div>
+<!--prettier-ignore-->
+#end if
+#end def
+
+<!--prettier-ignore-->
+#def batteries($sensor_batteries, $layout)
+## Some Ecowitt sensors emit a battery state other than 1 or 2 (https://github.com/gjr80/weewx-gw1000/wiki/Sensor-battery-states).
+#set $batteries_multi = ['wh41_ch1_batt', 'wh41_ch2_batt', 'wh41_ch3_batt', 'wh41_ch4_batt', 'wh45_batt', 'wh55_ch1_batt', 'wh55_ch2_batt', 'wh55_ch3_batt', 'wh55_ch4_batt', 'wh57_batt']
+#if $layout == 'alternative'
+  #set $classes = "    "
+#else
+  #set $classes = "    "
+#end if
+<!--prettier-ignore-->
+<!--prettier-ignore-->
+#for $battery in $sensor_batteries
+  #if $getattr($current, $battery).has_data
+<!--prettier-ignore-->
+<div class="$classes">
+    #set $battery_raw = $getVar('current.%s.raw' % $battery)
+
+    #if $battery in $batteries_multi
+      $get_battery_multi($battery_raw, $battery)
+    #else
+      $get_battery_binary($battery_raw, $battery)
+    #end if
+</div>
+<!--prettier-ignore-->
+#end if
+#end for
+#end def
+
+<!DOCTYPE html>
+<html lang="$lang">
+  <head>
+    #include "includes/html-head.inc"
+    <title>$station.location - $gettext("Sensor Status")</title>
+  </head>
+
+  <body class="theme-$layout">
+    #include "includes/ui-shell.inc"
+
+    <main class="main" id="main">
+      <div class="wrap">
+<header class="page-head">
+              <h1>$gettext("Sensor Status")</h1>
+              <h2>$now</h2>
+            </header>
+
+          <!--prettier-ignore-->
+          #if $layout == 'classic'
+          <!--prettier-ignore-->
+          <div>
+            <div
+              class="layout-col"
+            >
+              #set global $context = 'day'
+              #set global $stat_obs = $sensor_stat_tile_observations
+              #include 'includes/conditions-table.inc'
+
+              <!--prettier-ignore-->
+              <div>
+                $batteries($sensor_batteries, $layout)
+              </div>
+
+            </div>
+
+            <div class="layout-col">
+              <div>
+                $diagrams($sensor_diagram_period, $diagrams_config, $sensor_diagram_observations)
+              </div>
+            </div>
+          </div>
+          <div>
+            <!-- prettier-ignore -->
+            #if 'sensor_table_observations' in $DisplayOptions
+            <div>
+              <!-- prettier-ignore -->
+              #set global $table_obs = $DisplayOptions.get('sensor_table_observations')
+              #include "includes/data-table-tile.inc"
+            </div>
+            #end if
+          </div>
+          #else
+          <!--prettier-ignore-->
+          #set global $context = 'day'
+
+          <div style="margin-bottom: 1.5rem">
+            $batteries($sensor_batteries, $layout)
+          </div>
+
+          <div>
+            <!--prettier-ignore-->
+            #for $obs in $sensor_stat_tile_observations
+              #set $alltime_tag = $alltime if $context == 'alltime' else None
+
+              #if $getattr($current, $obs).has_data
+                #set global $partial_obs = $obs
+                #include "includes/stat-tile.inc"
+              #end if
+            #end for
+          </div>
+
+          <!--prettier-ignore-->
+          #set global $context = $sensor_diagram_period
+
+          <!--prettier-ignore-->
+          <div>
+            #include "includes/section-heading.inc"
+          </div>
+
+          <!-- prettier-ignore -->
+          <div>
+            $diagrams($context, $diagrams_config, $sensor_diagram_observations)
+          </div>
+
+          <!-- prettier-ignore -->
+          #if 'sensor_table_observations' in $DisplayOptions
+          <div>
+            <!-- prettier-ignore -->
+            #set global $table_obs = $DisplayOptions.get('sensor_table_observations')
+            #include "includes/data-table-tile.inc"
+          </div>
+          <!--prettier-ignore-->
+          #end if
+        #end if
+#include "includes/footer.inc"
+
+</body>
+</html>

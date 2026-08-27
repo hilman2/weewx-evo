@@ -35,6 +35,55 @@ _SECTION = re.compile(r"^(\[+)([^\]]+)(\]+)\s*(?:#.*)?$")
 _ENTRY = re.compile(r"^([^=]+?)\s*=\s*(.*)$")
 
 
+class Section(dict):
+    """A dictionary that knows the section above it.
+
+    ConfigObj sections do, and a WeeWX skin leans on it harder than it looks.
+    `[[[day]]]` names `bottom_date_time_format` once and every diagram under
+    it is expected to inherit it -- `accumulateLeaves` walks upwards to
+    collect that. With plain dictionaries the walk stops immediately, the
+    format arrives as None, and d3 formats every tick against the literal
+    string "undefined". A whole page of charts with `undefined` along the
+    bottom, and nothing in any log.
+
+    The root is its own parent, which is ConfigObj's arrangement and what
+    the code copied from WeeWX tests for.
+    """
+
+    __slots__ = ("parent",)
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.parent: Section = self
+
+    @property
+    def scalars(self) -> list[str]:
+        return [key for key, value in self.items()
+                if not isinstance(value, dict)]
+
+    @property
+    def sections(self) -> list[str]:
+        return [key for key, value in self.items() if isinstance(value, dict)]
+
+
+def reparent(node: Any, parent: Any = None) -> Any:
+    """Turn nested dictionaries into sections and tie the chain.
+
+    Called once on the finished skin configuration, after every merge. Doing
+    it at the end rather than during is deliberate: `dict(...)`, `{**a, **b}`
+    and a translation merged over a skin all drop the attribute silently, so
+    one pass over the finished thing is the only place it can be relied on.
+    """
+    if not isinstance(node, dict):
+        return node
+    out = node if isinstance(node, Section) else Section(node)
+    out.parent = out if parent is None else parent
+    for key, value in list(out.items()):
+        if isinstance(value, dict):
+            out[key] = reparent(value, out)
+    return out
+
+
 def parse(text: str) -> dict[str, Any]:
     """A weewx.conf as nested dictionaries.
 
@@ -42,7 +91,7 @@ def parse(text: str) -> dict[str, Any]:
     Types are the caller's business: `altitude = 440, meter` is a length and a
     unit, and only something that knows what altitude means can say so.
     """
-    root: dict[str, Any] = {}
+    root: Section = Section()
     stack: list[dict[str, Any]] = [root]
 
     for raw in text.splitlines():
@@ -59,11 +108,11 @@ def parse(text: str) -> dict[str, Any]:
             # Bracket depth is nesting depth: [a] is 1, [[b]] is 2.
             del stack[depth:]
             while len(stack) < depth:
-                stack.append(stack[-1].setdefault("__orphan__", {}))
+                stack.append(stack[-1].setdefault("__orphan__", Section()))
             parent = stack[depth - 1]
             node = parent.get(name.strip())
             if not isinstance(node, dict):
-                node = {}
+                node = Section()
                 parent[name.strip()] = node
             stack.append(node)
             continue
@@ -83,7 +132,7 @@ def parse(text: str) -> dict[str, Any]:
             stack[-1][_key(key)] = _value(value)
 
     root.pop("__orphan__", None)
-    return root
+    return reparent(root)
 
 
 def _splits(text: str) -> bool:
@@ -173,7 +222,7 @@ def _number(value: Any) -> float | None:
 def _altitude_metres(value: Any) -> float | None:
     """WeeWX writes `altitude = 440, meter`. Either unit, always metres out."""
     if isinstance(value, (list, tuple)):
-        amount, unit = (list(value) + ["meter"])[:2]
+        amount, unit = ([*list(value), "meter"])[:2]
     else:
         amount, unit = value, "meter"
     metres = _number(amount)

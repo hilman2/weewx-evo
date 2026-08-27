@@ -6,7 +6,6 @@
 """Test the whole way from a captured payload to a WeeWX packet."""
 
 import pytest
-
 from ecowitt.mapping import Mapper
 
 

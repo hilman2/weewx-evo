@@ -1,0 +1,212 @@
+<!--prettier-ignore-->
+#errorCatcher Echo
+#encoding UTF-8
+#import datetime
+#import time
+
+<!DOCTYPE html>
+<html lang="$lang">
+  <head>
+    #include "includes/html-head.inc"
+    <title>$station.location - $gettext("Forecast")</title>
+<style>
+      dds-image-with-caption {
+        max-width: 100%;
+        margin-top: 0;
+        margin-bottom: 0;
+      }
+    </style>
+  </head>
+
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+    #include "includes/ui-shell.inc"
+
+    <main class="main" id="main">
+      <div class="wrap">
+<header class="page-head">
+              <h1>$gettext("Vorhersage vom Deutschen Wetterdienst")</h1>
+            </header>
+
+          <!--prettier-ignore-->
+          #if $to_bool($Extras['weewx-DWD']['show_text_forecast'])
+          #set $VHDL = $Extras['weewx-DWD']['text_forecast_VHDL']
+          #set $dwd_link = $Extras['weewx-DWD']['dwd_link']
+          <div style="margin-bottom: 1.5rem">
+            <div>
+              <!--prettier-ignore-->
+              <div class="card">
+                #set $today = datetime.date.today()
+                #set $headings = {54: $pgettext("DWD", "Current Weather Conditions"), 50: $pgettext("DWD", "Today"), 51: $pgettext("DWD", "Tomorrow"), 52: $pgettext("DWD", ($today + datetime.timedelta(days=2)).strftime("%A")), 53: $pgettext("DWD", ($today + datetime.timedelta(days=3)).strftime("%A"))}
+                #for $day in [54, 50, 51, 52, 53]
+                  #if os.path.exists("dwd/VHDL" + str($day) + "_" + $VHDL + "_LATEST.html")
+                    <h4>$headings[$day]</h4>
+                    <p>
+                    #include raw "dwd/VHDL" + str($day) + "_" + $VHDL + "_LATEST.html"
+                    </p>
+                    #if $day != 53
+                      <br />
+                    #end if
+                  #end if
+                #end for
+
+                <p style="text-align: right;">
+                    [$gettext('Source'):
+                    <a
+                    href="$dwd_link"
+                    target="_blank"
+                    >DWD</a
+                    >]
+                </p>
+              </div>
+            </div>
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if $to_bool($Extras['weewx-DWD']['show_forecast']) and os.path.exists("dwd/forecast-" + $Extras['weewx-DWD']['mosmix_id'] + ".json")
+          <div style="margin-bottom: 1.5rem">
+            <div>
+              <div class="card">
+                <div class="dwd-forecast">
+                  <script>
+                    var dwdForecastData = #include raw "dwd/forecast-" + $Extras['weewx-DWD']['mosmix_id'] + ".json"
+                  </script>
+                </div>
+              </div>
+            </div>
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if $DisplayOptions.get("diagrams", {}).get("combined_observations", {}).get('dwd_meteogram_1', None) is not None
+          <div>
+            <!--prettier-ignore-->
+            #attr $context = 'custom'
+            #set global $context_start_ts = $time.time()
+            #set $end_dt = $datetime.date.today() + $datetime.timedelta(days=14)
+            #set global $context_end_ts = $time.mktime($end_dt.timetuple())
+            #set global $diagram_classes_custom = ""
+
+            #set global $comb_obs = "dwd_meteogram_1"
+            #set global $combined_diagram = $DisplayOptions.get("diagrams", {}).get("combined_observations", {}).get('dwd_meteogram_1', {})
+            #set global $diagram_index = 9999
+            #include "includes/combined-diagram-tile.inc"
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if $DisplayOptions.get("diagrams", {}).get("combined_observations", {}).get('dwd_meteogram_2', None) is not None
+          <div>
+            <!--prettier-ignore-->
+            #attr $context = 'custom'
+            #set global $context_start_ts = $time.time()
+            #set $end_dt = $datetime.date.today() + $datetime.timedelta(days=14)
+            #set global $context_end_ts = $time.mktime($end_dt.timetuple())
+            #set global $diagram_classes_custom = ""
+
+            #set global $comb_obs = "dwd_meteogram_2"
+            #set global $combined_diagram = $DisplayOptions.get("diagrams", {}).get("combined_observations", {}).get('dwd_meteogram_2', {})
+            #set global $diagram_index = 9999
+            #include "includes/combined-diagram-tile.inc"
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if $DisplayOptions.get("diagrams", {}).get("combined_observations", {}).get('dwd_meteogram_3', None) is not None
+          <div>
+            <!--prettier-ignore-->
+            #attr $context = 'custom'
+            #set global $context_start_ts = $time.time()
+            #set $end_dt = $datetime.date.today() + $datetime.timedelta(days=14)
+            #set global $context_end_ts = $time.mktime($end_dt.timetuple())
+            #set global $diagram_classes_custom = ""
+
+            #set global $comb_obs = "dwd_meteogram_3"
+            #set global $combined_diagram = $DisplayOptions.get("diagrams", {}).get("combined_observations", {}).get('dwd_meteogram_3', {})
+            #set global $diagram_index = 9999
+            #include "includes/combined-diagram-tile.inc"
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if $to_bool($Extras['weewx-DWD']['show_pressure_map']) or $to_bool($Extras['weewx-DWD']['show_warning_map'])
+          <div style="margin-bottom: 1.5rem">
+            <div
+            >
+              <header class="section-header">
+                <h2>$gettext("Aktuelle Bodendruck- und Warnkarte")</h2>
+              </header>
+            </div>
+            <!--prettier-ignore-->
+            #if $to_bool($Extras['weewx-DWD']['show_pressure_map'])
+            <div
+            >
+              <div class="card">
+                <figure class="card"><a href="dwd/bwk_bodendruck_na_ana.png"><img src="dwd/bwk_bodendruck_na_ana.png" alt="$gettext(" loading="lazy" /></a><figcaption class="card__foot">$gettext(</figcaption></figure>
+              </div>
+            </div>
+            #end if
+
+            <!--prettier-ignore-->
+            #if $to_bool($Extras['weewx-DWD']['show_warning_map'])
+            <div
+            >
+              <div class="card">
+                <figure class="card"><a href="dwd/$Extras["><img src="dwd/$Extras[" alt="$gettext(" loading="lazy" /></a><figcaption class="card__foot">$gettext(</figcaption></figure>
+              </div>
+            </div>
+            #end if
+          </div>
+          #end if
+
+          <!--prettier-ignore-->
+          #if $to_bool($Extras['weewx-DWD']['show_text_warnings'])
+          <div style="margin-bottom: 1.5rem">
+            <div
+            >
+              <header class="section-header">
+                <h2>$gettext("Wetterwarnungen")</h2>
+              </header>
+            </div>
+
+            #set $warning_index = 0
+            <!--prettier-ignore-->
+            <div
+            >
+              #for $region, $region_key in $get_dwd_warnings.items()
+              #if os.path.exists("dwd/warn-" + $region_key + ".json") and ($warning_index % 2) == 0
+
+                <!--prettier-ignore-->
+                #set global $region = $region
+                #set global $region_key = $region_key
+                #include "includes/dwd-warning.inc"
+
+              <!--prettier-ignore-->
+              #end if
+              #set $warning_index = $warning_index + 1
+              #end for
+            </div>
+
+            #set $warning_index = 0
+            <!--prettier-ignore-->
+            <div
+            >
+              #for $region, $region_key in $get_dwd_warnings.items()
+              #if os.path.exists("dwd/warn-" + $region_key + ".json") and ($warning_index % 2) != 0
+
+                <!--prettier-ignore-->
+                #set global $region = $region
+                #set global $region_key = $region_key
+                #include "includes/dwd-warning.inc"
+
+              <!--prettier-ignore-->
+              #end if
+              #set $warning_index = $warning_index + 1
+              #end for
+            </div>
+          </div>
+          #end if
+#include "includes/footer.inc"
+
+</body>
+</html>

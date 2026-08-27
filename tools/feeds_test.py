@@ -57,8 +57,7 @@ def archive(path: Path) -> None:
 
 def main() -> int:
     from weewx_evo import plots as plot_defs
-    from weewx_evo.cli import (build_feeds, configured_feeds, feed_dirs,
-                               settings_for)
+    from weewx_evo.cli import build_feeds, configured_feeds, feed_dirs, settings_for
     from weewx_evo.feedrunner import Runner
 
     failures = 0

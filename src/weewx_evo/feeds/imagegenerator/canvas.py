@@ -101,7 +101,7 @@ class Canvas:
         self.draw.line(
             [(self._s(x), self._s(y)) for x, y in points],
             fill=theming.rgba(color, opacity),
-            width=max(1, int(round(self._s(width)))), joint="curve")
+            width=max(1, round(self._s(width))), joint="curve")
 
     def polygon(self, points: list[tuple[float, float]], color: str,
                 opacity: float = 1.0) -> None:
@@ -124,7 +124,7 @@ class Canvas:
         self.draw.ellipse([self._s(x) - r, self._s(y) - r,
                            self._s(x) + r, self._s(y) + r],
                           outline=theming.rgba(color),
-                          width=max(1, int(round(self._s(width)))))
+                          width=max(1, round(self._s(width))))
 
     def fade_under(self, points: list[tuple[float, float]], baseline: float,
                    color: str, opacity: float) -> None:
@@ -167,7 +167,7 @@ class Canvas:
         # costs one draw call per strip and looks no different.
         column = Image.new("L", (1, h))
         column.putdata([
-            int(round(255 * opacity * (1.0 - i / max(1, h - 1)) ** 1.4))
+            round(255 * opacity * (1.0 - i / max(1, h - 1)) ** 1.4)
             for i in range(h)])
         self.big.paste(theming.rgba(color)[:3], (x0, y0),
                        ImageChops.multiply(shape, column.resize((w, h))))
@@ -197,8 +197,8 @@ class Canvas:
         # at most and this is two allocations rather than one per column.
         row = Image.new("L", (w, 1))
         row.putdata([
-            int(round(255 * ((i / max(1, w - 1)) if towards_right
-                             else 1.0 - i / max(1, w - 1))))
+            round(255 * ((i / max(1, w - 1)) if towards_right
+                             else 1.0 - i / max(1, w - 1)))
             for i in range(w)])
         self.big.paste(theming.rgba(color)[:3], (left, top),
                        row.resize((w, h)))
@@ -231,7 +231,7 @@ class Canvas:
             try:
                 self._fonts[key] = (ImageFont.truetype(path, size)
                                     if path else _default_font(size))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 self._fonts[key] = _default_font(size)
         return self._fonts[key]
 
@@ -316,7 +316,7 @@ def time_ticks(start: float, stop: float, wanted: int = 6,
 
     # Months and years. Stepped through the calendar, because adding
     # 2592000 seconds twelve times lands in the middle of December.
-    months = max(1, int(round(rough / (30 * 86400))))
+    months = max(1, round(rough / (30 * 86400)))
     if months >= 12:
         return _calendar_ticks(start, stop, years=max(1, months // 12),
                                language=language)
@@ -406,5 +406,5 @@ def label_for(value: float, step: float) -> str:
     """
     if step >= 1:
         return f"{value:.0f}"
-    places = max(0, min(4, int(math.ceil(-math.log10(step)))))
+    places = max(0, min(4, math.ceil(-math.log10(step))))
     return f"{value:.{places}f}"

@@ -111,7 +111,7 @@ class Policy:
                 return name
         # Nobody preferred has it. Someone does, or `available` would be empty,
         # and a reading from an unranked station beats no reading at all.
-        return sorted(available)[0]
+        return min(available)
 
 
 def sources_by_field(packets: list) -> dict[str, set[str]]:

@@ -50,8 +50,9 @@ import datetime
 import logging
 import math
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any
 
 from . import units
 

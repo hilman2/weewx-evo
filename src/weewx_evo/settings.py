@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +103,10 @@ class Settings:
         self.prefix = prefix
         self._path = Path(path) if path else None
         self._sources: dict[str, str] = {}
+        #: What changed on the last reload. Empty until one happens. Per
+        #: instance: as a class attribute every Settings in the process
+        #: shared one list.
+        self.changed: list[str] = []
 
     # -- resolution ------------------------------------------------------
 
@@ -164,7 +169,7 @@ class Settings:
         break because a name got tidier.
         """
         primary = "WEEWX_EVO_" + name.replace(".", "_").upper()
-        return [(primary, 1.0)] + ENV_ALIASES.get(name, [])
+        return [(primary, 1.0), *ENV_ALIASES.get(name, [])]
 
     def _from_args(self, name: str) -> Any:
         """The command-line value, if one was actually given.
@@ -202,9 +207,6 @@ class Settings:
                         weewx={}, prefix=prefix)
 
     # -- reloading -------------------------------------------------------
-
-    #: What changed on the last reload. Empty until one happens.
-    changed: list[str] = []
 
     def reload(self, path: str | Path | None = None) -> bool:
         """Re-read the file. Returns whether anything actually changed.
@@ -249,14 +251,52 @@ class Settings:
         return [option.label for _group, option in self.schema
                 if option.restart and option.name in self.changed]
 
-    def explain(self) -> list[str]:
-        """One line per setting, saying what it is and where it came from."""
+    def explain(self, extra: Sequence[Any] = ()) -> list[str]:
+        """One line per setting, saying what it is and where it came from.
+
+        `extra` is the schemas that are not the core's -- one per driver,
+        feed and export, because those are named instances and the core
+        schema cannot know how many there are. Left out, the command shows
+        two dozen settings and silently omits the forty a skin has, which
+        reads as "there are no others".
+        """
+        rows: list[tuple[str, Any, str] | None] = [
+            (option.name, option, "") for _group, option in self.schema]
+        for schema in extra:
+            found = [(f"{group.prefix}.{option.name}"
+                      if group.prefix else option.name, option)
+                     for group in getattr(schema, "groups", ())
+                     for option in getattr(group, "options", ())]
+            if not found:
+                continue
+            rows.append(None)
+            rows.append(("", None, str(getattr(schema, "label", ""))))
+            rows.extend((name, option, "") for name, option in found)
+
+        # One column width for the whole listing. A feed's settings carry
+        # their instance name and are half again as long as the core's, and
+        # a fixed width puts every one of those lines out of true.
+        width = max((len(name) for name, option, _ in
+                     (r for r in rows if r) if option), default=22)
         lines = []
-        for _group, option in self.schema:
-            value = self.get(option.name)
-            shown = "(set)" if option.kind == "secret" and value else repr(value)
-            lines.append(f"  {option.name:<22} {shown:<28} {self.source(option.name)}")
+        for row in rows:
+            if row is None:
+                lines.append("")
+                continue
+            name, option, heading = row
+            if option is None:
+                lines.append(f"  {heading}")
+                continue
+            lines.append(self._line(option, name, width))
         return lines
+
+    def _line(self, option: Any, name: str, width: int = 22) -> str:
+        value = self.get(name)
+        if value is None and name != option.name:
+            # Not in the file, so what the schema says it would be.
+            value = option.default
+        shown = "(set)" if option.kind == "secret" and value else repr(value)
+        return f"  {name:<{width}} {shown:<28} {self.source(name)}"
 
 
 def load(schema: Schema, config_path: str | Path | None = None,

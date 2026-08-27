@@ -25,10 +25,9 @@ import socket
 import socketserver
 import threading
 import time
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
-
-from dataclasses import replace
 
 from ..db.live import LiveStore, Packet
 from ..netaccess import PRIVATE_ONLY, Access
@@ -263,7 +262,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self) -> None:  # noqa: N802 - the base class names it
+    def do_POST(self) -> None:
         if not self._permitted():
             return
         try:
@@ -280,7 +279,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._reply(200, response[0], response[1])
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if not self._permitted():
             return
         parsed = urlparse(self.path)
@@ -425,7 +424,8 @@ def push(packets: list[Packet], host: str = "127.0.0.1", port: int = 8000,
     request = urllib.request.Request(
         f"http://{host}:{port}{path}", data=body,
         headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    # The URL is built here out of a host and a port, three lines up.
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
         response.read()
     return len(packets)
 

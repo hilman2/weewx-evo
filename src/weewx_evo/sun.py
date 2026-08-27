@@ -628,7 +628,7 @@ def moon_fullness(when: float) -> int:
         distance_km - sun_km * math.cos(elongation))
     # A whole percent, as WeeWX gives it. Nobody reads a tenth of a percent
     # of a moon, and a skin prints this straight into a sentence.
-    return int(round(100.0 * (1.0 + math.cos(phase_angle)) / 2.0))
+    return round(100.0 * (1.0 + math.cos(phase_angle)) / 2.0)
 
 
 def moon_phase(when: float) -> tuple[int, str]:

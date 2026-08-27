@@ -90,7 +90,8 @@ def main() -> int:
     except ImportError:
         ephem = None
     try:
-        from weeutil import Sun as schlyter
+        # WeeWX's own fallback, named after who wrote it.
+        from weeutil import Sun as schlyter  # noqa: N813
     except ImportError:
         schlyter = None
 
@@ -122,7 +123,8 @@ def main() -> int:
                             (theirs["sunrise"] is None)
                         failures += not agree
                         print(f"  {name:<11} {day:<11} no crossing"
-                              f"   {'-- and pyephem agrees' if agree else 'FAIL: pyephem found one'}")
+                              "   " + ('-- and pyephem agrees' if agree
+                                       else 'FAIL: pyephem found one'))
                         continue
 
                     gap = max(apart(ours["sunrise"], theirs["sunrise"]),
@@ -170,7 +172,7 @@ def main() -> int:
                     continue
                 try:
                     rise_h, set_h = schlyter.sunRiseSet(y, m, d, lon, lat)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     continue
                 theirs_rise, theirs_set = ts + rise_h * 3600.0, ts + set_h * 3600.0
                 gap = max(apart(accurate["sunrise"], theirs_rise),

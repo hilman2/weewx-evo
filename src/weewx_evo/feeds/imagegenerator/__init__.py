@@ -32,6 +32,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -133,7 +134,7 @@ class ImageGenerator:
                 continue
             try:
                 image = self.build(plot, generated)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # One broken chart must not cost the other ninety-nine. A
                 # station with a sensor that stopped reporting should still
                 # get its temperature chart.
@@ -301,7 +302,7 @@ class ImageGenerator:
             margin = (high - low) * 0.06
             low, high = low - margin, high + margin
 
-        fixed = list(chart.yscale) + [None, None, None]
+        fixed = [*list(chart.yscale), None, None, None]
         if fixed[0] is not None:
             low = float(fixed[0])
         if fixed[1] is not None:
@@ -350,10 +351,8 @@ class ImageGenerator:
             return
 
         state = chart.daynight.get("first")
-        edges = ([chart.start]
-                 + [t for t in chart.daynight.get("transitions") or ()]
-                 + [chart.stop])
-        for begin, end in zip(edges, edges[1:]):
+        edges = ([chart.start, *list(chart.daynight.get("transitions") or ()), chart.stop])
+        for begin, end in pairwise(edges):
             if state == "night":
                 self._band(sheet, chart, box, begin, end, look.night)
             state = "day" if state == "night" else "night"
@@ -424,7 +423,7 @@ class ImageGenerator:
               high: float) -> list[list[tuple[float, float]]]:
         runs: list[list[tuple[float, float]]] = []
         current: list[tuple[float, float]] = []
-        for when, value in zip(line.time, line.values):
+        for when, value in zip(line.time, line.values, strict=True):
             if value is None:
                 if len(current) > 1:
                     runs.append(current)
@@ -445,7 +444,7 @@ class ImageGenerator:
                    high: float, look: theming.Theme, color: str) -> None:
         fill = line.fill_color or color
         baseline = self._y(max(0.0, low), box, low, high)
-        for i, (when, value) in enumerate(zip(line.time, line.values)):
+        for i, (when, value) in enumerate(zip(line.time, line.values, strict=True)):
             if value is None:
                 continue
             seconds = (line.bar_width[i]

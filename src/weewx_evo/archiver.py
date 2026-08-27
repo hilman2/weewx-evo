@@ -28,9 +28,9 @@ import time
 from dataclasses import dataclass, field
 
 from .aggregate import Accumulator, start_of_archive_day
-from .derive import Deriver
 from .db.archive import ArchiveStore
 from .db.live import LiveStore, interval_stop
+from .derive import Deriver
 from .obstypes import DEFAULT_POLICY, Policy
 from .sources import Policy as SourcePolicy
 from .sources import apply as source_merge
