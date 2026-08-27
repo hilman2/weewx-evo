@@ -23,21 +23,6 @@
 <header class="page-head">
               <h1>$gettext("Current Weather Conditions")</h1>
               <h2>$current.dateTime</h2>
-              #if $to_bool($Extras['mqtt']['mqtt_websockets_enabled'])
-              #if $DisplayOptions.get('layout', 'alternative') == 'alternative'
-                #set $mqtt_notfication_classes = "    "
-              #else
-                #set $mqtt_notfication_classes = "    "
-              #end if
-<div
-                id="notification-container-mqtt"
-                style="display: none"
-              >
-                <div class="$mqtt_notfication_classes">
-                  <div class="notice"><div><p class="notice__title">Connected to live weather station.</p></div></div>
-                </div>
-              </div>
-              #end if
             </header>
 
           #if $DisplayOptions.get('layout', 'alternative') == 'alternative'
@@ -136,20 +121,15 @@
     #include "includes/footer.inc"
 
 
-#if $to_bool($Extras['mqtt']['mqtt_websockets_enabled'])
+## Live readings. The station POSTs them to live.php, which writes them
+## beside itself; this reads that file. Nothing is opened anywhere for it --
+## same web server as the page, same https, same origin.
+#if $to_bool($Extras.get('live_push', 1))
     <script>
-      var mqtt_host = "$Extras['mqtt']['mqtt_websockets_host']";
-      var mqtt_port = "$Extras['mqtt']['mqtt_websockets_port']";
-      var mqtt_topic = "$Extras['mqtt']['mqtt_websockets_topic']";
-      var mqtt_ssl = "$Extras['mqtt']['mqtt_websockets_ssl']";
-      var mqtt_username = "$Extras['mqtt']['mqtt_websockets_username']";
-      var mqtt_password = "$Extras['mqtt']['mqtt_websockets_password']";
-    </script>
-    <script src="$get_base_path(path='assets/live-updates.js')" defer></script>
-    ## Whether each card is actually live, and how old the readings are.
-    ## Its own file rather than part of deck.js, because it is only worth
-    ## loading on a station that has a broker at all.
-    <script>
+      window.deckLivePoll = {
+        url: "$Extras.get('live_push_file', 'live.json')",
+        every: $Extras.get('live_push_every', 15)
+      };
       window.deckLiveStrings = {
         live: "$gettext('LIVE')",
         stale: "$gettext('LIVE')",
@@ -168,6 +148,7 @@
         neverSent: "$gettext('The station does not publish this reading live.')"
       };
     </script>
+    <script src="$get_base_path(path='assets/live-poll.js')" defer></script>
     <script src="$get_base_path(path='assets/live-status.js')" defer></script>
     #end if
   </body>

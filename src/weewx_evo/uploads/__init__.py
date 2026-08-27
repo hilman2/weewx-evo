@@ -359,7 +359,7 @@ class Registry:
             except Exception:
                 log.exception("could not load the upload %r; carrying on", entry.name)
 
-        from . import ambient, cwop, mqtt, weathercloud, windy
+        from . import ambient, cwop, mqtt, weathercloud, webpush, windy
 
         # Three services, one protocol. Weather Underground defined it, the
         # other two copied it down to the parameter names -- so they are one
@@ -371,6 +371,7 @@ class Registry:
         self.register_factory("weathercloud", weathercloud.WeathercloudUpload)
         self.register_factory("cwop", cwop.CwopUpload)
         self.register_factory("mqtt", mqtt.MqttUpload)
+        self.register_factory("webpush", webpush.WebPushUpload)
 
 
 #: The registry the CLI and the admin page use.

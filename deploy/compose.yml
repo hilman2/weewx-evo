@@ -19,16 +19,6 @@ services:
       # The settings page. Its own port, and a reverse proxy passes only its
       # own token.
       - "127.0.0.1:${WEEWX_EVO_ADMIN_PORT:-3042}:8080"
-      # The MQTT broker, when it is switched on. Loopback, like everything
-      # else: a page reaches the websocket port through the reverse proxy,
-      # which is also what gives it TLS -- and a page served over https
-      # cannot open an unencrypted websocket.
-      #
-      # The plain MQTT port is here for a client on this machine. Nothing
-      # outside needs it: the station's own upload connects from inside the
-      # container, over the loopback the container already has.
-      - "127.0.0.1:${WEEWX_EVO_MQTT_PORT:-1883}:1883"
-      - "127.0.0.1:${WEEWX_EVO_MQTT_WS_PORT:-9001}:9001"
       # The pages the exports published. No token: this is the part meant to
       # be read. Still on loopback, so a reverse proxy decides who sees it.
       - "127.0.0.1:${WEEWX_EVO_WEB_PORT:-3043}:8081"
@@ -76,10 +66,6 @@ services:
       # while nothing can reach the container directly.
       - WEEWX_EVO_ALLOW=private
       - WEEWX_EVO_ADMIN_ALLOW=private
-      # The broker answers the Docker bridge, which is private. What decides
-      # who reaches it from outside is the port binding above and the reverse
-      # proxy, not this.
-      - WEEWX_EVO_BROKER_ALLOW=private
 
     command: ["serve", "--spool", "/data/packets"]
 

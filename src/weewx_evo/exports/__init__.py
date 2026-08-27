@@ -103,9 +103,37 @@ class BaseExport:
 
     #: Shown on the admin page and in `weewx-evo export list`.
     label: str = "export"
+    #: Whether `live.php` goes up with the files. On, because it costs two
+    #: small files and is the only way a page published elsewhere shows a
+    #: reading that is not five minutes old. See `exports.livepush`.
+    live_push: bool = True
+    #: The station's upload token, from which `live.php`'s own is derived.
+    #: Set when the export is built; without it nothing is installed.
+    upload_token: str = ""
 
     def send(self, source: Path, files: list[Path] | None = None) -> Sent:
         raise NotImplementedError
+
+    def prepare(self, source: Path) -> list[Path]:
+        """Put anything the destination needs into the directory first.
+
+        Today that is `live.php` and its token, and only when this export
+        wants them. Called by `send` in each export before it looks at what
+        is there, so the two files are picked up like any others -- which
+        means a tracker that only sends what changed does not send them
+        again every five minutes.
+        """
+        if not self.live_push or not self.upload_token:
+            return []
+        from .livepush import install
+
+        try:
+            return install(Path(source), self.upload_token)
+        except OSError:
+            # A directory that cannot be written to is the feed's problem,
+            # and the export can still send what is already there.
+            log.warning("could not put live.php into %s", source, exc_info=True)
+            return []
 
     def check(self) -> str:
         """Try the destination and say what happened, without sending.
@@ -238,6 +266,36 @@ def _feed_choices() -> list[tuple[str, str]]:
     from ..options import defined_feeds
 
     return [(name, f"the {label}") for name, label in defined_feeds()]
+
+
+def live_push_options() -> list:
+    """The two "live readings" settings, which every export has the same.
+
+    One copy, because three exports with three subtly different wordings for
+    the same switch is how a settings page stops being readable.
+    """
+    from ..options import Option
+
+    return [
+        Option("live_push", "Carry the live-readings script", kind="bool",
+               default=True,
+               help="On. Sends `live.php` and its token along with the pages, "
+                    "so a skin can show readings that are seconds old rather "
+                    "than as old as the last upload. Nothing is opened for "
+                    "it: the station posts to that script over the same "
+                    "connection it uses to publish, and the page reads a "
+                    "static file. Turn it off for a destination that is not a "
+                    "web host, or one where PHP is not wanted."),
+        Option("live_push_url", "Address the pages are served at",
+               placeholder="https://example.org/wetter",
+               help="Where these files end up as a web address -- not the "
+                    "directory they are uploaded to. The station posts its "
+                    "readings to `live.php` under it, and it cannot work that "
+                    "out on its own: an FTP path like /httpdocs/wetter says "
+                    "nothing about the domain in front of it. Leave it empty "
+                    "and the files still go up; only the posting does not "
+                    "start."),
+    ]
 
 
 def source_for(settings: dict[str, Any], feed_directory: Any = None) -> Path | None:

@@ -255,7 +255,6 @@ python tools/mqtt_test.py       # the MQTT client, against a broker of our own
 python tools/forecast_test.py   # the forecast sources and their store
 python tools/realtime_test.py   # realtime.txt and wxnow.txt
 python tools/deck_live_test.py  # the live display in the Deck skin
-python tools/broker_test.py     # the built-in MQTT broker
 ```
 
 `deck_live_test.py` needs Cheetah and renders the real skin, with and without a
@@ -264,9 +263,7 @@ configured. A station with no broker showing a red OFFLINE on every card has
 been given a fault it does not have.
 
 None of these touches the network. `upload_test.py` and `forecast_test.py` build
-requests and look at them; `mqtt_test.py` starts a broker on loopback, and
-`broker_test.py` drives ours from the other side -- with our own client, and
-with a websocket built by hand and masked the way a browser masks it.
+requests and look at them; `mqtt_test.py` starts a broker on loopback.
 
 `upload_test.py` additionally compares against WeeWX when it is importable — the
 Ambient query parameter by parameter and the CWOP packet character by character.

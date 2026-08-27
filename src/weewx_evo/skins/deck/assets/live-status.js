@@ -1,25 +1,24 @@
 /* Whether a reading is actually live, and how old it is.
  *
- * `live-updates.js` takes the MQTT feed and rewrites the values in place as
- * packets arrive. What it does not do is say so: a page with a working broker
- * and a page with one that went away ten minutes ago look identical, and a
- * number that is four hours old looks exactly like one from ten seconds ago.
+ * `live-poll.js` reads the file the station pushed and puts the numbers into
+ * the page. What it does not do is say so: a page whose station is pushing
+ * and one whose station stopped an hour ago look identical, and a
+ * four-hour-old number looks exactly like one from ten seconds ago.
  *
  * That is the failure this file exists for. A dashboard that is quietly wrong
  * is worse than one that is visibly stale.
  *
- * ## Why a MutationObserver and not a second MQTT client
+ * ## Two ways of noticing, and both are needed
  *
- * The obvious approach is to open our own connection and listen along. It is
- * also wrong: two clients means two subscriptions, two sets of credentials in
- * the page, and a second client id -- and two clients sharing an id take turns
- * kicking each other off the broker, which looks like a flapping network.
+ * `live-poll.js` says when it has applied a file, because a poll that finds
+ * an unchanged value produces no DOM change to observe -- and a reading that
+ * has not moved is still a fresh reading. Without that, a calm afternoon
+ * turns every badge red.
  *
- * So this watches the DOM instead. `live-updates.js` is the one asset here
- * that is still a minified bundle (MQTT.js and dayjs), so reaching into its
- * internals would break the next time it is rebuilt. What it changed in the
- * page is a fact that survives that, and "this card changed" is exactly what
- * "this card is live" means.
+ * The MutationObserver is the other half, and it is what makes this work
+ * whatever is feeding the page. Anything that writes a value into a card is
+ * saying that card is live, and this notices without being told -- so a skin
+ * fed some other way keeps its badges.
  *
  * ## What the colours mean
  *
@@ -231,30 +230,23 @@
     });
   }
 
-  function watchConnection() {
-    /* The bundle shows its own notification when the socket opens and hides
-     * it when it closes. That element is the only thing it exposes, so it is
-     * what the connected state is read from -- rather than reaching into the
-     * bundle's internals, which would break the next time it is rebuilt. */
-    var container = document.getElementById("notification-container-mqtt");
-    if (!container) {
-      return;
-    }
-    var read = function () {
-      var visible =
-        container.style.display !== "none" &&
-        !container.hidden &&
-        container.offsetParent !== null;
-      if (visible !== state.connected) {
-        state.connected = visible;
-        paint();
-      }
-    };
-    new MutationObserver(read).observe(container, {
-      attributes: true,
-      attributeFilter: ["style", "class", "hidden"]
+  function watchPolling() {
+    /* `live-poll.js` says so when it has applied a file, because a poll that
+     * finds an unchanged value produces no mutation to observe -- and a
+     * reading that has not moved is still a fresh reading. Without this a
+     * calm afternoon turns every badge red. */
+    document.addEventListener("deck:live", function (event) {
+      var seconds = now();
+      state.connected = true;
+      state.lastAny = seconds;
+      cards().forEach(function (card) {
+        var key = card.getAttribute("data-observation");
+        if (key) {
+          state.cards.set(key, seconds);
+        }
+      });
+      paint();
     });
-    read();
   }
 
   function start() {
@@ -263,7 +255,7 @@
        * worth having, so this carries on rather than returning. */
       paintIndicator(now());
     }
-    watchConnection();
+    watchPolling();
     watchCards();
     paint();
     /* A card goes stale by the clock, not by an event, so something has to

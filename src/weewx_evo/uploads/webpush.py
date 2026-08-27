@@ -1,0 +1,268 @@
+"""Pushing the current readings to the web host the pages are on.
+
+The problem: a skin published over FTP shows readings as old as the last
+upload. Making them live the usual way means an MQTT broker at the station, a
+port forwarded through the router, and a certificate -- because a page served
+over https cannot open an unencrypted websocket. Three things to get right on
+somebody else's network, and the third needs a domain that resolves to a home
+connection.
+
+This is one thing. The skin ships a `live.php`; this posts the current
+readings to it every few seconds, and it writes them to a file beside itself.
+The page then reads that file, which is static and served like any other.
+
+**Every web host runs PHP.** That is the observation the whole approach rests
+on: shared hosting where FTP is the only way in still runs PHP, and has for
+twenty years.
+
+Three things this buys over a broker:
+
+  * **Nothing is opened.** No port forwarded, no broker reachable, no
+    certificate to keep valid. The connection is outbound, like the FTP
+    upload that put the page there.
+  * **It works from anywhere.** Behind CGNAT, on a mobile connection, on a
+    network somebody else administers.
+  * **PHP runs when the station writes, not when somebody reads.** Six times
+    a minute rather than once per visitor. A hundred people watching a storm
+    cost nothing.
+
+What it is not is push all the way to the browser. The page polls the file,
+so the readings are as fresh as the interval here -- ten seconds by default,
+which is thirty times better than an archive record and not the sub-second
+that MQTT gives. For Home Assistant and a dashboard on the local network,
+MQTT is still the better answer. The two are not alternatives.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from urllib.parse import urlsplit
+
+from .. import units
+from . import BaseUpload, Posted, Rejected, request, when_options
+from .mqtt import NEVER, topic_name
+
+log = logging.getLogger(__name__)
+
+
+class WebPushUpload(BaseUpload):
+    """Posts the current readings to a `live.php` on the web host."""
+
+    label = "Push to the website"
+    summary = ("The readings straight into the published pages, over the "
+               "same connection that uploads them. No broker, no open port.")
+    #: What arrives is "now". An older reading posted here would be published
+    #: as the current conditions.
+    backfill = False
+
+    #: Filled in from an export that carries `live.php`, when this upload
+    #: was not given its own. See `from_exports`.
+    inferred = False
+
+    def __init__(self, url: str = "", token: str = "",
+                 unit_system: str = "", append_units: bool = True,
+                 trigger: str = "live", every: int = 10,
+                 catch_up: int = 0, timeout: int = 20,
+                 _inferred: bool = False) -> None:
+        self.inferred = bool(_inferred)
+        self.url = str(url or "").strip()
+        self.token = str(token or "")
+        # The same names the MQTT path uses -- `outTemp_C`, `windSpeed_mph`.
+        # A skin that can read one can read the other, and a station that
+        # switches between them does not have to change its templates.
+        self.unit_system = units.system_from(unit_system) if unit_system else None
+        self.append_units = bool(append_units)
+        self.trigger = trigger
+        self.every = int(every)
+        self.catch_up_limit = 0
+        self.timeout = int(timeout)
+        if not self.url:
+            raise ValueError(
+                "the address of the live.php on the web host is needed. An "
+                "export that carries live.php can supply it: put the site's "
+                "address in 'Address the pages are served at' there and this "
+                "fills in by itself.")
+        if not self.token:
+            raise ValueError(
+                "a token is needed. Without one anybody who finds the address "
+                "can write what the page shows as the weather. An export that "
+                "carries live.php derives one and sends it up with the files.")
+        parts = urlsplit(self.url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ValueError(f"{self.url!r} is not an http or https address")
+        self.host = parts.netloc
+        self.path = parts.path or "/live.php"
+        self.tls = parts.scheme == "https"
+        if parts.query:
+            self.path += "?" + parts.query
+
+    # -- shaping ---------------------------------------------------------
+
+    def document(self, record: dict) -> dict[str, object]:
+        """The record as the names and values that go into the file.
+
+        Deliberately the same shape as the MQTT JSON document: a skin that
+        reads `weather/loop` reads this, and switching a station from one to
+        the other changes no template.
+        """
+        stored = units.system_from(record.get("usUnits"), default=units.US)
+        wanted = self.unit_system or stored
+        shaped: dict[str, object] = {}
+        for obs, value in record.items():
+            if obs in NEVER or value is None:
+                continue
+            if obs == "dateTime":
+                shaped["dateTime"] = int(value)
+                continue
+            unit, _group = units.unit_of(obs, stored)
+            target, _ = units.unit_of(obs, wanted)
+            if unit and target and unit != target:
+                converted = units.convert(value, unit, target)
+                if converted is None:
+                    continue
+                value = float(converted)
+            shaped[topic_name(obs, target or unit, self.append_units)] = value
+        return shaped
+
+    # -- sending ---------------------------------------------------------
+
+    def _send(self, record: dict) -> int:
+        body = json.dumps(self.document(record),
+                          separators=(",", ":")).encode("utf-8")
+        status, text = request(
+            self.host, self.path, method="POST", body=body,
+            headers={
+                "Content-Type": "application/json",
+                # The token in a header rather than the address: an address
+                # ends up in a proxy log and in a browser's history, and this
+                # one is written down in the skin's own settings anyway.
+                "X-WeeWX-Token": self.token,
+                "Content-Length": str(len(body)),
+            },
+            tls=self.tls, timeout=self.timeout)
+
+        if status == 404:
+            # What `live.php` answers to a wrong token, on purpose: saying
+            # "wrong token" would confirm there is a right one. So this
+            # cannot tell the two apart, and says both.
+            raise Rejected(
+                f"{self.host}{self.path} answered 404. Either live.php is "
+                f"not there, or the token does not match the one in "
+                f"live.token beside it.", permanent=True)
+        if status == 503:
+            raise Rejected(f"{self.host}: {text[:160]}", permanent=True)
+        if status == 405:
+            raise Rejected(f"{self.host}{self.path} is not a live.php.",
+                           permanent=True)
+        if status != 200:
+            raise Rejected(f"{self.host} answered {status}: {text[:120]}")
+        return len(body)
+
+    def post(self, records: list[dict]) -> Posted:
+        result = Posted()
+        record = records[-1]
+        result.skipped = len(records) - 1
+        try:
+            result.bytes = self._send(record)
+        except Rejected as exc:
+            if exc.permanent:
+                raise
+            result.failures.append((str(record.get("dateTime")), str(exc)))
+            return result
+        result.sent = 1
+        result.through = int(record.get("dateTime") or 0)
+        return result
+
+    def check(self) -> str:
+        import time
+
+        try:
+            self._send({"dateTime": int(time.time()), "usUnits": units.METRICWX,
+                        "outTemp": 0.0})
+        except Rejected as exc:
+            return f"refused: {exc}"
+        except Exception as exc:
+            return f"could not reach {self.host}: {exc}"
+        where = self.path.rsplit("/", 1)[0] or ""
+        return (f"{self.host}{self.path} accepted a reading. The page reads "
+                f"it back from {where}/live.json.")
+
+    def status(self) -> dict:
+        return {"host": self.host, "path": self.path}
+
+    @staticmethod
+    def from_exports(settings: object) -> tuple[str, str]:
+        """The address and token to use, from an export that carries live.php.
+
+        The point of it: an export that publishes the pages already knows
+        where they end up and already derives the token it writes beside the
+        script. Asking for both again here is how the two drift apart -- and
+        the way they drift is a token that does not match, which shows up as
+        a page that renders perfectly and never updates.
+
+        The first export with an address set wins. Two of them publishing the
+        same pages to two hosts is legitimate, and posting to one of them is
+        the answer; posting to both would need two of these uploads, which is
+        exactly what naming a `url` here is for.
+        """
+        from ..exports.livepush import token_for, url_for
+
+        section = getattr(settings, "config", {}).get("exports") or {}
+        token = token_for(str(settings.get("token") or ""))
+        for _name, configured in sorted(section.items()):
+            if not isinstance(configured, dict):
+                continue
+            if configured.get("live_push") is False:
+                continue
+            where = str(configured.get("live_push_url") or "").strip()
+            if where:
+                return url_for(where), token
+        return "", token
+
+    @staticmethod
+    def options() -> list:
+        from ..options import Group, Option
+
+        return [
+            Group("Where the pages are",
+                  "Both of these fill in by themselves from an export that "
+                  "carries `live.php` -- so in the ordinary case there is "
+                  "nothing to type here at all. Set them only to post "
+                  "somewhere no export of this station publishes to.", (
+                      Option("url", "Address of live.php",
+                             placeholder="https://example.org/wetter/live.php",
+                             help="Empty means: from the export. The address "
+                                  "there plus /live.php."),
+                      Option("token", "Token", kind="secret",
+                             help="Empty means: derived from the station's "
+                                  "upload token, the same way the export "
+                                  "derives the one it writes into "
+                                  "`live.token` beside the script. Setting "
+                                  "one here means setting the same one in "
+                                  "that file by hand."),
+                  )),
+            Group("What is sent", "", (
+                Option("unit_system", "Send in", kind="choice", default="",
+                       choices=(("", "whatever the station reports"),
+                                ("US", "US -- °F, inHg, mph, in"),
+                                ("METRIC", "Metric -- °C, mbar, km/h, cm"),
+                                ("METRICWX", "Metric WX -- °C, mbar, m/s, mm")),
+                       help="The names carry the unit, so changing this "
+                            "renames them: a page reading outTemp_C stops "
+                            "finding anything when it becomes outTemp_F."),
+                Option("append_units", "Put the unit in the name",
+                       kind="bool", default=True, advanced=True,
+                       help="On. `outTemp_C` rather than `outTemp` -- the "
+                            "same names the MQTT path uses, so a skin that "
+                            "reads one reads the other."),
+            )),
+            # Ten seconds by default rather than the record: an HTTP POST is
+            # about a tenth of a second, so this is cheap in a way an FTP
+            # upload would not be.
+            *when_options(trigger="live", every=10, live=True),
+            Group("How", "", (
+                Option("timeout", "Give up after", kind="duration",
+                       default=20, minimum=5, maximum=120, advanced=True),
+            )),
+        ]

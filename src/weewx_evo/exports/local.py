@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import BaseExport, ExportError, Sent, walk
+from . import BaseExport, ExportError, Sent, live_push_options, walk
 from .tracker import Tracker
 
 log = logging.getLogger(__name__)
@@ -56,10 +56,17 @@ class LocalExport(BaseExport):
     def __init__(self, directory: str = "", source: str = "",
                  directory_source: str = "", trigger: str = "feed",
                  every: int = 900, link: bool = True, delete: bool = True,
+                 live_push: bool = False, live_push_url: str = "",
+                 upload_token: str = "",
                  tracker: str = "") -> None:
         #: Where it ends up. Under what the web server serves, this is the
         #: address it appears at.
         self.directory = str(directory or "").strip()
+        # `live.php` and its token, sent with the pages. See
+        # `exports.livepush` for what it is and why it is derived.
+        self.live_push = bool(live_push)
+        self.live_push_url = str(live_push_url or "").rstrip("/")
+        self.upload_token = str(upload_token or "")
         #: Which feed, or which directory. Same two options as every other
         #: export, and the same rule: a feed if one is chosen.
         self.source = (source or "").strip()
@@ -97,6 +104,11 @@ class LocalExport(BaseExport):
             raise ExportError("no directory is set")
         if not source.is_dir():
             raise ExportError(f"{source} is not a directory")
+
+        # `live.php` and its token first, so they are picked up like
+        # any other file -- which means the record of what was
+        # already sent stops them going again every five minutes.
+        self.prepare(source)
 
         started = time.monotonic()
         result = Sent()
@@ -275,6 +287,7 @@ class LocalExport(BaseExport):
                        placeholder="data/public_html",
                        help="Used when no feed is chosen. Everything under it "
                             "is published, keeping the structure."),
+                *live_push_options(),
                 Option("delete", "Remove files that are no longer produced",
                        kind="bool", default=True,
                        help="On, because otherwise nothing ever clears up. A "

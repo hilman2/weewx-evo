@@ -46,7 +46,6 @@ from . import units, weewxconf
 from . import uploads as upload_registry
 from .admin import Admin, AdminServer
 from .archiver import Archiver
-from .broker import Broker, BrokerServer
 from .db.archive import ArchiveStore
 from .db.live import LiveStore
 from .derive import from_settings as deriver_from
@@ -822,33 +821,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # both, and neither has to know about the other.
             feeds.on_produced = runner.feed_produced
 
-    # The broker, before the uploads: the station's own MQTT upload connects
-    # to it, and a client that starts first spends its first interval
-    # retrying. Its own threads and its own ports -- it is a server, not part
-    # of this loop.
-    broker_server = None
-    if cfg.get("broker.enabled"):
-        broker_server = BrokerServer(
-            Broker(publish_password=str(cfg.get("broker.password") or ""),
-                   subscribe_password=str(cfg.get("broker.read_password") or ""),
-                   publish_from=str(cfg.get("broker.publish_from") or "loopback")),
-            host=str(cfg.get("broker.host") or "0.0.0.0"),
-            port=int(cfg.get("broker.port") or 0),
-            websocket_port=int(cfg.get("broker.websocket_port") or 0),
-            access=Access.parse(str(cfg.get("broker.allow") or "private")))
-        broker_server.start()
-        # Only worth warning about when publishing is actually reachable.
-        # An open broker whose publishing path is the loopback is the
-        # intended arrangement, not a mistake -- readers are meant to reach
-        # it and none of them can write.
-        publishing = broker_server.broker.publish_from
-        if publishing.everyone and not cfg.get("broker.password"):
-            log.warning("the MQTT broker accepts publishing from any address "
-                        "and has no password. Anybody who reaches it can "
-                        "write what the page shows as the weather. Set "
-                        "broker.password, or put broker.publish_from back to "
-                        "'loopback'.")
-
     # The uploads, each in its own thread as well. An export moves the files
     # a feed produced; an upload sends the readings to a weather service.
     # Neither knows about the other, and both stay off this loop.
@@ -943,8 +915,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
             forecaster.stop()
         if forecast_store is not None:
             forecast_store.close()
-        if broker_server is not None:
-            broker_server.stop()
         if web is not None:
             web.stop()
         http.stop()
@@ -1631,6 +1601,19 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
         if kind == "mqtt" and not settings.get("station"):
             # What Home Assistant calls the device.
             settings["station"] = cfg.get("station.name") or ""
+        if kind == "webpush":
+            # Where the pages are and what the token is: both already known
+            # to the export that publishes them. Asking again here is how
+            # the two drift apart, and a token that does not match shows up
+            # as a page that renders perfectly and never updates.
+            from .uploads.webpush import WebPushUpload
+
+            where, token = WebPushUpload.from_exports(cfg)
+            if not settings.get("url") and where:
+                settings["url"] = where
+                settings["_inferred"] = True
+            if not settings.get("token") and token:
+                settings["token"] = token
         return build_upload(name, settings)
 
     return upload_runner.build(configured, with_station, progress, records,
@@ -1781,8 +1764,13 @@ def build_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     where = feed_dirs(cfg, args)
     configured = {name: resolve_paths(args, settings)
                   for name, settings in configured_exports(args).items()}
+    # What `live.php`'s token is derived from. The station's upload token is
+    # the one persistent secret every installation already has, so there is
+    # nothing extra to generate, store or lose -- see `exports.livepush`.
+    token = str(cfg.get("token") or "")
     return export_runner.build(
-        configured, build_export,
+        configured,
+        lambda name, settings: build_export(name, settings, token),
         lambda settings: export_registry.source_for(settings, where.get))
 
 

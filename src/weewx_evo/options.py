@@ -662,67 +662,6 @@ def core_options() -> list[Group]:
                         "means they are simply dropped."),
         )),
 
-        Group("MQTT broker",
-              "A skin showing live readings subscribes to an MQTT broker from "
-              "the visitor's browser. Switch this on and weewx-evo is that "
-              "broker -- nothing else to install, and the MQTT upload points "
-              "at localhost. A station that already runs Mosquitto, or "
-              "publishes to a broker somewhere else, leaves this off.", (
-                  Option("broker.enabled", "Be the broker", kind="bool",
-                         default=False, restart=True),
-                  Option("broker.host", "Listen on", default="0.0.0.0",
-                         restart=True, advanced=True,
-                         help="0.0.0.0 is every interface. What keeps it "
-                              "private is the rule below, not this."),
-                  Option("broker.port", "MQTT port", kind="int", default=1883,
-                         minimum=0, maximum=65535, restart=True,
-                         help="What the station's own upload connects to. 0 "
-                              "switches it off and leaves only websockets."),
-                  Option("broker.websocket_port", "Websocket port", kind="int",
-                         default=9001, minimum=0, maximum=65535, restart=True,
-                         help="What a browser connects to. A page cannot open "
-                              "a plain socket, so this is the one a skin "
-                              "needs. 0 switches it off."),
-                  Option("broker.allow", "Who may connect and read",
-                         default="private", restart=True,
-                         suggestions=(("private", "private networks only"),
-                                      ("any", "anywhere"),
-                                      ("loopback", "this machine only")),
-                         help="This is about reading. A skin published to a "
-                              "web host subscribes from the visitor's "
-                              "browser, so a public page needs 'anywhere'; "
-                              "Home Assistant on the same network needs "
-                              "'private'. Widening it does not let anybody "
-                              "publish -- see below."),
-                  Option("broker.publish_from", "Who may publish",
-                         default="loopback", restart=True, advanced=True,
-                         suggestions=(("loopback", "this machine only"),
-                                      ("private", "the local network"),
-                                      ("any", "anywhere -- needs a password")),
-                         help="This machine only, and that is the setting "
-                              "worth leaving alone. The only thing that ever "
-                              "publishes here is this station's own upload, "
-                              "running in this process -- everything that "
-                              "connects from outside is a reader. A "
-                              "connection from anywhere else is read-only "
-                              "whatever password it sends, so the broker can "
-                              "be open to the internet and still not be "
-                              "writable. Widen it only for a second machine "
-                              "that genuinely has to publish."),
-                  Option("broker.password", "Password for publishing",
-                         kind="secret",
-                         help="Only checked for a connection allowed to "
-                              "publish at all. With the setting above left "
-                              "alone that is this machine, so an empty "
-                              "password here is not the hole it looks like."),
-                  Option("broker.read_password", "Password for reading",
-                         kind="secret", advanced=True,
-                         help="Empty means anybody the broker answers may "
-                              "read. A skin subscribes from a visitor's "
-                              "browser, so this password ends up in the page "
-                              "-- which is why it is optional and why reading "
-                              "is all it grants."),
-              )),
         Group("Listener", "The port the hardware uploads to.", (
             Option("host", "Listen on", default="0.0.0.0", restart=True,
                    advanced=True,

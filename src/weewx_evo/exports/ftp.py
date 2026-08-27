@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import BaseExport, ExportError, Sent
+from . import BaseExport, ExportError, Sent, live_push_options
 from .local import _tracker_path, walk
 from .tracker import Tracker
 
@@ -57,11 +57,18 @@ class FtpExport(BaseExport):
     def __init__(self, host: str = "", user: str = "", password: str = "",
                  directory: str = "/", port: int = 21, tls: bool = True,
                  passive: bool = True, source: str = "",
+                 live_push: bool = True, live_push_url: str = "",
+                 upload_token: str = "",
                  delete: bool = False, tracker: str = "",
                  timeout: int = TIMEOUT,
                  directory_source: str = "",
                  trigger: str = "feed", every: int = 900) -> None:
         self.host = host.strip()
+        # `live.php` and its token, sent with the pages. See
+        # `exports.livepush` for what it is and why it is derived.
+        self.live_push = bool(live_push)
+        self.live_push_url = str(live_push_url or "").rstrip("/")
+        self.upload_token = str(upload_token or "")
         self.user = user
         self.password = password
         self.directory = "/" + directory.strip("/") if directory.strip("/") else "/"
@@ -90,6 +97,11 @@ class FtpExport(BaseExport):
             raise ExportError("no host is set")
         if not source.is_dir():
             raise ExportError(f"{source} is not a directory")
+
+        # `live.php` and its token first, so they are picked up like
+        # any other file -- which means the record of what was
+        # already sent stops them going again every five minutes.
+        self.prepare(source)
 
         started = time.monotonic()
         result = Sent()
@@ -298,6 +310,7 @@ class FtpExport(BaseExport):
                        placeholder="data/public_html",
                        help="Used when no feed is chosen. Everything under it "
                             "is sent, keeping the structure."),
+                *live_push_options(),
                 Option("delete", "Remove files that are no longer produced",
                        kind="bool", default=True,
                        help="On, so that a renamed chart does not leave its "

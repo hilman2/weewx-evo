@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""The Deck skin's live indicator, rendered from the real skin.
+"""Deck's live readings: the push path, end to end.
 
-What this checks is the part that is easy to get wrong and invisible when it
-is: whether the live markup appears **only** when a broker is configured.
+Deck takes live readings one way. The station POSTs them to the `live.php`
+that ships with the skin; that writes them beside itself; the page reads that
+file. No broker, no port forwarded, no certificate.
 
-A station without one that renders a permanent red OFFLINE badge on every
-card has been given a fault to worry about that it does not have. A station
-with one that renders nothing has a page which cannot tell a working broker
-from a dead one -- which is the whole reason the indicator exists.
+MQTT is still in weewx-evo -- Home Assistant needs it, and so do Belchertown,
+jas and weewx-wdc, which are written against it. Deck does not, and this
+checks that it really does not: a 46 kB broker client for a path the skin will
+never take is the sort of thing that is nobody's fault and never gets removed.
 
-So both directions are checked, from the actual templates rather than a
-stand-in for them.
+What is checked:
+
+  * The document the upload sends, and that its names match the ones the cards
+    carry. A mismatch there is a page that renders perfectly and never
+    updates, with nothing in any log.
+  * `live.php` itself, under a real PHP where there is one: the token, the
+    method, the size limit, and that it writes atomically.
+  * The rendered page: the poller and the badges, and no MQTT.
 
     python tools/deck_live_test.py
 
@@ -18,12 +25,17 @@ Needs Cheetah, so in practice:
 
     wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \\
       cd /mnt/d/Git/weewx-evo && python tools/deck_live_test.py'
+
+The PHP half runs under a local `php` where there is one, and under
+`php:8-cli-alpine` in Docker otherwise. Skipped with a word where there is neither.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import time
@@ -66,249 +78,382 @@ def archive(path: Path) -> None:
     conn.close()
 
 
-def render(tmp: Path, broker: bool, upload: dict | None = None) -> str:
-    """Render Deck's front page.
-
-    `broker` sets the skin's *own* mqtt block, the way somebody editing
-    skin.conf would. `upload` configures an MQTT upload, the way somebody
-    using the settings page would -- and the point of the arrangement is that
-    the second is enough on its own.
-    """
+def render(tmp: Path, live_push: bool = True) -> str:
+    """Render Deck's front page."""
     from weewx_evo import units
     from weewx_evo.feeds.cheetah import CheetahFeed
     from weewx_evo.series import Reader
     from weewx_evo.skins import bundled
     from weewx_evo.tags import Tags
 
-    where = tmp / ("with" if broker else "without")
-    if upload is not None:
-        where = tmp / ("both" if broker else "upload")
+    where = tmp / ("push" if live_push else "quiet")
     where.mkdir(parents=True, exist_ok=True)
     db = where / "weewx.sdb"
     archive(db)
 
-    # The shipped skin, copied so the test can change its configuration
-    # without touching what is installed.
     source = bundled().get("deck")
     if source is None:
         raise SystemExit("the deck skin is not where bundled() says it is")
     skin = where / "deck"
     shutil.copytree(source, skin)
 
-    if broker:
+    if not live_push:
         conf = (skin / "skin.conf").read_text(encoding="utf-8")
-        conf = conf.replace("mqtt_websockets_enabled = 0",
-                            "mqtt_websockets_enabled = 1")
+        conf = conf.replace("live_push = 1", "live_push = 0")
         (skin / "skin.conf").write_text(conf, encoding="utf-8")
 
     conn = sqlite3.connect(db)
     reader = Reader(conn)
-    # Everything Deck asks about the station. A short one renders a page
-    # full of `?'station.altitude'?`, which is not what is being tested here.
+    # Everything Deck asks about the station. A short one renders a page full
+    # of `?'station.altitude'?`, which is not what is being tested here.
     tags = Tags(reader, target=units.Target(reader.system),
                 unit_system=reader.system,
                 station={"location": "Kirchdorf", "latitude": 48.3858,
                          "longitude": 11.7050, "altitude": 440.0,
                          "station_url": "https://example.org",
                          "hardware": "ecowitt", "version": "0.0.1"})
-    found = {}
-    if upload is not None:
-        from weewx_evo.cli import build_upload
-
-        found = build_upload("broker", dict(upload)).browser()
-    feed = CheetahFeed(reader=reader, skin=skin, tags=tags, broker=found)
+    feed = CheetahFeed(reader=reader, skin=skin, tags=tags)
     produced = feed.produce(where / "out")
     conn.close()
 
     page = where / "out" / "index.html"
     if not page.is_file():
         made = sorted(str(f) for f in produced.files)
-        raise SystemExit(
-            f"deck did not write index.html. It wrote: {made or 'nothing'}")
+        raise SystemExit(f"deck did not write index.html. It wrote: {made}")
     return page.read_text(encoding="utf-8", errors="replace")
 
 
-def test_without_a_broker(tmp: Path) -> None:
-    """Nothing about live, anywhere.
+# ---------------------------------------------------------------------------
+# The skin no longer speaks MQTT.
+# ---------------------------------------------------------------------------
 
-    A station with no broker showing a red OFFLINE badge on every card has
-    been handed a fault to worry about that it does not have.
+def test_no_mqtt_left() -> None:
+    """A broker client for a path this skin will not take is dead weight."""
+    from weewx_evo.skins import bundled
+
+    skin = Path(bundled()["deck"])
+    ok("the 46 kB bundle is gone",
+       not (skin / "assets" / "live-updates.js").exists())
+
+    for name in ("skin.conf", "index.html.tmpl", "includes/ui-shell.inc"):
+        text = (skin / name).read_text(encoding="utf-8")
+        ok(f"no mqtt in {name}", "mqtt" not in text.lower())
+
+    ok("the poller ships with the skin",
+       (skin / "assets" / "live-poll.js").is_file())
+    # live.php is not the skin's: it goes up with every export that carries
+    # it, so every skin gets the same one and none has to bring its own.
+    ok("and live.php is not, because it is the core's",
+       not (skin / "live.php").exists())
+
+
+# ---------------------------------------------------------------------------
+# What the station sends.
+# ---------------------------------------------------------------------------
+
+RECORD = {
+    "dateTime": 1756308600, "usUnits": 17, "interval": 5,
+    "outTemp": 23.4, "outHumidity": 61.0, "barometer": 1013.2,
+    "windSpeed": 3.2, "windDir": 245.0,
+}
+
+
+def test_the_document() -> None:
+    from weewx_evo.uploads.webpush import WebPushUpload
+
+    upload = WebPushUpload(url="https://example.org/w/live.php", token="t")
+    document = upload.document(RECORD)
+
+    # The same names the cards carry, which is the whole contract between the
+    # two halves. A mismatch is a page that renders and never updates.
+    check("temperature", document["outTemp_C"], 23.4)
+    check("humidity has no unit suffix", document["outHumidity"], 61.0)
+    check("nor does a bearing", document["windDir"], 245.0)
+    check("the timestamp survives", document["dateTime"], 1756308600)
+    ok("usUnits is not sent", "usUnits" not in document)
+    ok("nor the interval", "interval" not in document)
+
+    # Converted on the way out, like everything else here.
+    imperial = WebPushUpload(url="https://example.org/w/live.php", token="t",
+                             unit_system="US")
+    check("in US units", round(imperial.document(RECORD)["outTemp_F"], 1), 74.1)
+
+
+def test_it_needs_a_token() -> None:
+    from weewx_evo.uploads.webpush import WebPushUpload
+
+    try:
+        WebPushUpload(url="https://example.org/live.php")
+    except ValueError as exc:
+        # Without one, anybody who finds the address writes the weather.
+        ok("it says why", "token" in str(exc))
+    else:
+        FAILURES.append("the upload accepted no token")
+
+    try:
+        WebPushUpload(url="ftp://example.org/live.php", token="t")
+    except ValueError as exc:
+        ok("and that it wants http", "http" in str(exc))
+    else:
+        FAILURES.append("the upload accepted an ftp address")
+
+
+# ---------------------------------------------------------------------------
+# live.php itself.
+# ---------------------------------------------------------------------------
+
+#: A PHP to run `live.php` under. Local first; a container otherwise, because
+#: this file runs on somebody else's web host and "it looked fine to me" is
+#: not a test. The image is small and cached after the first pull.
+PHP_IMAGE = "php:8-cli-alpine"
+
+
+#: Worked out once. Pulling an image is slow and asking twice whether it is
+#: there is how a test prints the same line twice and looks broken.
+_RUNNER: list[str] | str | None = "unknown"
+
+
+def php_runner() -> list[str] | None:
+    """How to run PHP here, or None if there is no way to.
+
+    Returns the command prefix. The container form mounts the script's
+    directory, so the two behave the same: `live.php` writes beside itself
+    either way.
     """
-    page = render(tmp, broker=False)
-    ok("the page rendered", "<html" in page.lower())
-    ok("no live indicator in the header", 'id="live-indicator"' not in page)
-    ok("no live script", "live-status.js" not in page)
-    ok("and none of the mqtt client either", "live-updates.js" not in page)
+    global _RUNNER
+    if _RUNNER != "unknown":
+        return _RUNNER
+
+    _RUNNER = _find_php()
+    return _RUNNER
 
 
-def test_with_a_broker(tmp: Path) -> None:
-    """Everything the indicator needs, and the cards it attaches to."""
-    page = render(tmp, broker=True)
-    ok("the page rendered", "<html" in page.lower())
+def _find_php() -> list[str] | None:
+    if shutil.which("php"):
+        return ["php"]
+    if shutil.which("docker"):
+        found = subprocess.run(["docker", "image", "inspect", PHP_IMAGE],
+                               capture_output=True, timeout=60, check=False)
+        if found.returncode != 0:
+            print(f"pulling {PHP_IMAGE} to run live.php ...")
+            pulled = subprocess.run(["docker", "pull", "-q", PHP_IMAGE],
+                                    capture_output=True, timeout=600,
+                                    check=False)
+            if pulled.returncode != 0:
+                return None
+        return ["docker"]
+    return None
 
-    # The indicator in the header. It starts as "waiting" rather than green
-    # or red: at the moment the page loads, neither is true yet.
+
+def php_available() -> bool:
+    return php_runner() is not None
+
+
+def run_php(script: Path, method: str, body: bytes = b"",
+            token: str = "") -> str:
+    """Run live.php, faking a request.
+
+    Enough of a request for what this script does, and it means the checks
+    need no web server. The body arrives on stdin, which is what
+    `php://input` reads under the CLI.
+    """
+    runner = php_runner()
+    if runner is None:
+        return ""
+    code = (f"$_SERVER['REQUEST_METHOD']={method!r};"
+            f"$_SERVER['HTTP_X_WEEWX_TOKEN']={token!r};"
+            f"require '/w/{script.name}';")
+
+    if runner == ["php"]:
+        command = ["php", "-r", code.replace("/w/", str(script.parent) + "/")]
+        cwd = str(script.parent)
+    else:
+        # `-i` so php://input has a stdin to read. The directory is mounted
+        # read-write because writing beside itself is the thing being
+        # tested.
+        command = ["docker", "run", "--rm", "-i",
+                   "-v", f"{script.parent.resolve()}:/w", "-w", "/w",
+                   PHP_IMAGE, "php", "-r", code]
+        cwd = None
+
+    done = subprocess.run(command, input=body, capture_output=True,
+                          cwd=cwd, timeout=120, check=False)
+    return done.stdout.decode("utf-8", "replace")
+
+
+def test_php_syntax() -> None:
+    """`php -l`, so a typo is caught here and not on somebody's web host."""
+    from weewx_evo.exports import livepush
+
+    runner = php_runner()
+    if runner is None:
+        return
+    script = Path(livepush.__file__).parent / livepush.SCRIPT
+    if runner == ["php"]:
+        command = ["php", "-l", str(script)]
+    else:
+        command = ["docker", "run", "--rm",
+                   "-v", f"{script.parent.resolve()}:/w", "-w", "/w",
+                   PHP_IMAGE, "php", "-l", livepush.SCRIPT]
+    done = subprocess.run(command, capture_output=True, timeout=120,
+                          check=False)
+    ok("live.php parses", done.returncode == 0)
+    if done.returncode != 0:
+        FAILURES.append(done.stdout.decode("utf-8", "replace")[:400])
+
+
+def test_live_php(tmp: Path) -> None:
+    from weewx_evo.exports import livepush
+
+    if not php_available():
+        print("no php and no docker; skipping the live.php checks.")
+        return
+
+    where = tmp / "php"
+    where.mkdir(parents=True, exist_ok=True)
+    script = where / livepush.SCRIPT
+    script.write_text(livepush.script(), encoding="utf-8")
+
+    body = json.dumps({"dateTime": 1756308600, "outTemp_C": 21.4}).encode()
+
+    # No token file: it says so rather than accepting anything.
+    ok("with no token configured it refuses",
+       "No token" in run_php(script, "POST", body, token="secret"))
+
+    (where / "live.token").write_text("secret\n", encoding="utf-8")
+
+    # A wrong token is a 404, on purpose: saying "wrong token" would confirm
+    # there is a right one.
+    ok("a wrong token is not found",
+       "Not found" in run_php(script, "POST", body, token="wrong"))
+    ok("and nothing was written", not (where / "live.json").exists())
+
+    ok("a GET before anything was pushed says so",
+       "nothing has been" in run_php(script, "GET", token="secret"))
+
+    ok("the right token is accepted",
+       run_php(script, "POST", body, token="secret").startswith("ok "))
+    ok("and it wrote the file", (where / "live.json").is_file())
+
+    stored = json.loads((where / "live.json").read_text(encoding="utf-8"))
+    check("the reading is in it", stored["outTemp_C"], 21.4)
+    check("and its own timestamp", stored["dateTime"], 1756308600)
+    # Stamped on arrival as well: the station's clock says when the reading is
+    # from, this says when it got here, and a page needs both to decide
+    # whether to call itself live.
+    ok("stamped on arrival", stored.get("_received", 0) > 1700000000)
+    ok("with how long it stays fresh", stored.get("_stale_after", 0) > 0)
+
+    # Written beside and renamed: half a JSON document is a parse error in
+    # every browser, which shows up as a page that blanks once in a while.
+    ok("nothing partial is left", not list(where.glob("*.part")))
+
+    got = run_php(script, "GET", token="secret")
+    check("a GET returns what was stored", json.loads(got)["outTemp_C"], 21.4)
+
+    ok("nonsense is refused",
+       "not JSON" in run_php(script, "POST", b"nonsense", token="secret"))
+    ok("an oversized body is refused",
+       "Too big" in run_php(script, "POST",
+                            b'{"x":"' + b"y" * 70000 + b'"}', token="secret"))
+    ok("anything else is refused",
+       "POST to write" in run_php(script, "DELETE", token="secret"))
+
+
+# ---------------------------------------------------------------------------
+# The rendered page.
+# ---------------------------------------------------------------------------
+
+def test_the_page(tmp: Path) -> None:
+    page = render(tmp, live_push=True)
+    ok("it rendered", "<html" in page.lower())
+
+    ok("the poller is loaded", "live-poll.js" in page)
+    ok("and the badges", "live-status.js" in page)
+    ok("with where to read from", "deckLivePoll" in page)
+    ok("and live.json named", "live.json" in page)
+
+    # Nothing of the broker path.
+    ok("no mqtt client", "live-updates.js" not in page)
+    ok("nor its globals", "mqtt_host" not in page)
+
     ok("the indicator is in the header", 'id="live-indicator"' in page)
-    ok("it starts neither green nor red",
-       "live-indicator--waiting" in page)
-    ok("with a dot", "live-indicator__dot" in page)
-    ok("and a label", "live-indicator__label" in page)
-    # Announced when it changes, rather than read out with everything else.
-    ok("announced politely", 'aria-live="polite"' in page)
+    ok("it starts neither green nor red", "live-indicator--waiting" in page)
 
-    ok("the script is loaded", "live-status.js" in page)
-    ok("after the client it watches",
-       page.index("live-updates.js") < page.index("live-status.js"))
-    ok("the strings are handed to it", "deckLiveStrings" in page)
-    ok("the connection notice the script reads is there",
-       'id="notification-container-mqtt"' in page)
-
-    # The cards the badges attach to. Without `data-observation` the script
-    # has nothing to find, and the whole thing renders as nothing at all.
-    ok("there are stat tiles", 'class="card stat-tile"' in page
-       or "card stat-tile" in page)
-    ok("with an observation name on them", "data-observation=" in page)
-    ok("and the value element the badge sits in",
-       "stat-title-obs-value" in page)
+    # The cards the badges attach to. Without `data-observation` the poller
+    # has nothing to find and the whole thing renders as nothing at all.
+    ok("there are stat tiles", "card stat-tile" in page)
+    ok("with an observation name", "data-observation=" in page)
+    ok("and the value element", "stat-title-obs-value" in page)
 
 
-def test_the_broker_is_configured_once(tmp: Path) -> None:
-    """The skin is filled in from the upload, not typed a second time.
+def test_the_page_without_it(tmp: Path) -> None:
+    """Switched off, nothing about live appears at all.
 
-    This is the point of the whole arrangement. Without it the broker is
-    configured twice -- once as an upload and once in the skin's `[Extras]` --
-    and a typo in the second gives a page that renders perfectly and never
-    updates, with nothing in any log to say why.
+    A station that does not push, showing a permanent red badge on every
+    card, has been handed a fault it does not have.
     """
-    from weewx_evo.uploads.mqtt import MqttUpload
-
-    upload = MqttUpload(host="localhost", topic="wetter",
-                        websockets_host="mqtt.example.org",
-                        websockets_port=9883, websockets_tls=True)
-    browser = upload.browser()
-
-    # The address a browser needs is not the one this client uses: it speaks
-    # TCP to localhost, a page speaks websockets to what is publicly there.
-    check("the browser gets the public host", browser["host"],
-          "mqtt.example.org")
-    check("and the websocket port", browser["port"], 9883)
-    # The topic is the one thing that must match, and the one thing nobody
-    # notices when it does not.
-    check("the topic follows the upload", browser["topic"], "wetter/loop")
-    check("and so does the encryption", browser["tls"], True)
-
-    # Never the credentials. A page is served to anybody, and a credential in
-    # it is a credential published.
-    check("no username reaches the page", browser["username"], "")
-    check("and no password", browser["password"], "")
-
-    # Defaults, when the operator said nothing about the browser side.
-    plain = MqttUpload(host="broker.example.org", topic="weather").browser()
-    check("the host falls back to the upload's", plain["host"],
-          "broker.example.org")
-    check("and the port to Mosquitto's websocket default", plain["port"], 9001)
-    check("unencrypted by default", plain["tls"], False)
-    # An encrypted upload implies an encrypted websocket: a page served over
-    # https cannot open a plain one.
-    secure = MqttUpload(host="b.example.org", tls=True).browser()
-    check("an encrypted broker implies an encrypted websocket",
-          secure["tls"], True)
-    check("on 443, which is where a proxied one ends up", secure["port"], 443)
-
-    # An upload that publishes only individual topics has nothing a page
-    # subscribes to: `topic/loop` is the document a skin reads.
-    single = MqttUpload(host="b.example.org", aggregate=False,
-                        individual=True).browser()
-    check("no JSON document means nothing for a page", single, {})
-
-
-def test_the_skin_takes_it(tmp: Path) -> None:
-    """And the filled-in settings actually reach the rendered page."""
-    page = render(tmp, broker=False, upload={
-        "kind": "mqtt", "host": "localhost", "topic": "wetter",
-        "websockets_host": "mqtt.example.org", "websockets_port": 9883})
-
-    # The skin ships with mqtt off. An upload being configured is what turns
-    # it on -- nobody has to find the setting.
-    ok("the skin went live without being told", 'id="live-indicator"' in page)
-    ok("with the browser's host", "mqtt.example.org" in page)
-    ok("and its port", "9883" in page)
-    ok("and the topic from the upload", "wetter/loop" in page)
-    ok("the script is loaded", "live-status.js" in page)
-
-
-def test_a_skin_that_says_its_own_wins(tmp: Path) -> None:
-    """Somebody who configured it by hand meant it."""
-    page = render(tmp, broker=True, upload={
-        "kind": "mqtt", "host": "localhost", "topic": "wetter",
-        "websockets_host": "mqtt.example.org"})
-    # `broker=True` sets the skin's own mqtt_websockets_enabled and leaves
-    # its host at localhost. That is a deliberate configuration and it
-    # stands, rather than half of each being used.
-    ok("the skin's own host stands", "localhost" in page)
-    ok("and the upload's does not overwrite it",
-       "mqtt.example.org" not in page)
+    page = render(tmp, live_push=False)
+    ok("it rendered", "<html" in page.lower())
+    ok("no poller", "live-poll.js" not in page)
+    ok("no badges", "live-status.js" not in page)
+    ok("no indicator", 'id="live-indicator"' not in page)
 
 
 def test_the_styles_are_there() -> None:
-    """The badge classes the script sets have to exist in the stylesheet.
-
-    They are in `deck.css` rather than a file of their own: Deck is ours, so
-    there is no foreign stylesheet to stay out of the way of, and one request
-    is better than two.
-    """
     from weewx_evo.skins import bundled
 
-    source = bundled().get("deck")
-    css = (Path(source) / "assets" / "deck.css").read_text(encoding="utf-8")
+    css = (Path(bundled()["deck"]) / "assets" / "deck.css").read_text(
+        encoding="utf-8")
     for name in (".live-badge", ".live-badge--live", ".live-badge--stale",
                  ".live-badge--off", ".live-badge--waiting",
                  ".live-indicator", ".live-indicator--live",
                  ".live-indicator--stale", ".live-indicator--off",
                  ".live-indicator--waiting", ".live-indicator__dot"):
         ok(f"{name} is styled", name in css)
-    # The skin's own colour tokens, so both themes carry rather than a green
-    # that vanishes on a dark background.
+    # The skin's own tokens, so both themes carry rather than a green that
+    # vanishes on a dark background.
     ok("green is the skin's own", "var(--good)" in css)
     ok("and so is red", "var(--bad)" in css)
-    # Somebody who asked their system not to animate things should not get a
-    # dot that breathes.
     ok("the pulse is off for reduced motion",
        "prefers-reduced-motion" in css and "live-pulse" in css)
 
 
 def test_the_german_words_exist() -> None:
-    """The station is read by the people who live near it."""
     from weewx_evo.skins import bundled
 
-    conf = (Path(bundled().get("deck")) / "lang" / "de.conf").read_text(
+    conf = (Path(bundled()["deck"]) / "lang" / "de.conf").read_text(
         encoding="utf-8")
     for phrase in ("just now", "min ago", "No connection to the live feed.",
                    "Waiting for the first reading."):
         ok(f"{phrase!r} is translated", f'"{phrase}"' in conf)
-    # "LIVE" stays English on purpose -- it is the word people already read on
-    # a stream, and a translation makes the badge longer than the value it
-    # sits beside.
     ok("and the reason LIVE is not is written down",
        "stays English on purpose" in conf)
 
 
 def main() -> int:
-    try:
-        import Cheetah.Template  # noqa: F401
-    except ImportError:
-        print("Cheetah is not installed; nothing to render here.")
-        return 0
-
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-deck-live-"))
     try:
+        # Everything that does not need a renderer. Most of this file is
+        # about `live.php` and the document sent to it, and neither has
+        # anything to do with Cheetah -- so a machine without it still checks
+        # the part that runs on somebody else's web host.
+        test_no_mqtt_left()
+        test_the_document()
+        test_it_needs_a_token()
+        test_php_syntax()
+        test_live_php(tmp)
         test_the_styles_are_there()
         test_the_german_words_exist()
-        test_without_a_broker(tmp)
-        test_with_a_broker(tmp)
-        test_the_broker_is_configured_once(tmp)
-        test_the_skin_takes_it(tmp)
-        test_a_skin_that_says_its_own_wins(tmp)
+
+        try:
+            import Cheetah.Template  # noqa: F401
+        except ImportError:
+            print("Cheetah is not installed; the rendering checks are "
+                  "skipped.")
+        else:
+            test_the_page(tmp)
+            test_the_page_without_it(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
