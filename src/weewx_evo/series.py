@@ -196,13 +196,30 @@ class Reader:
         return obs_type in self._daily
 
     def span(self) -> tuple[int, int] | None:
-        """The first and last record in the archive, or None if it is empty."""
-        row = self.conn.execute(
-            f"SELECT MIN(dateTime), MAX(dateTime) FROM {self.table}"
-        ).fetchone()
-        if not row or row[0] is None:
+        """The first and last record in the archive, or None if it is empty.
+
+        Two queries, not one, and that is the whole point. SQLite answers
+        `MIN(dateTime)` or `MAX(dateTime)` from the primary key without
+        reading a row; asked for both in one statement it gives up on the
+        index and scans the table.
+
+        Measured on ten years, a million records:
+
+            SELECT MIN(dateTime), MAX(dateTime)   52.94 ms   SCAN archive
+            SELECT MIN(dateTime)                   0.01 ms
+            SELECT MAX(dateTime)                   0.00 ms
+
+        A page asks for `$alltime` once per tile, so the statistics page
+        called this 354 times: nineteen seconds of a twenty-three second
+        render, spent finding out something the file knew instantly.
+        """
+        first = self.conn.execute(
+            f"SELECT MIN(dateTime) FROM {self.table}").fetchone()
+        if not first or first[0] is None:
             return None
-        return int(row[0]), int(row[1])
+        last = self.conn.execute(
+            f"SELECT MAX(dateTime) FROM {self.table}").fetchone()
+        return int(first[0]), int(last[0])
 
     # -- the entry point -------------------------------------------------
 
@@ -229,8 +246,16 @@ class Reader:
             raise ValueError(f"{aggregate!r} is not an aggregate. One of: "
                              f"{', '.join(AGGREGATES)}")
 
+        spans = list(self.buckets(start, stop, interval or "day"))
+        # Every bucket at once out of the daily summaries, where they can
+        # answer it. None means they cannot, and then it is one query per
+        # bucket as below.
+        whole = self._daily_series(obs_type, aggregate, spans, interval)
+        if whole is not None:
+            return whole
+
         out = Series(obs_type=obs_type, aggregate=aggregate, interval=interval)
-        for begin, end in self.buckets(start, stop, interval or "day"):
+        for begin, end in spans:
             out.time.append(end)
             out.values.append(self.aggregate(obs_type, begin, end, aggregate))
             out.start.append(begin)
@@ -546,6 +571,66 @@ class Reader:
             return _NOT_THERE
         return _NOT_THERE
 
+    # -- many buckets at once --------------------------------------------
+
+    def _daily_series(self, obs_type: str, how: str,
+                      spans: list[tuple[int, int]],
+                      interval: int | str | None) -> Series | None:
+        """A whole series out of the daily summaries in one query, or None.
+
+        The slow way asks the database once per bucket. That is one row
+        fetched per statement, and the statement costs far more than the
+        row: ten years of daily maxima is 3650 round trips to answer 3650
+        questions the file could answer in one.
+
+        None means "this one cannot be done that way" -- a bucket that is
+        not whole days, an aggregate the summaries do not hold, a column
+        the table does not have. The caller then walks bucket by bucket as
+        before, so the fast path can decline anything it is unsure of.
+        """
+        if how not in _DAILY_REDUCERS or obs_type in DEGREE_DAY_BASES:
+            return None
+        if not spans or not self.has_daily(obs_type):
+            return None
+        # `aggregate()` only reads the summaries for whole-day spans, and
+        # this has to make the same choice for every bucket or the series
+        # would be half one thing and half the other.
+        for begin, end in spans:
+            if end <= begin or not is_midnight(begin) or not is_midnight(end):
+                return None
+
+        table = f"{self.table}_day_{obs_type}"
+        try:
+            cursor = self.conn.execute(
+                f"SELECT * FROM {table} WHERE dateTime >= ? AND dateTime < ?"
+                " ORDER BY dateTime", (spans[0][0], spans[-1][1]))
+            rows = cursor.fetchall()
+        except sqlite3.OperationalError:
+            return None
+        columns = {name[0]: index
+                   for index, name in enumerate(cursor.description)}
+        reducer, needed = _DAILY_REDUCERS[how]
+        if not needed <= set(columns):
+            # A scalar table asked a vector question. The records can try.
+            return None
+
+        out = Series(obs_type=obs_type, aggregate=how, interval=interval)
+        when = columns["dateTime"]
+        at = 0
+        for begin, end in spans:
+            # Both lists run in time order, so the rows for a bucket are
+            # the next few: no searching, one pass over each.
+            while at < len(rows) and rows[at][when] < begin:
+                at += 1
+            first = at
+            while at < len(rows) and rows[at][when] < end:
+                at += 1
+            out.time.append(end)
+            out.values.append(reducer(rows[first:at], columns))
+            out.start.append(begin)
+            out.stop.append(end)
+        return out
+
     # -- from the records ------------------------------------------------
 
     def _from_records(self, obs_type: str, start: float, stop: float,
@@ -855,3 +940,127 @@ def _step(ts: float, unit: str, count: int = 1) -> int:
     else:
         dt = dt.replace(year=dt.year + count, month=1, day=1)
     return int(dt.timestamp())
+
+
+# -- one bucket out of a run of daily summary rows -----------------------
+#
+# A transcription of `Reader._from_daily`, statement by statement. That
+# method asks the database for one bucket; these answer the same question
+# about rows already in hand, so a whole series costs one query instead of
+# one per bucket. Where the two disagree the series is wrong, so they are
+# written to be read side by side.
+
+
+def _sum_of(rows, columns, field):
+    """SUM(field): NULL over no rows, and NULLs skipped over some."""
+    total = None
+    index = columns[field]
+    for row in rows:
+        value = row[index]
+        if value is not None:
+            total = value if total is None else total + value
+    return total
+
+
+def _sorts_first(value, current, descending):
+    """Whether `value` comes before `current` in SQLite's ORDER BY.
+
+    NULL sorts before every value ascending and after every value
+    descending. That is the whole reason the callers filter on `count`
+    first: getting it wrong here would pick an empty day. Ties keep the
+    row already held, which is the one `LIMIT 1` would have met first.
+    """
+    if value is None or current is None:
+        if descending:
+            return value is not None and current is None
+        return value is None and current is not None
+    return value > current if descending else value < current
+
+
+def _first_by(rows, columns, field, descending):
+    """The row `ORDER BY field [DESC] LIMIT 1` would return."""
+    best = None
+    index = columns[field]
+    for row in rows:
+        if not row[columns["count"]]:
+            continue
+        if best is None or _sorts_first(row[index], best[index], descending):
+            best = row
+    return best
+
+
+def _daily_extreme(rows, columns, field):
+    """MIN("min") or MAX("max"), which ignore the NULLs an empty day has."""
+    values = [row[columns[field]] for row in rows
+              if row[columns[field]] is not None]
+    if not values:
+        return None
+    return min(values) if field == "min" else max(values)
+
+
+def _daily_at(rows, columns, field, order, descending):
+    row = _first_by(rows, columns, order, descending)
+    if row is None or row[columns[field]] is None:
+        return None
+    return int(row[columns[field]])
+
+
+def _daily_avg(rows, columns):
+    weight = _sum_of(rows, columns, "sumtime")
+    return _sum_of(rows, columns, "wsum") / weight if weight else None
+
+
+def _daily_rms(rows, columns):
+    weight = _sum_of(rows, columns, "sumtime")
+    if not weight:
+        return None
+    return math.sqrt(_sum_of(rows, columns, "wsquaresum") / weight)
+
+
+def _daily_vector(rows, columns, how):
+    weight = _sum_of(rows, columns, "sumtime")
+    if weight is None:
+        return None
+    xsum = _sum_of(rows, columns, "xsum")
+    ysum = _sum_of(rows, columns, "ysum")
+    if how == "vecdir":
+        return _bearing(xsum, ysum)
+    if not weight:
+        return None
+    return math.sqrt((xsum ** 2 + ysum ** 2) / weight ** 2)
+
+
+def _daily_gustdir(rows, columns):
+    row = _first_by(rows, columns, "max", descending=True)
+    return row[columns["max_dir"]] if row is not None else None
+
+
+def _daily_count(rows, columns):
+    total = _sum_of(rows, columns, "count")
+    return None if total is None else int(total)
+
+
+#: What each aggregate reduces to, and the columns it needs to do it. An
+#: aggregate missing from here is one the summaries cannot answer, so the
+#: fast path declines it and the records are asked instead.
+_DAILY_REDUCERS = {
+    "min": (lambda rows, cols: _daily_extreme(rows, cols, "min"), {"min"}),
+    "max": (lambda rows, cols: _daily_extreme(rows, cols, "max"), {"max"}),
+    "mintime": (lambda rows, cols: _daily_at(rows, cols, "mintime", "min",
+                                             False),
+                {"mintime", "min", "count"}),
+    "maxtime": (lambda rows, cols: _daily_at(rows, cols, "maxtime", "max",
+                                             True),
+                {"maxtime", "max", "count"}),
+    "sum": (lambda rows, cols: _sum_of(rows, cols, "sum"), {"sum"}),
+    "count": (_daily_count, {"count"}),
+    "not_null": (lambda rows, cols: any(row[cols["count"]] for row in rows),
+                 {"count"}),
+    "avg": (_daily_avg, {"wsum", "sumtime"}),
+    "rms": (_daily_rms, {"wsquaresum", "sumtime"}),
+    "vecavg": (lambda rows, cols: _daily_vector(rows, cols, "vecavg"),
+               {"xsum", "ysum", "sumtime"}),
+    "vecdir": (lambda rows, cols: _daily_vector(rows, cols, "vecdir"),
+               {"xsum", "ysum", "sumtime"}),
+    "gustdir": (_daily_gustdir, {"max_dir", "max", "count"}),
+}
