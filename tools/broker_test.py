@@ -323,6 +323,101 @@ def test_a_subscriber_may_not_publish() -> None:
         page.close()
 
 
+def test_publishing_is_bound_to_this_machine() -> None:
+    """A reader from outside cannot publish, whatever it sends.
+
+    This is the boundary that matters, and it is not the transport. Home
+    Assistant subscribes over plain TCP and a browser over websockets, and
+    both are readers. What separates them from the station's own upload is
+    where they connected from -- so the broker can be open to the internet
+    and still not be writable.
+    """
+    from weewx_evo.broker import Broker
+
+    # The default: this machine only.
+    broker = Broker()
+    check("the loopback may publish", broker.authorise("", "", "127.0.0.1"),
+          (True, True))
+    # A machine on the same network is a reader. Not "needs a password" --
+    # there is no password that would help.
+    check("the local network may only read",
+          broker.authorise("", "", "192.168.1.50"), (True, False))
+    check("and so may the internet",
+          broker.authorise("", "", "203.0.113.9"), (True, False))
+
+    # With a publishing password, from the right place.
+    guarded = Broker(publish_password="secret")
+    check("the right password from here publishes",
+          guarded.authorise("station", "secret", "127.0.0.1"), (True, True))
+    check("the wrong one is refused rather than demoted",
+          guarded.authorise("station", "wrong", "127.0.0.1"), (False, False))
+    # And from outside, the right password still does not publish. That is
+    # the point: it is a door that is not there, not a stricter lock.
+    check("the right password from outside still cannot publish",
+          guarded.authorise("station", "secret", "203.0.113.9"), (True, False))
+
+    # Widened deliberately, for a second machine that has to publish.
+    wide = Broker(publish_password="secret", publish_from="any")
+    check("then it can, with the password",
+          wide.authorise("station", "secret", "203.0.113.9"), (True, True))
+    check("and not without it",
+          wide.authorise("station", "", "203.0.113.9"), (True, False))
+
+
+def test_a_reader_from_outside_over_tcp() -> None:
+    """Home Assistant's case: plain TCP, from another machine, read-only.
+
+    Checked over a real connection rather than only through `authorise`,
+    because the peer address has to reach it -- and a broker that gets that
+    wiring wrong is one where every client is a publisher.
+    """
+    with Running() as running:
+        writer = Client("127.0.0.1", running.port, client_id="station")
+        writer.connect()
+        writer.publish("weather/loop", "21.4", retain=True)
+        ok("the local station published",
+           wait_for(lambda: "weather/loop" in running.broker.retained))
+        writer.close()
+
+        # A test connects from 127.0.0.1, and `Access.parse` always adds the
+        # loopback -- deliberately, because the local publisher must never
+        # lock itself out. So the rule is replaced with one that excludes it,
+        # which is the only way to exercise the wiring: if the peer address
+        # never reaches `authorise`, every client is a publisher and nothing
+        # else here would notice.
+        running.broker.publish_from = _NowhereLocal()
+        reader = Client("127.0.0.1", running.port, client_id="ha")
+        reader.connect()
+        got: list[str] = []
+        reader.on_message = lambda t, _p: got.append(t)
+        reader.subscribe("weather/#")
+        reader.pump(0.6)
+        check("it may read", got, ["weather/loop"])
+
+        reader.publish("weather/loop", "999", retain=True)
+        time.sleep(0.2)
+        check("and may not write",
+              running.broker.retained["weather/loop"].payload, b"21.4")
+        reader.close()
+
+
+class _NowhereLocal:
+    """An access rule that allows nothing, for testing the wiring.
+
+    `Access.parse` always includes the loopback and a test always connects
+    from it, so there is no configuration that would make this check fail
+    for the right reason. This stands in for one.
+    """
+
+    everyone = False
+
+    def allows(self, address: str) -> bool:
+        return False
+
+    def __str__(self) -> str:
+        return "nowhere"
+
+
 def test_a_wrong_password_is_refused() -> None:
     with Running(publish_password="secret",
                  subscribe_password="readonly") as running:
@@ -556,6 +651,8 @@ def main() -> int:
     test_retained_can_be_cleared()
     test_one_message_per_client()
     test_a_subscriber_may_not_publish()
+    test_publishing_is_bound_to_this_machine()
+    test_a_reader_from_outside_over_tcp()
     test_a_wrong_password_is_refused()
     test_one_id_at_a_time()
     test_a_browser_can_subscribe()

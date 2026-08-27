@@ -45,15 +45,31 @@ private networks unless somebody says otherwise. A broker reachable from the
 open internet with no password is a machine anybody can publish rubbish into,
 and the readings on the page come straight from it.
 
-Two accounts, and they are not the same:
+**Publishing is bound to the loopback, and that is the important one.**
 
-    publish     what the station's own upload uses. Full access.
-    subscribe   what goes into a public web page. Read-only, and it may be
-                anonymous -- a page is served to anybody, so a credential in
-                it is a credential published.
+The only thing that ever publishes here is this station's own MQTT upload,
+and it runs in this process. Everything that connects from outside -- a skin
+in somebody's browser, Home Assistant, Node-RED -- only ever reads.
 
-A subscriber can never publish. That is not a setting: it is the difference
-between somebody reading your weather and somebody writing it.
+So a connection that did not come from this machine is read-only, whatever
+password it sends. Not "the password had better be strong": it cannot publish
+at all. That holds even if the broker is on the open internet and even if the
+publishing password leaks, which is the whole point of doing it this way
+rather than with a password alone.
+
+Note that the boundary is not the transport. Home Assistant subscribes over
+plain TCP and a browser over websockets, and both are readers. What separates
+them from the publisher is where they connected from.
+
+`publish_from` widens it for the case that does exist: a second machine that
+genuinely has to publish -- a separate listener in a split deployment, or a
+sensor of somebody's own. Then a password is the whole of the protection, and
+it says so.
+
+Reading, meanwhile, is meant to be reachable. A skin published to a web host
+opens its subscription from the visitor's browser, from anywhere. It may need
+a password, and that password ends up in the page -- which is fine, because
+reading is all it buys.
 """
 
 from __future__ import annotations
@@ -160,41 +176,62 @@ class Broker:
     def __init__(self, publish_password: str = "",
                  subscribe_password: str = "",
                  publish_user: str = "station",
-                 subscribe_user: str = "") -> None:
+                 subscribe_user: str = "",
+                 publish_from: str = "loopback") -> None:
         self.sessions: dict[str, Session] = {}
         self.retained: dict[str, Retained] = {}
         self.publish_user = publish_user
         self.publish_password = publish_password
         self.subscribe_user = subscribe_user
         self.subscribe_password = subscribe_password
+        #: Where a connection may publish from. `local` is the loopback and
+        #: is the default, because the only publisher is this process. See
+        #: the module docstring for why this is not merely a stricter
+        #: password.
+        self.publish_from = Access.parse(publish_from or "loopback")
         self._lock = threading.Lock()
         self.published = 0
         self.delivered = 0
 
     # -- who may do what -------------------------------------------------
 
-    def authorise(self, user: str, password: str) -> tuple[bool, bool]:
-        """(allowed, may_publish) for a set of credentials.
+    def authorise(self, user: str, password: str,
+                  peer: str = "") -> tuple[bool, bool]:
+        """(allowed, may_publish) for a connection.
 
-        A publisher password that is set and wrong is refused. A subscriber
-        password that is not set means anonymous reading is allowed, which is
-        what a public web page needs -- and reading is all it can do.
+        Two questions, and they are answered separately on purpose.
+
+        **May it publish?** Only from where `publish_from` says, which is the
+        loopback by default -- and then only with the right password if one
+        is set. A connection from anywhere else is read-only however it
+        authenticates. That is not a stricter password: it is a door that is
+        not there.
+
+        **May it read?** Anybody the port answers, unless a read password is
+        set. A skin subscribes from a visitor's browser and the credential
+        goes into the page, so it protects rather little -- which is why it
+        is optional and why reading is all it grants.
         """
-        if self.publish_password and password == self.publish_password:
-            if not self.publish_user or user == self.publish_user:
+        may_publish = self.publish_from.allows(peer) if peer else True
+        if may_publish and self.publish_password:
+            if password == self.publish_password and (
+                    not self.publish_user or user == self.publish_user):
                 return True, True
+            # From the right place with the wrong password. Not silently
+            # demoted to a reader: somebody is trying to publish and getting
+            # it wrong, and telling them so is the useful answer.
+            if password:
+                return False, False
+            may_publish = False
+
         if self.subscribe_password:
             if password == self.subscribe_password:
                 return True, False
             return False, False
-        if self.publish_password and not password:
-            # No subscriber password set: anonymous is read-only.
-            return True, False
-        if self.publish_password:
-            return False, False
-        # Nothing configured at all. Everything is allowed, which is only
-        # sane behind the private-network rule the listener applies.
-        return True, True
+        # No read password: anybody the port answers may read. Whether that
+        # is the whole internet is `broker.allow`, and it is private by
+        # default.
+        return True, may_publish and not self.publish_password
 
     # -- sessions --------------------------------------------------------
 
@@ -421,7 +458,7 @@ class _Connection:
         if flags & 0x40:
             password, at = decode_string(body, at)
 
-        allowed, may_publish = self.broker.authorise(user, password)
+        allowed, may_publish = self.broker.authorise(user, password, self.peer)
         if not allowed:
             self.write(_packet(CONNACK, 0, bytes([0, BAD_CREDENTIALS])))
             log.warning("MQTT: refused %s -- wrong credentials", self.peer)
@@ -453,8 +490,10 @@ class _Connection:
             # anyway, because a client that gets no PUBACK retries forever.
             # Saying no this way is quieter than closing the connection and
             # leaves the log the only place it shows.
-            log.warning("MQTT: %r tried to publish to %r and may not",
-                        self.session.identifier if self.session else "?", topic)
+            log.warning("MQTT: %r at %s tried to publish to %r and may not. "
+                        "Publishing is allowed from %s.",
+                        self.session.identifier if self.session else "?",
+                        self.peer, topic, self.broker.publish_from)
             if qos == 1:
                 self.write(_packet(PUBACK, 0, struct.pack("!H", packet_id)))
             return

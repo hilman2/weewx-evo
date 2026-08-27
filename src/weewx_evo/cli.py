@@ -830,21 +830,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if cfg.get("broker.enabled"):
         broker_server = BrokerServer(
             Broker(publish_password=str(cfg.get("broker.password") or ""),
-                   subscribe_password=str(cfg.get("broker.read_password") or "")),
+                   subscribe_password=str(cfg.get("broker.read_password") or ""),
+                   publish_from=str(cfg.get("broker.publish_from") or "loopback")),
             host=str(cfg.get("broker.host") or "0.0.0.0"),
             port=int(cfg.get("broker.port") or 0),
             websocket_port=int(cfg.get("broker.websocket_port") or 0),
             access=Access.parse(str(cfg.get("broker.allow") or "private")))
         broker_server.start()
-        if broker_server.access.everyone and not cfg.get("broker.password"):
-            # Its own warning rather than the shared one: what is missing
-            # here is a password, not a token, and the consequence is worse.
-            # Anybody who reaches the port can publish, and what they publish
-            # is what the page shows as the current weather.
-            log.warning("the MQTT broker answers any address and has no "
-                        "password. Anybody who reaches it can publish, and "
-                        "what they publish is what the page shows. Set "
-                        "broker.password, or narrow broker.allow.")
+        # Only worth warning about when publishing is actually reachable.
+        # An open broker whose publishing path is the loopback is the
+        # intended arrangement, not a mistake -- readers are meant to reach
+        # it and none of them can write.
+        publishing = broker_server.broker.publish_from
+        if publishing.everyone and not cfg.get("broker.password"):
+            log.warning("the MQTT broker accepts publishing from any address "
+                        "and has no password. Anybody who reaches it can "
+                        "write what the page shows as the weather. Set "
+                        "broker.password, or put broker.publish_from back to "
+                        "'loopback'.")
 
     # The uploads, each in its own thread as well. An export moves the files
     # a feed produced; an upload sends the readings to a weather service.

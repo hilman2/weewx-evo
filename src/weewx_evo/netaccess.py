@@ -66,10 +66,22 @@ class Access:
         """From 'private' (the default), 'any', or a list of addresses.
 
         A list may hold networks (`10.0.0.0/8`) or single addresses
-        (`203.0.113.4`), separated by commas. Loopback is added whatever the
-        list says.
+        (`203.0.113.4`), separated by commas.
+
+        **Loopback is added whatever the list says**, and that is deliberate
+        twice over: a reverse proxy connects from it, so a list that left it
+        out would make Caddy the one thing that cannot get through -- and a
+        service configured from this machine must never be able to lock this
+        machine out of it. `loopback` narrows to it; nothing widens away from
+        it.
         """
         text = (setting or "private").strip().lower()
+        if text in ("loopback", "this-machine", "here"):
+            # Narrower than `private`, and a genuinely different answer: the
+            # local network is other people's computers, and for something
+            # like the broker's publishing path that is exactly the
+            # difference that matters.
+            return cls(networks=LOOPBACK, described="this machine only")
         if text in ("private", "", "lan", "local"):
             return cls()
         if text in ("any", "all", "0.0.0.0/0", "*"):
@@ -114,6 +126,9 @@ class Access:
 #: What a service gets when nothing was configured.
 PRIVATE_ONLY = Access()
 EVERYONE = Access(everyone=True, described="anywhere")
+#: This machine and nothing else. For a path that has exactly one legitimate
+#: user and it is in this process.
+LOOPBACK_ONLY = Access(networks=LOOPBACK, described="this machine only")
 
 
 def warn_if_open(access: Access, what: str) -> None:

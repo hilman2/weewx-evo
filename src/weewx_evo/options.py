@@ -683,30 +683,45 @@ def core_options() -> list[Group]:
                          help="What a browser connects to. A page cannot open "
                               "a plain socket, so this is the one a skin "
                               "needs. 0 switches it off."),
-                  Option("broker.allow", "Answer", default="private",
-                         restart=True,
+                  Option("broker.allow", "Who may connect and read",
+                         default="private", restart=True,
                          suggestions=(("private", "private networks only"),
-                                      ("any", "anywhere -- see the help"),
-                                      ("127.0.0.1", "this machine only")),
-                         help="Private networks by default, the same as "
-                              "everything else here. A broker open to the "
-                              "internet with no password is a machine anybody "
-                              "can publish rubbish into, and the readings on "
-                              "the page come straight out of it. Set a "
-                              "password below before widening this."),
+                                      ("any", "anywhere"),
+                                      ("loopback", "this machine only")),
+                         help="This is about reading. A skin published to a "
+                              "web host subscribes from the visitor's "
+                              "browser, so a public page needs 'anywhere'; "
+                              "Home Assistant on the same network needs "
+                              "'private'. Widening it does not let anybody "
+                              "publish -- see below."),
+                  Option("broker.publish_from", "Who may publish",
+                         default="loopback", restart=True, advanced=True,
+                         suggestions=(("loopback", "this machine only"),
+                                      ("private", "the local network"),
+                                      ("any", "anywhere -- needs a password")),
+                         help="This machine only, and that is the setting "
+                              "worth leaving alone. The only thing that ever "
+                              "publishes here is this station's own upload, "
+                              "running in this process -- everything that "
+                              "connects from outside is a reader. A "
+                              "connection from anywhere else is read-only "
+                              "whatever password it sends, so the broker can "
+                              "be open to the internet and still not be "
+                              "writable. Widen it only for a second machine "
+                              "that genuinely has to publish."),
                   Option("broker.password", "Password for publishing",
                          kind="secret",
-                         help="What the station's own upload uses. Empty "
-                              "means no password at all, which is only sane "
-                              "while the broker answers private networks "
-                              "only."),
+                         help="Only checked for a connection allowed to "
+                              "publish at all. With the setting above left "
+                              "alone that is this machine, so an empty "
+                              "password here is not the hole it looks like."),
                   Option("broker.read_password", "Password for reading",
                          kind="secret", advanced=True,
-                         help="Empty means anybody who can reach the broker "
-                              "may read -- which is what a public web page "
-                              "needs, because a credential in a page is a "
-                              "credential published. Reading is all they can "
-                              "do either way: a subscriber can never publish."),
+                         help="Empty means anybody the broker answers may "
+                              "read. A skin subscribes from a visitor's "
+                              "browser, so this password ends up in the page "
+                              "-- which is why it is optional and why reading "
+                              "is all it grants."),
               )),
         Group("Listener", "The port the hardware uploads to.", (
             Option("host", "Listen on", default="0.0.0.0", restart=True,
