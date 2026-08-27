@@ -70,7 +70,7 @@ python tools/docsindex.py --accept <page>.md
 | ✅ | [Series](Series) | 2 | 2026-08-27 10:29 | 2026-08-27 11:04 |
 | ⚠️ | [Settings A–Z](Settings-Reference) | 6 | 2026-08-27 11:29 | 2026-08-27 11:16 |
 | ✅ | [Sun](Sun) | 2 | 2026-08-26 23:55 | 2026-08-27 11:05 |
-| ✅ | [Testing](Testing) | 17 | 2026-08-27 10:33 | 2026-08-27 11:13 |
+| ✅ | [Testing](Testing) | 17 | 2026-08-27 10:33 | 2026-08-27 11:31 |
 | ✅ | [The archive database](Database-Archive) | 3 | 2026-08-26 23:53 | 2026-08-27 11:03 |
 | ✅ | [The live database](Database-Live) | 1 | 2026-08-26 12:25 | 2026-08-27 11:01 |
 | ✅ | [The settings page](Admin-Page) | 2 | 2026-08-27 10:33 | 2026-08-27 11:06 |
