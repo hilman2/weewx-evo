@@ -1393,12 +1393,18 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     packets = upload_records.live_source(live_db) if live_db.exists() else None
 
     def with_station(name: str, settings: dict) -> object:
-        # CWOP needs a position and almost nobody wants to type it twice.
-        # Filled in from the station rather than required, and only when the
+        # Two settings that belong to the station rather than to a service,
+        # filled in here so nobody types them twice -- and only when the
         # upload did not say its own.
-        if str(settings.get("kind", "")) == "cwop":
+        kind = str(settings.get("kind", ""))
+        if kind == "cwop":
+            # The packet is a position report; without one there is nothing
+            # to send.
             settings.setdefault("latitude", cfg.get("station.latitude"))
             settings.setdefault("longitude", cfg.get("station.longitude"))
+        if kind == "mqtt" and not settings.get("station"):
+            # What Home Assistant calls the device.
+            settings["station"] = cfg.get("station.name") or ""
         return build_upload(name, settings)
 
     return upload_runner.build(configured, with_station, progress, records,

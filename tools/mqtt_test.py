@@ -494,6 +494,82 @@ def test_the_live_path(tmp: Path) -> None:
           Progress(tmp / "progress.json").through("live"), 0)
 
 
+def test_home_assistant_discovery() -> None:
+    """The station appears in Home Assistant without anybody writing YAML.
+
+    A wrong device class is not cosmetic: `pressure` on a temperature makes
+    the history graph unreadable, and a unit Home Assistant does not know
+    turns the sensor into a plain string with no graph at all.
+    """
+    broker = Broker()
+    broker.start()
+    record = {"dateTime": 1756308600, "usUnits": 17, "outTemp": 23.4,
+              "outHumidity": 61.0, "barometer": 1013.2, "windSpeed": 3.2,
+              "windDir": 245.0, "dayRain": 2.6, "radiation": 512.0}
+    try:
+        upload = MqttUpload(host="127.0.0.1", port=broker.port,
+                            home_assistant=True, station="Kirchdorf",
+                            individual=False, unit_system="METRICWX")
+        upload.post([record])
+        ok("the definitions went out", broker.until(
+            lambda b: sum(1 for t, _p, _q, _r in b.published
+                          if t.startswith("homeassistant/")) >= 7))
+        first = sum(1 for t, _p, _q, _r in broker.published
+                    if t.startswith("homeassistant/"))
+        # Definitions do not change between readings. Re-sending them every
+        # ten seconds would be most of the traffic.
+        upload.post([dict(record, dateTime=1756308660)])
+        ok("the second reading published", broker.until(
+            lambda b: sum(1 for t, _p, _q, _r in b.published
+                          if t == "weather/loop") >= 2))
+        check("and did not repeat the definitions",
+              sum(1 for t, _p, _q, _r in broker.published
+                  if t.startswith("homeassistant/")), first)
+        upload.close()
+    finally:
+        broker.stop()
+
+    found = {t: json.loads(p) for t, p, _q, _r in broker.published
+             if t.startswith("homeassistant/")}
+    temp = found["homeassistant/sensor/weewx_evo_kirchdorf/outTemp/config"]
+    check("the temperature is a temperature", temp["device_class"], "temperature")
+    check("in a unit Home Assistant knows", temp["unit_of_measurement"], "°C")
+    check("reading the JSON document", temp["state_topic"], "weather/loop")
+    check("by the name it is published under",
+          temp["value_template"], "{{ value_json.outTemp_C | default('', true) }}")
+    check("named for a person", temp["name"], "Out temp")
+    check("under one device", temp["device"]["name"], "Kirchdorf")
+
+    bar = found["homeassistant/sensor/weewx_evo_kirchdorf/barometer/config"]
+    # Millibars and hectopascals are the same thing, and hPa is the one Home
+    # Assistant lists. Sending `mbar` makes it a string.
+    check("pressure is atmospheric_pressure",
+          bar["device_class"], "atmospheric_pressure")
+    check("in hectopascals", bar["unit_of_measurement"], "hPa")
+
+    wind = found["homeassistant/sensor/weewx_evo_kirchdorf/windSpeed/config"]
+    check("wind speed", wind["device_class"], "wind_speed")
+    check("in metres per second", wind["unit_of_measurement"], "m/s")
+
+    # A bearing has no device class in Home Assistant, so it stays a number
+    # with a degree sign rather than being given a wrong one.
+    bearing = found["homeassistant/sensor/weewx_evo_kirchdorf/windDir/config"]
+    ok("a bearing gets no device class", "device_class" not in bearing)
+    check("but keeps its unit", bearing["unit_of_measurement"], "°")
+
+    rain = found["homeassistant/sensor/weewx_evo_kirchdorf/dayRain/config"]
+    # A daily total resets at midnight. As `measurement` the drop reads as a
+    # negative rainfall; as `total_increasing` it reads as a new day.
+    check("a daily total is a total", rain["state_class"], "total_increasing")
+    ok("and does not expire", "expire_after" not in rain)
+
+    every = [p for t, p, _q, _r in broker.published
+             if t.startswith("homeassistant/")]
+    ok("every definition is retained", all(
+        r for t, _p, _q, r in broker.published if t.startswith("homeassistant/")))
+    check("one per reading, and no more", len(every), 7)
+
+
 def main() -> int:
     import tempfile
 
@@ -506,6 +582,7 @@ def main() -> int:
     test_reconnect_keeps_subscriptions()
     test_the_upload_shapes_a_record()
     test_the_upload_converts()
+    test_home_assistant_discovery()
     with tempfile.TemporaryDirectory() as tmp:
         test_the_live_path(Path(tmp))
 

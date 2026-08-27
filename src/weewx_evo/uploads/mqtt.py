@@ -35,6 +35,7 @@ import logging
 from .. import units
 from ..mqtt import Client, MqttError
 from . import BaseUpload, Posted, Rejected, when_options
+from .homeassistant import discovery
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +95,8 @@ class MqttUpload(BaseUpload):
                  client_id: str = "", unit_system: str = "",
                  append_units: bool = True, aggregate: bool = True,
                  individual: bool = True, retain: bool = True, qos: int = 0,
-                 trigger: str = "live", every: int = 10,
+                 home_assistant: bool = False, discovery_prefix: str = "homeassistant",
+                 station: str = "", trigger: str = "live", every: int = 10,
                  catch_up: int = 0, timeout: int = 20,
                  keepalive: int = 60) -> None:
         if not host:
@@ -109,6 +111,17 @@ class MqttUpload(BaseUpload):
         self.individual = bool(individual)
         self.retain = bool(retain)
         self.qos = int(qos)
+        self.home_assistant = bool(home_assistant)
+        self.discovery_prefix = (discovery_prefix or "homeassistant").strip("/")
+        # Named here so the device has a name in Home Assistant. Empty means
+        # the station's own, filled in when the upload is built -- an upload
+        # has no business reading the whole settings.
+        self.station = station
+        #: Which readings have been announced on this connection. Cleared on
+        #: a reconnect: a broker restarted without persistence has forgotten
+        #: the retained definitions, and a Home Assistant starting after that
+        #: would find nothing.
+        self._announced: set[str] = set()
         self.trigger = trigger
         self.every = int(every)
         self.catch_up_limit = 0
@@ -150,9 +163,34 @@ class MqttUpload(BaseUpload):
 
     # -- sending ---------------------------------------------------------
 
+    def _announce(self, record: dict, shaped: dict[str, object]) -> None:
+        """Tell Home Assistant what these topics are. Once per connection."""
+        stored = units.system_from(record.get("usUnits"), default=units.US)
+        wanted = self.unit_system or stored
+        for obs in record:
+            if obs in NEVER or obs == "dateTime" or record[obs] is None:
+                continue
+            unit, _group = units.unit_of(obs, wanted)
+            field = topic_name(obs, unit, self.append_units)
+            if field not in shaped or obs in self._announced:
+                continue
+            where, payload = discovery(obs, unit, self.topic, field,
+                                       self.station, self.discovery_prefix)
+            # Always retained, whatever `retain` says for the readings: a
+            # definition nobody kept is one only a Home Assistant that was
+            # already running ever saw.
+            self.client.publish(where, payload, qos=self.qos, retain=True)
+            self._announced.add(obs)
+
     def _publish(self, record: dict) -> int:
         shaped = self.message(record)
         published = 0
+        if self.home_assistant:
+            if not self.client.connected:
+                # Reconnecting clears what the broker was told, because it
+                # may have been restarted in between.
+                self._announced.clear()
+            self._announce(record, shaped)
         if self.individual:
             for name, value in shaped.items():
                 self.client.publish(f"{self.topic}/{name}", str(value),
@@ -275,6 +313,20 @@ class MqttUpload(BaseUpload):
                             "the moment it subscribes, so a page shows the "
                             "conditions at once rather than a blank dashboard "
                             "until the next record."),
+                Option("home_assistant", "Announce to Home Assistant",
+                       kind="bool", default=False,
+                       help="Publishes a definition for each reading under "
+                            "`homeassistant/`, so the station appears as a "
+                            "device with its sensors named and graphed. No "
+                            "YAML and no restart. Needs the JSON document "
+                            "above, which is on by default."),
+                Option("discovery_prefix", "Home Assistant topic prefix",
+                       default="homeassistant", advanced=True,
+                       help="Only change this if Home Assistant's own MQTT "
+                            "discovery prefix was changed."),
+                Option("station", "Call the device", advanced=True,
+                       help="The name Home Assistant shows. Empty means the "
+                            "station name from the main settings."),
                 Option("qos", "Delivery", kind="choice", default=0,
                        choices=((0, "at most once -- fastest, and enough"),
                                 (1, "at least once -- may duplicate")),
