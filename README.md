@@ -22,6 +22,11 @@ Quellen (Push oder Pull, je eigener Prozess)
           └─ Archiver: deterministisch je Zeitspanne
               └─ archive (WeeWX-kompatibel, PK dateTime)
                   └─ archive_day_* (Cache, jederzeit neu berechenbar)
+
+Und hinaus, jeweils aus der Datenbank gelesen statt durchgereicht:
+  Feeds    → ein Verzeichnis     Exports   → dieses Verzeichnis, woandershin
+  Uploads  → die Messwerte an einen Wetterdienst oder einen MQTT-Broker
+  Forecast → was kommt, in eine eigene Datei neben dem Archiv
 ```
 
 Jede Stufe ist aus der vorherigen reproduzierbar. Es gibt keinen flüchtigen
@@ -194,6 +199,12 @@ eigene Spalte.
 | `ingest/drivers.py` | Die Treiber-Schnittstelle und ihre Registry. |
 | `ingest/envelope.py` | Der JSON-Umschlag — der Vertrag, kein Protokoll. Der einzige Treiber im Kern. |
 | `ingest/plugins/ecowitt/` | Ecowitt. Kern-Treiber, der meistgebrauchte. |
+| `derive.py` | Was aus anderen Messwerten folgt. Taupunkt bis Sonnenscheindauer. |
+| `feeds/` | Was erzeugt wird: JSON, Diagramme, eine Skin, `realtime.txt`. |
+| `exports/` | Wie ein Verzeichnis woandershin kommt: FTP, rsync, lokal. |
+| `uploads/` | Die Messwerte an einen Dienst: WU, PWSweather, WOW, Windy, Weathercloud, CWOP, MQTT. |
+| `mqtt.py` | Ein MQTT-3.1.1-Client aus der Standardbibliothek. Was eine Skin lebendig macht. |
+| `forecast/` | Vorhersage und Warnungen: Open-Meteo, DWD MOSMIX, MeteoAlarm, NWS. Eigene Datei, nie ins Archiv. |
 
 ## Tests
 

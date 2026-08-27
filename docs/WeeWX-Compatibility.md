@@ -149,7 +149,7 @@ Systemen zwei verschiedene Zahlen aufzeichnet.
 | Abschnitt | Grund |
 |---|---|
 | `[StdReport]` | Berichtserzeugung, die weewx-evo (noch) nicht macht |
-| `[StdRESTful]` | Uploads zu Wetterdiensten, noch nicht |
+| `[StdRESTful]` | Uploads zu Wetterdiensten — siehe [Uploads](Uploads) |
 | … | |
 
 **Schweigen liest sich wie „verloren".** Der Bericht nennt, was liegen blieb,

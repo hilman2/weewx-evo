@@ -26,6 +26,9 @@
 - [Diagramme](Plots)
 - [Feeds](Feeds)
 - [Exports](Exports)
+- [Uploads](Uploads)
+- [MQTT](MQTT)
+- [Vorhersage](Forecast)
 - [Web-Server](Web-Server)
 
 **Betrieb**

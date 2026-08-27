@@ -253,6 +253,29 @@ Liefert ein paar Dateien aus und versucht, aus dem Verzeichnis herauszukommen.
 
 → [Web-Server](Web-Server)
 
+## Was hinausgeht
+
+```bash
+python tools/upload_test.py     # was an einen Wetterdienst geht
+python tools/mqtt_test.py       # der MQTT-Client, gegen einen eigenen Broker
+python tools/forecast_test.py   # die Vorhersagequellen und ihr Speicher
+python tools/realtime_test.py   # realtime.txt und wxnow.txt
+```
+
+Keiner davon fasst das Netz an. `upload_test.py` und `forecast_test.py` bauen
+Anfragen und sehen sie an; `mqtt_test.py` startet einen Broker auf loopback.
+
+`upload_test.py` vergleicht zusätzlich gegen WeeWX, wenn es importierbar ist —
+die Ambient-Query parameterweise und das CWOP-Paket Zeichen für Zeichen. Beide
+sind Transkriptionen, und eine Transkription ist entweder identisch oder ein
+Fehler:
+
+```bash
+wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
+  cd /mnt/d/Git/weewx-evo && PYTHONPATH=/mnt/d/Git/weewx/src:src \
+  python3 tools/upload_test.py'
+```
+
 ## Die Treibertests
 
 59 Tests unter `tests/ecowitt/`, ursprünglich aus weewx-ecowitt.

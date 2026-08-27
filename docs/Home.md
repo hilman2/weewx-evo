@@ -71,6 +71,9 @@ Lizenzdatei daneben liegen.
 | [Ingest-Listener](Ingest-Listener) | HTTP + UDP, Token, Ratelimit, Statusseite |
 | [Drivers](Drivers) | Die Treiber-Schnittstelle, mitgelieferte und fremde Treiber |
 | [Driver-Ecowitt](Driver-Ecowitt) | Der Ecowitt-Treiber, vollständig |
+| [Uploads](Uploads) | Die Messwerte an einen Wetterdienst |
+| [MQTT](MQTT) | Der eigene Client, und was ihn nötig macht |
+| [Forecast](Forecast) | Vorhersage und Warnungen, vier Quellen |
 | [Multiple-Sources](Multiple-Sources) | Mehrere Stationen, eine Messreihe |
 
 ### Verarbeitung und Speicherung
