@@ -316,7 +316,15 @@ def new_reading_tests() -> int:
     got = derive.Deriver(station=station).apply(dict(metric))
     failures += not close("absolute humidity", got.get("absoluteHumidity"),
                           8.65, 0.1)
-    failures += not close("mixing ratio", got.get("mixingRatio"), 7.3, 0.15)
+    # 7.63, not the 7.3 this expected before there was a station pressure to
+    # use. The record gives a *barometer* -- 1013.25 reduced to sea level --
+    # and the station stands at 440 m, where the air is nearer 963 mbar. A
+    # mixing ratio is grams of water per kilogram of dry air at the pressure
+    # the air is actually at, so the thinner air holds proportionally more.
+    # The old number was right only because nothing derived the pressure.
+    failures += not close("mixing ratio", got.get("mixingRatio"), 7.63, 0.15)
+    failures += not close("from the station's own pressure, not the sea's",
+                          got.get("pressure"), 962.7, 0.5)
     failures += not close("vapour pressure in millibars",
                           got.get("vaporPressure"), 11.7, 0.15)
     failures += not check("sunshine", got.get("sunshine_time"), 300.0)
@@ -356,6 +364,131 @@ def new_reading_tests() -> int:
     return failures
 
 
+def everything_declared_is_produced() -> int:
+    """Every reading the table promises actually comes out of the machine.
+
+    This is the check that was missing, and its absence is why nobody
+    noticed. `DEFAULTS` is a promise; the only feedback when it is broken is
+    an empty column, and an empty column looks like a sensor that went quiet.
+    Four readings were declared and had no code at all -- evapotranspiration
+    for months, and it was only found because a chart of it looked broken.
+
+    Given every input a station can offer, every declared name has to appear.
+    Two are conditional and are asked for separately below, because a rule
+    that only fires in calm air cannot be tested in a breeze.
+    """
+    from weewx_evo import units as unit_module
+
+    failures = 0
+    print("\neverything the table declares is actually produced")
+
+    station = derive.Station(latitude=48.4, longitude=11.7, altitude_m=440.0)
+    deriver = derive.Deriver(
+        station=station, how=dict.fromkeys(derive.DEFAULTS, "software"))
+
+    # Only inputs. Naming an output here makes it look produced when it is
+    # not -- which is exactly how the first attempt at this reported four
+    # working calculators that did not exist.
+    inputs = {
+        "usUnits": US, "interval": 1,
+        "outTemp": 70.0, "inTemp": 68.0,
+        "outHumidity": 55.0, "inHumidity": 45.0,
+        "pressure": 29.5,
+        "windSpeed": 5.0, "windDir": 180.0, "windGust": 8.0,
+        "radiation": 500.0, "UV": 4.0,
+        "dayRain": 0.1, "totalRain": 1.0, "eventRain": 0.0,
+    }
+    deriver.apply(dict(inputs, dateTime=1787832000))
+    later = dict(inputs, dateTime=1787832060, dayRain=0.12, totalRain=1.02)
+    before = set(later)
+    deriver.apply(later)
+    made = set(later) - before
+
+    # The three that cannot appear in a record already holding their input,
+    # or in one taken while the wind is blowing.
+    conditional = {"pressure", "windDir", "windGustDir"}
+    for name in sorted(set(derive.DEFAULTS) - conditional):
+        failures += not check(f"{name} is produced", name in made, True)
+
+    print("\nand the ones that only apply in certain weather")
+    # Station pressure: only for hardware that reports a barometer instead.
+    only_barometer = {"usUnits": unit_module.METRICWX, "interval": 1,
+                      "dateTime": 1787832000, "outTemp": 21.0,
+                      "outHumidity": 55.0, "barometer": 1013.2}
+    derive.Deriver(station=station,
+                   how=dict.fromkeys(derive.DEFAULTS, "software")
+                   ).apply(only_barometer)
+    failures += not check("pressure comes from a barometer",
+                          only_barometer.get("pressure") is not None, True)
+
+    # A direction with no wind behind it is not a reading.
+    calm = {"usUnits": unit_module.METRICWX, "interval": 1,
+            "dateTime": 1787832000, "windSpeed": 0.0,
+            "windDir": 180.0, "windGust": 0.0, "windGustDir": 200.0}
+    derive.Deriver(station=station,
+                   how=dict.fromkeys(derive.DEFAULTS, "software")).apply(calm)
+    failures += not check("a calm windDir is dropped", calm["windDir"], None)
+    failures += not check("and the gust's with it", calm["windGustDir"], None)
+
+    breeze = dict(calm, windSpeed=3.0, windDir=180.0, windGustDir=200.0)
+    derive.Deriver(station=station,
+                   how=dict.fromkeys(derive.DEFAULTS, "software")).apply(breeze)
+    failures += not check("but a real one is left alone",
+                          breeze["windDir"], 180.0)
+    return failures
+
+
+def against_weewx_formulas() -> int:
+    """The new formulas against WeeWX's own, expression for expression.
+
+    Transcribed rather than reasoned out, so the test is equality and not a
+    tolerance. A station moving across from WeeWX keeps the same numbers in
+    the same column, which is the whole promise.
+    """
+    try:
+        import weewx.wxformulas as theirs
+    except ImportError:
+        print("\n-- WeeWX is not importable; the formula comparison is "
+              "skipped")
+        return 0
+
+    failures = 0
+    print("\nthe new formulas against WeeWX's")
+
+    # Two of these are WeeWX's own worked examples, from its docstrings.
+    for tmin, tmax, rh_min, rh_max, rad, wind, when in (
+            (38.0, 38.0, 52.0, 52.0, 680.56, 3.3, 1475337600),
+            (28.0, 28.0, 90.0, 90.0, 0.0, 3.3, 1475294400),
+            (12.0, 21.0, 40.0, 88.0, 420.0, 2.1, 1787832000),
+            (-4.0, 2.0, 60.0, 95.0, 90.0, 6.0, 1766000000)):
+        ours = derive.evapotranspiration_mm(
+            tmin_c=tmin, tmax_c=tmax, rh_min=rh_min, rh_max=rh_max,
+            radiation_wpm2=rad, wind_mps=wind, wind_height_m=2.0,
+            latitude_deg=16.217, longitude_deg=-16.25, altitude_m=8.0,
+            when=when)
+        want = theirs.evapotranspiration_Metric(
+            Tmin_C=tmin, Tmax_C=tmax, rh_min=rh_min, rh_max=rh_max,
+            sr_mean_wpm2=rad, ws_mps=wind, wind_height_m=2.0,
+            latitude_deg=16.217, longitude_deg=-16.25, altitude_m=8.0,
+            timestamp=when)
+        failures += not check(f"ET at {tmax}C, {rad}W/m2", ours, want)
+
+    for station_mbar, t_c in ((980.0, 21.0), (1013.2, -5.0), (900.0, 30.0)):
+        failures += not check(
+            f"sea level from {station_mbar} at {t_c}C",
+            derive.sealevel_pressure_mbar(station_mbar, 440.0, t_c),
+            theirs.sealevel_pressure_Metric(station_mbar, 440.0, t_c))
+
+    # Every boundary of the scale, and one either side of each.
+    for knots in (0.5, 0.99, 1.0, 3.9, 4.0, 6.9, 7.0, 10.9, 11.0, 16.9, 17.0,
+                  21.9, 22.0, 27.9, 28.0, 33.9, 34.0, 40.9, 41.0, 47.9, 48.0,
+                  55.9, 56.0, 63.9, 64.0, 90.0):
+        failures += not check(f"beaufort at {knots} kt",
+                              derive.beaufort_number(knots),
+                              theirs.beaufort(knots))
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -377,6 +510,8 @@ def main() -> int:
     failures += moisture_tests()
     failures += sunshine_tests()
     failures += new_reading_tests()
+    failures += everything_declared_is_produced()
+    failures += against_weewx_formulas()
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")
     return 1 if failures else 0
