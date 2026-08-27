@@ -255,14 +255,14 @@ Liefert ein paar Dateien aus und versucht, aus dem Verzeichnis herauszukommen.
 
 ## Die Treibertests
 
-59 Tests unter `tests/ecowitt/`, unverändert aus weewx-ecowitt übernommen.
+59 Tests unter `tests/ecowitt/`, ursprünglich aus weewx-ecowitt.
 
 ```bash
 python -m pytest tests/ecowitt -q
 ```
 
-**Testdateien unverändert halten** — Fixes sollen zwischen beiden Repos wandern
-können.
+Sie gehören jetzt hierher und dürfen wachsen: der Treiber ist Kern, kein
+gespiegeltes Fremdrepo.
 
 → [Driver-Ecowitt](Driver-Ecowitt#die-tests)
 

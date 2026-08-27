@@ -200,7 +200,7 @@ ehrlichen Fehler und die faule Abkürzung.
 ## Treiber-Zustand
 
 `ingest/state.py`. Ein Treiber muss sich manchmal etwas über Neustarts hinweg
-merken. weewx-ecowitt merkt sich, welche Konsole er adoptiert hat — sonst wird
+merken. Der Ecowitt-Treiber merkt sich, welche Konsole er adoptiert hat — sonst wird
 die nächste Konsole, die hochlädt, zur Station, und zwei Sensoren landen in
 einer Spalte.
 

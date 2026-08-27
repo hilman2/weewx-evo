@@ -54,10 +54,10 @@ Codeänderung. Das ist keine Zierde, sondern die Eigenschaft, die
 
 ## Lizenz
 
-**GPL-3.0-or-later.** Der Ecowitt-Treiber stammt über
-[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) vom
-`ecowittcustom`-Treiber von Werner Krenn ab, der wiederum vom `interceptor` von
-Matthew Wall — beide GPLv3, und das ist der Grund.
+**GPL-3.0-or-later.** Der Ecowitt-Treiber geht über
+[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) auf den
+`ecowittcustom`-Treiber von Werner Krenn zurück, der wiederum auf den
+`interceptor` von Matthew Wall — beide GPLv3, und das ist der Grund.
 
 Das uPlot in `feeds/diagnostic/vendor/` ist MIT und hat seine eigene
 Lizenzdatei daneben liegen.
@@ -70,7 +70,7 @@ Lizenzdatei daneben liegen.
 |---|---|
 | [Ingest-Listener](Ingest-Listener) | HTTP + UDP, Token, Ratelimit, Statusseite |
 | [Drivers](Drivers) | Die Treiber-Schnittstelle, mitgelieferte und fremde Treiber |
-| [Driver-Ecowitt](Driver-Ecowitt) | Der übernommene weewx-ecowitt, vollständig |
+| [Driver-Ecowitt](Driver-Ecowitt) | Der Ecowitt-Treiber, vollständig |
 | [Multiple-Sources](Multiple-Sources) | Mehrere Stationen, eine Messreihe |
 
 ### Verarbeitung und Speicherung

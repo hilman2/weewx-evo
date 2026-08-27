@@ -95,9 +95,10 @@ WeeWX liest und schreibt sämtliche Tagesstatistik-Tabellen eines Tages für
 **jeden einzelnen** Satz neu. Bei einem Satz alle fünf Minuten fällt das nicht
 auf; bei einem Catch-up über ein Jahr schon.
 
-`set_meta` ist auch der Ort, an dem Treiber ihren Zustand ablegen: weewx-ecowitt
-hält seine Konsolenliste hier, unter demselben Schlüssel, unter dem WeeWX sie
-schreibt — eine geteilte Datenbank behält dadurch dieselbe Station.
+`set_meta` ist auch der Ort, an dem Treiber ihren Zustand ablegen: der
+Ecowitt-Treiber hält seine Konsolenliste hier, unter demselben Schlüssel, unter
+dem WeeWX sie schreibt — eine geteilte Datenbank behält dadurch dieselbe
+Station.
 → [Drivers](Drivers#treiber-zustand)
 
 ### Spalten

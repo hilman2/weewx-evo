@@ -69,17 +69,21 @@ mine = "my_package:MyDriver"
 
 ```
 src/weewx_evo/ingest/plugins/     unsere, im Repo, zentral gepflegt
-  ecowitt/                        weewx-ecowitt, komplett übernommen
+  ecowitt/                        Kern-Treiber
 <datenverzeichnis>/drivers/       fremde, per CLI installiert
 ```
 
 **`plugins/`** sind unsere. Ein Unterordner je Treiber, nichts wird von Hand
-aufgezählt — jedes Unterverzeichnis wird geladen. Der erste ist
-[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt), vollständig
-übernommen: `catalog.py` (1074 Zeilen Feldkatalog), `mapping.py`, `infer.py`,
-`protocol.py`, `consoles.py`, `columns.py`, `report.py`, `__main__.py`, plus
-59 Tests, die unverändert mitliefen. Nur `driver.py` ist neu — das ist das
-Stück, das WeeWX kannte und jetzt weewx-evo kennt.
+aufgezählt — jedes Unterverzeichnis wird geladen. Der erste ist **Ecowitt**,
+und er ist Kern: `catalog.py` (1074 Zeilen Feldkatalog), `mapping.py`,
+`infer.py`, `protocol.py`, `consoles.py`, `columns.py`, `report.py`,
+`driver.py`, plus 59 Tests.
+
+Katalog, Protokoll und Tests kamen ursprünglich aus
+[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt). Das ist die
+Herkunft, keine laufende Bindung — jenes Plugin spricht `weewx.conf` und
+`weewx.drivers`, dieser Treiber spricht `options()`, `view()` und die
+Live-Tabelle. Zwei Programme, ein gemeinsamer Vorfahr.
 
 Dass wichtige Treiber hier liegen, ist eine Entscheidung über Pflege, nicht
 über Kopplung: ein Treiber im Repo hängt an derselben Schnittstelle wie einer
@@ -189,7 +193,7 @@ eigene Spalte.
 | `ingest/listener.py` | HTTP + UDP, Token, Treiberauswahl. Ein Ort für das, was Push-Treiber falsch machen. |
 | `ingest/drivers.py` | Die Treiber-Schnittstelle und ihre Registry. |
 | `ingest/envelope.py` | Der JSON-Umschlag — der Vertrag, kein Protokoll. Der einzige Treiber im Kern. |
-| `ingest/plugins/ecowitt.py` | Ecowitt, über weewx-ecowitt. |
+| `ingest/plugins/ecowitt/` | Ecowitt. Kern-Treiber, der meistgebrauchte. |
 
 ## Tests
 
@@ -370,8 +374,9 @@ WeeWX: Copyright (c) Tom Keffer und Mitwirkende, <https://weewx.com>.
 - [uPlot](https://github.com/leeoniya/uPlot) 1.6.32, MIT, unverändert unter
   `src/weewx_evo/feeds/diagnostic/vendor/`. Der Diagnose-Feed zeichnet damit,
   ohne dass eine Station dafür ins Netz muss.
-- [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt), vollständig
-  übernommen als erster Treiber, samt seinen 59 Tests.
+- Der Ecowitt-Treiber geht auf
+  [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) zurück — Katalog,
+  Protokoll und 59 Tests. Er wird hier weiterentwickelt.
 
 Ansonsten nichts. Der Kern kommt mit der Standardbibliothek aus, und pyephem
 wird benutzt, wenn es da ist, ohne dass es fehlen darf.

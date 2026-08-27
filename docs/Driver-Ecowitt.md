@@ -1,14 +1,17 @@
 # Treiber: Ecowitt
 
-`ingest/plugins/ecowitt/`. Vollständig aus
-[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) übernommen, samt
-seiner 59 Tests. Version `0.3.1`.
+`ingest/plugins/ecowitt/`. **Kern von weewx-evo**, kein übernommenes Fremdrepo.
 
-Nur `driver.py` ist neu — das ist das Stück, das WeeWX kannte und jetzt
-weewx-evo kennt. Alles andere ist unverändert.
+Die Herkunft ist [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) —
+Katalog, Protokoll und die 59 Tests kamen von dort. Das ist Geschichte, keine
+laufende Bindung: der Treiber wird hier weiterentwickelt und folgt den Regeln
+dieses Repos.
 
-> **Fixes sollten zwischen beiden Repos wandern können.** Halte die Abweichung
-> klein und die Testdateien unverändert.
+> **Kein Rückfluss.** weewx-ecowitt ist ein WeeWX-Plugin. Es kennt weder
+> `options()` noch `view()`, weder die Live-Tabelle noch die Herkunft eines
+> Feldes — es kennt `weewx.drivers` und eine `weewx.conf`. Ein Fix hier gegen
+> dort zu spiegeln hieße, zwei verschiedene Programme mit demselben Diff zu
+> bedienen. Wer beides pflegt, portiert von Hand und mit Verstand.
 
 ## Die Dateien
 
