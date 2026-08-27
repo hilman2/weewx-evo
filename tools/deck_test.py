@@ -504,6 +504,17 @@ def check_charts_build_themselves(page_html: str, out: Path) -> list[str]:
         problems.append("a tile has no heading; the file's title was not used")
     if found["charts"] == 0:
         problems.append("tiles were built and nothing was drawn")
+    # A plot whose readings stopped is written and empty. It must not put a
+    # box on the page: an empty chart reads as a broken sensor rather than as
+    # a reading this station has not taken lately, and an empty card in a
+    # grid holds a column open beside the ones that do have something.
+    if "dayET" in found["plots"]:
+        problems.append("a plot with no readings in the window still got a "
+                        "tile")
+    if found["tiles"] != len(found["plots"]):
+        problems.append(f"{found['tiles']} tile(s) for {len(found['plots'])} "
+                        f"chart(s)")
+
     grid = found.get("grid")
     if not grid:
         problems.append("nothing on the page asks for a span of charts")

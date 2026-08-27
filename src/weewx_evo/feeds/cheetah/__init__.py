@@ -911,6 +911,21 @@ class CheetahFeed:
                             "leaves whatever the skin says, which for the "
                             "bundled one is `/json/` -- what the built-in web "
                             "server serves a local export named `json` at."),
+                Option("units_other_path",
+                       "Address of the same site in other units",
+                       placeholder="/wdc-us/",
+                       help="For a station publishing twice, once in each "
+                            "system: a second feed of the same skin with a "
+                            "different `Show readings in`, into a directory "
+                            "of its own. Given this, the pages grow a switch "
+                            "between the two and remember which one somebody "
+                            "chose. Left empty there is no switch, which is "
+                            "right for a station that publishes once."),
+                Option("units_other_label", "What to call those units",
+                       placeholder="°F",
+                       help="What the switch says for the other side. Two or "
+                            "three characters: it sits in the header beside "
+                            "the light and dark toggle."),
                 Option("extras", "The skin's own settings", kind="list",
                        advanced=True,
                        help="One `name = value` per line, put into the "
@@ -1369,7 +1384,10 @@ def from_settings(settings: Any, reader: Reader,
         stale_ok=option("stale_ok") is not False,
         language=spoken.code,
         derived=_derived(settings),
-        extras=_extras(option("extras"), option("charts_path")),
+        extras=_extras(option("extras"), option("charts_path"),
+                       option("units_other_path"),
+                       option("units_other_label"),
+                       option("units")),
         broker=_broker(settings, str(option("live_from") or "")),
     )
     # An explicit choice on the feed's page beats what the skin asked for.
@@ -1462,20 +1480,48 @@ def _display(settings: Any, prefix: str, skin: str,
     return found
 
 
-def _extras(block: Any, charts_path: Any) -> dict[str, Any]:
+#: What to call a unit system on a switch, when nobody said. Short, because
+#: it goes in a header beside the light and dark toggle.
+UNIT_MARKS = {"US": "\u00b0F", "METRIC": "\u00b0C", "METRICWX": "\u00b0C"}
+
+
+def _extras(block: Any, charts_path: Any, other_path: Any = None,
+            other_label: Any = None, own_units: Any = None) -> dict[str, Any]:
     """The skin's own settings, plus the ones this page asks for by name.
 
-    `charts_path` is free text in the block as well, and would work there --
-    but nobody found it. It is a fact about where a *different* export
-    landed, which is the operator's to know and not the skin author's, so it
-    gets a field with a label and a help line like every other such fact.
-    A value typed here wins over one written into the skin.
+    All of these are free text in the block as well, and would work there --
+    but nobody found `charts_path` when it was only that. They are facts
+    about the deployment: where a *different* export landed, and whether this
+    station publishes a second set of pages in other units. That is the
+    operator's to know and not the skin author's, so each gets a field with a
+    label and a help line. A value typed there wins over one in the skin.
     """
     found = _settings_block(block)
     said = str(charts_path or "").strip()
     if said:
         found["charts_path"] = said
+
+    where = str(other_path or "").strip()
+    if where:
+        found["units_other_path"] = where
+        found["units_other_label"] = (str(other_label or "").strip()
+                                      or _other_mark(own_units))
+        # What this side is called, so the switch can show both and say
+        # which one is showing. Worked out rather than asked for: a page
+        # already knows what it is written in.
+        found["units_own_label"] = UNIT_MARKS.get(
+            units.name(units.system_from(own_units or "METRICWX")), "")
     return found
+
+
+def _other_mark(own_units: Any) -> str:
+    """A guess at what the other side is called, from what this side is.
+
+    Two systems in practice: somebody publishing in Celsius has the second
+    set in Fahrenheit. A station doing something else says so in the field.
+    """
+    here = units.name(units.system_from(own_units or "METRICWX"))
+    return UNIT_MARKS["METRICWX"] if here == "US" else UNIT_MARKS["US"]
 
 
 def _derived(settings: Any) -> tuple[str, ...]:

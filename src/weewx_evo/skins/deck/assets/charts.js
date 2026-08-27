@@ -839,25 +839,49 @@
     return said.charAt(said.length - 1) === "/" ? said : said + "/";
   }
 
-  function whole(value) {
-    var found = parseInt(value, 10);
-    return isNaN(found) ? 0 : found;
-  }
-
   /* The file's own series, as the rows the builders read.
    *
    * `[start, stop, value]`: a bucket knows how wide it is, which is what
-   * lets a bar be a bar. An unaggregated series has no width, so start and
-   * stop are the same instant and it draws as a line, which is what it is. */
+   * lets a bar be a bar.
+   *
+   * The width comes from the next bucket's start rather than from
+   * `aggregate_interval`, and that is not laziness. The interval is
+   * sometimes a count of seconds and sometimes a word -- `hour`, `month`,
+   * `year` -- because a month is not a fixed number of seconds. Reading it
+   * as a number gives NaN for the words, and mapping the words to an average
+   * length draws February the width of March. The gap to the next bucket is
+   * exact for both, and needs no table. */
   function rowsFrom(one) {
     var when = one.time || [];
     var values = one.values || [];
-    var every = whole(one.aggregate_interval);
     var rows = [];
     for (var i = 0; i < when.length; i++) {
-      rows.push([when[i], every ? when[i] + every : when[i], values[i]]);
+      var stop = when[i];
+      if (i + 1 < when.length) {
+        stop = when[i + 1];
+      } else if (when.length > 1) {
+        // The last one is as wide as the one before it.
+        stop = when[i] + (when[i] - when[i - 1]);
+      }
+      rows.push([when[i], stop, values[i]]);
     }
     return rows;
+  }
+
+  /* Whether there is anything to draw. A chart of nothing is worse than no
+   * chart: it reads as a broken sensor rather than as a reading this station
+   * has not taken lately.
+   *
+   * The tile that this replaces was only rendered `#if ... .has_data`, and
+   * losing that check put an empty box on the page for every plot whose
+   * readings had stopped -- evapotranspiration, on a station whose last one
+   * was the day before. */
+  function hasNumbers(found) {
+    return (found.series || []).some(function (one) {
+      return (one.values || []).some(function (value) {
+        return value !== null && value !== undefined;
+      });
+    });
   }
 
   /* What the file says about a series, over what the page guessed.
@@ -907,6 +931,19 @@
           return response.json();
         })
         .then(function (found) {
+          if (!hasNumbers(found)) {
+            /* Taken off the page rather than emptied: an empty card in a
+               grid still holds a column open, so the ones that do have
+               something end up beside a gap. */
+            var card = element.closest(".diagram-tile");
+            var slot = card && card.parentElement;
+            if (slot && slot.parentElement) {
+              slot.parentElement.removeChild(slot);
+            } else if (card) {
+              card.parentElement.removeChild(card);
+            }
+            return;
+          }
           fill(spec, found);
           /* The heading, from the file rather than from the page. The tile
            * renders it empty: a title written into the HTML would be a second

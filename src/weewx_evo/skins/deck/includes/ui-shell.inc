@@ -51,6 +51,23 @@
       <span class="live-indicator__label">$gettext('connecting')</span>
     </div>
     #end if
+    ## A second set of these pages, in the other unit system. Only when one
+    ## exists: a station publishing once has nothing to switch to, and a
+    ## control that does nothing is worse than no control.
+    ##
+    ## A link, not a button. The other set is a different set of pages, so
+    ## this is navigation -- and it works before any script has run, which a
+    ## button toggling something would not.
+    #if $Extras.get('units_other_path')
+    <div class="unit-switch" role="group" aria-label="$gettext('Units')">
+      <span class="unit-switch__here" aria-current="true">$Extras.get('units_own_label', '')</span>
+      <a class="unit-switch__other"
+         href="$Extras.units_other_path"
+         data-units-switch="$Extras.get('units_other_label', '')"
+         title="$gettext('Show this page in other units')"
+        >$Extras.get('units_other_label', '')</a>
+    </div>
+    #end if
     <button
       class="icon-button"
       type="button"

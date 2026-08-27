@@ -97,6 +97,74 @@
     onWide();
   }
 
+  /* ------------------------------------------------------------- units */
+
+  /* Which unit system somebody chose, kept for next time.
+   *
+   * The two sets of pages are separate files, so the choice cannot live in
+   * the page. It lives in the browser, and a reader who picked Fahrenheit
+   * once gets it when they come back -- including when they come back to the
+   * address the metric set is published at, which is the one that ends up in
+   * a link somebody sent them.
+   *
+   * Every read and write is guarded: a private window, a browser told to
+   * block site data, and a thumbnailer all throw rather than return
+   * nothing, and none of them is a reason for the page not to render. */
+  var UNITS_KEY = "deck-units";
+
+  function unitsRemembered() {
+    try {
+      return window.localStorage.getItem(UNITS_KEY);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function rememberUnits(which) {
+    try {
+      window.localStorage.setItem(UNITS_KEY, which);
+    } catch (e) {
+      /* Nothing to do about it, and nothing worth saying: the switch still
+       * works, it just will not be remembered. */
+    }
+  }
+
+  /* The same page in the other set, not the other set's front page.
+   *
+   * Somebody switching units while reading the month page means "this, in
+   * Fahrenheit". Sending them to the front page loses where they were, and
+   * on a phone that is a scroll back to it. */
+  function counterpart(otherBase) {
+    var base = (window.deckConfig && window.deckConfig.basePath) || "/";
+    var here = window.location.pathname;
+    var rest = here.indexOf(base) === 0 ? here.slice(base.length) : "";
+    if (otherBase.charAt(otherBase.length - 1) !== "/") otherBase += "/";
+    return otherBase + rest;
+  }
+
+  function wireUnits() {
+    var group = document.querySelector(".unit-switch");
+    if (!group) return;
+    var link = group.querySelector(".unit-switch__other");
+    var showing = group.querySelector(".unit-switch__here");
+    if (!link || !showing) return;
+
+    var here = showing.textContent.trim();
+    var there = link.getAttribute("data-units-switch") || "";
+    link.setAttribute("href", counterpart(link.getAttribute("href") || "/"));
+    link.addEventListener("click", function () { rememberUnits(there); });
+
+    /* Landed on the set they did not choose. Sent to the other one, and only
+     * ever in that direction: on the far side `here` is what was remembered,
+     * so nothing sends them back and there is no loop to guard against. */
+    var wanted = unitsRemembered();
+    if (wanted && wanted === there && wanted !== here) {
+      window.location.replace(link.getAttribute("href"));
+      return;
+    }
+    if (wanted !== here) rememberUnits(here);
+  }
+
   /* -------------------------------------------------------------- tabs */
 
   function wireTabs() {
@@ -325,6 +393,7 @@
     wireTheme();
     wireMenu();
     wrapTables();
+    wireUnits();
     wireTabs();
     wireSorting();
     wireDialogs();

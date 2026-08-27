@@ -40,10 +40,25 @@ const MANIFEST = {
       unit_label: "%", obs_types: ["outHumidity"] },
     { name: "weektempdew", group: "week", title: "Temperatur / Taupunkt",
       unit_label: "°C", obs_types: ["outTemp", "dewpoint"] },
+    /* A plot whose readings stopped. The station has the column and the plot
+     * is defined, so the file exists and is empty -- evapotranspiration, on
+     * a station whose last one was the day before. */
+    { name: "dayET", group: "day", title: "Evapotranspiration",
+      unit_label: "mm", obs_types: ["ET"] },
   ],
 };
 
 function chartFile(name, aggregated) {
+  if (name === "dayET") {
+    /* Written, and empty: nothing fell in the window. */
+    return {
+      name: name, format: 1, generated: NOW, start: NOW - 7200, stop: NOW,
+      unit: "mm", unit_label: "mm", title: "Evapotranspiration",
+      series: [{ obs_type: "ET", label: "Evapotranspiration",
+                 plot_type: "bar", aggregate_type: "sum",
+                 aggregate_interval: "hour", time: [], values: [] }],
+    };
+  }
   const time = [NOW - 7200, NOW - 3600, NOW];
   return {
     name: name,
@@ -142,6 +157,10 @@ setTimeout(() => {
     firstPoint: points.length ? points[0] : null,
     lastPoint: points.length ? points[points.length - 1] : null,
     seriesName: series.name || null,
+    /* A bucket's width, which a bar is drawn at. Taken from the next
+     * bucket's start, because `aggregate_interval` is sometimes a word. */
+    firstWidth: points.length > 1
+      ? (points[1][0] - points[0][0]) : null,
   }));
   process.exit(0);
 }, 300);
