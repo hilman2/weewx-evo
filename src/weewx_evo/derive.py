@@ -730,6 +730,14 @@ class Deriver:
     #: What counts as sunshine, as a fraction of the clear-sky maximum. A
     #: setting because the right value depends on the sensor and how clean
     #: it is -- a dusty dome reads low all day.
+    #: Clear a wind direction when the wind is zero. On, because a direction
+    #: with no wind behind it is not a reading and a calm night otherwise
+    #: reads as a steady breeze from wherever it last blew.
+    #:
+    #: Its own switch rather than an entry in `how`, because it does not
+    #: *derive* anything: it removes what the hardware sent, and `how` says
+    #: whether to trust the hardware. WeeWX calls this one `force_null`.
+    calm_wind_null: bool = True
     #: How high the anemometer is, in metres. Evapotranspiration wants the
     #: wind at two metres and a mast is rarely there, so the formula corrects
     #: for it. Two is what WeeWX assumes when nobody says.
@@ -951,9 +959,9 @@ class Deriver:
         # A direction with no wind behind it is not a reading. Left alone, a
         # calm night reads as a steady breeze from wherever it last blew, and
         # a wind rose fills up with it.
-        if speed == 0:
+        if speed == 0 and self.calm_wind_null:
             for name in ("windDir", "windGustDir"):
-                if self.wanted(name, record) or record.get(name) is not None:
+                if name in record or self.wanted(name, record):
                     record[name] = None
 
         if not self.wanted("windrun", record):

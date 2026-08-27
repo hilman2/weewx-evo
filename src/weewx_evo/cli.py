@@ -975,6 +975,102 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_derive(args: argparse.Namespace) -> int:
+    """Fill in derived readings on records that are already in the archive.
+
+    A calculator that arrives late leaves a hole behind it: this station has
+    a year of weather and evapotranspiration only since the version that
+    could work it out. WeeWX calls the same thing `--calc-missing`.
+
+    The records are walked forward in time, not at random, and that is not
+    tidiness. Evapotranspiration needs the hour behind it and the rain rate a
+    quarter of one; walking in order fills those windows exactly as they
+    filled when the readings were new, so a backfilled value is the value
+    that would have been recorded at the time.
+
+    What is *not* re-derived: `rain`. The archive holds the fall for each
+    interval, while the deriver makes that by subtracting one running total
+    from the one before it. Running it over archive records would take the
+    difference between two intervals of rain and call the result rain.
+    """
+    import time as clock
+
+    from . import derive as derive_module
+    from .aggregate import start_of_archive_day
+
+    cfg = settings_for(args)
+    live, archive = open_stores(args)
+    try:
+        deriver = derive_module.from_settings(cfg)
+        # A backfill is exactly the case where the hardware is not there to
+        # ask, so nothing waits on it.
+        deriver.how = {name: ("software" if args.replace else how)
+                       for name, how in deriver.how.items()}
+        # See the docstring: the archive's `rain` is not a running total.
+        # Set rather than removed -- an absent name falls back to
+        # `prefer_hardware`, which computes it whenever the record has none,
+        # so taking the key out turns the thing on.
+        deriver.how["rain"] = "hardware"
+        # Clearing a direction because the wind was calm removes a reading
+        # that is already recorded. Right, and still a deletion, so it is
+        # asked for rather than assumed.
+        deriver.calm_wind_null = bool(args.calm)
+
+        known = set(archive.schema.columns)
+        start = args.start if args.start is not None else 0
+        stop = args.stop if args.stop is not None else int(clock.time())
+
+        cursor = archive.conn.execute(
+            f"SELECT * FROM {archive.table_name} "
+            f"WHERE dateTime > ? AND dateTime <= ? ORDER BY dateTime",
+            (start, stop))
+        columns = [one[0] for one in cursor.description]
+
+        touched: dict[str, int] = {}
+        days: set[int] = set()
+        changed = 0
+        for row in cursor.fetchall():
+            record = {name: value for name, value in zip(columns, row,
+                                                         strict=True)
+                      if value is not None}
+            before = dict(record)
+            deriver.apply(record)
+
+            # Only what the archive can hold, and only what actually moved.
+            wanted = {name: value for name, value in record.items()
+                      if name in known and before.get(name) != value}
+            if not wanted:
+                continue
+            for name in wanted:
+                touched[name] = touched.get(name, 0) + 1
+            if not args.dry_run:
+                archive.add_record({**before, **wanted}, replace=True,
+                                   update_daily=False)
+                days.add(start_of_archive_day(int(record["dateTime"])))
+            changed += 1
+
+        if not touched:
+            print("nothing to fill in.")
+            return 0
+
+        for name, count in sorted(touched.items(), key=lambda x: -x[1]):
+            print(f"  {name:22} {count}")
+        print(f"{changed} record(s)"
+              + (" would change" if args.dry_run else " changed"))
+
+        # The day summaries hold maxima, and a maximum does not remember the
+        # runner-up: the only honest way to correct a day is to build it
+        # again from the records.
+        for sod in sorted(days):
+            archive.rebuild_day(sod)
+        if days:
+            print(f"{len(days)} day summary(ies) rebuilt")
+    finally:
+        live.close()
+        archive.close()
+    return 0
+
+
 def cmd_columns(args: argparse.Namespace) -> int:
     """Readings that the archive has no column for.
 
@@ -2544,6 +2640,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("start", type=int, help="unix timestamp, exclusive")
     p.add_argument("stop", type=int, help="unix timestamp, inclusive")
     p.set_defaults(func=cmd_rebuild)
+
+    p = sub.add_parser("derive",
+                       help="work out derived readings on stored records")
+    add_common(p)
+    p.add_argument("--start", type=int, default=None,
+                   help="unix timestamp, exclusive. The whole archive by "
+                        "default.")
+    p.add_argument("--stop", type=int, default=None,
+                   help="unix timestamp, inclusive. Now by default.")
+    p.add_argument("--replace", action="store_true",
+                   help="work out every derived reading again, including "
+                        "ones already there. Without this only the empty "
+                        "ones are filled, which is what a calculator that "
+                        "arrived late needs.")
+    p.add_argument("--calm", action="store_true",
+                   help="also clear wind directions on records where the "
+                        "wind was zero. A direction with no wind behind it "
+                        "is not a reading, but removing one already stored "
+                        "is a deletion, so it is asked for.")
+    p.add_argument("--dry-run", action="store_true",
+                   help="say what would change and change nothing.")
+    p.set_defaults(func=cmd_derive)
 
     p = sub.add_parser("columns", help="readings that have nowhere to live")
     add_common(p)
