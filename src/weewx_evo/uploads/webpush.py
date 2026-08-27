@@ -62,17 +62,25 @@ class WebPushUpload(BaseUpload):
     #: was not given its own. See `from_exports`.
     inferred = False
 
-    def __init__(self, url: str = "", token: str = "", directory: str = "",
+    def __init__(self, url: str = "", token: str = "",
+                 directories: list | str | None = None,
                  unit_system: str = "", append_units: bool = True,
                  trigger: str = "live", every: int = 10,
                  catch_up: int = 0, timeout: int = 20,
                  _inferred: bool = False) -> None:
         self.inferred = bool(_inferred)
-        # A directory to write the same document into, for a site this
-        # machine serves itself. No PHP and no request: the web server hands
-        # out `live.json` like any other file, and the page reads it exactly
-        # as it would on a web host. The skin cannot tell the two apart.
-        self.directory = str(directory or "").strip()
+        # Directories to write the same document into, for sites this machine
+        # serves itself. No PHP and no request: the web server hands out
+        # `live.json` like any other file, and the page reads it exactly as it
+        # would on a web host. The skin cannot tell the two apart.
+        #
+        # Several, because a station can serve several sites and the file is a
+        # kilobyte. Choosing one of them to be live and leaving the rest stale
+        # is not a reading of this setting anybody meant.
+        if isinstance(directories, str):
+            directories = [directories]
+        self.directories = [str(one).strip() for one in (directories or [])
+                            if str(one).strip()]
         self.url = str(url or "").strip()
         self.token = str(token or "")
         # The same names the MQTT path uses -- `outTemp_C`, `windSpeed_mph`.
@@ -84,12 +92,12 @@ class WebPushUpload(BaseUpload):
         self.every = int(every)
         self.catch_up_limit = 0
         self.timeout = int(timeout)
-        if not self.url and not self.directory:
+        if not self.url and not self.directories:
             raise ValueError(
                 "either a directory to write into, or the address of a "
-                "live.php on a web host. An export can supply the second: "
-                "put the site's address in 'Address the pages are served at' "
-                "there and this fills in by itself.")
+                "live.php on a web host. An export supplies both: a local one "
+                "gives its directory, and one that publishes to a web host "
+                "gives the address in 'Address the pages are served at'.")
 
         self.host = self.path = ""
         self.tls = True
@@ -172,43 +180,54 @@ class WebPushUpload(BaseUpload):
             raise Rejected(f"{self.host} answered {status}: {text[:120]}")
         return len(body)
 
-    def _write(self, record: dict) -> int:
-        """The same document, straight into a directory this machine serves.
+    def _body(self, record: dict) -> str:
+        """The document as it goes into the file, both ways round.
 
-        Written beside and renamed: half a JSON document is a parse error in
-        every browser, and a page that blanks once in a while is the sort of
-        fault nobody can reproduce.
+        The two fields `live.php` adds are added here too, so a page cannot
+        tell the routes apart and needs no second way of reading this one.
         """
         import time
 
         document = self.document(record)
-        # The same two fields `live.php` adds, so a page cannot tell the two
-        # routes apart and needs no second way of reading this one.
         document["_received"] = int(time.time())
         document["_stale_after"] = STALE_AFTER
+        return json.dumps(document, separators=(",", ":"))
 
-        where = Path(self.directory)
-        where.mkdir(parents=True, exist_ok=True)
-        body = json.dumps(document, separators=(",", ":"))
-        target = where / DATA_FILE
-        partial = target.with_suffix(".json.part")
-        partial.write_text(body, encoding="utf-8", newline="\n")
-        partial.replace(target)
-        return len(body)
+    def _write(self, record: dict) -> list[str]:
+        """The same document, into each directory this machine serves.
+
+        Written beside and renamed: half a JSON document is a parse error in
+        every browser, and a page that blanks once in a while is the sort of
+        fault nobody can reproduce.
+
+        One directory failing does not stop the others. A skin on a full disk
+        must not take the live readings off the site next to it.
+        """
+        body = self._body(record)
+        failures = []
+        for one in self.directories:
+            try:
+                where = Path(one)
+                where.mkdir(parents=True, exist_ok=True)
+                target = where / DATA_FILE
+                partial = target.with_suffix(".json.part")
+                partial.write_text(body, encoding="utf-8", newline="\n")
+                partial.replace(target)
+            except OSError as exc:
+                failures.append(f"could not write into {one}: {exc}")
+        return failures
 
     def post(self, records: list[dict]) -> Posted:
         result = Posted()
         record = records[-1]
         result.skipped = len(records) - 1
 
-        if self.directory:
-            try:
-                self._write(record)
+        if self.directories:
+            trouble = self._write(record)
+            for why in trouble:
+                result.failures.append((str(record.get("dateTime")), why))
+            if len(trouble) < len(self.directories):
                 result.sent = 1
-            except OSError as exc:
-                result.failures.append(
-                    (str(record.get("dateTime")),
-                     f"could not write into {self.directory}: {exc}"))
 
         if self.url:
             try:
@@ -231,12 +250,14 @@ class WebPushUpload(BaseUpload):
                   "outTemp": 0.0}
         said = []
 
-        if self.directory:
-            try:
-                self._write(sample)
-                said.append(f"wrote {Path(self.directory) / DATA_FILE}")
-            except OSError as exc:
-                said.append(f"could not write into {self.directory}: {exc}")
+        if self.directories:
+            trouble = self._write(sample)
+            written = len(self.directories) - len(trouble)
+            if written:
+                said.append(f"wrote {DATA_FILE} into "
+                            + ", ".join(self.directories[:4])
+                            + (" and more" if len(self.directories) > 4 else ""))
+            said.extend(trouble)
 
         if self.url:
             try:
@@ -253,30 +274,33 @@ class WebPushUpload(BaseUpload):
 
     def status(self) -> dict:
         return {"host": self.host, "path": self.path,
-                "directory": self.directory}
+                "directories": self.directories}
 
     @staticmethod
-    def from_exports(settings: object) -> tuple[str, str, str]:
+    def from_exports(settings: object) -> tuple[str, str, list[str]]:
         """Where to send, from the exports that asked for live readings.
 
         Three things come back: the address of a `live.php` on a web host, the
-        token for it, and a directory on this machine to write into. An export
-        that publishes the pages already knows all of it -- where they end up,
-        what token it writes beside the script, which directory the built-in
-        server hands out. Asking again here is how the two drift apart, and
-        the way they drift is a token that does not match: a page that renders
-        perfectly and never updates.
+        token for it, and every directory on this machine to write into. An
+        export that publishes the pages already knows all of it -- where they
+        end up, what token it writes beside the script, which directory the
+        built-in server hands out. Asking again here is how the two drift
+        apart, and the way they drift is a token that does not match: a page
+        that renders perfectly and never updates.
 
-        The first export of each kind with the switch on wins. Two hosts
-        publishing the same pages is legitimate, and posting to one of them is
-        the answer; posting to both needs a second upload, which is exactly
-        what naming a `url` here is for.
+        Every local directory, but only the first web address. Writing a
+        kilobyte into five directories on this disk is free, and picking one
+        of five locally served sites to be live is not something anybody
+        meant. Posting to a second web host is a second connection over
+        somebody else's network, and that is a decision -- so it wants a
+        second upload with its own `url`.
         """
         from ..exports.livepush import token_for, url_for
 
         section = getattr(settings, "config", {}).get("exports") or {}
         token = token_for(str(settings.get("token") or ""))
-        url = directory = ""
+        url = ""
+        directories: list[str] = []
         for _name, configured in sorted(section.items()):
             if not isinstance(configured, dict):
                 continue
@@ -285,13 +309,14 @@ class WebPushUpload(BaseUpload):
             if configured.get("kind") == "local":
                 # No script and no address: the file goes straight into the
                 # directory the web server is already handing out.
-                if not directory:
-                    directory = str(configured.get("directory") or "").strip()
+                where = str(configured.get("directory") or "").strip()
+                if where and where not in directories:
+                    directories.append(where)
                 continue
-            where = str(configured.get("live_push_url") or "").strip()
-            if where and not url:
-                url = url_for(where)
-        return url, token, directory
+            address = str(configured.get("live_push_url") or "").strip()
+            if address and not url:
+                url = url_for(address)
+        return url, token, directories
 
     @staticmethod
     def options() -> list:
@@ -309,17 +334,19 @@ class WebPushUpload(BaseUpload):
                              placeholder="https://example.org/wetter/live.php",
                              help="Empty means: from the export. The address "
                                   "there plus /live.php."),
-                      Option("directory", "Or a directory on this machine",
-                             kind="path",
-                             placeholder="data/feeds/wdc",
-                             help="For a site this machine serves itself. "
-                                  "No PHP and no request -- the file is "
-                                  "written straight into the feed's own "
-                                  "directory and the web server hands it out "
-                                  "like any other. A page cannot tell the "
-                                  "two apart, so a skin needs no change. "
-                                  "Both may be set: the same readings go to "
-                                  "the local site and the published one."),
+                      Option("directories", "Or directories on this machine",
+                             kind="list",
+                             placeholder="data/site",
+                             help="For sites this machine serves itself, one "
+                                  "per line. No PHP and no request -- the "
+                                  "file is written straight into the "
+                                  "published directory and the web server "
+                                  "hands it out like any other. A page cannot "
+                                  "tell the two apart, so a skin needs no "
+                                  "change. Empty means: every local export "
+                                  "that has live readings switched on. Both "
+                                  "this and the address may be set; the same "
+                                  "readings go to each."),
                       Option("token", "Token", kind="secret",
                              help="Empty means: derived from the station's "
                                   "upload token, the same way the export "

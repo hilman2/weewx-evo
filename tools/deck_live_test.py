@@ -84,14 +84,26 @@ def archive(path: Path) -> None:
 
 
 def render(tmp: Path, live_push: bool = True) -> str:
-    """Render Deck's front page."""
+    """Render Deck's front page, as text."""
+    return rendered(tmp, live_push).read_text(encoding="utf-8", errors="replace")
+
+
+def rendered(tmp: Path, live_push: bool = True, name: str = "") -> Path:
+    """Render Deck's front page. Returns where it was written.
+
+    `name` gives a run its own directory. Two renders into one is a second
+    `CREATE TABLE archive`, which is an error nobody reads as "this test
+    asked for the page twice".
+    """
     from weewx_evo import units
     from weewx_evo.feeds.cheetah import CheetahFeed
     from weewx_evo.series import Reader
     from weewx_evo.skins import bundled
     from weewx_evo.tags import Tags
 
-    where = tmp / ("push" if live_push else "quiet")
+    where = tmp / (name or ("push" if live_push else "quiet"))
+    if where.exists():
+        return where / "out" / "index.html"
     where.mkdir(parents=True, exist_ok=True)
     db = where / "weewx.sdb"
     archive(db)
@@ -125,7 +137,7 @@ def render(tmp: Path, live_push: bool = True) -> str:
     if not page.is_file():
         made = sorted(str(f) for f in produced.files)
         raise SystemExit(f"deck did not write index.html. It wrote: {made}")
-    return page.read_text(encoding="utf-8", errors="replace")
+    return page
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +232,7 @@ def test_the_local_way(tmp: Path) -> None:
     from weewx_evo.uploads.webpush import WebPushUpload
 
     where = tmp / "site"
-    upload = WebPushUpload(directory=str(where))
+    upload = WebPushUpload(directories=[str(where)])
 
     # No token: there is nobody to prove anything to. Requiring one here
     # would be theatre, and theatre in a settings page is a field somebody
@@ -262,6 +274,22 @@ def test_the_local_way(tmp: Path) -> None:
     else:
         FAILURES.append("the upload accepted neither a directory nor a url")
 
+    # Several, because a station can serve several sites and one of them
+    # being live while the rest go stale is nobody's reading of the setting.
+    two = tmp / "two"
+    both = WebPushUpload(directories=[str(two / "a"), str(two / "b")])
+    both.post([dict(RECORD)])
+    ok("each served directory gets the file",
+       (two / "a" / DATA_FILE).is_file() and (two / "b" / DATA_FILE).is_file())
+
+    # And one failing does not take the other with it: a skin on a full disk
+    # must not stop the live readings on the site beside it.
+    mixed = WebPushUpload(directories=["/nope/nowhere/at/all", str(two / "c")])
+    result = mixed.post([dict(RECORD)])
+    check("the good one still went", result.sent, 1)
+    ok("and the bad one is reported", len(result.failures) == 1)
+    ok("the file is there", (two / "c" / DATA_FILE).is_file())
+
 
 def test_a_local_export_carries_no_php(tmp: Path) -> None:
     """The switch is the same one; what it does is not.
@@ -301,6 +329,7 @@ def test_the_directory_fills_in_by_itself() -> None:
     exports = {
         "site": {"kind": "local", "directory": "data/site",
                  "live_push": True},
+        "wdc": {"kind": "local", "directory": "data/wdc", "live_push": True},
         "host": {"kind": "ftp", "live_push": True,
                  "live_push_url": "https://example.org/wetter"},
     }
@@ -312,16 +341,17 @@ def test_the_directory_fills_in_by_itself() -> None:
         def get(self, name: str) -> object:
             return "upload-token" if name == "token" else None
 
-    url, token, directory = WebPushUpload.from_exports(FakeSettings())
+    url, token, directories = WebPushUpload.from_exports(FakeSettings())
     check("the web host", url, "https://example.org/wetter/live.php")
-    check("the local directory", directory, "data/site")
+    check("every local directory", directories, ["data/site", "data/wdc"])
     ok("and a token for the first", len(token) == 32)
 
     # Switched off means switched off, for both.
     exports["site"]["live_push"] = False
+    exports["wdc"]["live_push"] = False
     exports["host"]["live_push"] = False
-    url, _token, directory = WebPushUpload.from_exports(FakeSettings())
-    check("nothing when it is off", (url, directory), ("", ""))
+    url, _token, directories = WebPushUpload.from_exports(FakeSettings())
+    check("nothing when it is off", (url, directories), ("", []))
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +587,121 @@ def test_the_german_words_exist() -> None:
        "stays English on purpose" in conf)
 
 
+# ---------------------------------------------------------------------------
+# The page, running.
+# ---------------------------------------------------------------------------
+
+class Hung(Exception):
+    """The page did not settle, or would not run at all."""
+
+
+#: How the page is actually run. Everything else here reads what Deck wrote;
+#: this executes it, because the fault that put it here cannot be read.
+NODE_SCRIPT = Path(__file__).resolve().parent / "deck_page_test.js"
+
+
+def can_run_javascript() -> str:
+    """A node with jsdom, or a word saying why not."""
+    if shutil.which("node") is None:
+        return "there is no node on PATH"
+    found = subprocess.run(["node", "-e", "require('jsdom')"],
+                           capture_output=True, text=True, check=False)
+    if found.returncode != 0:
+        return "node is there but jsdom is not (npm install -g jsdom)"
+    return ""
+
+
+def run_page(page: Path, live: dict | None = None) -> dict:
+    """Load the page in jsdom, let it live for a few seconds, report."""
+    command = ["node", str(NODE_SCRIPT), str(page), str(page.parent / "assets")]
+    if live is not None:
+        document = page.parent / "sent.json"
+        document.write_text(json.dumps(live), encoding="utf-8")
+        command.append(str(document))
+
+    try:
+        finished = subprocess.run(command, capture_output=True, text=True,
+                                  timeout=60, check=False)
+    except subprocess.TimeoutExpired:
+        # Not an error in the harness: it is the finding. A page whose
+        # scripts never yield never lets the timer that reports fire either,
+        # so the run stops exactly the way the browser tab does.
+        raise Hung("the page never finished loading. Something in its "
+                   "JavaScript does not yield -- a browser calls this "
+                   "'page unresponsive'.") from None
+    if finished.returncode != 0 or not finished.stdout.strip():
+        raise Hung(f"the page could not be run: "
+                   f"{finished.stderr.strip()[:400]}")
+    return json.loads(finished.stdout)
+
+
+def test_the_page_does_not_lock_up(tmp: Path) -> None:
+    """The one fault reading the HTML cannot find.
+
+    The badges were painted into the element a MutationObserver was watching.
+    Every paint was a mutation, every mutation a paint, and the tab stopped
+    responding about a second after it loaded. The page was correct, every
+    test passed, and the only symptom was a browser saying the page is not
+    responding.
+
+    Two things are checked, because either alone can be got round. A badge
+    must not be inside the watched element, and the observer must not be
+    running away.
+    """
+    page = rendered(tmp, live_push=True, name="running")
+    result = run_page(page)
+
+    ok("the page ran", not result["problems"])
+    if result["problems"]:
+        for problem in result["problems"]:
+            FAILURES.append(f"    {problem}")
+
+    ok("there are cards to badge", result["cards"] > 0)
+    check("every card got a badge", result["badges"], result["cards"])
+    ok("no badge sits in the watched element",
+       not result["badgeInWatchedElement"])
+
+    # A page that settles calls the observer a handful of times. One that is
+    # running away calls it as fast as the machine allows -- tens of thousands
+    # in four seconds, and that is being generous about the machine.
+    ok(f"the observer settles ({result['observerCallbacks']} callbacks in "
+       f"{result['seconds']:.1f}s)",
+       result["observerCallbacks"] < 200)
+
+
+def test_the_page_shows_what_was_pushed(tmp: Path) -> None:
+    """And the other half: a live document reaches the cards.
+
+    Reading the file is not the point. Putting the number on the page is, and
+    between the two sit the names -- `outTemp_C` in the document against
+    `outTemp` on the card. A mismatch there renders perfectly and never
+    updates, with nothing in any log.
+    """
+    page = rendered(tmp, live_push=True, name="running")
+    document = {"dateTime": int(time.time()), "outTemp_C": 27.5,
+                "outHumidity": 44.0, "barometer_mbar": 1008.3,
+                "_received": int(time.time()), "_stale_after": 300}
+    result = run_page(page, live=document)
+
+    ok("the page asked for the file", result["fetches"] > 0)
+    shown = {row["obs"]: row["shown"] for row in result["values"]}
+    check("the pushed temperature is on the card",
+          shown.get("outTemp"), "27.5")
+    # Whole numbers: the card carries `data-rounding="0"` for humidity, and
+    # the page rounds the way the skin says rather than the way the document
+    # happens to be written.
+    check("and the humidity, at the skin's own rounding",
+          shown.get("outHumidity"), "44")
+
+    # Green, not red: the document is seconds old.
+    ok("the badges say live", "live-badge--live" in result["badgeStates"])
+    ok("and none says otherwise", "live-badge--off" not in result["badgeStates"])
+    ok("it still does not run away", result["observerCallbacks"] < 200)
+
+
 def main() -> int:
+    global CHECKS
+
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-deck-live-"))
     try:
         # Everything that does not need a renderer. Most of this file is
@@ -583,6 +727,19 @@ def main() -> int:
         else:
             test_the_page(tmp)
             test_the_page_without_it(tmp)
+
+            why = can_run_javascript()
+            if why:
+                print(f"the page is not run: {why}. "
+                      f"docker/run.sh has both.")
+            else:
+                for one in (test_the_page_does_not_lock_up,
+                            test_the_page_shows_what_was_pushed):
+                    try:
+                        one(tmp)
+                    except Hung as exc:
+                        CHECKS += 1
+                        FAILURES.append(one.__name__ + chr(10) + "    " + str(exc))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

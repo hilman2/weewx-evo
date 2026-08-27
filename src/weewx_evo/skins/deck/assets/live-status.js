@@ -84,9 +84,30 @@
     /* Announced to a screen reader as a status rather than read out in the
      * middle of the value it sits beside. */
     badge.setAttribute("role", "status");
-    var host = card.querySelector(".stat-title-obs-value") || card;
+    /* Beside the card's own label, and specifically NOT inside
+     * `.stat-title-obs-value`. That element is what the MutationObserver
+     * below watches, so a badge in it makes every paint a mutation and every
+     * mutation a paint: the tab stops responding within a second of loading,
+     * and every card reads permanently live because the badge's own change
+     * counts as a reading arriving. */
+    var host = card.querySelector(".label") || card;
     host.appendChild(badge);
     return badge;
+  }
+
+  function write(element, className, label, title) {
+    /* Only when it differs. Setting textContent to the same string still
+     * replaces the text node, and a mutation the observer has to look at
+     * every second is a cost for nothing. */
+    if (element.className !== className) {
+      element.className = className;
+    }
+    if (element.textContent !== label) {
+      element.textContent = label;
+    }
+    if (element.title !== title) {
+      element.title = title;
+    }
   }
 
   function paint() {
@@ -100,26 +121,23 @@
       var live = state.connected && when > 0 && seconds - when < FRESH_SECONDS;
 
       if (live) {
-        badge.className = "live-badge live-badge--live";
-        badge.textContent = text("live", "LIVE");
-        badge.title = text("liveSince", "Updated") + " " + ago(seconds - when);
+        write(badge, "live-badge live-badge--live", text("live", "LIVE"),
+              text("liveSince", "Updated") + " " + ago(seconds - when));
       } else if (!state.connected) {
-        badge.className = "live-badge live-badge--off";
-        badge.textContent = text("offline", "OFFLINE");
-        badge.title = text("noBroker", "No connection to the live feed.");
+        write(badge, "live-badge live-badge--off", text("offline", "OFFLINE"),
+              text("noBroker", "No connection to the live feed."));
       } else if (when === 0 && settling) {
         /* Connected, nothing yet, and it is early. Neither claim is true, so
          * neither is made. */
-        badge.className = "live-badge live-badge--waiting";
-        badge.textContent = text("waiting", "…");
-        badge.title = text("waitingFor", "Waiting for the first reading.");
+        write(badge, "live-badge live-badge--waiting", text("waiting", "…"),
+              text("waitingFor", "Waiting for the first reading."));
       } else {
-        badge.className = "live-badge live-badge--stale";
-        badge.textContent = text("stale", "LIVE");
-        badge.title =
-          when === 0
-            ? text("neverSent", "The station does not publish this reading live.")
-            : text("lastSeen", "Last live reading") + " " + ago(seconds - when);
+        write(badge, "live-badge live-badge--stale", text("stale", "LIVE"),
+              when === 0
+                ? text("neverSent",
+                       "The station does not publish this reading live.")
+                : text("lastSeen", "Last live reading") + " "
+                  + ago(seconds - when));
       }
     });
 
@@ -144,14 +162,15 @@
     }
 
     if (!state.connected) {
+      write(label, label.className, text("offline", "OFFLINE"), label.title);
       element.className = "live-indicator live-indicator--off";
-      label.textContent = text("offline", "OFFLINE");
       element.title = text("noBroker", "No connection to the live feed.");
       return;
     }
     if (!state.lastAny) {
+      write(label, label.className, text("connecting", "connecting"),
+            label.title);
       element.className = "live-indicator live-indicator--waiting";
-      label.textContent = text("connecting", "connecting");
       element.title = text("waitingFor", "Waiting for the first reading.");
       return;
     }
@@ -160,7 +179,7 @@
     element.className =
       "live-indicator " +
       (age < FRESH_SECONDS ? "live-indicator--live" : "live-indicator--stale");
-    label.textContent = ago(age);
+    write(label, label.className, ago(age), label.title);
     element.title =
       text("liveSince", "Updated") +
       " " +
@@ -196,16 +215,18 @@
       var touched = false;
       records.forEach(function (record) {
         var node = record.target;
-        var card = node.closest
-          ? node.closest(".card.stat-tile[data-observation]")
-          : null;
-        if (!card && node.parentElement) {
-          /* A characterData mutation reports the text node, which has no
-           * `closest` of its own. */
-          card = node.parentElement.closest(
-            ".card.stat-tile[data-observation]"
-          );
+        var element = node.closest ? node : node.parentElement;
+        if (!element) {
+          return;
         }
+        /* Our own badge is not a reading arriving. It is kept off this
+         * subtree as well (see `badgeFor`), and this is the second lock on
+         * the same door: paint -> mutation -> paint is a tab that stops
+         * responding, and it is not obvious from either end alone. */
+        if (element.closest(".live-badge")) {
+          return;
+        }
+        var card = element.closest(".card.stat-tile[data-observation]");
         if (!card) {
           return;
         }

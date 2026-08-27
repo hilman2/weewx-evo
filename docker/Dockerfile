@@ -40,7 +40,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         php-cli \
         rsync \
         tzdata \
+        nodejs npm \
     && rm -rf /var/lib/apt/lists/*
+
+# A DOM to run the skin's own JavaScript in. The fault that put this here: the
+# live badges were painted into the element a MutationObserver was watching,
+# so every paint was a mutation and every mutation a paint. The page rendered
+# perfectly, every test passed, and the tab stopped responding a second after
+# loading. Nothing that reads HTML as text can find that. It has to run.
+RUN npm install --global --no-fund --no-audit jsdom@26.1.0
+ENV NODE_PATH=/usr/local/lib/node_modules
 
 # WeeWX brings CT3 and configobj with it, which is the point: the Cheetah the
 # comparison runs under is then the same one WeeWX itself uses.

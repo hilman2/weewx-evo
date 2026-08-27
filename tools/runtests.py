@@ -148,7 +148,7 @@ def tests() -> list[Test]:
              "the bundled skin",
              needs=("Cheetah",), needs_reference=True),
         Test("deck-live", ["deck_live_test.py"],
-             "live readings: the document, live.php, and the page",
+             "live readings: the document, live.php, and the page run in jsdom",
              needs=("Cheetah",)),
 
         # -- the driver's own suite --------------------------------------

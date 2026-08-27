@@ -1608,25 +1608,28 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
             # as a page that renders perfectly and never updates.
             from .uploads.webpush import WebPushUpload
 
-            where, token, directory = WebPushUpload.from_exports(cfg)
+            where, token, directories = WebPushUpload.from_exports(cfg)
             if not settings.get("url") and where:
                 settings["url"] = where
                 settings["_inferred"] = True
             if not settings.get("token") and token:
                 settings["token"] = token
-            # A local export publishes into a directory this machine serves.
+            # Local exports publish into directories this machine serves.
             # There is no script there and nothing to post to: the file is
             # written where the server will hand it out.
-            if not settings.get("directory") and directory:
-                settings["directory"] = directory
+            if not settings.get("directories") and directories:
+                settings["directories"] = directories
                 settings["_inferred"] = True
             # Beside the settings, not beside whatever directory this process
             # started in -- the same rule the exports follow. In a container
             # the second reading points inside the image, where the file is
             # written and nobody serves it.
-            written = str(settings.get("directory") or "").strip()
-            if written and not Path(written).is_absolute():
-                settings["directory"] = str(base / written)
+            written = settings.get("directories") or []
+            if isinstance(written, str):
+                written = [written]
+            settings["directories"] = [
+                one if Path(one).is_absolute() else str(base / one)
+                for one in (str(w).strip() for w in written) if one]
         return build_upload(name, settings)
 
     return upload_runner.build(configured, with_station, progress, records,
