@@ -900,6 +900,17 @@ class CheetahFeed:
                        help="Where skins are looked for. A WeeWX "
                             "installation keeps them in `skins`; that "
                             "directory can be used directly."),
+                Option("charts_path", "Where the chart files are",
+                       placeholder="/json/",
+                       help="The address a browser reaches this station's "
+                            "chart files at, which is where the `json` feed "
+                            "publishes to. A skin that draws its charts from "
+                            "those files has to be told: they are a separate "
+                            "export from these pages, possibly to a different "
+                            "host, so nothing here can work it out. Empty "
+                            "leaves whatever the skin says, which for the "
+                            "bundled one is `/json/` -- what the built-in web "
+                            "server serves a local export named `json` at."),
                 Option("extras", "The skin's own settings", kind="list",
                        advanced=True,
                        help="One `name = value` per line, put into the "
@@ -1358,7 +1369,7 @@ def from_settings(settings: Any, reader: Reader,
         stale_ok=option("stale_ok") is not False,
         language=spoken.code,
         derived=_derived(settings),
-        extras=_settings_block(option("extras")),
+        extras=_extras(option("extras"), option("charts_path")),
         broker=_broker(settings, str(option("live_from") or "")),
     )
     # An explicit choice on the feed's page beats what the skin asked for.
@@ -1448,6 +1459,22 @@ def _display(settings: Any, prefix: str, skin: str,
                 continue
             if value is not None and value != "":
                 found[option.name] = value
+    return found
+
+
+def _extras(block: Any, charts_path: Any) -> dict[str, Any]:
+    """The skin's own settings, plus the ones this page asks for by name.
+
+    `charts_path` is free text in the block as well, and would work there --
+    but nobody found it. It is a fact about where a *different* export
+    landed, which is the operator's to know and not the skin author's, so it
+    gets a field with a label and a help line like every other such fact.
+    A value typed here wins over one written into the skin.
+    """
+    found = _settings_block(block)
+    said = str(charts_path or "").strip()
+    if said:
+        found["charts_path"] = said
     return found
 
 
