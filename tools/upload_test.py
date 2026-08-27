@@ -33,8 +33,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo.uploads import ambient, cwop, weathercloud, windy  # noqa: E402
-from weewx_evo.uploads.progress import Progress  # noqa: E402
+from weewx_evo.uploads import ambient, cwop, weathercloud, windy
+from weewx_evo.uploads.progress import Progress
 
 FAILURES: list[str] = []
 CHECKS = 0
@@ -213,7 +213,7 @@ def against_weewx() -> bool:
     try:
         import weewx
         import weewx.restx
-        import weeutil.weeutil
+        import weewx.units
     except ImportError:
         return False
 
