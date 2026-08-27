@@ -1,96 +1,95 @@
-# Tagesstatistiken
+# Daily summaries
 
-`db/daily.py`. Die `archive_day_*`-Tabellen.
+`db/daily.py`. The `archive_day_*` tables.
 
-> **`archive_day_*` ist ein Cache.** Jede Zahl darin ist aus der
-> `archive`-Tabelle ableitbar, und dieses Modul ist die Ableitung.
+> **`archive_day_*` is a cache.** Every number in it is derivable from the
+> `archive` table, and this module is the derivation.
 
-Diese Eigenschaft ist es wert, geschützt zu werden: sie bedeutet, dass ein
-Absturz, ein verspätetes Paket oder eine korrigierte Kalibrierung eine
-Neuberechnung kosten und sonst nichts.
+That property is worth protecting: it means a crash, a late packet or a
+corrected calibration cost a recomputation and nothing else.
 
-Eine Einschränkung, und sie ist der Grund für die [Live-Tabelle](Database-Live):
-Mit `loop_hilo = true` gehen zusätzlich LOOP-Extreme ein, die **nicht** in der
-Archivtabelle stehen. Ein Neuaufbau aus dem Archiv allein ist deshalb korrekt,
-aber stumpfer. → [Aggregation](Aggregation#was-der-differenztest-prüft)
+One qualification, and it is the reason for the [live
+table](Database-Live): with `loop_hilo = true`, LOOP extremes that are **not**
+in the archive table go in as well. Rebuilding from the archive alone is
+therefore correct, but duller.
+→ [Aggregation](Aggregation#what-the-difference-test-checks)
 
-## Eine Tabelle je Messgröße
+## One table per observation
 
 ```
 archive_day_outTemp      dateTime, min, mintime, max, maxtime,
                          sum, count, wsum, sumtime
-archive_day_wind         … dazu xsum, ysum, dirsumtime,
+archive_day_wind         … plus xsum, ysum, dirsumtime,
                          squaresum, wsquaresum, max_dir
-archive_day__metadata    lastUpdate, Version, Treiberzustand
+archive_day__metadata    lastUpdate, Version, driver state
 ```
 
-`dateTime` ist der Beginn des lokalen Tages (`start_of_archive_day`) und der
-Primärschlüssel. **Tage sind lokale Tage**, nicht Blöcke von 86400 Sekunden.
+`dateTime` is the start of the local day (`start_of_archive_day`) and the
+primary key. **Days are local days**, not blocks of 86400 seconds.
 
-## Die Gewichtung
+## The weighting
 
-Das ist der Teil, der nicht driften darf.
+This is the part that must not drift.
 
 ```python
 def weight_of(record) -> float:
-    """60 * interval — Sekunden, für die dieser Satz steht."""
+    """60 * interval — seconds this record stands for."""
 ```
 
-Jeder Satz trägt `60 * interval` Sekunden Gewicht bei. WeeWX benutzt das ab
-Tagesstatistik-Version 2.0; Version 1.0 gewichtete jeden Satz gleich, was der
-Fehler ist, für dessen Reparatur `patch_sums` existiert.
+Every record contributes `60 * interval` seconds of weight. WeeWX has used this
+since daily-summary version 2.0; version 1.0 weighted every record equally,
+which is the bug `patch_sums` exists to repair.
 
-Genau deshalb mitteln alte und neue Sätze korrekt zusammen, wenn sich das
-Archivintervall einer Anlage geändert hat.
+That is exactly why old and new records average together correctly when an
+installation's archive interval has changed.
 
-`IntervalError` wird geworfen, wenn ein `interval` sich nicht in ein Gewicht
-verwandeln lässt. `build(..., on_bad_interval="skip")` lässt solche Sätze aus,
-statt die ganze Ableitung scheitern zu lassen.
+`IntervalError` is raised when an `interval` cannot be turned into a weight.
+`build(..., on_bad_interval="skip")` leaves such records out instead of letting
+the whole derivation fail.
 
-## Die Funktionen
+## The functions
 
 | | |
 |---|---|
-| `weight_of(record)` | Das Gewicht eines Satzes |
-| `day_accumulator(sod_ts, unit_system, policy)` | Ein Akkumulator über genau einen Archivtag |
-| `build(records, policy, on_bad_interval="skip")` | Archivsätze in je einen Akkumulator pro Tag falten |
-| `read_day(conn, schema, obs_type, sod_ts)` | Eine gespeicherte Tageszeile lesen |
-| `read_records(conn, schema, start, stop)` | Archivsätze in Zeitreihenfolge, ohne die NULL-Spalten |
+| `weight_of(record)` | The weight of a record |
+| `day_accumulator(sod_ts, unit_system, policy)` | An accumulator over exactly one archive day |
+| `build(records, policy, on_bad_interval="skip")` | Fold archive records into one accumulator per day |
+| `read_day(conn, schema, obs_type, sod_ts)` | Read a stored day row |
+| `read_records(conn, schema, start, stop)` | Archive records in time order, without the NULL columns |
 
-### `build` ist ein Generator
+### `build` is a generator
 
-Sätze müssen in aufsteigender Zeitreihenfolge kommen — dieselbe Reihenfolge, die
-der Primärschlüssel der Archivtabelle liefert. Jeder Tag wird ausgegeben, sobald
-er vollständig ist, damit ein Jahrzehnt Daten nicht als Ganzes in den Speicher
-muss.
+Records have to arrive in ascending time order — the same order the archive
+table's primary key delivers. Each day is yielded as soon as it is complete, so
+that a decade of data does not have to go into memory as a whole.
 
-### `read_records` lässt NULLs weg
+### `read_records` leaves NULLs out
 
-Das ist keine Optimierung, sondern korrekt: Der Akkumulator unterscheidet
-„kein Wert" von „Wert `None`". Ein auf alle 134 Spalten aufgefüllter Satz würde
-Tagesstatistik-Zeilen für Sensoren erzeugen, die diese Station nie hatte —
-Zeilen voller Nullen für Messwerte, die es nie gab.
+That is not an optimisation, it is correct: the accumulator distinguishes "no
+value" from "value `None`". A record padded out to all 134 columns would create
+daily-summary rows for sensors this station never had — rows full of zeroes for
+readings that never existed.
 
-## Wann welcher Weg
+## Which route when
 
-| Situation | Was passiert |
+| Situation | What happens |
 |---|---|
-| Ein neuer Archivsatz | `ArchiveStore._apply_daily()` faltet ihn in seinen Tag |
-| Danach, mit `loop_hilo` | `Archiver._sharpen_day()` legt die LOOP-Extreme darüber |
-| `rebuild <von> <bis>` | `rebuild_day()` je betroffenem Tag, dann erneut geschärft |
-| Ein Satz wird ersetzt | `_unapply_daily()`, dann `_apply_daily()` — **nur die Summen** kommen heraus |
+| A new archive record | `ArchiveStore._apply_daily()` folds it into its day |
+| Afterwards, with `loop_hilo` | `Archiver._sharpen_day()` lays the LOOP extremes over it |
+| `rebuild <from> <to>` | `rebuild_day()` for every affected day, then sharpened again |
+| A record is replaced | `_unapply_daily()`, then `_apply_daily()` — **only the sums** come back out |
 
-Extreme sind nicht umkehrbar. Ein Maximum erinnert sich nicht daran, was der
-zweithöchste Wert war. Wer Extreme korrigieren muss, braucht `rebuild_day`.
+Extremes are not reversible. A maximum does not remember what the second-highest
+value was. Anyone who has to correct extremes needs `rebuild_day`.
 
-## Wofür sie im Betrieb gut sind
+## What they are good for in operation
 
-`series.py` beantwortet ein Aggregat aus den Tagesstatistiken, wann immer die
-Spanne auf ganze lokale Tage fällt: ein Monat Tagesmaxima sind 30 Zeilen über
-den Primärschlüssel statt ein Monat Archivsätze.
+`series.py` answers an aggregate from the daily summaries whenever the span
+falls on whole local days: a month of daily maxima is 30 rows via the primary
+key instead of a month of archive records.
 
-Und es sind die *besseren* Extreme — aus den Live-Paketen aufgenommen, also ist
-eine Bö zwischen zwei Archivsätzen darin. → [Series](Series)
+And they are the *better* extremes — taken from the live packets, so a gust
+between two archive records is in there. → [Series](Series)
 
 <!-- covers
 src/weewx_evo/db/daily.py

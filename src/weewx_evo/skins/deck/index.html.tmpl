@@ -146,6 +146,29 @@
       var mqtt_password = "$Extras['mqtt']['mqtt_websockets_password']";
     </script>
     <script src="$get_base_path(path='assets/live-updates.js')" defer></script>
+    ## Whether each card is actually live, and how old the readings are.
+    ## Its own file rather than part of deck.js, because it is only worth
+    ## loading on a station that has a broker at all.
+    <script>
+      window.deckLiveStrings = {
+        live: "$gettext('LIVE')",
+        stale: "$gettext('LIVE')",
+        offline: "$gettext('OFFLINE')",
+        waiting: "…",
+        connecting: "$gettext('connecting')",
+        justNow: "$gettext('just now')",
+        secondsAgo: "$gettext('s ago')",
+        minutesAgo: "$gettext('min ago')",
+        hoursAgo: "$gettext('h ago')",
+        daysAgo: "$gettext('d ago')",
+        liveSince: "$gettext('Updated')",
+        lastSeen: "$gettext('Last live reading')",
+        noBroker: "$gettext('No connection to the live feed.')",
+        waitingFor: "$gettext('Waiting for the first reading.')",
+        neverSent: "$gettext('The station does not publish this reading live.')"
+      };
+    </script>
+    <script src="$get_base_path(path='assets/live-status.js')" defer></script>
     #end if
   </body>
 </html>

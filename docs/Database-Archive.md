@@ -1,26 +1,25 @@
-# Die Archiv-Datenbank
+# The archive database
 
 `db/archive.py`, `db/schema.py`, `db/wview.py`.
 
-Alles hier ist so geschrieben, dass WeeWX 5 die Datei danach wieder aufnehmen
-kann, ohne zu merken, dass jemand anders darin war.
+Everything here is written so that WeeWX 5 can pick the file back up afterwards
+without noticing that anyone else was in it.
 
-## Die drei Regeln
+## The three rules
 
-1. **Spalten kommen aus der Datei, nie aus einer Liste in diesem Code.** Eine
-   Anlage mit Sensoren, von denen wir nie gehört haben, behält sie.
-2. **Messwerte, für die die Datenbank keine Spalte hat, werden fallen gelassen,
-   nicht angelegt.** Eine Spalte anzulegen ändert das Schema, und das ist eine
-   Entscheidung, die ein Mensch trifft — die falsche mischt zwei Sensoren in
-   eine Spalte, die danach niemand mehr trennt.
-3. **Ein weggefallener Messwert wird gemeldet**, einmal je Feld.
+1. **Columns come from the file, never from a list in this code.** An
+   installation with sensors we have never heard of keeps them.
+2. **Readings the database has no column for are dropped, not created.**
+   Creating a column changes the schema, and that is a decision a person makes —
+   the wrong one mixes two sensors into a column nobody can separate afterwards.
+3. **A dropped reading is reported**, once per field.
 
-## `db/schema.py` — das Schema aus der Datei lesen
+## `db/schema.py` — reading the schema from the file
 
-WeeWX liefert Schemadateien aus, aber die setzen nur eine **neue** Datenbank
-auf. Danach lebt das Schema in der Datei: Anlagen fügen Spalten für ihre eigenen
-Sensoren hinzu, und eine Erweiterung kann jederzeit mehr hinzufügen. Alles, was
-eine echte Anlage liest, muss die Datei fragen, nicht die ausgelieferte Liste.
+WeeWX ships schema files, but those only set up a **new** database. After that
+the schema lives in the file: installations add columns for sensors of their
+own, and an extension can add more at any time. Anything reading a real
+installation has to ask the file, not the shipped list.
 
 ```python
 schema = db.schema.read(conn, table_name="archive")
@@ -30,38 +29,38 @@ schema = db.schema.read(conn, table_name="archive")
 @dataclass
 class Schema:
     table_name: str
-    columns: tuple[str, ...]          # die Spalten der archive-Tabelle
+    columns: tuple[str, ...]          # the columns of the archive table
     day_types: dict[str, str]         # obs_type -> scalar | vector
     metadata: dict[str, str]
 ```
 
 | | |
 |---|---|
-| `version()` | Die Version der Tagesstatistiken. `4.0` ist aktuell |
+| `version()` | The daily-summary version. `4.0` is current |
 | `has_column(name)` | |
 
-`DAY_COLUMNS` sagt, welche Spalten eine `archive_day_*`-Tabelle hat, je nachdem
-ob sie skalar oder vektoriell ist. → [Daily-Summaries](Daily-Summaries)
+`DAY_COLUMNS` says which columns an `archive_day_*` table has, depending on
+whether it is scalar or vector. → [Daily-Summaries](Daily-Summaries)
 
-### Die Versionsprüfung
+### The version check
 
-`ArchiveStore._check_version()` **verweigert** eine Datenbank, deren
-Tagesstatistiken bekannt fehlerhafte Gewichte tragen:
+`ArchiveStore._check_version()` **refuses** a database whose daily summaries
+carry known-bad weights:
 
-- WeeWX 4.2.0 las Version-2-Summen als Version 1.
-- Die Reparatur in 4.3.0 ließ `dirsumtime` ungewichtet.
+- WeeWX 4.2.0 read version-2 sums as version 1.
+- The repair in 4.3.0 left `dirsumtime` unweighted.
 
-Beides ist behebbar, aber von WeeWX, nicht von hier: `weectl database
-rebuild-daily`. Eine solche Datei stillschweigend weiterzuschreiben hieße,
-falsche Gewichte mit richtigen zu mischen.
+Both are fixable, but by WeeWX, not from here: `weectl database
+rebuild-daily`. Carrying on writing to such a file silently would mean mixing
+wrong weights with right ones.
 
-## `db/wview.py` — das Startschema
+## `db/wview.py` — the starting schema
 
-Das Schema, mit dem WeeWX eine neue Datenbank aufsetzt, generiert aus
-`weewx/schemas/wview_extended.py` (WeeWX 5.5.0), 113 Beobachtungsspalten.
+The schema WeeWX sets a new database up with, generated from
+`weewx/schemas/wview_extended.py` (WeeWX 5.5.0), 113 observation columns.
 
-Es wird **nur** benutzt, um eine Datenbank anzulegen, die noch nicht existiert.
-Sobald eine Datei da ist, kommt ihr Schema aus der Datei.
+It is used **only** to create a database that does not exist yet. Once a file is
+there, its schema comes from the file.
 
 ## `ArchiveStore`
 
@@ -71,89 +70,88 @@ with ArchiveStore("data/weewx.sdb", table_name="archive",
     store.add_record(record)
 ```
 
-### Lesen
+### Reading
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
 | `last_timestamp()` | |
 | `count()` | |
 | `exists(ts)` | |
-| `record(ts)` | Ein Satz |
-| `days()` | Jeder Archivtag mit Sätzen, in Reihenfolge |
-| `get_meta(name)` | Aus der `archive_day__metadata`-Tabelle |
+| `record(ts)` | One record |
+| `days()` | Every archive day with records, in order |
+| `get_meta(name)` | From the `archive_day__metadata` table |
 
-### Schreiben
+### Writing
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `add_record(record, replace=False, update_daily=True)` | Einen Satz schreiben und in die Tagesstatistiken einfalten. `False`, wenn schon einer für diesen Zeitstempel da war |
-| `add_records(records, replace=False)` | Viele Sätze, wobei die Tagesstatistiken **je Tag einmal** angefasst werden |
+| `add_record(record, replace=False, update_daily=True)` | Write a record and fold it into the daily summaries. `False` if one for that timestamp was already there |
+| `add_records(records, replace=False)` | Many records, touching the daily summaries **once per day** |
 | `set_meta(name, value)` | |
 
-`add_records` ist der Grund, warum ein Aufholen über Monate erträglich ist:
-WeeWX liest und schreibt sämtliche Tagesstatistik-Tabellen eines Tages für
-**jeden einzelnen** Satz neu. Bei einem Satz alle fünf Minuten fällt das nicht
-auf; bei einem Catch-up über ein Jahr schon.
+`add_records` is why catching up over months is bearable: WeeWX reads and
+rewrites every daily-summary table of a day for **each individual** record. At
+one record every five minutes you do not notice; on a catch-up over a year you
+do.
 
-`set_meta` ist auch der Ort, an dem Treiber ihren Zustand ablegen: der
-Ecowitt-Treiber hält seine Konsolenliste hier, unter demselben Schlüssel, unter
-dem WeeWX sie schreibt — eine geteilte Datenbank behält dadurch dieselbe
-Station.
-→ [Drivers](Drivers#treiber-zustand)
+`set_meta` is also where drivers put their state: the Ecowitt driver keeps its
+console list here, under the same key WeeWX writes it under — which is how a
+shared database keeps the same station.
+→ [Drivers](Drivers#driver-state)
 
-### Spalten
+### Columns
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `homeless()` | Felder, die mangels Spalte fallen gelassen wurden, und wie oft — seit Prozessstart |
-| `add_column(name, sql_type="REAL")` | Einem Messwert einen Platz geben. `False`, wenn er schon einen hat |
+| `homeless()` | Fields dropped for want of a column, and how often — since process start |
+| `add_column(name, sql_type="REAL")` | Give a reading somewhere to live. `False` if it already has one |
 
-`_note_homeless()` sagt **einmal je Feld**, dass ein Messwert nirgendwo hin kann.
-Einmal, nicht bei jedem Paket: ein Log, das alle acht Sekunden dieselbe Zeile
-schreibt, wird zu einem Log, das niemand liest.
+`_note_homeless()` says **once per field** that a reading has nowhere to go.
+Once, not on every packet: a log writing the same line every eight seconds
+becomes a log nobody reads.
 
-WeeWX liest sein Schema aus der Datei, eine hier angelegte Spalte nimmt es also
-von selbst auf. **Vorher sichern.**
+WeeWX reads its schema from the file, so it picks up a column created here on
+its own. **Back up first.**
 
 ```bash
-weewx-evo columns          # was fehlt
-weewx-evo columns --add    # anlegen
+weewx-evo columns          # what is missing
+weewx-evo columns --add    # create them
 ```
 
-### Tagesstatistiken
+### Daily summaries
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `_apply_daily(record)` | Einen Satz in seinen Tag einfalten |
-| `_unapply_daily(record)` | Seinen Beitrag wieder herausnehmen |
-| `_load_day(sod, unit_system)` | Der Akkumulator eines Tages, mit jedem Typ vorbereitet, den die Datenbank kennt |
+| `_apply_daily(record)` | Fold a record into its day |
+| `_unapply_daily(record)` | Take its contribution back out |
+| `_load_day(sod, unit_system)` | A day's accumulator, prepared with every type the database knows |
 | `_store_day(sod, accum)` | |
-| `rebuild_day(sod)` | Einen Tag aus der Archivtabelle neu rechnen |
+| `rebuild_day(sod)` | Recompute a day from the archive table |
 
-**`_unapply_daily` nimmt nur die Summen heraus.** Extreme sind nicht umkehrbar —
-ein Maximum erinnert sich nicht daran, was der zweithöchste Wert war. Wer
-Extreme korrigieren will, braucht `rebuild_day`.
+**`_unapply_daily` takes only the sums back out.** Extremes are not reversible —
+a maximum does not remember what the second-highest value was. Anyone wanting to
+correct extremes needs `rebuild_day`.
 
-`_load_day` bereitet Typen ohne gespeicherte Zeile **leer** vor, statt sie
-wegzulassen. Das ist Absicht: WeeWX schreibt für jede Größe eine Zeile, die es
-kennt, und eine fehlende Zeile wäre ein Unterschied, den WeeWX bemerken würde.
+`_load_day` prepares types without a stored row as **empty** rather than leaving
+them out. That is deliberate: WeeWX writes a row for every observation it knows,
+and a missing row would be a difference WeeWX would notice.
 
-`rebuild_day` ist, was eine Korrektur möglich macht — und was jedes LOOP-Extrem
-dieses Tages stumpf macht, weil die Pakete nicht mehr eingerechnet werden. Der
-Archiver schärft danach aus der Live-Tabelle nach, soweit sie reicht.
+`rebuild_day` is what makes a correction possible — and what dulls every LOOP
+extreme of that day, because the packets are no longer counted in. The archiver
+sharpens afterwards from the live table, as far as it reaches.
 → [Archiver](Archiver), [Daily-Summaries](Daily-Summaries)
 
-## Prüfen, dass nichts verrutscht
+## Checking that nothing slips
 
 ```bash
-python tools/difftest.py reference/weewx.sdb    # die Arithmetik
-python tools/roundtrip.py reference/weewx.sdb   # das Schreiben
+python tools/difftest.py reference/weewx.sdb    # the arithmetic
+python tools/roundtrip.py reference/weewx.sdb   # the writing
 ```
 
-`roundtrip.py` nimmt eine Kopie einer echten Datenbank, löscht die letzten N
-Tage daraus — Archivsätze und Tagesstatistiken — und schreibt sie über den
-normalen Schreibpfad zurück, Satz für Satz, genau wie der Archiver es bei einem
-Catch-up täte. Verglichen wird danach jede Zeile jeder Tabelle.
+`roundtrip.py` takes a copy of a real database, deletes the last N days from it
+— archive records and daily summaries — and writes them back over the normal
+write path, record by record, exactly as the archiver would on a catch-up. Every
+row of every table is compared afterwards.
 
 → [Testing](Testing)
 

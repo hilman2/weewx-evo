@@ -1,30 +1,29 @@
 # Archiver
 
-`archiver.py` ist der Dienst, der WeeWX' `StdArchive` ersetzt.
+`archiver.py` is the service that replaces WeeWX's `StdArchive`.
 
-Der Unterschied ist nicht, *was* er rechnet, sondern **woher er es nimmt**.
-WeeWX akkumuliert im Speicher, während Pakete ankommen, und schreibt das
-Ergebnis einmal am Intervallende. Ein Neustart mittendrin verliert das Intervall,
-und ein verspätetes Paket hat nirgendwo hin. Hier liegen die Pakete schon in der
-Live-Tabelle, also ist ein Archivsatz eine Funktion einer Zeitspanne — und diese
-Funktion kann jederzeit, beliebig oft und in beliebiger Reihenfolge ausgeführt
-werden, mit demselben Ergebnis.
+The difference is not *what* it computes, but **where it takes it from**. WeeWX
+accumulates in memory as packets arrive and writes the result once at the end of
+the interval. A restart in the middle loses the interval, and a late packet has
+nowhere to go. Here the packets are already in the live table, so an archive
+record is a function of a timespan — and that function can be run at any time,
+any number of times, in any order, with the same result.
 
 ## `Built`
 
-Ein ausgerechnetes Intervall, bevor es geschrieben wird.
+A computed interval, before it is written.
 
-| Feld | Bedeutung |
+| Field | What it means |
 |---|---|
-| `stop` | Ende des Intervalls, der Zeitstempel des Satzes |
-| `seconds` | Länge des Intervalls |
-| `record` | Der Archivsatz als `dict` |
-| `accumulator` | Der Akkumulator dahinter, für das Schärfen der Tageswerte |
-| `packets` | Wie viele Pakete hineingeflossen sind |
-| `from_hardware` | Ob die Konsole selbst einen Archivsatz geliefert hat |
-| `provenance` | Welches Feld von welcher Quelle kam → [Multiple-Sources](Multiple-Sources) |
+| `stop` | End of the interval, the record's timestamp |
+| `seconds` | Length of the interval |
+| `record` | The archive record, as a `dict` |
+| `accumulator` | The accumulator behind it, for sharpening the day's values |
+| `packets` | How many packets went into it |
+| `from_hardware` | Whether the console delivered an archive record itself |
+| `provenance` | Which field came from which source → [Multiple-Sources](Multiple-Sources) |
 
-## Der Weg eines Intervalls
+## The path of an interval
 
 ```python
 archiver = Archiver(live, archive, interval_seconds=300,
@@ -35,50 +34,50 @@ archiver.store(built)
 
 ### `build(stop, seconds=None)`
 
-1. Pakete aus `(stop - seconds, stop]` holen
-2. Über `sources.apply()` je Feld die gewinnende Quelle bestimmen
-3. Einen `Accumulator` füttern
-4. Einen Satz herausziehen, `derive` anwenden
+1. Fetch the packets in `(stop - seconds, stop]`
+2. Determine the winning source per field via `sources.apply()`
+3. Feed an `Accumulator`
+4. Pull out a record, apply `derive`
 
-Gibt `None` zurück, wenn kein Paket in das Intervall fiel. **Eine Lücke in den
-Daten ist eine Lücke im Archiv** — einen Satz dafür zu erfinden wäre eine
-Behauptung über Wetter, das niemand gemessen hat.
+Returns `None` if no packet fell into the interval. **A gap in the data is a gap
+in the archive** — inventing a record for it would be a claim about weather
+nobody measured.
 
 ### `store(built, replace=False)`
 
-Die Reihenfolge zählt:
+The order matters:
 
-1. Der Satz geht **zuerst** hinein und trägt die Summen.
-2. Der Akkumulator wird **danach** eingefaltet und rührt nur Extreme an.
+1. The record goes in **first** and carries the sums.
+2. The accumulator is folded in **afterwards** and touches only extremes.
 
-Umgekehrt käme jede Summe doppelt.
+The other way round, every sum would arrive twice.
 
 ### `_sharpen_day(built)`
 
-Das ist WeeWX' `_updateHiLo`. Nur Extreme bewegen sich: die Summen des
-Akkumulators haben den Tag schon über den Archivsatz erreicht.
+This is WeeWX's `_updateHiLo`. Only extremes move: the accumulator's sums have
+already reached the day by way of the archive record.
 
-Damit landen die LOOP-Extreme in `archive_day_*` — eine Bö zwischen zwei
-Archivsätzen bleibt erhalten. Abschaltbar über `loop_hilo = false`, dann sind
-die Tagesextreme exakt aus dem Archiv allein reproduzierbar.
+That puts the LOOP extremes into `archive_day_*` — a gust between two archive
+records is kept. Can be turned off with `loop_hilo = false`, and then the daily
+extremes are exactly reproducible from the archive alone.
 
-## Betriebsarten
+## Modes of operation
 
 ### `process_due(now=None, grace=15, replace=False)`
 
-Baut und speichert jedes Intervall, das geschlossen hat. Gibt zurück, wie viele.
+Builds and stores every interval that has closed. Returns how many.
 
-**Jederzeit aufrufbar und jederzeit unterbrechbar**: ein Intervall wird erst aus
-`pending` gestrichen, wenn sein Satz in der Datenbank steht.
+**Callable at any time and interruptible at any time**: an interval is only
+struck from `pending` once its record is in the database.
 
-`grace` hält ein Intervall ein paar Sekunden nach seinem Ende zurück, damit ein
-bloß langsames Paket nicht dazu führt, dass der Satz zweimal gerechnet wird.
+`grace` holds an interval back for a few seconds after it ends, so that a merely
+slow packet does not cause the record to be computed twice.
 
 ### `catch_up(since=None, until=None, replace=False)`
 
-Baut jedes Intervall, das die Live-Tabelle abdeckt. Beim Start, nach einer
-Ausfallzeit und im Differenztest. Anders als `process_due` ignoriert das die
-`pending`-Liste und arbeitet direkt an den Paketen.
+Builds every interval the live table covers. At startup, after an outage, and in
+the difference test. Unlike `process_due`, this ignores the `pending` list and
+works straight off the packets.
 
 ```bash
 weewx-evo catchup
@@ -86,49 +85,48 @@ weewx-evo catchup
 
 ### `rebuild(start, stop)`
 
-Rechnet jedes Intervall in `(start, stop]` neu und ersetzt, was da ist.
-Anschließend werden die Tagesstatistiken jedes betroffenen Tages aus der
-Archivtabelle neu aufgebaut und danach wieder aus den Paketen geschärft.
+Recomputes every interval in `(start, stop]` and replaces what is there.
+Afterwards the daily summaries of every affected day are rebuilt from the
+archive table and then sharpened from the packets again.
 
 ```bash
-weewx-evo rebuild <von> <bis>
+weewx-evo rebuild <from> <to>
 ```
 
-Das ist, was eine Korrektur möglich macht: Kalibrierung ändern, neu bauen, und
-die Statistik folgt. Voraussetzung ist, dass die Rohpakete noch in der Retention
-liegen. → [Database-Live](Database-Live)
+This is what makes a correction possible: change the calibration, rebuild, and
+the statistics follow. The prerequisite is that the raw packets are still within
+retention. → [Database-Live](Database-Live)
 
 ### `run(grace=15, poll=5.0, stop_when=None)`
 
-Die Schleife. Eine schlichte Sleep-Schleife, kein Scheduler: die Arbeit ist
-idempotent und die Intervallgrenzen kommen aus den Paketen, also ändert ein
-Tick, der zu spät kommt oder ausfällt, nichts.
+The loop. A plain sleep loop, no scheduler: the work is idempotent and the
+interval boundaries come from the packets, so a tick arriving late or not at all
+changes nothing.
 
-## Was der Archiver sonst noch anstößt
+## What else the archiver sets off
 
-Nach jedem geschriebenen Satz:
+After every record written:
 
-- `feedrunner.Runner.record_written()` — setzt ein Flag und kehrt zurück.
+- `feedrunner.Runner.record_written()` — sets a flag and returns.
   → [Feeds](Feeds)
-- `exports.runner.Runner.record_written()` — dito. → [Exports](Exports)
+- `exports.runner.Runner.record_written()` — likewise. → [Exports](Exports)
 
-Beides setzt nur Flags. **Nichts an einem Upload oder einem Diagramm passiert
-auf dem Thread des Archivers**, weil das eine Sekunde je Intervall wäre, in der
-er nicht archiviert.
+Both only set flags. **Nothing about an upload or a plot happens on the
+archiver's thread**, because that would be a second per interval in which it is
+not archiving.
 
-Außerdem läuft hier die Retention: `LiveStore.prune()` wirft Pakete weg, die
-älter sind als die Aufbewahrungszeit, und schreibt sie vorher als gzip-NDJSON
-weg, wenn `spool` gesetzt ist.
+Retention runs here too: `LiveStore.prune()` throws away packets older than the
+retention period, writing them out as gzip NDJSON first if `spool` is set.
 
-> Retention gehört zum **Archiver**, nicht zum Listener. Pakete dürfen erst
-> fallen, wenn sie in einem Satz stehen, und nur diese Seite weiß das.
+> Retention belongs to the **archiver**, not to the listener. Packets may only
+> be dropped once they are in a record, and only that side knows.
 
-## Ein Archivsatz von der Hardware
+## An archive record from the hardware
 
-Manche Konsolen liefern selbst Archivsätze (`kind = "archive"`). Dann wird der
-Akkumulator nicht verworfen, sondern über `Accumulator.augment()` gelegt: der
-Satz der Konsole behält seine hardwaregerechneten Felder und gewinnt die dazu,
-die sie nicht liefert. `from_hardware` merkt sich, dass es so war.
+Some consoles deliver archive records themselves (`kind = "archive"`). The
+accumulator is then not discarded but laid over it via `Accumulator.augment()`:
+the console's record keeps its hardware-computed fields and gains the ones it
+does not deliver. `from_hardware` remembers that this is what happened.
 
 <!-- covers
 src/weewx_evo/archiver.py

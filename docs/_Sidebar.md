@@ -1,48 +1,47 @@
 **[weewx-evo](Home)**
 
-**Einstieg**
+**Start here**
 - [Getting Started](Getting-Started)
 - [Architecture](Architecture)
 - [Glossary](Glossary)
 
-**Aufnahme**
+**Ingest**
 - [Listener](Ingest-Listener)
 - [Drivers](Drivers)
 - [Ecowitt](Driver-Ecowitt)
-- [Plugins](Plugins)
 - [Multiple Sources](Multiple-Sources)
 
-**Verarbeitung**
-- [Live-Datenbank](Database-Live)
+**Processing**
+- [Live database](Database-Live)
 - [Archiver](Archiver)
 - [Aggregation](Aggregation)
-- [Archiv-Datenbank](Database-Archive)
-- [Tagesstatistiken](Daily-Summaries)
-- [Abgeleitete Werte](Derived-Readings)
+- [Archive database](Database-Archive)
+- [Daily summaries](Daily-Summaries)
+- [Derived readings](Derived-Readings)
 
-**Ausgabe**
-- [Zeitreihen](Series)
-- [Einheiten](Units)
-- [Sonne](Sun)
-- [Diagramme](Plots)
+**Output**
+- [Series](Series)
+- [Units](Units)
+- [Sun](Sun)
+- [Plots](Plots)
 - [Feeds](Feeds)
 - [Exports](Exports)
 - [Uploads](Uploads)
 - [MQTT](MQTT)
-- [Vorhersage](Forecast)
-- [Web-Server](Web-Server)
+- [Forecast](Forecast)
+- [Web server](Web-Server)
 
-**Betrieb**
-- [Konfiguration](Configuration)
-- [Einstellungen A–Z](Settings-Reference)
+**Operation**
+- [Configuration](Configuration)
+- [Settings A–Z](Settings-Reference)
 - [CLI](CLI-Reference)
-- [Admin-Seite](Admin-Page)
-- [Sicherheit](Security)
+- [Admin page](Admin-Page)
+- [Security](Security)
 - [Deployment](Deployment)
 - [Testing](Testing)
-- [WeeWX-Kompatibilität](WeeWX-Compatibility)
-- [Mitarbeiten](Contributing)
+- [WeeWX compatibility](WeeWX-Compatibility)
+- [Contributing](Contributing)
 
-**Register**
-- [Datei-Index](Index)
-- [API-Index](API-Index)
+**Registers**
+- [File index](Index)
+- [API index](API-Index)

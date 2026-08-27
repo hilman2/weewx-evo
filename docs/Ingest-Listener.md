@@ -1,18 +1,17 @@
 # Listener
 
-`ingest/listener.py`. Der Listener, hinter dem jeder Push-Treiber sitzt.
+`ingest/listener.py`. The listener every push driver sits behind.
 
-Ein Prozess nimmt HTTP und UDP an, gibt die Bytes an einen Treiber und schreibt
-die zurückkommenden Pakete in die Live-Tabelle. Treiber öffnen keine Sockets,
-prüfen keine Tokens und fassen die Datenbank nicht an — das ist der ganze Punkt:
-diese drei sind die Stellen, an denen Push-Treiber schiefgehen, und sie einmal
-zu machen heißt, sie einmal zu machen.
+One process accepts HTTP and UDP, hands the bytes to a driver and writes the
+packets that come back into the live table. Drivers open no sockets, check no
+tokens and never touch the database — that is the whole point: those three are
+where push drivers go wrong, and doing them once means doing them once.
 
 ## `Ingest`
 
-Was der Listener mit einem Upload macht, sobald er einen hat. Getrennt von den
-Transporten, damit dasselbe Objekt HTTP, UDP und die Tests bedient — und damit
-ein Pull-Treiber direkt dagegen geschrieben werden kann.
+What the listener does with an upload once it has one. Separate from the
+transports, so that the same object serves HTTP, UDP and the tests — and so
+that a pull driver can be written straight against it.
 
 ```python
 ingest = Ingest(store, token="…", default_driver="ecowitt",
@@ -20,85 +19,84 @@ ingest = Ingest(store, token="…", default_driver="ecowitt",
 stored, reason, response = ingest.submit(body, path, peer)
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `authorised(path)` | Ob ein Pfad das Token trägt |
-| `driver_for(path)` | Den Treiber aus dem Pfad wählen |
-| `submit(body, path, peer)` | Einen Upload annehmen. Gibt `(gespeicherte Pakete, Grund, Antwort)` |
-| `status()` | Zahlen für `/status` |
+| `authorised(path)` | Whether a path carries the token |
+| `driver_for(path)` | Pick the driver from the path |
+| `submit(body, path, peer)` | Accept an upload. Returns `(packets stored, reason, response)` |
+| `status()` | Numbers for `/status` |
 
-Die **Antwort kommt vom Treiber**. Was ein Gerät hören muss, ist Teil seines
-Protokolls — ein Ecowitt-Gateway erwartet `{"errcode":"0","errmsg":"ok"}` und
-wiederholt sonst.
+The **response comes from the driver**. What a device has to hear is part of its
+protocol — an Ecowitt gateway expects `{"errcode":"0","errmsg":"ok"}` and
+retries otherwise.
 
-`_redacted()` speichert den Upload, wie er ankam, mit dem, was der Treiber für
-geheim hält, entfernt. **Redaktion ist Protokollwissen**: nur der Treiber weiß,
-dass Ecowitts `PASSKEY` die Station identifiziert.
+`_redacted()` stores the upload as it arrived, with whatever the driver deems
+secret taken out. **Redaction is protocol knowledge**: only the driver knows
+that Ecowitt's `PASSKEY` identifies the station.
 
-## Die Pfade
+## The paths
 
-Der Treiber wird aus dem Pfad gewählt:
+The driver is picked from the path:
 
 ```
-POST /<token>/               → der Default-Treiber
-POST /<token>/ecowitt/       → dieser Treiber
-POST /<token>/json/          → der Umschlag-Treiber
-GET  /<token>/?ID=…&…        → Wunderground-Protokoll, Messwerte im Query-String
+POST /<token>/               → the default driver
+POST /<token>/ecowitt/       → that driver
+POST /<token>/json/          → the envelope driver
+GET  /<token>/?ID=…&…        → Wunderground protocol, readings in the query string
 ```
 
-Diagnose, alles hinter dem Token:
+Diagnostics, all behind the token:
 
-| Pfad | Was |
+| Path | What |
 |---|---|
-| `GET /<token>/live` | Die Statusseite |
-| `GET /<token>/` | Dasselbe |
-| `GET /<token>/status` | JSON: Zähler, Treiber, Grenzen |
-| `GET /<token>/recent` | JSON: die letzten Pakete, für die Seite |
-| `GET /` (ohne Token) | `weewx-evo`, sonst nichts |
+| `GET /<token>/live` | The status page |
+| `GET /<token>/` | The same |
+| `GET /<token>/status` | JSON: counters, drivers, limits |
+| `GET /<token>/recent` | JSON: the last packets, for the page |
+| `GET /` (no token) | `weewx-evo`, nothing else |
 
-Die Diagnoseseiten sitzen auf dem Upload-Pfad, weil dieser Pfad das Einzige ist,
-was Fremde draußen hält — eine Seite, die zeigt, was eine Station misst, soll
-nicht leichter erreichbar sein als der Endpunkt, der es aufzeichnet.
+The diagnostic pages sit on the upload path, because that path is the only thing
+keeping strangers out — a page showing what a station is measuring should not be
+easier to reach than the endpoint that records it.
 
-## Warum das Token im Pfad steht
+## Why the token is in the path
 
-Hardware kann keine Header senden. Eine Ecowitt-Konsole hat ein Feld für Host,
-Port und Pfad — mehr nicht. Also ist ein Pfad, den niemand erraten kann, die
-praktische Antwort.
+Hardware cannot send headers. An Ecowitt console has a field for host, port and
+path — and nothing more. So a path nobody can guess is the practical answer.
 
-Damit ist das Token **erratbar** im Sinne von: jemand kann es versuchen. Deshalb
-die enge Grenze auf Fehlversuche. → [Security](Security)
+That makes the token **guessable** in the sense that someone can try. Hence the
+tight limit on failed attempts. → [Security](Security)
 
-## Grenzen des Kerns
+## Limits of the core
 
 | | |
 |---|---|
-| `MAX_BODY` | 1 MiB. Mehr wird nicht gelesen |
-| `MAX_RAW` | 8 KiB. So viel vom Rohupload wird aufbewahrt |
+| `MAX_BODY` | 1 MiB. Nothing beyond that is read |
+| `MAX_RAW` | 8 KiB. That much of the raw upload is kept |
 
-## Die Transporte
+## The transports
 
 ### `HttpListener`
 
-`ThreadingHTTPServer`. Eine langsame Konsole darf die anderen nicht blockieren.
+`ThreadingHTTPServer`. One slow console must not block the others.
 
 ```python
 listener = HttpListener(ingest, host="0.0.0.0", port=8000)
-listener.start()      # Thread
+listener.start()      # thread
 listener.stop()
 ```
 
 ### `UdpListener`
 
-Für Hardware, die broadcastet statt zu posten.
+For hardware that broadcasts instead of posting.
 
 ```python
 UdpListener(ingest, host="0.0.0.0", port=8001, driver="json")
 ```
 
-Ein Datagramm trägt keinen Pfad, also gibt es kein Token darin: **der Port
-selbst ist die Zugangskontrolle**, und der Treiber ist fest eingestellt. `0`
-schaltet es ab, und das ist der Default.
+A datagram carries no path, so there is no token in it: **the port itself is the
+access control**, and the driver is fixed. `0` turns it off, and that is the
+default.
 
 ### `push()`
 
@@ -106,50 +104,49 @@ schaltet es ab, und das ist der Default.
 push(packets, host="127.0.0.1", port=8000, token="…")
 ```
 
-So liefert ein **Pull**-Treiber ab. Über Loopback zu gehen statt direkt in die
-Datenbank zu schreiben, ist Absicht: es kostet eine Millisekunde und kauft
-Prozessisolierung. Ein Treiber, der sich aufhängt, hängt sich in seinem eigenen
-Prozess auf.
+This is how a **pull** driver delivers. Going over loopback instead of writing
+straight into the database is deliberate: it costs a millisecond and buys
+process isolation. A driver that hangs, hangs in its own process.
 
-## Reihenfolge der Prüfungen
+## Order of the checks
 
 ```
-1. _permitted()   Ist der Peer in einem Netz, das wir überhaupt beantworten?
-                  Nein → 404. Nicht "falsches Netz": das würde verraten,
-                  dass es hier etwas gibt.
-2. Rate-Limit     Zu viele Anfragen → 429 mit Retry-After.
-3. _has_token()   Falsches Token → 404 und ein Fehlversuch verbucht.
-4. driver_for()   Treiber wählen.
+1. _permitted()   Is the peer on a network we answer at all?
+                  No → 404. Not "wrong network": that would give away
+                  that there is something here.
+2. Rate limit     Too many requests → 429 with Retry-After.
+3. _has_token()   Wrong token → 404 and a failed attempt recorded.
+4. driver_for()   Pick the driver.
 5. driver.packets(body, meta)
 6. store.add_all(packets)
 ```
 
-**Prüfen kostet nichts, nur ein echter Fehlversuch zahlt.** `_has_token()` prüft
-und zählt an **einer** Stelle. Das war vorher getrennt — `submit` zählte ein
-falsches Token, die Seiten nicht — und `tools/ratelimit_test.py` hält es jetzt
-fest. Ohne diese Trennung hätte sich eine Konsole nach fünf **gültigen** Uploads
-selbst ausgesperrt.
+**Checking costs nothing, only a real failure pays.** `_has_token()` checks and
+counts in **one** place. That used to be split — `submit` counted a wrong token,
+the pages did not — and `tools/ratelimit_test.py` now holds it in place. Without
+that separation a console would have locked itself out after five **valid**
+uploads.
 
 → [Security](Security)
 
-## Die Statusseite
+## The status page
 
-`ingest/statuspage.py`. Eine Seite, die zeigt, was gerade ankommt.
+`ingest/statuspage.py`. A page showing what is arriving right now.
 
-Sie existiert für genau eine Frage, die man beim Aufbau immer wieder stellt:
-*kommt was an?* Sie sonst zu beantworten heißt SSH, `docker exec` und eine
-handgeschriebene SQL-Abfrage.
+It exists for exactly one question, the one you keep asking while setting things
+up: *is anything coming in?* Answering it otherwise means SSH, `docker exec` and
+a hand-written SQL query.
 
 | | |
 |---|---|
-| `recent(store, ingest, limit=12)` | Die letzten Pakete und wie es läuft |
-| `render(title)` | Die Seite. Eine Datei, keine Abhängigkeiten |
-| `short_source(source)` | Quellnamen auf 8 Zeichen kürzen |
+| `recent(store, ingest, limit=12)` | The last packets and how it is going |
+| `render(title)` | The page. One file, no dependencies |
+| `short_source(source)` | Shorten source names to 8 characters |
 
-`HEADLINE` legt fest, was oben groß steht: Außentemperatur, Feuchte, Barometer,
-Wind, Regen.
+`HEADLINE` sets what is shown large at the top: outside temperature, humidity,
+barometer, wind, rain.
 
-## Konfiguration
+## Configuration
 
 → [Settings-Reference](Settings-Reference#listener)
 

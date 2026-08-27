@@ -1,158 +1,153 @@
-# Glossar
+# Glossary
 
-Begriffe, wie sie in diesem Projekt gemeint sind. Wo WeeWX einen anderen Namen
-für dasselbe hat, steht er dabei.
+Terms as they are meant in this project. Where WeeWX has a different name for
+the same thing, it is given alongside.
 
 ---
 
-**Accumulator** — `aggregate.Accumulator`. Statistiken für eine Menge von
-Messgrößen über **eine** Zeitspanne. Rohwerte rein, ein Archivsatz raus.
-Transkription von `weewx.accum`. → [Aggregation](Aggregation)
+**Accumulator** — `aggregate.Accumulator`. Statistics for a set of observations
+over **one** timespan. Raw values in, one archive record out. A transcription
+of `weewx.accum`. → [Aggregation](Aggregation)
 
-**Aggregat** — Eine Zahl für eine Spanne: `avg`, `min`, `max`, `sum`, `count`,
-`first`, `last`, `rms`, `vecavg`, `vecdir` und die Zeitvarianten davon.
+**Aggregate** — One number for a span: `avg`, `min`, `max`, `sum`, `count`,
+`first`, `last`, `rms`, `vecavg`, `vecdir` and the time variants of those.
 → [Series](Series)
 
-**Archivsatz** (*archive record*) — Eine Zeile in der `archive`-Tabelle. Deckt
-`interval` Minuten ab und ist auf das **Ende** dieser Spanne gestempelt.
-
-**`archive_day_*`** — Die Tagesstatistiken. Eine Tabelle je Messgröße. **Ein
-Cache**: alles darin ist aus `archive` ableitbar.
+**`archive_day_*`** — The daily summaries. One table per observation. **A
+cache**: everything in it is derivable from `archive`.
 → [Daily-Summaries](Daily-Summaries)
 
-**Archiver** — Der Dienst, der Archivsätze aus Zeitspannen baut. Ersetzt WeeWX'
-`StdArchive`. → [Archiver](Archiver)
+**Archive record** — A row in the `archive` table. Covers `interval` minutes
+and is stamped with the **end** of that span.
 
-**Catch-up** — Jedes Intervall bauen, das die Live-Tabelle abdeckt.
+**Archiver** — The service that builds archive records out of timespans.
+Replaces WeeWX's `StdArchive`. → [Archiver](Archiver)
+
+**Catch-up** — Build every interval the live table covers.
 `weewx-evo catchup`.
 
-**Deriver** — Was Taupunkt, Windchill und den Regen-Delta ergänzt. Ersetzt
-WeeWX' `StdWXCalculate`. → [Derived-Readings](Derived-Readings)
-
-**`dirsumtime`** — Gewicht, das nur für Windmessungen zählt, die eine Richtung
-hatten. Eine Windstille ohne Fahne trägt keine Richtung bei.
-
-**Einheitengruppe** (*unit group*) — `group_temperature`, `group_pressure`,
-`group_rain` und so weiter. Welche Einheit eine Gruppe hat, hängt vom System ab.
-→ [Units](Units)
-
-**Einheitensystem** — `US` (1), `METRIC` (16), `METRICWX` (17). Steht je Satz in
-`usUnits`.
-
-**Export** — **Wie** etwas woandershin kommt: FTP, rsync, eine Kopie. Nimmt ein
-Verzeichnis. → [Exports](Exports)
-
-**Feed** — **Was** erzeugt wird: eine CSV, ein JSON-Dokument, eine Webseite, ein
-Monatsbericht. Schreibt in ein Verzeichnis. → [Feeds](Feeds)
-
-**Fingerprint** — Größe, Zeitstempel und (bei kleinen Dateien) ein Hash. Womit
-ein FTP-Export entscheidet, ob eine Datei schon gesendet wurde.
-→ [Exports](Exports#nur-senden-was-sich-geändert-hat)
-
-**Grace** — Wie lange nach Intervallende gewartet wird, bevor der Satz gerechnet
-wird. Default 15 s. Damit ein bloß langsames Paket nicht zwei Berechnungen
-auslöst.
-
-**Homeless** — Ein Messwert, für den die Archivtabelle keine Spalte hat. Wird
-gemeldet, nie stillschweigend angelegt. `weewx-evo columns`.
-
-**Intervall** — Wie viel Zeit ein Archivsatz abdeckt. Default 5 Minuten.
-**Halboffen am Anfang**: ein Paket genau auf der Grenze schließt das Intervall,
-das dort endet.
-
-**Kanal** (*channel*) — Bei Ecowitt: eine Sensorposition, `ch1` bis `ch8`. Zwei
-Konsolen nummerieren beide ab eins — deshalb die Konsolenliste.
+**Channel** — With Ecowitt: a sensor position, `ch1` through `ch8`. Two
+consoles both number from one — hence the console list.
 → [Driver-Ecowitt](Driver-Ecowitt)
 
-**Kind** — Zwei Bedeutungen. (1) Der Typ einer Einstellung: `text secret int
-float bool choice path duration list`. (2) Die Art eines Pakets: `loop` oder
-`archive`.
+**Deriver** — What adds dewpoint, wind chill and the rain delta. Replaces
+WeeWX's `StdWXCalculate`. → [Derived-Readings](Derived-Readings)
 
-**Live-Tabelle** — `packet` in `live.sdb`. Jedes Paket, das je ankam, N Tage
-lang. Ersetzt WeeWX' In-Memory-Akkumulator.
+**`dirsumtime`** — Weight that counts only for wind readings that had a
+direction. A calm with no vane contributes no direction.
+
+**Export** — **How** something gets somewhere else: FTP, rsync, a copy. Takes a
+directory. → [Exports](Exports)
+
+**Feed** — **What** gets produced: a CSV, a JSON document, a website, a monthly
+report. Writes into a directory. → [Feeds](Feeds)
+
+**Fingerprint** — Size, timestamp and, for small files, a hash. What an FTP
+export decides with, on whether a file has already been sent.
+→ [Exports](Exports#only-send-what-has-changed)
+
+**Grace** — How long to wait after the end of an interval before computing the
+record. Default 15 s. So that a merely slow packet does not trigger two
+computations.
+
+**Homeless** — A reading the archive table has no column for. Reported, never
+created silently. `weewx-evo columns`.
+
+**Interval** — How much time one archive record covers. Default 5 minutes.
+**Half-open at the start**: a packet exactly on the boundary closes the interval
+that ends there.
+
+**Kind** — Two meanings. (1) The type of a setting: `text secret int float bool
+choice path duration list`. (2) The sort of a packet: `loop` or `archive`.
+
+**Live table** — `packet` in `live.sdb`. Every packet that ever arrived, for N
+days. Replaces WeeWX's in-memory accumulator.
 → [Database-Live](Database-Live)
 
-**LOOP-Paket** — WeeWX' Name für eine einzelne Messung, im Gegensatz zu einem
-Archivsatz. Hier `kind = "loop"`.
+**LOOP packet** — WeeWX's name for a single reading, as opposed to an archive
+record. Here `kind = "loop"`.
 
-**`loop_hilo`** — Ob einzelne Pakete die Tagesextreme setzen dürfen. An by
-default, wie WeeWX. Aus gemacht sind die Tagesextreme exakt aus dem Archiv
-reproduzierbar.
+**`loop_hilo`** — Whether individual packets may set the day's extremes. On by
+default, like WeeWX. Turned off, the daily extremes are exactly reproducible
+from the archive.
 
-**Manifest** — `index.json`. Was der JSON-Feed erzeugt hat, damit ein Client
-seine Seite anlegen kann, bevor er etwas holt.
+**Manifest** — `index.json`. What the JSON feed produced, so a client can lay
+out its page before fetching anything.
 
-**`maxSolarRad`** — Was ein Solarsensor bei wolkenlosem Himmel läse. Ein
-gemessener Wert dagegen gehalten sagt, wie bewölkt es war.
+**`maxSolarRad`** — What a solar sensor would read under a cloudless sky. Held
+against a measured value, it says how cloudy it was.
 
-**Option** — Eine deklarierte Einstellung. Daraus entstehen Formularfeld,
-Validierung, Dateikommentar und `--explain`-Zeile.
-→ [Configuration](Configuration)
+**Option** — A declared setting. Out of it come the form field, the validation,
+the file comment and the `--explain` line. → [Configuration](Configuration)
 
-**Paket** (*packet*) — Eine Messung, wie sie ankam, bevor irgendetwas damit
-gemacht wurde. `db.live.Packet`.
+**Packet** — One reading, as it arrived, before anything was done to it.
+`db.live.Packet`.
 
-**PASSKEY** — Womit Ecowitt-Hardware sich ausweist, abgeleitet aus ihrer
-MAC-Adresse. Wird redigiert, bevor irgendetwas gespeichert wird, das jemand
-weiterreicht.
+**PASSKEY** — What Ecowitt hardware identifies itself with, derived from its MAC
+address. Redacted before anything is stored that somebody might pass on.
 
-**Plot** — Eine Diagramm-**Definition**: ein Name, eine Zeitspanne, und die
-Messwerte darin. Gehört weewx-evo, nicht einem Renderer. → [Plots](Plots)
+**Plot** — A plot **definition**: a name, a timespan, and the readings in it.
+Belongs to weewx-evo, not to a renderer. → [Plots](Plots)
 
-**Policy** — Zwei Bedeutungen. (1) `obstypes.Policy`: wie jede Messgröße
-aggregiert wird. (2) `sources.Policy`: welche Quelle für welches Feld gewinnt.
+**Policy** — Two meanings. (1) `obstypes.Policy`: how each observation
+aggregates. (2) `sources.Policy`: which source wins for which field.
 
-**Provenance** — Welches Feld eines Archivsatzes von welcher Quelle kam.
+**Provenance** — Which field of an archive record came from which source.
 → [Multiple-Sources](Multiple-Sources)
 
-**Quelle** (*source*) — Eine Station. Steht an jedem Paket. Mehrere Quellen
-werden **beim Bau des Intervalls** zusammengeführt, je Feld.
+**Retention** — How long packets stay in the live table. Default 7 days. As long
+as they are there, a record can be corrected.
 
-**Retention** — Wie lange Pakete in der Live-Tabelle bleiben. Default 7 Tage.
-Solange sie da sind, ist ein Satz korrigierbar.
+**Roundtrip** — A value that goes through the form, the file and back. The place
+where `"5m"` can come back as a string instead of 300.
 
-**Roundtrip** — Ein Wert, der durch Formular, Datei und zurück geht. Der Ort, an
-dem `"5m"` als String zurückkommen kann statt als 300.
+**Schema** — Two meanings. (1) `db.schema.Schema`: the shape of an archive
+database, **read from the file**. (2) `options.Schema`: everything a component
+can be configured with.
 
-**Schema** — Zwei Bedeutungen. (1) `db.schema.Schema`: die Form einer
-Archivdatenbank, **aus der Datei gelesen**. (2) `options.Schema`: alles, womit
-eine Komponente konfigurierbar ist.
+**`skip_if_empty`** — A **timespan**, not a boolean. Says over what period a
+sensor must have reported nothing for a plot not to be produced at all.
 
-**`skip_if_empty`** — Eine **Zeitspanne**, kein Boolean. Sagt, über welchen
-Zeitraum ein Sensor nichts gemeldet haben muss, damit ein Diagramm gar nicht
-erst erzeugt wird.
+**Source** — A station. Attached to every packet. Several sources are merged
+**while the interval is being built**, field by field.
 
-**Span** — Zwei Bedeutungen. (1) Die Gruppe eines Diagramms: `day`, `week`,
-`month`, `year`. (2) Eine Zeitspanne allgemein. `time_length` ist, was
-tatsächlich entscheidet, wie weit ein Diagramm zurückreicht.
+**Span** — Two meanings. (1) The group a plot belongs to: `day`, `week`,
+`month`, `year`. (2) A timespan in general. `time_length` is what actually
+decides how far a plot reaches back.
 
-**Spool** — Pakete als gzip-NDJSON wegschreiben, bevor sie die Live-Tabelle
-verlassen.
+**Spool** — Writing packets out as gzip NDJSON before they leave the live table.
 
-**`sumtime`** — Das Gesamtgewicht in einem Akkumulator. Zusammen mit `wsum`
-macht es einen Mittelwert über eine beliebige Periode möglich.
+**`sumtime`** — The total weight in an accumulator. Together with `wsum` it
+makes an average over any period possible.
 
-**Target** — `units.Target`. Worin Messwerte **gezeigt** werden, unabhängig
-davon, was die Datenbank hält. → [Units](Units)
+**Target** — `units.Target`. What readings are **shown** in, independently of
+what the database holds. → [Units](Units)
 
-**Token** — Ein Pfadsegment. Zwei davon: eines für Uploads, eines für die
-Einstellungsseite, **nie dasselbe**. → [Security](Security)
+**Token** — A path segment. Two of them: one for uploads, one for the settings
+page, **never the same**. → [Security](Security)
 
-**Tracker** — Was ein FTP-Export sich merkt, damit er nicht jedes Mal alles
-schickt. → [Exports](Exports)
+**Tracker** — What an FTP export remembers so that it does not send everything
+every time. → [Exports](Exports)
 
-**Trigger** — Wann ein Export läuft: `feed`, `record`, `interval`, `manual`.
-`feed` ist der Default und der richtige.
+**Trigger** — When an export runs: `feed`, `record`, `interval`, `manual`.
+`feed` is the default and the right one.
 
-**`usUnits`** — Die Spalte, die sagt, in welchem Einheitensystem ein Satz steht.
+**Unit group** — `group_temperature`, `group_pressure`, `group_rain` and so on.
+Which unit a group has depends on the system. → [Units](Units)
 
-**View** — `Settings.view(prefix, schema)`. Die Ecke der Einstellungen, die einer
-Komponente gehört, und sonst nichts. Ein Treiber bekommt das, nicht das Ganze.
+**Unit system** — `US` (1), `METRIC` (16), `METRICWX` (17). Stored per record in
+`usUnits`.
 
-**`wsum`** — Die gewichtete Summe: jeder Wert mal der Zeit, die er stand.
+**`usUnits`** — The column that says which unit system a record is in.
 
-**`xsum` / `ysum`** — Ost- und Nordkomponente der summierten Windvektoren. Wie
-eine mittlere Richtung eine Mittelung überlebt.
+**View** — `Settings.view(prefix, schema)`. The corner of the settings that
+belongs to one component, and nothing else. A driver gets that, not the whole
+thing.
+
+**`wsum`** — The weighted sum: every value times the time it stood.
+
+**`xsum` / `ysum`** — East and north components of the summed wind vectors. How
+a mean direction survives being averaged.
 
 <!-- covers
 -->

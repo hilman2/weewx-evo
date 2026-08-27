@@ -1,235 +1,235 @@
-# Architektur
+# Architecture
 
-## Der Datenfluss
+## The flow of data
 
 ```
-   Hardware / andere Stationen
+   Hardware / other stations
         │  HTTP POST · HTTP GET (Wunderground) · UDP
         ▼
 ┌───────────────────────────────────────────────────────┐
 │ Listener            ingest/listener.py                │
-│  Socket, Threads, Body-Limit, Token, Netzgrenze,      │
-│  Ratelimit — der Kern.                                │
+│  Socket, threads, body limit, token, network          │
+│  boundary, rate limit — the core.                     │
 │         │ body: bytes, meta: dict                     │
 │         ▼                                             │
-│  Treiber            ingest/drivers.py, plugins/       │
-│  Parsen, Feldnamen, Einheiten, Antwort ans Gerät      │
+│  Driver             ingest/drivers.py, plugins/       │
+│  Parsing, field names, units, the reply to the device │
 └─────────┬─────────────────────────────────────────────┘
           │ list[Packet]
           ▼
    ┌──────────────┐   db/live.py
-   │ live.sdb     │   append-only, idempotent, Retention N Tage
-   │  packet      │   inkl. Herkunft (source) und Rohbody
+   │ live.sdb     │   append-only, idempotent, retention N days
+   │  packet      │   including origin (source) and raw body
    └──────┬───────┘
           │  packets(start, stop)
           ▼
 ┌───────────────────────────────────────────────────────┐
 │ Archiver            archiver.py                       │
-│  1. Pakete des Intervalls holen                       │
-│  2. sources.py: welche Quelle gewinnt je Feld         │
-│  3. aggregate.py: Accumulator füttern                 │
-│  4. derive.py: Taupunkt, Windchill, Regen-Delta       │
-│  5. Satz schreiben, dann Tagesextreme schärfen        │
+│  1. fetch the packets of the interval                 │
+│  2. sources.py: which source wins per field           │
+│  3. aggregate.py: feed the accumulator                │
+│  4. derive.py: dewpoint, wind chill, rain delta       │
+│  5. write the record, then sharpen the day's extremes │
 └─────────┬─────────────────────────────────────────────┘
-          │ dict (ein Archivsatz)
+          │ dict (one archive record)
           ▼
    ┌──────────────┐   db/archive.py
-   │ weewx.sdb    │   archive        ← WeeWX-kompatibel, PK dateTime
-   │              │   archive_day_*  ← Cache, aus archive ableitbar
+   │ weewx.sdb    │   archive        ← WeeWX-compatible, PK dateTime
+   │              │   archive_day_*  ← cache, derivable from archive
    └──────┬───────┘
           │  series.Reader
           ▼
    ┌──────────────┐   feeds/ + feedrunner.py
-   │ Feeds        │   jsongenerator → JSON-Zeitreihen
-   │              │   diagnostic    → HTML-Diagnoseseite
+   │ Feeds        │   jsongenerator → JSON series
+   │              │   diagnostic    → HTML diagnostic page
    └──────┬───────┘
-          │  ein Verzeichnis
-          ├───────────────► webserver.py (lokal ausliefern)
+          │  a directory
+          ├───────────────► webserver.py (serve locally)
           ▼
    ┌──────────────┐   exports/
-   │ Exports      │   ftp.py · rsync.py, je eigener Thread
+   │ Exports      │   ftp.py · rsync.py, each its own thread
    └──────────────┘
 ```
 
-## Die Kernregel der Kopplung
+## The core rule of coupling
 
-Die Komponenten reden **ausschließlich über die Datenbank**, nie miteinander.
-Es gibt keinen Kanal zwischen Listener und Archiver, absichtlich.
+The components talk **only through the database**, never to each other. There
+is no channel between listener and archiver, deliberately.
 
-Was das kauft:
+What that buys:
 
-- **Ein Prozess oder drei**, ohne Codeänderung. `weewx-evo serve` startet beide;
-  `listen` und `archive` starten je einen. Das ist der Unterschied zwischen
-  `deploy/compose.yml` und `deploy/split.yml` — und sonst nichts.
-- **Ein Neustart mitten im Archivintervall kostet nichts.** Es gibt keinen
-  In-Memory-Akkumulator, der ihn nicht überlebt: die Pakete liegen schon in der
-  Live-Tabelle.
-- **Ein verspätetes Push-Paket landet im richtigen Intervall.** Es wird nach
-  seinem eigenen Zeitstempel eingeordnet, nicht nach seiner Ankunft.
-- **Rückwirkend korrigierbar.** Solange die Rohdaten in der Retention liegen,
-  lässt sich eine falsche Kalibrierung mit `weewx-evo rebuild` herausrechnen.
-- **Ein Treiber kann nicht ins Archiv schreiben**, wenn der Listener die Datei
-  gar nicht gemountet hat. → [Security](Security), [Deployment](Deployment)
+- **One process or three**, with no code change. `weewx-evo serve` starts both;
+  `listen` and `archive` start one each. That is the difference between
+  `deploy/compose.yml` and `deploy/split.yml` — and nothing else.
+- **A restart mid-interval costs nothing.** There is no in-memory accumulator
+  to lose it: the packets are already in the live table.
+- **A late push packet lands in the right interval.** It is placed by its own
+  timestamp, not by when it arrived.
+- **Correctable after the fact.** As long as the raw data is still within
+  retention, a wrong calibration can be taken back out with `weewx-evo rebuild`.
+- **A driver cannot write to the archive** if the listener never mounted the
+  file at all. → [Security](Security), [Deployment](Deployment)
 
-Jede Stufe ist aus der vorherigen reproduzierbar. Es gibt keinen flüchtigen
-Zustand, aus dem sich eine Zahl herleitet.
+Every stage is reproducible from the one before it. There is no transient state
+that a number derives from.
 
-## Kern und Treiber
+## Core and driver
 
-**Der Kern besitzt den Socket.** Threads, Shutdown, Body-Limits, Token-Prüfung,
-Netzgrenze, Rate-Limit, Schreiben in die Live-Tabelle. Das ist für jedes
-Protokoll dasselbe, und es ist die Stelle, an der Push-Treiber schiefgehen.
+**The core owns the socket.** Threads, shutdown, body limits, token checks,
+network boundary, rate limit, writing to the live table. That is the same for
+every protocol, and it is where push drivers go wrong.
 
-**Der Treiber besitzt alles andere.** Parsen, Feldnamen, Einheiten, welchem
-Gerät er antwortet, und **was das Gerät zurückhören muss**. Er liefert ein
-fertiges Paket. Der Kern schaut nicht hinein.
+**The driver owns everything else.** Parsing, field names, units, which device
+it answers, and **what the device has to hear back**. It hands over a finished
+packet. The core does not look inside.
 
 ```python
 class MyDriver:
-    response = (b'{"ok":true}', "application/json")   # was das Gerät hören will
+    response = (b'{"ok":true}', "application/json")   # what the device wants to hear
 
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
         ...
 ```
 
-Der Kern kennt kein Wetterprotokoll. Wer in `listener.py` oder `archiver.py`
-etwas über Ecowitt schreiben will: es gehört in den Treiber.
+The core knows no weather protocol. If you want to write something about
+Ecowitt into `listener.py` or `archiver.py`: it belongs in the driver.
 → [Drivers](Drivers)
 
-## Feeds und Exports
+## Feeds and exports
 
-Zwei verschiedene Dinge, und WeeWX trennt sie nicht:
+Two different things, and WeeWX does not separate them:
 
-- **Feed** = *was* erzeugt wird. Eine CSV, ein JSON-Dokument, ein Diagramm,
-  eine ganze Webseite, ein Monatsbericht. Schreibt in ein Verzeichnis.
-- **Export** = *wie* es woandershin kommt. FTP, rsync, Kopie auf eine
-  eingehängte Freigabe.
+- **Feed** = *what* gets produced. A CSV, a JSON document, a plot, a whole
+  website, a monthly report. Writes into a directory.
+- **Export** = *how* it gets somewhere else. FTP, rsync, a copy onto a mounted
+  share.
 
-Das Verzeichnis ist die ganze Schnittstelle dazwischen — genauso wie die
-Live-Tabelle zwischen Listener und Archiver. Ein Feed, drei Exports. Oder drei
-Feeds in ein Verzeichnis und ein Export. Keiner weiß vom anderen.
+The directory is the entire interface between them — exactly like the live
+table between listener and archiver. One feed, three exports. Or three feeds
+into one directory and one export. Neither knows about the other.
 
-Bei WeeWX konfiguriert man den FTP-Upload *innerhalb* der Skin-Sektion. Zwei
-Ziele bedeuten dort, den Renderer zweimal laufen zu lassen.
+With WeeWX you configure the FTP upload *inside* the skin section. Two
+destinations mean running the renderer twice.
 
 → [Feeds](Feeds), [Exports](Exports)
 
 ## Threads
 
-Drei Stellen laufen nebenläufig, jede aus einem benannten Grund:
+Three places run concurrently, each for a named reason:
 
-| Thread | Wo | Warum |
+| Thread | Where | Why |
 |---|---|---|
-| HTTP-Handler | `listener.HttpListener` (`ThreadingHTTPServer`) | Eine langsame Konsole darf die anderen nicht blockieren |
-| Feed-Runner | `feedrunner.Runner`, **ein** Thread für alle Feeds | 100 Diagramme sind eine knappe Sekunde, und eine Sekunde dort ist eine Sekunde, in der der Archiver nicht archiviert. Ein Thread, weil Feeds geordnet sind |
-| Export-Runner | `exports/runner.Runner`, **ein Thread je Export** | Ein FTP-Host, der nicht mehr antwortet, hängt 30 s im `connect` — und darf dabei weder den Archiver noch den anderen Export aufhalten |
+| HTTP handler | `listener.HttpListener` (`ThreadingHTTPServer`) | One slow console must not block the others |
+| Feed runner | `feedrunner.Runner`, **one** thread for all feeds | 100 plots are the best part of a second, and a second there is a second the archiver is not archiving. One thread, because feeds are ordered |
+| Export runner | `exports/runner.Runner`, **one thread per export** | An FTP host that has stopped answering sits 30 s in `connect` — and must hold up neither the archiver nor the other export while it does |
 
-Ein Export kann sich dadurch auch nicht selbst überlappen: der Thread steckt in
-`send()` und liest seinen eigenen Auslöser nicht. Was währenddessen feuert, wird
-gemerkt und danach **einmal** ausgeführt.
+That also stops an export from overlapping itself: the thread is stuck in
+`send()` and is not reading its own trigger. Whatever fires meanwhile is
+remembered and run **once** afterwards.
 
-SQLite-Verbindungen sind thread-gebunden. `LiveStore.conn()` öffnet deshalb je
-Thread eine eigene Verbindung beim ersten Zugriff — das war ein echter Fehler
-und ist jetzt Teil des Designs.
+SQLite connections are thread-bound. `LiveStore.conn()` therefore opens its own
+connection per thread on first use — that was a real bug and is now part of the
+design.
 
-## Prozessmodelle
+## Process models
 
-### Ein Prozess (der Normalfall)
+### One process (the normal case)
 
 ```bash
 weewx-evo serve
 ```
 
-Listener, Archiver, optional Admin-Seite, Web-Server, Feeds und Exports in
-einem Prozess. Richtig für einen Pi Zero im Schuppen.
+Listener, archiver, optionally the admin page, web server, feeds and exports in
+one process. The right thing for a Pi Zero in a shed.
 
-### Getrennt (wenn ein Treiber nicht ans Archiv soll)
+### Split (when a driver should not reach the archive)
 
 ```bash
-weewx-evo listen     # hält die Treiber, mountet nur live.sdb
-weewx-evo archive    # hält keine Treiber, mountet beide Dateien
+weewx-evo listen     # holds the drivers, mounts only live.sdb
+weewx-evo archive    # holds no drivers, mounts both files
 ```
 
-Der Listener öffnet das Archiv nie. Ein Treiber darin *hat* die Datei nicht.
-Das ist der einzige durchsetzbare Käfig — im selben Prozess genügt
-`import sqlite3`. → `deploy/split.yml`, [Security](Security)
+The listener never opens the archive. A driver inside it does not *have* the
+file. That is the only enforceable cage — in the same process `import sqlite3`
+is enough. → `deploy/split.yml`, [Security](Security)
 
-Zwei Fallen, beide im Kommentar von `split.yml` festgehalten:
+Two pitfalls, both recorded in the comments of `split.yml`:
 
-- **Retention gehört zum Archiver**, nicht zum Listener. Pakete dürfen erst
-  fallen, wenn sie in einem Satz stehen, und nur diese Seite weiß das.
-- **SQLite im WAL-Modus schreibt `-shm` und `-wal` neben die Datei — auch zum
-  Lesen.** Ein read-only gemountetes *Verzeichnis* ist deshalb nicht dasselbe
-  wie eine read-only Datei und schlägt fehl. Der wirksame Weg ist ein Benutzer
-  ohne Schreibrecht aufs Archiv.
+- **Retention belongs to the archiver**, not to the listener. Packets may only
+  be dropped once they are in a record, and only that side knows.
+- **SQLite in WAL mode writes `-shm` and `-wal` next to the file — for reading
+  too.** A read-only mounted *directory* is therefore not the same as a
+  read-only file, and it fails. The route that works is a user without write
+  permission on the archive.
 
-## Warum kein Settings-Dienst
+## Why no settings service
 
-Die Frage kommt wieder, deshalb die Begründung: Die Datei **ist** schon, was ein
-Daemon wäre, ohne dessen Ausfallarten — atomar geschrieben, überlebt Neustarts
-in der richtigen Reihenfolge, mit `cat` lesbar, kann nicht down sein. Listener
-und Archiver koordinieren bewusst **nur** über die Datenbank; ein Kanal zwischen
-ihnen würde aufheben, dass man sie trennen oder zusammenlegen kann. Was ein
-Dienst wirklich brächte — Änderung ohne Neustart — macht `Settings.reload()`.
+The question keeps coming back, so here is the reasoning. The file **already
+is** what a daemon would be, without the daemon's failure modes — written
+atomically, survives restarts in the right order, readable with `cat`, cannot
+be down. Listener and archiver coordinate deliberately **only** through the
+database; a channel between them would undo the fact that you can split them or
+put them together. What a service would really buy — changes without a restart
+— `Settings.reload()` already does.
 
 → [Configuration](Configuration)
 
-## Paketstruktur
+## Package layout
 
 ```
 src/weewx_evo/
-  __init__.py          Die eine Regel, als Docstring
-  cli.py               Alle Kommandos, das einzige Programm
-  settings.py          Die Rangfolge: Argument > Umgebung > Datei > weewx.conf > Default
-  options.py           Option / Group / Schema — das Deklarationsmodell
-  config.py            TOML lesen und kommentiert zurückschreiben
-  weewxconf.py         weewx.conf lesen (nie schreiben)
+  __init__.py          The one rule, as a docstring
+  cli.py               Every command, the only program
+  settings.py          The precedence: argument > environment > file > weewx.conf > default
+  options.py           Option / Group / Schema — the declaration model
+  config.py            Read TOML and write it back with comments
+  weewxconf.py         Read weewx.conf (never write it)
 
-  aggregate.py         Transkription von weewx.accum
-  obstypes.py          Welche Größe wie aggregiert wird
-  archiver.py          Ersetzt StdArchive
-  derive.py            Ersetzt StdWXCalculate
-  sources.py           Mehrere Stationen, eine Messreihe
-  series.py            Ersetzt xtypes.get_series
-  units.py             Transkription von weewx.units
-  sun.py               Sonnenstand, Auf- und Untergang
-  plots.py             Plot-Definitionen und plots.toml
+  aggregate.py         Transcription of weewx.accum
+  obstypes.py          Which observation aggregates how
+  archiver.py          Replaces StdArchive
+  derive.py            Replaces StdWXCalculate
+  sources.py           Several stations, one record
+  series.py            Replaces xtypes.get_series
+  units.py             Transcription of weewx.units
+  sun.py               Solar position, rise and set
+  plots.py             Plot definitions and plots.toml
 
   db/
-    schema.py          Schema aus der Datei lesen
-    wview.py           Das Startschema für eine neue Datei
-    archive.py         Die WeeWX-Datenbank
-    daily.py           archive_day_* aufbauen
-    live.py            Die Live-Tabelle
+    schema.py          Read the schema from the file
+    wview.py           The starting schema for a new file
+    archive.py         The WeeWX database
+    daily.py           Build archive_day_*
+    live.py            The live table
 
   ingest/
     listener.py        HTTP + UDP
-    drivers.py         Treiber-Schnittstelle und Registry
-    envelope.py        Der JSON-Umschlag — der einzige Treiber im Kern
-    parsers.py         Ältere, funktionsbasierte Registry
-    state.py           Was ein Treiber sich merken darf
-    statuspage.py      Die Live-Seite hinter dem Token
-    userdrivers.py     Fremde Treiber installieren
-    plugins/           Unsere Treiber, ein Ordner je Treiber
+    drivers.py         Driver interface and registry
+    envelope.py        The JSON envelope — the only driver in the core
+    parsers.py         The older, function-based registry
+    state.py           What a driver is allowed to remember
+    statuspage.py      The live page behind the token
+    userdrivers.py     Installing third-party drivers
+    plugins/           Our drivers, one folder per driver
       ecowitt/
 
   feeds/
-    __init__.py        Die Feed-Schnittstelle
-    jsongenerator/     Die Zeitreihen, auf denen alles andere steht
-    diagnostic/        Zeichnet, was tatsächlich auf der Platte liegt
-  feedrunner.py        Fährt die Feeds der Reihe nach, eigener Thread
+    __init__.py        The feed interface
+    jsongenerator/     The series everything else stands on
+    diagnostic/        Draws what is actually on disk
+  feedrunner.py        Runs the feeds in order, own thread
 
   exports/
-    __init__.py        Export-Schnittstelle und Registry
-    ftp.py  rsync.py   Die zwei gebauten
-    runner.py          Wann welcher läuft
-    tracker.py         Was schon gesendet wurde
+    __init__.py        Export interface and registry
+    ftp.py  rsync.py   The two that are built
+    runner.py          When each one runs
+    tracker.py         What has already been sent
 
-  admin.py             Die Einstellungsseite
-  adminplots.py        Die Diagramm-Seiten darin (handgeschrieben)
-  webserver.py         Die Feeds ausliefern
-  netaccess.py         Wer eine Antwort bekommt
-  ratelimit.py         Zwei Grenzen: Anfragen und Fehlversuche
+  admin.py             The settings page
+  adminplots.py        The plot pages within it (hand-written)
+  webserver.py         Serving the feeds
+  netaccess.py         Who gets an answer
+  ratelimit.py         Two limits: requests and failed attempts
 ```
 
 <!-- covers

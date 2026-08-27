@@ -260,7 +260,13 @@ python tools/upload_test.py     # was an einen Wetterdienst geht
 python tools/mqtt_test.py       # der MQTT-Client, gegen einen eigenen Broker
 python tools/forecast_test.py   # die Vorhersagequellen und ihr Speicher
 python tools/realtime_test.py   # realtime.txt und wxnow.txt
+python tools/deck_live_test.py  # die Live-Anzeige im Deck-Skin
 ```
+
+`deck_live_test.py` braucht Cheetah und rendert die echte Skin, mit und ohne
+Broker. Geprüft wird beides: dass die Live-Anzeige **nur** erscheint, wenn
+einer konfiguriert ist. Eine Station ohne Broker, die auf jeder Karte ein
+rotes OFFLINE zeigt, hat einen Fehler bekommen, den sie nicht hat.
 
 Keiner davon fasst das Netz an. `upload_test.py` und `forecast_test.py` bauen
 Anfragen und sehen sie an; `mqtt_test.py` startet einen Broker auf loopback.

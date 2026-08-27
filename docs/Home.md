@@ -1,118 +1,120 @@
 # weewx-evo
 
-Ein Neubau des WeeWX-Kerns. Python, ohne Abhängigkeiten außerhalb der
-Standardbibliothek, ab 3.11.
+A rebuild of the WeeWX core. Python, no dependencies outside the standard
+library, 3.11 and up.
 
-## Die eine Regel
+## The one rule
 
-> Eine bestehende WeeWX-Datenbank bleibt lesbar und schreibbar — **für WeeWX
-> selbst**. Nicht „importierbar": dieselbe Datei, dieselbe Bedeutung, und
-> WeeWX 5 kann sie danach weiterbenutzen.
+> An existing WeeWX database stays readable and writable — **by WeeWX
+> itself**. Not "importable": the same file, the same meaning, and WeeWX 5
+> can carry on using it afterwards.
 
-Alles andere in diesem Projekt ist verhandelbar. Das hier nicht. Wer eine Zeile
-in [`aggregate.py`](Aggregation), [`db/archive.py`](Database-Archive) oder
-[`db/daily.py`](Daily-Summaries) ändert, führt vorher und nachher
-`python tools/difftest.py reference/weewx.sdb` aus — siehe [Testing](Testing).
+Everything else in this project is negotiable. This is not. Anyone changing a
+line in [`aggregate.py`](Aggregation), [`db/archive.py`](Database-Archive) or
+[`db/daily.py`](Daily-Summaries) runs
+`python tools/difftest.py reference/weewx.sdb` before and after — see
+[Testing](Testing).
 
-Praktisch folgen daraus drei Dinge:
+Three things follow from it in practice:
 
 | | |
 |---|---|
-| **Das Schema kommt aus der Datei** | Nie aus einer Liste im Code. Eine Anlage mit eigenen Spalten behält sie. → [Database-Archive](Database-Archive) |
-| **Die Arithmetik ist abgeschrieben** | `aggregate.py` ist eine Transkription von `weewx.accum`, Schritt für Schritt. Eine „sauberere" Formel, die anders rundet, ist hier eine falsche Formel. → [Aggregation](Aggregation) |
-| **`archive_day_*` ist ein Cache** | Alles darin ist aus `archive` ableitbar, und `rebuild_day` ist die Ableitung. → [Daily-Summaries](Daily-Summaries) |
+| **The schema comes from the file** | Never from a list in the code. An installation with columns of its own keeps them. → [Database-Archive](Database-Archive) |
+| **The arithmetic is transcribed** | `aggregate.py` is a transcription of `weewx.accum`, step by step. A "cleaner" formula that rounds differently is a wrong formula here. → [Aggregation](Aggregation) |
+| **`archive_day_*` is a cache** | Everything in it is derivable from `archive`, and `rebuild_day` is the derivation. → [Daily-Summaries](Daily-Summaries) |
 
-## Der Schnitt
+## The seams
 
 ```
-Quellen (Push oder Pull, je eigener Prozess)
-  └─ Listener: HTTP + UDP, Token, Treiber-Plugins
-      └─ live: jedes Paket, mit Herkunft, N Tage
-          └─ Archiver: deterministisch je Zeitspanne
-              └─ archive (WeeWX-kompatibel, PK dateTime)
-                  └─ archive_day_* (Cache)
-                      └─ series → Feeds → Exports
+Sources (push or pull, each its own process)
+  └─ Listener: HTTP + UDP, token, driver plugins
+      └─ live: every packet, with its origin, N days
+          └─ Archiver: deterministic per timespan
+              └─ archive (WeeWX-compatible, PK dateTime)
+                  └─ archive_day_* (cache)
+                      └─ series → feeds → exports
 ```
 
-Die Komponenten reden **ausschließlich über die Datenbank**, nie miteinander.
-Deshalb laufen sie als drei systemd-Units oder als ein Prozess, ohne
-Codeänderung. Das ist keine Zierde, sondern die Eigenschaft, die
-`deploy/split.yml` möglich macht. → [Architecture](Architecture)
+The components talk **only through the database**, never to each other. That
+is why they run as three systemd units or as one process, with no code change.
+It is not decoration, it is the property that makes `deploy/split.yml`
+possible. → [Architecture](Architecture)
 
-## Wo anfangen
+## Where to start
 
-**Ich will es laufen lassen** → [Getting-Started](Getting-Started) ·
+**I want to run it** → [Getting-Started](Getting-Started) ·
 [CLI-Reference](CLI-Reference) · [Deployment](Deployment)
 
-**Ich will verstehen, wie es aufgebaut ist** → [Architecture](Architecture) ·
+**I want to understand how it is put together** → [Architecture](Architecture) ·
 [WeeWX-Compatibility](WeeWX-Compatibility) · [Glossary](Glossary)
 
-**Ich will etwas ändern** → [Contributing](Contributing) · [Testing](Testing) ·
-[Index](Index) (welche Datei zu welcher Seite gehört, samt Veraltungs-Markierung)
+**I want to change something** → [Contributing](Contributing) ·
+[Testing](Testing) · [Index](Index) (which file belongs to which page, with
+staleness marks)
 
-**Ich suche eine Funktion** → [API-Index](API-Index)
+**I am looking for a function** → [API-Index](API-Index)
 
-## Lizenz
+## Licence
 
-**GPL-3.0-or-later.** Der Ecowitt-Treiber geht über
-[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) auf den
-`ecowittcustom`-Treiber von Werner Krenn zurück, der wiederum auf den
-`interceptor` von Matthew Wall — beide GPLv3, und das ist der Grund.
+**GPL-3.0-or-later.** The Ecowitt driver goes back, by way of
+[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt), to Werner Krenn's
+`ecowittcustom` driver, which in turn goes back to Matthew Wall's
+`interceptor` — both GPLv3, and that is the reason.
 
-Das uPlot in `feeds/diagnostic/vendor/` ist MIT und hat seine eigene
-Lizenzdatei daneben liegen.
+The uPlot in `feeds/diagnostic/vendor/` is MIT and has its own licence file
+sitting next to it.
 
-## Die Seiten
+## The pages
 
-### Aufnahme
+### Ingest
 
-| Seite | Worum es geht |
+| Page | What it covers |
 |---|---|
-| [Ingest-Listener](Ingest-Listener) | HTTP + UDP, Token, Ratelimit, Statusseite |
-| [Drivers](Drivers) | Die Treiber-Schnittstelle, mitgelieferte und fremde Treiber |
-| [Driver-Ecowitt](Driver-Ecowitt) | Der Ecowitt-Treiber, vollständig |
-| [Uploads](Uploads) | Die Messwerte an einen Wetterdienst |
-| [MQTT](MQTT) | Der eigene Client, und was ihn nötig macht |
-| [Forecast](Forecast) | Vorhersage und Warnungen, vier Quellen |
-| [Plugins](Plugins) | Was nicht im Kern liegt, und der Katalog dafür |
-| [Multiple-Sources](Multiple-Sources) | Mehrere Stationen, eine Messreihe |
+| [Ingest-Listener](Ingest-Listener) | HTTP + UDP, tokens, rate limit, status page |
+| [Drivers](Drivers) | The driver interface, bundled and third-party drivers |
+| [Driver-Ecowitt](Driver-Ecowitt) | The Ecowitt driver, in full |
+| [Uploads](Uploads) | The readings sent to a weather service |
+| [MQTT](MQTT) | The in-house client, and what makes it necessary |
+| [Forecast](Forecast) | Forecast and warnings, four sources |
+| [Plugins](Plugins) | What lives outside the core, and the catalogue for it |
+| [Multiple-Sources](Multiple-Sources) | Several stations, one record |
 
-### Verarbeitung und Speicherung
+### Processing and storage
 
-| Seite | Worum es geht |
+| Page | What it covers |
 |---|---|
-| [Database-Live](Database-Live) | Die Live-Tabelle: jedes Paket, N Tage lang |
-| [Archiver](Archiver) | Archivsätze aus Zeitspannen |
-| [Aggregation](Aggregation) | Die Arithmetik — Transkription von `weewx.accum` |
-| [Database-Archive](Database-Archive) | Die WeeWX-Datenbank, lesend und schreibend |
-| [Daily-Summaries](Daily-Summaries) | `archive_day_*` als ableitbarer Cache |
-| [Derived-Readings](Derived-Readings) | Taupunkt, Windchill, Regen-Delta |
+| [Database-Live](Database-Live) | The live table: every packet, for N days |
+| [Archiver](Archiver) | Archive records out of timespans |
+| [Aggregation](Aggregation) | The arithmetic — a transcription of `weewx.accum` |
+| [Database-Archive](Database-Archive) | The WeeWX database, reading and writing |
+| [Daily-Summaries](Daily-Summaries) | `archive_day_*` as a derivable cache |
+| [Derived-Readings](Derived-Readings) | Dewpoint, wind chill, rain delta |
 
-### Ausgabe
+### Output
 
-| Seite | Worum es geht |
+| Page | What it covers |
 |---|---|
-| [Series](Series) | Zeitreihen aus dem Archiv — die Grundlage jedes Feeds |
-| [Units](Units) | Einheiten, Gruppen, Umrechnung, Zielsystem |
-| [Sun](Sun) | Sonnenstand, Auf- und Untergang, Dämmerung |
-| [Plots](Plots) | Plot-Definitionen und `plots.toml` |
-| [Feeds](Feeds) | Was erzeugt wird — JSON-Feed, Diagnoseseite |
-| [Exports](Exports) | Wie es woandershin kommt — FTP, rsync |
-| [Web-Server](Web-Server) | Die Feeds lokal ausliefern |
+| [Series](Series) | Series out of the archive — what every feed stands on |
+| [Units](Units) | Units, groups, conversion, target system |
+| [Sun](Sun) | Solar position, rise and set, twilight |
+| [Plots](Plots) | Plot definitions and `plots.toml` |
+| [Feeds](Feeds) | What gets produced — JSON feed, diagnostic page |
+| [Exports](Exports) | How it gets somewhere else — FTP, rsync |
+| [Web-Server](Web-Server) | Serving the feeds locally |
 
-### Betrieb
+### Operation
 
-| Seite | Worum es geht |
+| Page | What it covers |
 |---|---|
-| [Configuration](Configuration) | Die Rangfolge, das Option-Schema, `--explain` |
-| [Settings-Reference](Settings-Reference) | Jede Kern-Einstellung, vollständig |
-| [CLI-Reference](CLI-Reference) | Jedes Kommando, jedes Flag |
-| [Admin-Page](Admin-Page) | Die Einstellungsseite |
-| [Security](Security) | Tokens, Netzgrenze, Ratelimit |
-| [Deployment](Deployment) | Docker, Caddy, der geteilte Betrieb |
-| [Testing](Testing) | Die Werkzeuge in `tools/` und was jedes prüft |
-| [WeeWX-Compatibility](WeeWX-Compatibility) | Was geteilt wird, was nicht, `weewx.conf` |
-| [Contributing](Contributing) | Schreibstil, Konventionen, Fallen |
+| [Configuration](Configuration) | The precedence, the option schema, `--explain` |
+| [Settings-Reference](Settings-Reference) | Every core setting, in full |
+| [CLI-Reference](CLI-Reference) | Every command, every flag |
+| [Admin-Page](Admin-Page) | The settings page |
+| [Security](Security) | Tokens, network boundary, rate limit |
+| [Deployment](Deployment) | Docker, Caddy, the split arrangement |
+| [Testing](Testing) | The tools in `tools/` and what each one checks |
+| [WeeWX-Compatibility](WeeWX-Compatibility) | What is shared, what is not, `weewx.conf` |
+| [Contributing](Contributing) | Writing style, conventions, pitfalls |
 
 <!-- covers
 README.md

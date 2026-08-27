@@ -1354,3 +1354,109 @@ tr.summary td {
   background: var(--surface-2);
   font-weight: 600;
 }
+
+/* -- live ---------------------------------------------------------------- */
+
+/* Whether a reading is actually live, and how old it is.
+ *
+ * The skin can take live updates over MQTT: `live-updates.js` rewrites the
+ * values in place as packets arrive. What it does not do is say so, and a
+ * page with a broker that has gone away looks exactly like one with a broker
+ * that is working. A dashboard that is quietly wrong is worse than one that
+ * is visibly stale.
+ *
+ * The colours are the skin's own `--good` and `--bad`, so both themes carry
+ * and a temperature stays the same red everywhere. */
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: .25em;
+  margin-inline-start: .5em;
+  padding: .05em .4em;
+  border-radius: 1em;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  vertical-align: middle;
+  white-space: nowrap;
+  /* Never the thing the eye goes to first. The reading is what somebody
+   * came for; this only has to be findable once they wonder. */
+  opacity: .85;
+}
+
+.live-badge::before,
+.live-indicator__dot {
+  content: "";
+  width: .45em;
+  height: .45em;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.live-badge--live,
+.live-indicator--live {
+  color: var(--good);
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+}
+
+.live-badge--stale, .live-badge--off,
+.live-indicator--stale, .live-indicator--off {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+
+/* Connected, nothing yet, and it is early. Neither claim is true, so the
+ * badge makes neither -- grey rather than a red that turns green ten seconds
+ * later and teaches people to ignore it. */
+.live-badge--waiting,
+.live-indicator--waiting {
+  color: var(--ink-3);
+  background: color-mix(in srgb, var(--ink-3) 12%, transparent);
+  letter-spacing: 0;
+}
+
+/* The dot breathes only while it is actually live. A page full of animation
+ * is a page people stop looking at. */
+.live-badge--live::before,
+.live-indicator--live .live-indicator__dot {
+  animation: live-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+.live-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .4em;
+  margin-inline-end: var(--s-2);
+  padding: .2em .6em;
+  border-radius: 1em;
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+  white-space: nowrap;
+  /* Tabular numerals and a floor on the width, so "3 s ago" becoming
+   * "12 s ago" does not shift the header sideways once a second. */
+  min-width: 6.5em;
+}
+
+/* On a phone the header is already tight. The dot alone still answers the
+ * question the indicator exists for -- is this live -- and the exact age is
+ * in the title. */
+@media (max-width: 42rem) {
+  .live-indicator { min-width: 0; padding: .2em .4em; }
+  .live-indicator__label { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-badge--live::before,
+  .live-indicator--live .live-indicator__dot { animation: none; }
+}

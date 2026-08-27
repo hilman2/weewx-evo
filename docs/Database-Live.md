@@ -1,23 +1,23 @@
-# Die Live-Datenbank
+# The live database
 
-`db/live.py`. Jedes Paket, das je ankam, eine Weile aufbewahrt. Das ist der
-Speicher, der WeeWX' In-Memory-Akkumulator ersetzt.
+`db/live.py`. Every packet that ever arrived, kept for a while. This is the
+store that replaces WeeWX's in-memory accumulator.
 
-Ein Paket wird hier geschrieben, sobald es ankommt, und sonst passiert nichts
-damit. Archivsätze werden **danach** aus dieser Tabelle gerechnet — genau das
-macht sie reproduzierbar: dieselben Pakete ergeben immer denselben Satz, ob
-jetzt aggregiert, nach einem Neustart oder eine Woche später.
+A packet is written here the moment it arrives, and nothing else happens to it.
+Archive records are computed from this table **afterwards** — which is exactly
+what makes them reproducible: the same packets always give the same record,
+whether aggregated now, after a restart or a week later.
 
-Eigene Datei, damit Größe und Retention nichts mit dem Archiv zu tun haben. Die
-Archivdatenbank bleibt klein und sicherbar.
+Its own file, so that size and retention have nothing to do with the archive.
+The archive database stays small and easy to back up.
 
-## Größe
+## Size
 
-Gemessen an einer Konsole mit einem Paket alle 8 s: rund **11 MB pro Tag**, also
-etwa 80 MB bei sieben Tagen Retention. Eine Vantage mit einem LOOP-Paket alle
-2 s ist das Vierfache.
+Measured on a console sending a packet every 8 s: around **11 MB per day**, so
+about 80 MB at seven days of retention. A Vantage with a LOOP packet every 2 s
+is four times that.
 
-## Das Schema
+## The schema
 
 ```sql
 CREATE TABLE IF NOT EXISTS packet (
@@ -27,34 +27,34 @@ CREATE TABLE IF NOT EXISTS packet (
 );
 ```
 
-| Spalte | Bedeutung |
+| Column | What it means |
 |---|---|
-| `seq` | Fortlaufend, der Primärschlüssel |
-| `dateTime` | Der Messzeitpunkt, wie das Paket ihn nennt |
-| `usUnits` | Einheitensystem, `1` / `16` / `17` → [Units](Units) |
-| `data` | Die Messwerte als JSON |
-| `source` | Von welcher Station → [Multiple-Sources](Multiple-Sources) |
-| `kind` | `loop` oder `archive` |
-| `interval` | Wenn das Paket eine Spanne trägt |
-| `received` | Ankunftszeit, unabhängig vom Messzeitpunkt |
-| `raw` | Der Upload, wie er vom Draht kam — nur eine Weile |
+| `seq` | Sequential, the primary key |
+| `dateTime` | The time of the reading, as the packet gives it |
+| `usUnits` | Unit system, `1` / `16` / `17` → [Units](Units) |
+| `data` | The readings, as JSON |
+| `source` | Which station it came from → [Multiple-Sources](Multiple-Sources) |
+| `kind` | `loop` or `archive` |
+| `interval` | If the packet carries a span |
+| `received` | Time of arrival, independent of the time of the reading |
+| `raw` | The upload as it came off the wire — only for a while |
 
-Dazu eine `meta`-Tabelle und eine `pending`-Liste.
+Alongside that, a `meta` table and a `pending` list.
 
 ## `Packet`
 
-Ein Messwert, wie er ankam, bevor irgendetwas damit gemacht wurde.
+One reading, as it arrived, before anything was done to it.
 
 ```python
 Packet(dateTime=1787734265, usUnits=1, data={"outTemp": 21.4},
-       source="garten", kind="loop", interval=None,
+       source="garden", kind="loop", interval=None,
        received=1787734266, raw=None)
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `digest()` | Ein kurzer Hash der Nutzlast, damit eine erneute Übertragung kein neues Paket ist |
-| `record()` | Das Paket als Beobachtungssatz, fertig für den Akkumulator |
+| `digest()` | A short hash of the payload, so a retransmission is not a new packet |
+| `record()` | The packet as an observation record, ready for the accumulator |
 
 ## `LiveStore`
 
@@ -62,88 +62,86 @@ Packet(dateTime=1787734265, usUnits=1, data={"outTemp": 21.4},
 store = LiveStore("data/live.sdb", interval_seconds=300, keep_raw_seconds=3600)
 ```
 
-### Schreiben
+### Writing
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `add(packet)` | Ein Paket. Gibt `False` zurück, wenn es schon da war |
-| `add_all(packets)` | Viele in einer Transaktion. Gibt zurück, wie viele neu waren |
+| `add(packet)` | One packet. Returns `False` if it was already there |
+| `add_all(packets)` | Many in one transaction. Returns how many were new |
 
-**Idempotent auf `(source, kind, dateTime, payload)`.** Eine Konsole, die einen
-Upload wiederholt, wird nicht doppelt gezählt. Das ist keine Kür: Ecowitt-Geräte
-wiederholen, wenn die Antwort ausbleibt, und ein doppelt gezähltes Paket
-verschiebt jeden gewichteten Mittelwert des Intervalls.
+**Idempotent on `(source, kind, dateTime, payload)`.** A console retrying an
+upload is not counted twice. This is not a flourish: Ecowitt devices retry when
+no response comes, and a packet counted twice shifts every weighted mean of the
+interval.
 
-### Lesen
+### Reading
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `packets(start, stop, kind=None, with_raw=False)` | Jedes Paket in `(start, stop]`, in Zeitreihenfolge |
-| `raw_of(seq)` | Ein Paket samt Rohupload, wenn noch vorhanden |
-| `span()` | Erster und letzter Zeitstempel |
+| `packets(start, stop, kind=None, with_raw=False)` | Every packet in `(start, stop]`, in time order |
+| `raw_of(seq)` | A packet together with its raw upload, if it is still there |
+| `span()` | First and last timestamp |
 | `count()` | |
 
-`with_raw` ist **standardmäßig aus**: der Archiver läuft über tausende Pakete
-und hat keine Verwendung dafür, und die Spalte ist die große.
+`with_raw` is **off by default**: the archiver runs over thousands of packets
+and has no use for it, and that column is the big one.
 
-### Intervalle
+### Intervals
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `mark_pending(ts, seconds=None)` | Merken, dass das Intervall um `ts` gerechnet werden muss |
+| `mark_pending(ts, seconds=None)` | Note that the interval around `ts` needs computing |
 | `clear_pending(stop)` | |
-| `due(now=None, grace=15)` | Intervalle, die geschlossen haben, ältestes zuerst |
+| `due(now=None, grace=15)` | Intervals that have closed, oldest first |
 
-`interval_stop(ts, seconds)` (Modulfunktion) sagt, zu welchem Intervall ein
-Zeitstempel gehört. Intervalle sind **am Anfang halboffen**: ein Paket genau auf
-einer Grenze schließt das Intervall, das dort endet, statt das nächste zu
-öffnen. Dieselbe Konvention wie im [Accumulator](Aggregation).
+`interval_stop(ts, seconds)` (a module function) says which interval a timestamp
+belongs to. Intervals are **half-open at the start**: a packet exactly on a
+boundary closes the interval that ends there, rather than opening the next one.
+The same convention as in the [accumulator](Aggregation).
 
-`grace` hält ein Intervall nach seinem Ende ein paar Sekunden zurück, damit ein
-bloß langsames Paket nicht dazu führt, dass ein Satz zweimal gerechnet wird.
+`grace` holds an interval back for a few seconds after it ends, so that a merely
+slow packet does not cause a record to be computed twice.
 
-### Aufräumen
+### Tidying up
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `forget_raw(before)` | Die Rohuploads verwerfen, die Pakete bleiben |
-| `prune(before, archive_dir=None)` | Pakete älter als `before` wegwerfen, optional vorher wegschreiben |
+| `forget_raw(before)` | Discard the raw uploads, keep the packets |
+| `prune(before, archive_dir=None)` | Throw away packets older than `before`, optionally writing them out first |
 
-`forget_raw` geht nach **Ankunftszeit**, nicht nach Messzeit: ein spät
-angekommenes Paket soll seinen Rohupload noch eine Weile behalten dürfen.
+`forget_raw` goes by **arrival time**, not by reading time: a packet that
+arrived late should be allowed to keep its raw upload a while longer.
 
-`prune` mit `archive_dir` schreibt jeden Tag, der die Tabelle verlässt, vorher
-als gzip-NDJSON weg (`_spool`). Nichts wird gelöscht, bevor die Datei
-geschrieben ist.
+`prune` with `archive_dir` writes out every day leaving the table as gzip NDJSON
+first (`_spool`). Nothing is deleted before the file has been written.
 
 ```bash
 weewx-evo archive --spool /data/packets
 ```
 
-### Verbindungen
+### Connections
 
-`conn()` öffnet **je Thread** eine eigene Verbindung beim ersten Zugriff.
-SQLite-Verbindungen sind thread-gebunden — das war ein echter Fehler, der im
-Browser nie aufgefallen wäre, und ist jetzt Teil des Designs.
-→ [Testing](Testing)
+`conn()` opens its own connection **per thread** on first use. SQLite
+connections are thread-bound — that was a real bug that would never have shown
+up in a browser, and is now part of the design. → [Testing](Testing)
 
 ### Migration
 
-`_migrate()` bringt eine ältere Datei auf den Stand, **nur additiv**. Diese
-Datei ist ein Cache mit ein paar Tagen darin, eine schiefgegangene Migration
-kostete also wenig — aber die Pakete sind das, woraus ein Satz reproduzierbar
-ist, also wird trotzdem nichts weggenommen.
+`_migrate()` brings an older file up to date, **additively only**. This file is
+a cache with a few days in it, so a migration going wrong would cost little —
+but the packets are what makes a record reproducible, so nothing is taken away
+regardless.
 
-## Warum das die Live-Tabelle rechtfertigt
+## Why this justifies the live table
 
-Der messbare Fall steht im [Testing](Testing)-Kapitel: In einer echten Datenbank
-stand ein `outTemp`-Minimum von 17,6 °F und ein Maximum von 96,8 °F, acht
-Minuten auseinander, spätabends im August. Beides Müll aus einer Umbauphase —
-und beides steht dauerhaft in der Statistik, weil die LOOP-Pakete fort sind.
-`weectl database rebuild-daily` würde es entfernen und dabei jedes **echte**
-LOOP-Extrem des gesamten Zeitraums mitnehmen.
+The measurable case is in the [Testing](Testing) chapter: in a real database
+there was an `outTemp` minimum of 17.6 °F and a maximum of 96.8 °F, eight
+minutes apart, late one August evening. Both of them rubbish from a period of
+rebuilding — and both permanently in the statistics, because the LOOP packets
+are gone. `weectl database rebuild-daily` would remove them and take every
+**real** LOOP extreme of the whole period with them.
 
-Solange die Pakete hier liegen, ist beides trennbar.
+As long as the packets are here, the two can be told apart.
 
 <!-- covers
 src/weewx_evo/db/live.py

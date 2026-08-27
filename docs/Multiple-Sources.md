@@ -1,67 +1,66 @@
-# Mehrere Quellen
+# Multiple sources
 
-`sources.py`. Mehrere Stationen, eine Messreihe.
+`sources.py`. Several stations, one record.
 
-## Warum das bei WeeWX schwer ist
+## Why this is hard in WeeWX
 
-WeeWX kennt genau einen `station_type`. Zwei Stationen zu kombinieren heißt dort
-also, einen Treiber zu schreiben, der Treiber umschließt —
-[weewx-metadriver](https://github.com/tkeffer/weewx-metadriver): Worker-Threads
-je Kind, eine gemeinsame Queue, ein `source`-Schlüssel an jedem Paket.
+WeeWX knows exactly one `station_type`. Combining two stations there means
+writing a driver that wraps drivers —
+[weewx-metadriver](https://github.com/tkeffer/weewx-metadriver): worker threads
+per child, a shared queue, a `source` key on every packet.
 
-Er funktioniert, und seine Grenzen folgen daraus, **wo** er sitzt. Ein Treiber
-führt Pakete zusammen, während sie ankommen, und zu diesem Zeitpunkt ist die
-Wahl schon getroffen:
+It works, and its limits follow from **where** it sits. A driver merges packets
+as they arrive, and by that point the choice has already been made:
 
-- Nur der primäre Treiber darf Archivsätze liefern.
-- Nur seine Uhr wird gelesen.
-- Ein abgestürztes Kind bleibt tot.
+- Only the primary driver may deliver archive records.
+- Only its clock is read.
+- A child that has crashed stays dead.
 
-`tools/multisource.py` prüft genau diese drei Fälle.
+`tools/multisource.py` checks exactly those three cases.
 
-## Wie es hier geht
+## How it works here
 
-Hier umschließt nichts irgendwas. Jede Quelle liefert selbst ein, ihre Pakete
-landen mit ihrem Namen in der Live-Tabelle, und zusammengeführt wird erst **beim
-Aufbau des Intervalls** — wenn alle Pakete samt Herkunft vorliegen.
+Here nothing wraps anything. Every source delivers on its own, its packets land
+in the live table under its name, and the merge happens only **while the
+interval is being built** — when every packet is available, origin and all.
 
-Damit verschiebt sich die Frage von „welcher Treiber hat das Sagen" zu „welcher
-Quelle glaube ich für *dieses Feld* in *diesem Intervall*".
+That moves the question from "which driver is in charge" to "which source do I
+believe for *this field* in *this interval*".
 
 ```
-garten (Ecowitt)  ─┐
-dach (Vantage)    ─┼─► live.packet (source, dateTime, data)
-weiteres          ─┘        │
-                            ▼  beim Bau des Intervalls
+garden (Ecowitt)  ─┐
+roof (Vantage)    ─┼─► live.packet (source, dateTime, data)
+another one       ─┘        │
+                            ▼  while the interval is built
                      sources.apply(packets, policy)
                             │
                             ▼
-                     ein Archivsatz + provenance
+                     one archive record + provenance
 ```
 
-## Die Konfiguration
+## The configuration
 
 ```toml
 [sources]
-outTemp = "garten, dach"     # der Garten ist die Messreihe
-"soil*" = "garten"           # nur der Garten hat Bodensonden
-"*"     = "dach, garten"     # alles andere: zuerst das Dach
+outTemp = "garden, roof"     # the garden is the record
+"soil*" = "garden"           # only the garden has soil probes
+"*"     = "roof, garden"     # everything else: the roof first
 ```
 
-Auch als eigene Datei (`--sources sources.toml`, `WEEWX_EVO_SOURCES`). Eine
-Politik für ein Dutzend Felder ist es wert, getrennt von den Einstellungen
-gehalten zu werden.
+Also available as its own file (`--sources sources.toml`,
+`WEEWX_EVO_SOURCES`). A policy covering a dozen fields is worth keeping apart
+from the settings.
 
-**Regeln werden der Reihe nach geprüft, die erste passende entscheidet.** Also
-die spezifischen vor die allgemeinen.
+**Rules are checked in order, the first match decides.** So put the specific
+ones before the general ones.
 
-## Das Modell
+## The model
 
 ```python
 @dataclass
 class Rule:
-    pattern: str            # Feldname oder Glob
-    order: tuple[str, ...]  # Quellen, beste zuerst
+    pattern: str            # field name or glob
+    order: tuple[str, ...]  # sources, best first
 
     def matches(self, obs_type: str) -> bool: ...
 ```
@@ -73,65 +72,64 @@ class Policy:
     stale_after: int | None
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `Policy.from_config(mapping, stale_after=None)` | Aus dem `[sources]`-Abschnitt |
+| `Policy.from_config(mapping, stale_after=None)` | From the `[sources]` section |
 | `is_empty()` | |
-| `order_for(obs_type)` | Die Präferenzliste für ein Feld, oder `None` |
-| `choose(obs_type, available)` | Welche der Quellen, die dieses Feld *tatsächlich* hatten, liefern soll |
+| `order_for(obs_type)` | The preference list for a field, or `None` |
+| `choose(obs_type, available)` | Which of the sources that *actually* had this field should deliver it |
 
-**`available` ist entscheidend.** Es ist die Menge der Quellen, die das Feld in
-*diesem* Intervall getragen haben — nicht die Menge der konfigurierten. Eine
-Station, die ausgefallen ist, gewinnt nicht dadurch, dass sie in der Liste
-vorne steht.
+**`available` is what decides.** It is the set of sources that carried the field
+in *this* interval — not the set of configured ones. A station that has failed
+does not win by standing at the front of the list.
 
-`stale_after` lässt eine Quelle nach so vielen Sekunden ohne Paket zurückfallen.
+`stale_after` lets a source drop back after that many seconds without a packet.
 
-## Die Funktionen
+## The functions
 
 | | |
 |---|---|
-| `sources_by_field(packets)` | Welche Quelle welches Feld getragen hat |
-| `apply(packets, policy)` | Die Pakete auf die gewinnende Quelle je Feld eindampfen |
-| `replace_data(packet, data)` | Eine Kopie eines Pakets mit anderen Messwerten |
+| `sources_by_field(packets)` | Which source carried which field |
+| `apply(packets, policy)` | Reduce the packets to the winning source per field |
+| `replace_data(packet, data)` | A copy of a packet with different readings |
 
-`apply()` gibt die Pakete zurück, deren verlierende Felder entfernt wurden, plus
-eine Aufzeichnung, aus welcher Quelle jedes Feld kam. Pakete, denen nichts
-bleibt, fallen weg. Das Herkunftsprotokoll landet in `Built.provenance`.
-→ [Archiver](Archiver)
+`apply()` returns the packets with their losing fields removed, plus a record of
+which source each field came from. Packets left with nothing drop out. The
+provenance record ends up in `Built.provenance`. → [Archiver](Archiver)
 
-## Die Regel gilt je Feld
+## The rule applies per field
 
-Nicht je Datensatz. Eine Station, die Temperatur und Regen misst, aber
-Schneehöhe nicht messen *kann*, liefert ihre Temperatur und ihren Regen; die
-Schneehöhe kommt von dem, der sie hat.
+Not per record. A station that measures temperature and rain but *cannot*
+measure snow depth delivers its temperature and its rain; the snow depth comes
+from whichever one has it.
 
-## Gemittelt wird über Quellen nie
+## Sources are never averaged
 
-Zwei Thermometer mit 19 °C und 21 °C ergeben nirgends 20 °C. Es sind zwei
-Messungen zweier Orte, und eine davon zu nehmen ist die einzige ehrliche
-Antwort. Wer beide will, gibt der zweiten eine eigene Spalte —
-→ [Database-Archive](Database-Archive#spalten).
+Two thermometers reading 19 °C and 21 °C do not make 20 °C anywhere. They are
+two readings of two places, and taking one of them is the only honest answer.
+Anyone who wants both gives the second a column of its own —
+→ [Database-Archive](Database-Archive#columns).
 
-## Was jede Quelle sein kann
+## What each source can be
 
-Alles, was in die Live-Tabelle einliefert:
+Anything that delivers into the live table:
 
-- Ein Treiber im Listener, mit `source` am Paket
-- Ein zweiter Listener auf einem anderen Port
-- Ein Pull-Treiber über `listener.push()`
-- Etwas völlig anderes, das den [JSON-Umschlag](Drivers#der-umschlag--der-einzige-treiber-im-kern)
-  auf `/<token>/json/` postet
+- A driver in the listener, with `source` on the packet
+- A second listener on another port
+- A pull driver via `listener.push()`
+- Something else entirely posting the
+  [JSON envelope](Drivers#the-envelope--the-only-driver-in-the-core) to
+  `/<token>/json/`
 
-Der Kern kennt keinen Unterschied zwischen ihnen.
+The core knows no difference between them.
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/multisource.py
 ```
 
-Prüft die drei Fälle, die der Metatreiber als seine Grenzen nennt.
+Checks the three cases the metadriver names as its own limits.
 
 <!-- covers
 src/weewx_evo/sources.py

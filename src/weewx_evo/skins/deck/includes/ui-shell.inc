@@ -40,6 +40,17 @@
 
 
   <div class="header__end">
+    ## Whether the readings on this page are live, and how old they are.
+    ## Only when a broker is configured: on a station without one it would
+    ## be a permanent red badge saying nothing anybody can act on.
+    #if $to_bool($Extras.get('mqtt', {}).get('mqtt_websockets_enabled', 0))
+    <div class="live-indicator live-indicator--waiting" id="live-indicator"
+         role="status" aria-live="polite"
+         title="$gettext('Waiting for the first reading.')">
+      <span class="live-indicator__dot" aria-hidden="true"></span>
+      <span class="live-indicator__label">$gettext('connecting')</span>
+    </div>
+    #end if
     <button
       class="icon-button"
       type="button"

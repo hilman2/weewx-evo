@@ -1,12 +1,11 @@
-# Zeitreihen
+# Series
 
-`series.py`. Das Äquivalent zu `weewx.xtypes.get_series()` und die Grundlage
-jedes Feeds.
+`series.py`. The equivalent of `weewx.xtypes.get_series()`, and what every feed
+stands on.
 
-Jeder Feed will dasselbe: einen Messwert, über eine Spanne, in irgendeiner
-Auflösung. Die heutige Temperatur alle fünf Minuten. Den Regen dieses Monats je
-Tag. Ein Jahrzehnt Jahresmaxima. Ohne das kann ein Feed nur den letzten Wert
-melden.
+Every feed wants the same thing: one reading, over a span, at some resolution.
+Today's temperature every five minutes. This month's rain by day. A decade of
+yearly maxima. Without it a feed can only report the last value.
 
 ## `Series`
 
@@ -23,17 +22,16 @@ class Series:
     directions: list[Any] | None
 ```
 
-**Zwei parallele Arrays statt einer Liste von Paaren**: rund 30 % kleiner,
-sobald es JSON ist, und die Form, die jede Diagrammbibliothek will.
+**Two parallel arrays rather than a list of pairs**: around 30 % smaller once it
+is JSON, and the shape every charting library wants.
 
-`start` und `stop` begrenzen jeden Punkt. Ein Aggregat gehört zu einer Spanne,
-nicht zu einem Moment — ein Tagesbalken, der auf seinen Zeitstempel gezeichnet
-wird, sitzt an der falschen Stelle des Diagramms.
+`start` and `stop` bound each point. An aggregate belongs to a span, not to a
+moment — a daily bar drawn on its timestamp sits in the wrong place on the plot.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `empty()` | Ob es etwas zu zeichnen gibt. Eine Reihe aus lauter Nulls hat es nicht |
-| `rounded(places=3)` | Werte an Ort und Stelle runden. **Zeitstempel nie** |
+| `empty()` | Whether there is anything to draw. A series of nothing but nulls has not |
+| `rounded(places=3)` | Round the values in place. **Never the timestamps** |
 
 ## `Reader`
 
@@ -42,78 +40,78 @@ reader = Reader(connection, table="archive")
 s = reader.series("outTemp", start, stop, aggregate="max", interval="day")
 ```
 
-Hält eine Verbindung und sonst nichts — **keinen Cache**, also auch nichts, was
-veralten könnte, während der Archiver in dieselbe Datei schreibt.
+Holds a connection and nothing else — **no cache**, so nothing that could go
+stale while the archiver writes into the same file.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `columns()` | Die Messwerte, für die die Archivtabelle eine Spalte hat |
-| `has_daily(obs_type)` | Ob es eine Tagesstatistik-Tabelle dafür gibt |
-| `span()` | Erster und letzter Satz |
-| `series(obs_type, start, stop, aggregate=None, interval=None)` | Die Hauptsache |
-| `aggregate(obs_type, start, stop, how)` | **Eine** Zahl für eine Spanne |
-| `vector(obs_type, start, stop, how)` | Ein Windvektor als `(Betrag, Richtung)` |
-| `buckets(start, stop, interval)` | In welche Eimer eine Spanne zerfällt |
+| `columns()` | The readings the archive table has a column for |
+| `has_daily(obs_type)` | Whether there is a daily-summary table for it |
+| `span()` | First and last record |
+| `series(obs_type, start, stop, aggregate=None, interval=None)` | The main thing |
+| `aggregate(obs_type, start, stop, how)` | **One** number for a span |
+| `vector(obs_type, start, stop, how)` | A wind vector as `(magnitude, direction)` |
+| `buckets(start, stop, interval)` | Which buckets a span falls into |
 
-Ohne `aggregate` kommen die Archivsätze selbst. Mit einem wird die Spanne in
-Eimer geschnitten und jeder auf eine Zahl reduziert.
+Without `aggregate` you get the archive records themselves. With one, the span
+is cut into buckets and each is reduced to a number.
 
-## Die zwei Wege zu einem Aggregat
+## The two routes to an aggregate
 
-Die Wahl zwischen ihnen ist der größte Teil dieser Datei.
+Choosing between them is most of what this file is.
 
-### 1. Aus den Tagesstatistiken
+### 1. From the daily summaries
 
-`archive_day_outTemp` hält Minimum, Maximum, Summe und gewichtete Summe für
-jeden Tag. **Ein Monat Tagesmaxima sind 30 Zeilen über den Primärschlüssel**
-statt ein Monat Archivsätze.
+`archive_day_outTemp` holds minimum, maximum, sum and weighted sum for every
+day. **A month of daily maxima is 30 rows via the primary key** instead of a
+month of archive records.
 
-Und es sind die *besseren* Extreme: aus den Live-Paketen aufgenommen, also ist
-eine Bö zwischen zwei Archivsätzen darin.
+And they are the *better* extremes: taken from the live packets, so a gust
+between two archive records is in there.
 
-Voraussetzung: die Spanne fällt auf ganze lokale Tage. `is_midnight(ts)` ist
-genau diese Frage — die Tagesstatistiken sind danach indiziert, also ist es die
-Frage, ob sie überhaupt antworten können.
+The prerequisite: the span falls on whole local days. `is_midnight(ts)` is
+exactly that question — the daily summaries are indexed by it, so it is the
+question of whether they can answer at all.
 
-### 2. Aus der Archivtabelle
+### 2. From the archive table
 
-Alles, was nicht auf Tage fällt.
+Everything that does not fall on days.
 
 ### `_NOT_THERE`
 
-`_from_daily()` gibt entweder einen Wert, `None` oder das Sentinel `_NOT_THERE`
-zurück. Der Unterschied ist wichtig:
+`_from_daily()` returns either a value, `None`, or the sentinel `_NOT_THERE`.
+The difference matters:
 
 | | |
 |---|---|
-| `_NOT_THERE` | Die Statistiken **können** nicht antworten → die Sätze fragen |
-| `None` | Die Antwort **ist** nichts |
+| `_NOT_THERE` | The summaries **cannot** answer → ask the records |
+| `None` | The answer **is** nothing |
 
-## Tage sind Tage
+## Days are days
 
-Ein Tagesaggregat bekommt Eimer auf **lokaler Mitternacht**, nicht Eimer von
-86400 Sekunden ab dem Beginn der Anfrage. Monate und Jahre genauso.
+A daily aggregate gets buckets on **local midnight**, not buckets of 86400
+seconds from the start of the request. Months and years likewise.
 
-Ein Tag ist nicht immer 86400 Sekunden. Deshalb wird in Ortszeit gelaufen und
-nicht addiert:
+A day is not always 86400 seconds. That is why it is walked in local time rather
+than added up:
 
 | | |
 |---|---|
-| `FIXED = {"hour": 3600, "week": 604800}` | Feste Längen |
-| `CALENDAR = ("day", "month", "year")` | Kalendereinheiten |
-| `_floor(ts, unit)` | Beginn des Tages, Monats oder Jahres |
-| `_step(ts, unit, count=1)` | Um ganze Einheiten vorwärts, in Ortszeit |
-| `_fixed(start, stop, interval)` | Feste Eimer, **in Ortszeit gestuft** |
+| `FIXED = {"hour": 3600, "week": 604800}` | Fixed lengths |
+| `CALENDAR = ("day", "month", "year")` | Calendar units |
+| `_floor(ts, unit)` | Start of the day, month or year |
+| `_step(ts, unit, count=1)` | Forward by whole units, in local time |
+| `_fixed(start, stop, interval)` | Fixed buckets, **stepped in local time** |
 
-`_fixed` stuft ebenfalls in Ortszeit statt Sekunden zu addieren. Das hält die
-Grenzen über einen Sommerzeitwechsel hinweg auf derselben Uhrzeit — was WeeWX
-tut und was ein Diagramm braucht, das an Stundenmarken ausgerichtet ist.
+`_fixed` also steps in local time instead of adding seconds. That keeps the
+boundaries on the same clock time across a daylight-saving change — which is
+what WeeWX does and what a plot aligned to hour marks needs.
 
-`buckets()` nimmt nur Kalendereinheiten, die **innerhalb** der Spanne beginnen:
-eine Anfrage, die um neun Uhr morgens anfängt, bekommt keinen Tageseimer, der
-Mitternacht anfängt und nur zu einem Viertel abgedeckt ist.
+`buckets()` takes only calendar units that begin **inside** the span: a request
+starting at nine in the morning does not get a day bucket that starts at
+midnight and is only a quarter covered.
 
-## Die Aggregate
+## The aggregates
 
 ```python
 AGGREGATES = ("avg", "min", "max", "sum", "count", "first", "last",
@@ -121,12 +119,12 @@ AGGREGATES = ("avg", "min", "max", "sum", "count", "first", "last",
               "vecavg", "vecdir", …)
 ```
 
-Dazu die Änderungsaggregate über `_change()`: wie viel ein Messwert über eine
-Spanne wanderte und wie schnell.
+Plus the change aggregates via `_change()`: how far a reading moved over a span
+and how fast.
 
-**Der Ausgangspunkt ist der Satz *bei oder vor* dem Beginn der Spanne**, nicht
-der erste darin. Ein Zähler, der bei 4 kWh stand, als die Woche begann, hat in
-dieser Woche nicht 4 kWh geliefert.
+**The starting point is the record *at or before* the beginning of the span**,
+not the first one inside it. A meter that stood at 4 kWh when the week began did
+not deliver 4 kWh that week.
 
 ## Wind
 
@@ -136,50 +134,48 @@ VECTORS = {"windvec": ("windSpeed", "windDir"),
 WIND = {"max": "windGust", "maxtime": "windGust"}
 ```
 
-Der Vektorpfad ist vom skalaren getrennt, weil das Mitteln eine **andere
-Operation** ist. Das Mittel aus einer Stunde Nordwind und einer Stunde Südwind
-ist nicht ein frischer Wind, sondern Windstille — und genau das kommt heraus,
-wenn man die Komponenten addiert statt der Beträge.
+The vector path is separate from the scalar one because averaging is a
+**different operation**. The mean of an hour of northerly and an hour of
+southerly wind is not a brisk wind, it is a calm — and that is exactly what
+comes out when you add the components rather than the magnitudes.
 
 | | |
 |---|---|
-| `_vector(magnitude, bearing)` | Eine Windmessung als Vektor, oder nichts |
-| `_bearing(x, y)` | Die Richtung einer Vektorsumme, in Kompassgrad |
+| `_vector(magnitude, bearing)` | A wind reading as a vector, or nothing |
+| `_bearing(x, y)` | The direction of a vector sum, in compass degrees |
 
-Eine Geschwindigkeit ohne Richtung **ist kein Vektor**: es gibt keinen Pfeil zu
-zeichnen und keine Möglichkeit, ihn zu einem anderen zu addieren. WeeWX wirft
-solche weg, und das hier auch. Eine Geschwindigkeit von null ist die Ausnahme.
+A speed without a direction **is not a vector**: there is no arrow to draw and
+no way to add it to another. WeeWX throws those away, and so does this. A speed
+of zero is the exception.
 
-`vector(obs_type, start, stop, how)`: `avg` und `sum` addieren die Messungen als
-Vektoren. Jedes andere Aggregat wählt **eine** Messung — die stärkste, die
-erste — und meldet deren Richtung.
+`vector(obs_type, start, stop, how)`: `avg` and `sum` add the readings as
+vectors. Every other aggregate picks **one** reading — the strongest, the first
+— and reports its direction.
 
-## Eine bewusste Abweichung
+## One deliberate departure
 
-**Ein Mittelwert ist hier immer mit `interval` gewichtet.**
+**A mean here is always weighted by `interval`.**
 
-WeeWX gewichtet in den Tagesstatistiken so, benutzt aber ein schlichtes `AVG()`
-auf der Archivtabelle. In einer Datenbank, deren Archivintervall sich geändert
-hat, widerspricht WeeWX also **sich selbst** — je nachdem, welchen der beiden
-Wege eine Anfrage nimmt.
+WeeWX weights that way in the daily summaries, but uses a plain `AVG()` on the
+archive table. In a database whose archive interval has changed, WeeWX therefore
+contradicts **itself** — depending on which of the two routes a query takes.
 
-Gemessen: `tools/seriestest.py`, 94 Vergleiche, 19 957 Punkte, 0 Fehler,
-8 bekannte Abweichungen (genau diese).
+Measured: `tools/seriestest.py`, 94 comparisons, 19,957 points, 0 failures,
+8 known departures (exactly these).
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/seriestest.py reference/weewx.sdb
 ```
 
-Fragt WeeWX und weewx-evo nach derselben Reihe und vergleicht. `weewx.xtypes.
-get_series` ist, worauf jeder WeeWX-Bericht steht, und `weewx_evo.series` ist,
-worauf jeder Feed hier steht. Weichen die zwei ab, zeigt ein von weewx-evo
-gezeichnetes Diagramm eine andere Woche Wetter als dasselbe Diagramm von WeeWX —
-und das ist die eine Sache, die dieses Projekt nicht darf.
+Asks WeeWX and weewx-evo for the same series and compares. `weewx.xtypes.
+get_series` is what every WeeWX report stands on, and `weewx_evo.series` is what
+every feed here stands on. If the two diverge, a plot drawn by weewx-evo shows a
+different week of weather than the same plot from WeeWX — and that is the one
+thing this project must not do.
 
-Der Test braucht ein installiertes WeeWX und eine echte Datenbank.
-→ [Testing](Testing)
+The test needs an installed WeeWX and a real database. → [Testing](Testing)
 
 <!-- covers
 src/weewx_evo/series.py
