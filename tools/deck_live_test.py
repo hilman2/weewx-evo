@@ -368,11 +368,11 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
     from weewx_evo.cli import live_readings_locally
 
     class FakeSettings:
-        def __init__(self, exports: dict) -> None:
-            self.config = {"exports": exports}
+        def __init__(self, exports: dict, feeds: dict | None = None) -> None:
+            self.config = {"exports": exports, "feeds": feeds or {}}
 
         def get(self, name: str) -> object:
-            return "upload-token" if name == "token" else None
+            return {"token": "upload-token", "language": "en"}.get(name)
 
     local = FakeSettings({"site": {"kind": "local", "directory": "data/site",
                                    "live_push": True}})
@@ -397,6 +397,34 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
     # One that was configured on purpose is left alone, whatever it says.
     check("an upload that exists is not doubled",
           live_readings_locally(local, {"mine": {"kind": "webpush"}}), {})
+
+    # The units the pages are written in, not the ones the station reports.
+    # A station on Fahrenheit publishing a page in Celsius is the ordinary
+    # case, and the page has no way to tell that 82.8 is not what it was
+    # about to print.
+    two = FakeSettings(
+        {"metric": {"kind": "local", "directory": "data/metric",
+                    "source": "deck"},
+         "imperial": {"kind": "local", "directory": "data/imperial",
+                      "source": "seasons"}},
+        {"deck": {"units": "METRICWX"}, "seasons": {"units": "US"}})
+    made = live_readings_locally(two, {})
+    check("two unit systems are two uploads", sorted(made),
+          ["live-metricwx", "live-us"])
+    check("each with its own directory",
+          made["live-us"]["directories"], ["data/imperial"])
+    check("and its own units",
+          made["live-metricwx"]["unit_system"], "METRICWX")
+
+    # And the language decides where the feed did not say.
+    class German(FakeSettings):
+        def get(self, name: str) -> object:
+            return {"token": "t", "language": "de"}.get(name)
+
+    spoken = German({"site": {"kind": "local", "directory": "data/site",
+                              "source": "deck"}}, {"deck": {}})
+    check("the language settles it when the feed does not",
+          live_readings_locally(spoken, {})["live"]["unit_system"], "METRICWX")
 
 
 # ---------------------------------------------------------------------------

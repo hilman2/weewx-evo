@@ -1650,16 +1650,60 @@ def live_readings_locally(cfg: Settings,
     somebody else's network, and starting that because a checkbox defaulted on
     is not this program's decision -- so a web host still wants an upload
     added on purpose, and this leaves one alone as soon as there is one.
-    """
-    from .uploads.webpush import WebPushUpload
 
+    Grouped by the units the pages are rendered in, because that is what the
+    numbers have to match. A station reporting Fahrenheit and a page showing
+    Celsius is the ordinary case here, not an odd one -- and the page has no
+    way to tell that 82.8 is not what it was about to print. Two sites in
+    different units are two uploads, which costs a second file of a kilobyte.
+    """
     if any(str(one.get("kind", "")) == "webpush" for one in configured.values()):
         return {}
-    _url, _token, directories = WebPushUpload.from_exports(cfg)
-    if not directories:
+
+    section = cfg.config.get("exports") or {}
+    grouped: dict[str, list[str]] = {}
+    for _name, export in sorted(section.items()):
+        if not isinstance(export, dict) or export.get("kind") != "local":
+            continue
+        if not export.get("live_push", True):
+            continue
+        where = str(export.get("directory") or "").strip()
+        if not where:
+            continue
+        grouped.setdefault(_rendered_units(cfg, export), []).append(where)
+
+    if not grouped:
         return {}
-    return {"live": {"kind": "webpush", "directories": list(directories),
-                     "_inferred": True}}
+    if len(grouped) == 1:
+        system, directories = next(iter(grouped.items()))
+        return {"live": {"kind": "webpush", "directories": directories,
+                         "unit_system": system, "_inferred": True}}
+    return {f"live-{system.lower() or 'stored'}":
+            {"kind": "webpush", "directories": directories,
+             "unit_system": system, "_inferred": True}
+            for system, directories in grouped.items()}
+
+
+def _rendered_units(cfg: Settings, export: dict) -> str:
+    """Which units the pages this export publishes are written in.
+
+    The same three steps the Cheetah feed takes, in the same order: what the
+    feed was told to show, then what the language asks for, then nothing --
+    which means the archive's own units and is what the upload does with an
+    empty string. Working it out twice in two places is how the two drift, so
+    if that order ever changes it changes in both.
+    """
+    feeds = cfg.config.get("feeds") or {}
+    feed = feeds.get(str(export.get("source") or "").strip())
+    if not isinstance(feed, dict):
+        feed = {}
+    chosen = str(feed.get("units") or "").strip()
+    if chosen:
+        return chosen
+    from . import language
+
+    spoken = language.get(str(feed.get("lang") or cfg.get("language") or ""))
+    return str(getattr(spoken, "unit_system", "") or "")
 
 
 def configured_forecasts(args: argparse.Namespace) -> dict[str, dict]:
