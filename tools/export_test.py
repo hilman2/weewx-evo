@@ -277,6 +277,53 @@ def local_export(check) -> int:
                                          "directory": "/httpdocs"})
         failures += not check("but a remote directory is left alone",
                               kept["directory"], "/httpdocs")
+        print("\nthe whole schedule is built, the way serve builds it")
+        # The one check that would have caught it: `build_schedule` calls
+        # `build_export` with the station's upload token, and nothing else in
+        # this file walks that call. A signature that had never been given a
+        # third argument reached a running instance, where every export said
+        # "not usable" at startup and nothing else looked wrong.
+        from weewx_evo.cli import build_schedule, settings_for
+
+        schedule_config = tmp / "schedule" / "evo.toml"
+        schedule_config.parent.mkdir(parents=True, exist_ok=True)
+        # The directory both are pointed at has to exist: an export with
+        # nothing to send is left out, and then this would pass for the
+        # wrong reason.
+        (schedule_config.parent / "data" / "work").mkdir(parents=True)
+        schedule_config.write_text(
+            'archive_db = "data/weewx.sdb"\n'
+            'token = "station-upload-token"\n'
+            '[exports.site]\n'
+            'kind = "local"\n'
+            'directory = "data/site"\n'
+            'directory_source = "data/work"\n'
+            'trigger = "manual"\n'
+            '[exports.away]\n'
+            'kind = "ftp"\n'
+            'host = "ftp.example.org"\n'
+            'user = "u"\n'
+            'password = "p"\n'
+            'directory = "/httpdocs"\n'
+            'directory_source = "data/work"\n'
+            'trigger = "manual"\n'
+            'live_push_url = "https://example.org/wetter"\n',
+            encoding="utf-8")
+        schedule_args = argparse.Namespace(config=schedule_config)
+        schedule = build_schedule(schedule_args, settings_for(schedule_args))
+        failures += not check("both exports were built", len(schedule), 2)
+
+        built_exports = {entry.name: entry.export for entry in schedule}
+        failures += not check(
+            "the token reached the one that carries live.php",
+            getattr(built_exports.get("away"), "upload_token", None),
+            "station-upload-token")
+        failures += not check(
+            "and the local one, which uses the same switch differently",
+            getattr(built_exports.get("site"), "upload_token", None),
+            "station-upload-token")
+
+
         print("\nthe web server serves what a local export published")
         # Nobody says the path twice: an export named `site` is at /site/.
         class Settings:

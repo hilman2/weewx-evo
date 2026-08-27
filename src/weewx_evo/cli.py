@@ -1807,8 +1807,14 @@ def resolve_paths(args: argparse.Namespace, settings: dict) -> dict:
     return out
 
 
-def build_export(name: str, settings: dict) -> object:
-    """Make one export from its settings. Raises with a usable message."""
+def build_export(name: str, settings: dict, upload_token: str = "") -> object:
+    """Make one export from its settings. Raises with a usable message.
+
+    `upload_token` is what `live.php`'s token is derived from. It belongs to
+    the station rather than to any one export, so it is filled in here instead
+    of being typed into every export -- and only when the export did not say
+    its own.
+    """
     kind = str(settings.pop("kind", "")).strip()
     if not kind:
         raise ValueError(f"export {name!r} does not say what kind it is. "
@@ -1824,6 +1830,8 @@ def build_export(name: str, settings: dict) -> object:
             first = next(iter(errors.values()))
             raise ValueError(f"export {name!r}: {first}")
         settings = parsed
+    if upload_token and not settings.get("upload_token"):
+        settings["upload_token"] = upload_token
     return factory(**settings)
 
 
