@@ -236,6 +236,89 @@ def check_forecast(database: Path, out: Path) -> list[str]:
     return problems
 
 
+
+#: Where a sideways scrollbar is the right answer, and why. Everywhere else it
+#: is content hidden behind a gesture nobody performs on a weather page.
+MAY_SCROLL_SIDEWAYS = {
+    ".table-wrap": "a fourteen-column year table cannot wrap",
+    ".table-scroll": "the same, on a phone",
+    ".tabs": "the strip of tab buttons, and its bar is hidden",
+}
+
+
+def check_icons_have_a_colour(page_html: str, out: Path) -> list[str]:
+    """No icon is left black, which on a dark page is invisible.
+
+    The set these come from leaves `fill` out, so an SVG with no rule of its
+    own renders black -- correct markup, present icon, and half the page
+    simply not there for anybody on the dark theme. Nothing that reads the
+    HTML finds it, and nothing that reads the CSS finds it either: it is the
+    two together that decide.
+    """
+    import shutil
+    import subprocess
+
+    from weewx_evo.skins import bundled
+
+    if shutil.which("node") is None:
+        return []
+    if subprocess.run(["node", "-e", "require('jsdom')"],
+                      capture_output=True, check=False).returncode != 0:
+        return []
+
+    where = out / "icons.html"
+    where.parent.mkdir(parents=True, exist_ok=True)
+    where.write_text(page_html, encoding="utf-8")
+    script = Path(__file__).resolve().parent / "deck_icons_test.js"
+    css = Path(bundled()["deck"]) / "assets" / "deck.css"
+    finished = subprocess.run(["node", str(script), str(where), str(css)],
+                              capture_output=True, text=True, timeout=60,
+                              check=False)
+    if finished.returncode != 0 or not finished.stdout.strip():
+        why = finished.stderr.strip()[:300]
+        return [f"the icons could not be checked: {why}"]
+    found = json.loads(finished.stdout)
+    return [f"an icon under {said} is given no colour, so it is black -- "
+            f"invisible on a dark page"
+            for said in found["uncoloured"]]
+
+
+def check_no_sideways_scrolling() -> list[str]:
+    """No horizontal scrollbars, except the two that earn one.
+
+    The forecast had two, stacked, with arrow buttons: the week and the day
+    each in a flex row with `overflow-x: auto`. On a wide screen the same
+    rule left a third of the card empty, because a fixed-width item cannot
+    stretch. A grid that wraps does both jobs and needs no gesture.
+    """
+    import re as _re
+
+    from weewx_evo.skins import bundled
+
+    css = (Path(bundled()["deck"]) / "assets" / "deck.css").read_text(
+        encoding="utf-8")
+    # Comments out first. A rule preceded by a paragraph explaining it would
+    # otherwise be reported with the paragraph attached, and the name of the
+    # thing that scrolls is the part somebody needs.
+    css = _re.sub(r"/\*.*?\*/", "", css, flags=_re.DOTALL)
+
+    problems: list[str] = []
+    # Every rule that turns on sideways scrolling, with the selector it is
+    # under. Read from the file rather than from a list of names: a new
+    # component that adds one has to be looked at, not silently allowed.
+    for block in _re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        selector = " ".join(block.group(1).split())
+        body = block.group(2)
+        if not _re.search(r"overflow(?:-x)?\s*:\s*(auto|scroll)", body):
+            continue
+        if _re.search(r"scrollbar-width\s*:\s*none", body):
+            continue
+        if any(allowed in selector for allowed in MAY_SCROLL_SIDEWAYS):
+            continue
+        problems.append(f"{selector} scrolls sideways, and nothing says why")
+    return problems
+
+
 def main(argv: list[str]) -> int:
     database = Path(argv[1] if len(argv) > 1 else "reference/weewx.sdb")
     if not database.is_file():
@@ -252,6 +335,11 @@ def main(argv: list[str]) -> int:
             failures.append(f"{name} did not render: {why}")
 
         failures += check_forecast(database, out)
+        failures += check_no_sideways_scrolling()
+
+        forecast_page, _ = with_forecast(database, out / "icons")
+        if forecast_page:
+            failures += check_icons_have_a_colour(forecast_page, out / "icons")
 
         pages = sorted(out.glob("*.html"))
         if len(pages) < 5:

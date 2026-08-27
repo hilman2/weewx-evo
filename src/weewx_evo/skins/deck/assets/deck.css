@@ -1003,7 +1003,11 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
   border-top: 1px solid var(--line-soft);
 }
 
-.stat-tile .stat-label {
+/* The forecast shares these, so the same kind of thing is the same size and
+   the same grey wherever it appears. Widened rather than copied: two rules
+   that mean "a small grey label" drift apart the first time one is touched. */
+.stat-tile .stat-label,
+.forecast-tile .stat-label {
   margin: 0;
   font-size: var(--step--1);
   font-weight: 500;
@@ -1011,7 +1015,8 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
   white-space: nowrap;
 }
 
-.stat-tile .stat-value {
+.stat-tile .stat-value,
+.forecast-tile .stat-value {
   margin: 0;
   font-size: var(--step-0);
   font-weight: 620;
@@ -1019,7 +1024,8 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
   white-space: nowrap;
 }
 
-.stat-tile .stat-value .value { font-size: inherit; font-weight: inherit; }
+.stat-tile .stat-value .value,
+.forecast-tile .stat-value .value { font-size: inherit; font-weight: inherit; }
 
 @supports not selector(:has(*)) {
   .value-min, .value-max, .value-total-week {
@@ -1188,22 +1194,38 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
 
 /* --------------------------------------------------------------- lists */
 
+/* A grid that wraps, never a row that scrolls.
+ *
+ * This was a flex row with `overflow-x: auto`, and it was wrong in both
+ * directions at once: on a wide screen seven fixed-width days left a third of
+ * the card empty, and on a phone the week and the day became two scrollbars
+ * stacked on top of each other with arrow buttons -- the one interaction
+ * nobody performs on a weather page. Sideways scrolling hides content behind
+ * a gesture; wrapping puts it on the screen.
+ *
+ * `auto-fit` with a `1fr` maximum does both jobs: the tracks stretch to fill
+ * whatever width there is, and how many fit is the browser's arithmetic
+ * rather than a breakpoint somebody has to keep in step with the font. */
 .forecast-list {
-  display: flex;
-  gap: var(--s-3);
-  overflow-x: auto;
-  padding-bottom: var(--s-2);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: var(--s-2);
   margin: 0;
+  padding: 0;
   list-style: none;
 }
 
-.forecast-list > * { flex: 0 0 auto; min-width: 6rem; text-align: center; }
+.forecast-list > * { min-width: 0; text-align: center; }
 
-/* The day and hour cards scroll sideways rather than wrapping: a week is
-   seven of them and a phone fits three, and a wrapped row reads as two
-   unrelated groups. */
-.forecast-list.hourly { margin-top: var(--s-4); }
-.forecast-list.hourly > * { min-width: 3.75rem; }
+/* An hour needs a time, a picture and a number and nothing else, so it fits
+   in half the width of a day -- and twenty-four of them are four rows on a
+   phone rather than a scrollbar. */
+.forecast-list.hourly {
+  grid-template-columns: repeat(auto-fit, minmax(3.5rem, 1fr));
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line-soft);
+}
 
 .forecast-list p { margin: 0; }
 
@@ -1212,21 +1234,24 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
   flex-direction: column;
   align-items: center;
   gap: var(--s-1);
-  padding: var(--s-2) var(--s-3);
+  padding: var(--s-2) var(--s-1);
   border-radius: var(--r-2);
 }
 
+.forecast-hour { gap: 0; padding-inline: 0; }
+
+/* Today, and the hour we are in. The same sunk surface the rest of the skin
+   uses for "this one", not a colour invented here. */
 .forecast-day:first-child, .forecast-hour:first-child {
   background: var(--bg-sunk);
 }
 
-.forecast-day__name, .forecast-hour__time {
-  font-weight: 600;
-  font-size: var(--step--1);
-}
+.forecast-day__name, .forecast-hour__time { white-space: nowrap; }
+.forecast-day__name { font-weight: 620; color: var(--ink-2); }
 
 .forecast-day__text {
   font-size: var(--step--2);
+  line-height: 1.25;
   color: var(--ink-3);
   /* Two lines at most. "Thunderstorm with slight hail" is a real answer and
      it must not make one card twice the height of its neighbours. */
@@ -1237,58 +1262,71 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
   overflow: hidden;
 }
 
-.forecast-day__temps { display: flex; gap: var(--s-2); }
-.forecast-day__max { font-weight: 600; }
-.forecast-day__min { color: var(--ink-3); }
+.forecast-day__temps {
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+}
+
+.forecast-day__max { color: var(--warm); }
+.forecast-day__min { color: var(--cool); font-weight: 500; }
+.forecast-hour__temp { font-size: var(--step--1); font-weight: 620; }
 
 .forecast-day__wet, .forecast-day__wind, .forecast-hour__wet {
   display: inline-flex;
   align-items: center;
   gap: .25em;
-  font-size: var(--step--2);
-  color: var(--ink-3);
+  white-space: nowrap;
 }
 
-.forecast-icon svg { width: 2rem; height: 2rem; }
-.forecast-day__wet svg, .forecast-day__wind svg { width: 1em; height: 1em; }
+.forecast-hour__wet { color: var(--wet); }
 
-.forecast-issued {
-  margin: var(--s-3) 0 0;
-  font-size: var(--step--2);
-  color: var(--ink-3);
-}
+/* The one thing that made this section unreadable in the dark: an SVG with
+   no `fill` of its own is black, and these came from a set that leaves it
+   out. Every other icon in this skin is given a colour explicitly -- see
+   `.card__head svg` and the stat tiles -- and the reading's own colour is
+   the same one its tile uses, so the same quantity is the same hue wherever
+   it appears. */
+.forecast-icon svg { width: 2rem; height: 2rem; fill: var(--ink-2); }
+.forecast-hour .forecast-icon svg { width: 1.5rem; height: 1.5rem; }
+.forecast-day__wet svg { width: 1em; height: 1em; fill: var(--wet); }
+.forecast-day__wind svg { width: 1em; height: 1em; fill: var(--wind); }
+
+/* A wet sky is drawn wet and a clear one is drawn clear, so the row reads
+   before any of the words do. */
+.forecast-icon[data-symbol^="clear"] svg,
+.forecast-icon[data-symbol^="mostly-clear"] svg { fill: var(--sun); }
+.forecast-icon[data-symbol$="-night"] svg { fill: var(--ink-3); }
+.forecast-icon[data-symbol^="drizzle"] svg,
+.forecast-icon[data-symbol^="rain"] svg,
+.forecast-icon[data-symbol^="heavy-rain"] svg,
+.forecast-icon[data-symbol^="showers"] svg,
+.forecast-icon[data-symbol^="heavy-showers"] svg { fill: var(--wet); }
+.forecast-icon[data-symbol^="thunderstorm"] svg { fill: var(--warn); }
+
+.forecast-issued { margin: 0; }
 
 /* ------------------------------------------------------------- warnings */
 
-/* Above the numbers, not beside them. A warning is the one thing on the page
-   somebody needs to read before anything else, and a station that has none
-   shows nothing at all rather than an empty box saying so. */
+/* Above the numbers, not beside them: a warning is the one thing on the page
+   somebody needs to read before anything else. A station with none shows
+   nothing at all rather than an empty box saying so. */
 .forecast-warnings { display: grid; gap: var(--s-3); margin-block: var(--s-5); }
 
-.warning {
-  border-left: 4px solid var(--ink-3);
-  padding-left: var(--s-4);
+.forecast-warning__when {
+  margin-inline-start: var(--s-2);
+  font-weight: 400;
+  font-size: var(--step--1);
+  color: var(--ink-3);
+  white-space: nowrap;
 }
 
-.warning__event {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  font-weight: 600;
-}
-
-.warning__event svg { width: 1.25em; height: 1.25em; flex: none; }
-.warning__when { margin-left: auto; font-weight: 400; color: var(--ink-3); }
-.warning__headline { margin-top: var(--s-2); }
-.warning__area, .warning__more { color: var(--ink-3); font-size: var(--step--1); }
-.warning__more summary { cursor: pointer; }
-.warning__instruction { font-weight: 600; }
-
-/* Severity as the issuer graded it, not as we judged it. The words are
-   CAP's: Minor, Moderate, Severe, Extreme. */
-.warning--moderate { border-left-color: var(--warn, #d9a441); }
-.warning--severe, .warning--extreme { border-left-color: var(--bad); }
-.warning--extreme { border-left-width: 6px; }
+.forecast-warning__area { color: var(--ink-3); }
+.forecast-warning__more summary { cursor: pointer; color: var(--accent); }
+.forecast-warning__more p { margin-top: var(--s-2); }
+.forecast-warning__instruction { font-weight: 620; color: var(--ink-2); }
 
 .custom-content { margin-block: var(--s-5); }
 .section-header { margin: var(--s-7) 0 var(--s-4); }

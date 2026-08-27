@@ -14,6 +14,11 @@
 ## `$forecast` is the core's, and one source answers everything: hours, days,
 ## warnings, and when the model last ran. See `forecast/tags.py`.
 ##
+## Built out of the skin's own pieces rather than new ones: `notice` for a
+## warning, `card__body` and `card__foot` for the panel, `stat-label`,
+## `stat-value` and `stat-detail` for the numbers. A section that invents its
+## own vocabulary looks like a section somebody bolted on.
+##
 ## `forecast_settings`, not `forecast`. Every key under [Extras] becomes a
 ## top-level tag, and the extras are searched before the tag layer -- so a
 ## section called `forecast` shadows `$forecast` itself with a plain dict, and
@@ -52,29 +57,32 @@
 #if $len($forecast_warnings) > 0
 <div class="forecast-warnings">
   #for $warning in $forecast_warnings
-  <div class="card warning warning--$warning.severity.lower()">
-    <p class="warning__event">
-      #include "includes/icons/lightning.svg"
-      <span>$warning.event</span>
-      <span class="warning__when">
-        $warning.starts.format("%a %H:%M")#if $warning.ends# &ndash; $warning.ends.format("%a %H:%M")#end if#
-      </span>
-    </p>
-    #if $warning.headline
-    <p class="warning__headline">$warning.headline</p>
-    #end if
-    #if $warning.area
-    <p class="warning__area">$warning.area</p>
-    #end if
-    #if $warning.description
-    <details class="warning__more">
-      <summary>$gettext("More")</summary>
-      <p>$warning.description</p>
-      #if $warning.instruction
-      <p class="warning__instruction">$warning.instruction</p>
+  #set $grade = $warning.severity.lower()
+  <div class="notice forecast-warning #if $grade in ('severe', 'extreme')#notice--bad#else#notice--warn#end if#">
+    #include "includes/icons/lightning.svg"
+    <div>
+      <p class="notice__title">
+        $warning.event
+        <span class="forecast-warning__when">
+          $warning.starts.format("%a %H:%M")#if $warning.ends# &ndash; $warning.ends.format("%a %H:%M")#end if#
+        </span>
+      </p>
+      #if $warning.headline
+      <p class="notice__body">$warning.headline</p>
       #end if
-    </details>
-    #end if
+      #if $warning.area
+      <p class="notice__body forecast-warning__area">$warning.area</p>
+      #end if
+      #if $warning.description
+      <details class="notice__body forecast-warning__more">
+        <summary>$gettext("More")</summary>
+        <p>$warning.description</p>
+        #if $warning.instruction
+        <p class="forecast-warning__instruction">$warning.instruction</p>
+        #end if
+      </details>
+      #end if
+    </div>
   </div>
   #end for
 </div>
@@ -89,66 +97,73 @@
 </div>
 
 <div class="card forecast-tile">
-  <!--prettier-ignore-->
-  #if $len($forecast_days) > 0
-  <ol class="forecast-list daily" data-test="forecast-days">
-    #for $i, $day in $enumerate($forecast_days)
-    <li class="forecast-day">
-      <p class="forecast-day__name">
-        #if $i == 0
-        $gettext("Today")
-        #else
-        $day.dateTime.format("%a")
+  <div class="card__body">
+    <!--prettier-ignore-->
+    #if $len($forecast_days) > 0
+    <ol class="forecast-list daily" data-test="forecast-days">
+      #for $i, $day in $enumerate($forecast_days)
+      <li class="forecast-day">
+        <p class="stat-label forecast-day__name">
+          #if $i == 0
+          $gettext("Today")
+          #else
+          $day.dateTime.format("%a")
+          #end if
+        </p>
+        #set global $forecast_symbol = $day.symbol
+        #include "includes/forecast-icon.inc"
+        <p class="forecast-day__text">$day.text</p>
+        <p class="forecast-day__temps">
+          <span class="stat-value forecast-day__max">$day.tempMax</span>
+          <span class="stat-label forecast-day__min">$day.tempMin</span>
+        </p>
+        #if $day.rainProbability.raw
+        <p class="stat-detail forecast-day__wet">
+          #include "includes/icons/rain.svg"
+          $day.rainProbability
+        </p>
         #end if
-      </p>
-      #set global $forecast_symbol = $day.symbol
-      #include "includes/forecast-icon.inc"
-      <p class="forecast-day__text">$day.text</p>
-      <p class="forecast-day__temps">
-        <span class="forecast-day__max">$day.tempMax</span>
-        <span class="forecast-day__min">$day.tempMin</span>
-      </p>
-      #if $day.rainProbability.raw is not None
-      <p class="forecast-day__wet">
-        #include "includes/icons/rain.svg"
-        $day.rainProbability
-      </p>
-      #end if
-      #if $day.windMax.raw is not None
-      <p class="forecast-day__wind">
-        #include "includes/icons/wind-gust.svg"
-        $day.windMax
-      </p>
-      #end if
-    </li>
-    #end for
-  </ol>
-  #end if
+        #if $day.windMax.raw
+        <p class="stat-detail forecast-day__wind">
+          #include "includes/icons/wind-gust.svg"
+          $day.windMax
+        </p>
+        #end if
+      </li>
+      #end for
+    </ol>
+    #end if
+
+    <!--prettier-ignore-->
+    #if $show_hours and $len($forecast_hours) > 0
+    <ol class="forecast-list hourly" data-test="forecast-hours">
+      #for $hour in $forecast_hours
+      <li class="forecast-hour">
+        <p class="stat-label forecast-hour__time">$hour.dateTime.format("%H")</p>
+        #set global $forecast_symbol = $hour.symbol
+        #include "includes/forecast-icon.inc"
+        <p class="forecast-hour__temp">$hour.outTemp</p>
+        ## Only when there is some. A dry afternoon printed "0%" twenty-four
+        ## times under twenty-four identical clouds, which is a column of
+        ## noise in the place a reader looks for the one hour that differs.
+        #if $hour.rainProbability.raw
+        <p class="stat-detail forecast-hour__wet">$hour.rainProbability</p>
+        #end if
+      </li>
+      #end for
+    </ol>
+    #end if
+  </div>
 
   <!--prettier-ignore-->
-  #if $show_hours and $len($forecast_hours) > 0
-  <ol class="forecast-list hourly" data-test="forecast-hours">
-    #for $hour in $forecast_hours
-    <li class="forecast-hour">
-      <p class="forecast-hour__time">$hour.dateTime.format("%H")</p>
-      #set global $forecast_symbol = $hour.symbol
-      #include "includes/forecast-icon.inc"
-      <p class="forecast-hour__temp">$hour.outTemp</p>
-      #if $hour.rainProbability.raw is not None
-      <p class="forecast-hour__wet">$hour.rainProbability</p>
-      #end if
-    </li>
-    #end for
-  </ol>
-  #end if
-
-  <!--prettier-ignore-->
-  <p class="forecast-issued">
+  #if $outlook.issued or $outlook.updated
+  <p class="card__foot forecast-issued">
     #if $outlook.issued
     $gettext("Model run") $outlook.issued.format("%a %H:%M")
-    #else if $outlook.updated
+    #else
     $gettext("Fetched") $outlook.updated.format("%a %H:%M")
     #end if
   </p>
+  #end if
 </div>
 #end if
