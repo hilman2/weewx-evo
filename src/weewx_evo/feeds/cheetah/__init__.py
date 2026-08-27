@@ -1173,6 +1173,7 @@ def from_settings(settings: Any, reader: Reader,
     tags.plots = plots
     tags.language = spoken.code
     tags.moon_phases = spoken.moon_phases()
+    _install_forecast(tags, settings, spoken)
 
     skins = Path(str(option("skins_dir") or "skins"))
     skin = str(option("skin") or "").strip()
@@ -1298,6 +1299,33 @@ def _derived(settings: Any) -> tuple[str, ...]:
     how.update(getattr(settings, "config", {}).get("derive") or {})
     return tuple(sorted(name for name, choice in how.items()
                         if choice in ("software", "prefer_hardware")))
+
+
+def _install_forecast(tags: Any, settings: Any, spoken: Any) -> None:
+    """Give the skin `$forecast`, if this station fetches one.
+
+    Opened here rather than in `tags.py` for two reasons. A station with no
+    forecast configured should not open a database it has no rows in -- and
+    the tag layer has no business knowing the forecast package exists, the
+    same way it has no business knowing about the exports.
+
+    The file not being there is the ordinary case and is not an error: a
+    template asking `#if $forecast` gets a no and renders around it.
+    """
+    archive = str(settings.get("archive_db") or "data/weewx.sdb")
+    path = Path(archive).parent / "forecast.sdb"
+    if not path.exists():
+        return
+    try:
+        from ...forecast.store import ForecastStore
+        from ...forecast.tags import install
+
+        install(tags, ForecastStore(path), spoken)
+    except Exception:
+        # A forecast nobody can read must not take a page down. The skin
+        # asking for it gets a miss, which the report names.
+        log.warning("could not open the forecast at %s; the pages will render "
+                    "without it", path, exc_info=True)
 
 
 def _version() -> str:

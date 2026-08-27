@@ -36,7 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from weewx_evo import units
 from weewx_evo.forecast import (
+    Day,
     ForecastError,
+    Moment,
     Place,
     Reading,
     Warning,
@@ -553,6 +555,106 @@ def test_zip_handling() -> None:
     close("with the temperature intact", got.hours[0].outTemp, 14.2)
 
 
+# ---------------------------------------------------------------------------
+# What a template sees.
+# ---------------------------------------------------------------------------
+
+def test_tags(tmp: Path) -> None:
+    """A forecast temperature has to behave like a measured one.
+
+    That is the point of the tag layer: a template formats both the same way
+    and `units.Target` converts both, so a page written in Fahrenheit shows a
+    metric forecast in Fahrenheit without knowing there are two systems
+    underneath.
+    """
+    from weewx_evo.forecast import tags as forecast_tags
+
+    store = ForecastStore(tmp / "tags.sdb")
+    # Hours around "now", so `$forecast.now` has something to find.
+    now = int(time.time())
+    reading = Reading(source="ahead")
+    for offset, temp, code in ((-1800, 18.0, 2), (1800, 19.5, 61),
+                               (5400, 21.0, 63)):
+        reading.hours.append(Moment(dateTime=now + offset,
+                                    usUnits=units.METRICWX,
+                                    outTemp=temp, code=code, windSpeed=3.0))
+    midnight = time.mktime(time.localtime(now)[:3] + (0, 0, 0, 0, 0, -1))
+    reading.days.append(Day(dateTime=int(midnight), usUnits=units.METRICWX,
+                            tempMax=24.0, tempMin=12.0, code=61,
+                            sunrise=now - 20000, sunset=now + 20000))
+    reading.warnings.append(Warning(
+        identifier="a", event="wind gusts", severity="Minor",
+        starts=now - 600, ends=now + 3600, area="Kreis Freising"))
+    reading.warnings.append(Warning(
+        identifier="b", event="thunderstorms", severity="Severe",
+        starts=now + 7200, ends=now + 14400, area="Kreis Freising"))
+    store.store(reading, fetched=now)
+
+    metric = units.Target(units.METRICWX)
+    tag = forecast_tags.SourceTag(store, "", metric)
+
+    ok("the forecast is there", bool(tag))
+    check("three hours", len(tag.hours), 3)
+    # The hour we are in, not the nearest one: at twenty-nine minutes past,
+    # the nearest is the next hour, and showing its rain as current would be
+    # wrong in the way nobody checks.
+    check("now is the hour we are in", tag.now.item.dateTime, now - 1800)
+    check("its temperature", str(tag.now.outTemp), "18.0\u00b0C")
+    check("said in words", tag.now.text, "Partly cloudy")
+    check("and as a symbol name", tag.now.symbol in
+          ("partly-cloudy", "partly-cloudy-night"), True)
+    ok("partly cloudy is not wet", not tag.now.wet)
+    ok("but the next hour is", tag.hours[1].wet)
+
+    check("today", str(tag.today.tempMax), "24.0\u00b0C")
+    check("sunrise is a time, not a number",
+          ":" in str(tag.today.sunrise), True)
+
+    # The conversion is the whole point. Same store, a page in Fahrenheit.
+    imperial = forecast_tags.SourceTag(store, "", units.Target(units.US))
+    check("the same forecast in Fahrenheit", str(imperial.now.outTemp),
+          "64.4\u00b0F")
+    check("and the daily maximum too", str(imperial.today.tempMax), "75.2\u00b0F")
+
+    # Warnings, worst first, and `active` is a question rather than a filter:
+    # "storm tonight" is the point of a warning.
+    check("two warnings", len(tag.warnings), 2)
+    check("worst first", tag.warning.event, "thunderstorms")
+    ok("the severe one has not started yet", not tag.warning.active)
+    ok("the minor one has", tag.warnings[1].active)
+    check("only one is active now", len(tag.active_warnings), 1)
+    check("the area came through", tag.warning.area, "Kreis Freising")
+
+    # A named source, which is what makes two of them usable at once.
+    named = tag.ahead
+    check("a named source answers", str(named.now.outTemp), "18.0\u00b0C")
+    # An unknown name is a miss, not an exception: `#if $forecast.nothing`
+    # must not break a page.
+    unknown = tag.nothing
+    check("an unknown source prints as unknown", str(unknown), "?'forecast.nothing'?")
+
+    check("it knows when it was fetched", tag.updated.raw, now)
+    store.close()
+
+
+def test_tags_with_nothing(tmp: Path) -> None:
+    """A station that started a minute ago still has to render."""
+    from weewx_evo.forecast import tags as forecast_tags
+
+    store = ForecastStore(tmp / "empty.sdb")
+    tag = forecast_tags.SourceTag(store, "", units.Target(units.METRICWX))
+    ok("there is no forecast", not bool(tag))
+    check("no hours", tag.hours, [])
+    check("no days", tag.days, [])
+    check("no warnings", tag.warnings, [])
+    # Unknown rather than an exception, so a template renders around it.
+    check("now prints as unknown", str(tag.now), "?'forecast.now'?")
+    check("and so does the worst warning", str(tag.warning),
+          "?'forecast.warning'?")
+    ok("asking twice does not raise", str(tag.today) == "?'forecast.today'?")
+    store.close()
+
+
 def main() -> int:
     test_open_meteo()
     test_open_meteo_asks_for_what_it_reads()
@@ -570,6 +672,8 @@ def main() -> int:
         test_store_warnings(Path(tmp))
         test_a_failure_keeps_the_forecast(Path(tmp))
         test_prune(Path(tmp))
+        test_tags(Path(tmp))
+        test_tags_with_nothing(Path(tmp))
 
     print()
     for failure in FAILURES:

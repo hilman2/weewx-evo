@@ -17,6 +17,7 @@ database and never through each other.
     weewx-evo admin      # the settings page, on its own port
     weewx-evo export     # move what a feed produced somewhere
     weewx-evo upload     # send the readings to a weather service
+    weewx-evo forecast   # what somebody who knows says is coming
     weewx-evo web        # serve what a feed produced
     weewx-evo plots      # the charts, and the JSON behind them
 """
@@ -37,17 +38,22 @@ from typing import Any
 from . import config as config_file
 from . import exports as export_registry
 from . import feedrunner as feed_runner
+from . import forecast as forecast_registry
 from . import options as option_defs
 from . import plots as plot_defs
 from . import settings as settings_state
+from . import units, weewxconf
 from . import uploads as upload_registry
-from . import weewxconf
 from .admin import Admin, AdminServer
 from .archiver import Archiver
 from .db.archive import ArchiveStore
 from .db.live import LiveStore
 from .derive import from_settings as deriver_from
 from .exports import runner as export_runner
+from .forecast import Place as ForecastPlace
+from .forecast import codes as forecast_codes
+from .forecast import runner as forecast_runner
+from .forecast.store import ForecastStore
 from .ingest import drivers, userdrivers
 from .ingest import state as state_module
 from .ingest.listener import HttpListener, Ingest, UdpListener
@@ -382,6 +388,15 @@ def cmd_archive(args: argparse.Namespace) -> int:
     if scheduled_uploads:
         uploader = upload_runner.Runner(scheduled_uploads)
         uploader.start()
+
+    forecaster = forecast_store = None
+    if configured_forecasts(args):
+        forecast_store = ForecastStore(forecast_db(args, cfg))
+        scheduled_forecasts = build_forecast_schedule(args, cfg, forecast_store)
+        if scheduled_forecasts:
+            forecaster = forecast_runner.Runner(scheduled_forecasts,
+                                                forecast_store)
+            forecaster.start()
     last_prune = 0.0
     try:
         while not stopping.is_set():
@@ -420,6 +435,10 @@ def cmd_archive(args: argparse.Namespace) -> int:
             runner.stop()
         if uploader is not None:
             uploader.stop()
+        if forecaster is not None:
+            forecaster.stop()
+        if forecast_store is not None:
+            forecast_store.close()
         live.close()
         archive.close()
     return 0
@@ -530,6 +549,148 @@ def cmd_upload_run(args: argparse.Namespace) -> int:
         if close is not None:
             close()
     return 1 if problems else 0
+
+
+def cmd_forecast_list(args: argparse.Namespace) -> int:
+    forecast_registry.DEFAULT.load()
+    print(f"sources available: {', '.join(forecast_registry.kinds())}")
+    print()
+
+    entries = configured_forecasts(args)
+    if not entries:
+        print("None configured. A forecast is the other half of what people")
+        print("look at a weather page for. One source covers almost")
+        print("everybody:")
+        print()
+        print("  [forecast.ahead]")
+        print('  kind = "open-meteo"')
+        print()
+        print("Warnings are a second source, because no service does both")
+        print("well -- meteoalarm in Europe, nws in the United States.")
+        return 0
+
+    print(f"configured ({len(entries)}):")
+    for name, settings in sorted(entries.items()):
+        kind = settings.get("kind", "?")
+        every = option_defs.format_duration(settings.get("every") or 3600)
+        print(f"  {name:<16} {kind:<14} every {every}")
+    return 0
+
+
+def cmd_forecast_check(args: argparse.Namespace) -> int:
+    """Fetch once and say what came back.
+
+    This is also how somebody finds a DWD station id or a MeteoAlarm region:
+    a source that needs one and has not been given one lists the candidates
+    rather than refusing.
+    """
+    entries = configured_forecasts(args)
+    if args.name:
+        entries = {k: v for k, v in entries.items() if k == args.name}
+        if not entries:
+            print(f"No forecast source called {args.name!r}.", file=sys.stderr)
+            return 1
+    if not entries:
+        print("None configured.")
+        return 0
+
+    cfg = settings_for(args)
+    place = forecast_place(cfg)
+    problems = 0
+    for name, settings in sorted(entries.items()):
+        try:
+            source = build_forecast_source(name, dict(settings))
+        except ValueError as exc:
+            print(f"  {name}: {exc}")
+            problems += 1
+            continue
+        try:
+            said = source.check(place)
+        except Exception as exc:
+            said = f"{type(exc).__name__}: {exc}"
+            problems += 1
+        first, *rest = said.split("\n")
+        print(f"  {name}: {first}")
+        for line in rest:
+            print(f"    {line}")
+    return 1 if problems else 0
+
+
+def cmd_forecast_run(args: argparse.Namespace) -> int:
+    """Fetch now and store, whatever the schedule says."""
+    cfg = settings_for(args)
+    store = ForecastStore(forecast_db(args, cfg))
+    try:
+        scheduled = build_forecast_schedule(args, cfg, store)
+        if args.name:
+            scheduled = [s for s in scheduled if s.name == args.name]
+        if not scheduled:
+            print("None configured." if not args.name
+                  else f"No forecast source called {args.name!r}.")
+            return 0 if not args.name else 1
+        problems = 0
+        for entry in scheduled:
+            entry.run()
+            print(f"  {entry.name}: {entry.last_summary}")
+            if entry.failures or entry.blocked:
+                problems += 1
+        return 1 if problems else 0
+    finally:
+        store.close()
+
+
+def cmd_forecast_show(args: argparse.Namespace) -> int:
+    """Print what is stored, which is what a page would draw."""
+    cfg = settings_for(args)
+    path = forecast_db(args, cfg)
+    if not path.exists():
+        print("Nothing fetched yet. Run `weewx-evo forecast run`.")
+        return 0
+    store = ForecastStore(path)
+    try:
+        target = units.Target(units.system_from(cfg.get("units") or "METRICWX"))
+        for source in store.sources():
+            run = store.run(source) or {}
+            when = time.strftime("%Y-%m-%d %H:%M",
+                                 time.localtime(run.get("fetched") or 0))
+            print(f"{source} -- fetched {when}"
+                  f"{', ' + run['note'] if run.get('note') else ''}")
+
+            for warning in store.warnings(source)[:10]:
+                starts = time.strftime("%a %H:%M",
+                                       time.localtime(warning.starts))
+                print(f"  ! {warning.severity:<9} {warning.event} "
+                      f"from {starts}  {warning.area[:40]}")
+
+            for day in store.days(source)[:7]:
+                when = time.strftime("%a %d %b", time.localtime(day.dateTime))
+                low = _shown(day.tempMin, "outTemp", day.usUnits, target)
+                high = _shown(day.tempMax, "outTemp", day.usUnits, target)
+                said = forecast_codes.text(day.code)
+                print(f"  {when}  {low:>7} .. {high:>7}   {said}")
+
+            if args.hours:
+                now = int(time.time())
+                for hour in store.hours(source, start=now)[:args.hours]:
+                    when = time.strftime("%a %H:%M",
+                                         time.localtime(hour.dateTime))
+                    temp = _shown(hour.outTemp, "outTemp", hour.usUnits, target)
+                    said = forecast_codes.text(hour.code)
+                    print(f"    {when}  {temp:>7}   {said}")
+            print()
+        return 0
+    finally:
+        store.close()
+
+
+def _shown(value: float | None, obs: str, system: int, target: Any) -> str:
+    """One forecast number in the unit the station publishes in."""
+    if value is None:
+        return "--"
+    converted, unit, _group = target.convert([value], obs, system)
+    if not converted or converted[0] is None:
+        return "--"
+    return units.formatted(converted[0], unit, with_label=True)
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -669,6 +830,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
         uploader = upload_runner.Runner(scheduled_uploads)
         uploader.start()
 
+    # The forecast. Its own database and its own threads: a 350 kB MOSMIX
+    # file over somebody else's connection has no business on this loop, and
+    # a predicted temperature has no business in the archive.
+    forecaster = forecast_store = None
+    if configured_forecasts(args):
+        forecast_store = ForecastStore(forecast_db(args, cfg))
+        scheduled_forecasts = build_forecast_schedule(args, cfg, forecast_store)
+        if scheduled_forecasts:
+            forecaster = forecast_runner.Runner(scheduled_forecasts,
+                                                forecast_store)
+            forecaster.start()
+
     stopping = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stopping.set())
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
@@ -703,7 +876,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         restarting = True
                         stopping.set()
                         continue
-                    apply_live(args, cfg, web, runner, uploader)
+                    apply_live(args, cfg, web, runner, uploader, forecaster)
 
                 n = archiver.process_due(grace=cfg.get("grace"))
                 if n:
@@ -738,6 +911,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
             runner.stop()
         if uploader is not None:
             uploader.stop()
+        if forecaster is not None:
+            forecaster.stop()
+        if forecast_store is not None:
+            forecast_store.close()
         if web is not None:
             web.stop()
         http.stop()
@@ -1150,6 +1327,25 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         schema.groups = tuple(
             replace_group(group, f"uploads.{name}") for group in schema.groups)
         schemas.append(schema)
+
+    # One page per configured forecast source. Two of them is the ordinary
+    # arrangement rather than the exception: a model for the numbers and a
+    # warning service for the alerts, because no source does both well.
+    for name, settings in sorted((configured.get("forecast") or {}).items()):
+        if not isinstance(settings, dict):
+            continue
+        kind = str(settings.get("kind", "")).strip()
+        factory = forecast_registry.DEFAULT.factory_for(kind)
+        if factory is None:
+            continue
+        schema = option_defs.schema_of(
+            factory, name=f"forecast:{name}",
+            label=f"Forecast: {name} ({kind})", kind="forecast")
+        if schema is None:
+            continue
+        schema.groups = tuple(
+            replace_group(group, f"forecast.{name}") for group in schema.groups)
+        schemas.append(schema)
     return schemas
 
 
@@ -1411,8 +1607,67 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
                                packets)
 
 
+def configured_forecasts(args: argparse.Namespace) -> dict[str, dict]:
+    """What the configuration file says about forecast sources, by name."""
+    cfg = settings_for(args)
+    section = cfg.config.get("forecast") or {}
+    return {name: dict(settings) for name, settings in section.items()
+            if isinstance(settings, dict)}
+
+
+def forecast_db(args: argparse.Namespace, cfg: Settings) -> Path:
+    """Where the forecast is kept. Beside the archive, never in it."""
+    base = Path(getattr(args, "config", None) or ".").parent
+    archive = Path(cfg.get("archive_db") or "data/weewx.sdb")
+    if not archive.is_absolute():
+        archive = base / archive
+    return archive.parent / "forecast.sdb"
+
+
+def forecast_place(cfg: Settings) -> ForecastPlace:
+    """Where the station is, which is what a forecast is for."""
+    return ForecastPlace(
+        latitude=float(cfg.get("station.latitude") or 0.0),
+        longitude=float(cfg.get("station.longitude") or 0.0),
+        altitude=cfg.get("station.altitude"),
+        name=str(cfg.get("station.name") or ""))
+
+
+def build_forecast_source(name: str, settings: dict) -> object:
+    """Make one forecast source. Raises with a usable message."""
+    kind = str(settings.pop("kind", "")).strip()
+    if not kind:
+        raise ValueError(f"forecast source {name!r} does not say what kind it "
+                         f'is. Add kind = "open-meteo" or one of: '
+                         f"{', '.join(forecast_registry.kinds())}.")
+    factory = forecast_registry.DEFAULT.factory_for(kind)
+    if factory is None:
+        raise ValueError(f"forecast source {name!r} is of kind {kind!r}, which "
+                         f"is not one of: "
+                         f"{', '.join(forecast_registry.kinds())}")
+    schema = option_defs.schema_of(factory, name=kind, label=kind)
+    if schema is not None:
+        parsed, errors = schema.parse(settings, only_present=True)
+        if errors:
+            first = next(iter(errors.values()))
+            raise ValueError(f"forecast source {name!r}: {first}")
+        settings = parsed
+    return factory(**settings)
+
+
+def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
+                            store: Any) -> list:
+    """What the forecast sources are, right now."""
+    configured = configured_forecasts(args)
+    if not configured:
+        return []
+    return forecast_runner.build(configured, build_forecast_source,
+                                 forecast_place(cfg), store)
+
+
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
-               runner: Any, uploader: Any = None) -> None:
+               runner: Any, uploader: Any = None,
+               forecaster: Any = None) -> None:
     """Apply a changed configuration to a running process.
 
     Everything that can be rebuilt in place, in one function. Scattering
@@ -1437,6 +1692,15 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             # An upload added on the settings page joins the running set.
             uploader.replace(fresh)
             log.info("%d upload(s) running", len(fresh))
+
+    if forecaster is not None:
+        fresh = build_forecast_schedule(args, cfg, forecaster.store)
+        before = [(s.name, type(s.source).__name__, s.every)
+                  for s in forecaster.sources]
+        after = [(s.name, type(s.source).__name__, s.every) for s in fresh]
+        if before != after:
+            forecaster.replace(fresh)
+            log.info("%d forecast source(s) running", len(fresh))
 
     if web is not None and web.site.update(
             served_directories(args, cfg),
@@ -2268,6 +2532,30 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--again", action="store_true",
                    help="forget how far it got, so the last records go again")
     q.set_defaults(func=cmd_upload_run)
+
+    p = sub.add_parser("forecast", help="what is coming, from somebody who knows")
+    forecast_sub = p.add_subparsers(dest="forecast_command", required=True)
+
+    q = forecast_sub.add_parser("list", help="what is available and configured")
+    add_common(q)
+    q.set_defaults(func=cmd_forecast_list)
+
+    q = forecast_sub.add_parser(
+        "check", help="fetch once and say what came back, storing nothing")
+    add_common(q)
+    q.add_argument("name", nargs="?", help="just this one")
+    q.set_defaults(func=cmd_forecast_check)
+
+    q = forecast_sub.add_parser("run", help="fetch now and store")
+    add_common(q)
+    q.add_argument("name", nargs="?", help="just this one")
+    q.set_defaults(func=cmd_forecast_run)
+
+    q = forecast_sub.add_parser("show", help="print what is stored")
+    add_common(q)
+    q.add_argument("--hours", type=int, default=0,
+                   help="also print this many hours")
+    q.set_defaults(func=cmd_forecast_show)
 
     p = sub.add_parser("web", help="serve what the feeds produced")
     add_common(p)

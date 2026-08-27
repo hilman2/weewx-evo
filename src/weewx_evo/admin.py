@@ -101,6 +101,24 @@ def upload_kind_choices() -> list[tuple[str, str, str]]:
     return out
 
 
+def forecast_kinds() -> list[str]:
+    """The forecast sources that can be added. Asked, not listed."""
+    from . import forecast
+
+    return forecast.kinds()
+
+
+def forecast_kind_choices() -> list[tuple[str, str, str]]:
+    from . import forecast
+
+    out = []
+    for kind in forecast.kinds():
+        factory = forecast.DEFAULT.factory_for(kind)
+        out.append((kind, getattr(factory, "label", kind),
+                    getattr(factory, "summary", "")))
+    return out
+
+
 #: Prefix for the hidden field that says "this checkbox was on the form".
 #: A browser sends nothing for an unticked box, which is indistinguishable
 #: from a field that was never there -- and the two must mean different
@@ -109,6 +127,13 @@ MARKER = "__present__"
 
 #: A newline, for joining inside an f-string.
 NEWLINE = chr(10)
+
+
+#: The pages that create something, which are not schemas and so have to be
+#: listed. One list, used by both the router and the renderer, because two
+#: lists is how one of them ends up short.
+ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
+             "new-plot", "import-plots")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -327,6 +352,80 @@ class Admin:
                     close()
                 except Exception:
                     log.debug("upload %s did not close cleanly", name)
+
+    def add_forecast(self, name: str, kind: str) -> str:
+        """Create a forecast source. Name and kind only, like the rest."""
+        if self.read_only:
+            return "This admin page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return ("A name may hold lowercase letters, digits, - and _, and "
+                    "must start with a letter. It becomes a heading, and the "
+                    "name a page asks for this source by.")
+        if kind not in forecast_kinds():
+            return f"{kind!r} is not one of: {', '.join(forecast_kinds())}"
+
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"forecast.{name}") is not None:
+                return f"There is already a forecast source called {name!r}."
+            config_file.put(current, f"forecast.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def remove_forecast(self, name: str) -> str:
+        """Delete a forecast source. What it fetched stays until it is pruned."""
+        if self.read_only:
+            return "This admin page was started read-only."
+        with self._lock:
+            current = self.config()
+            section = current.get("forecast")
+            if not isinstance(section, dict) or name not in section:
+                return f"There is no forecast source called {name!r}."
+            del section[name]
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def test_forecast(self, name: str) -> str:
+        """Fetch once and say what came back, storing nothing.
+
+        This button does double duty: a MOSMIX source with no station id and
+        a MeteoAlarm source with no region both answer with the candidates
+        rather than an error, which is how somebody finds theirs.
+        """
+        current = self.config()
+        settings = config_file.get(current, f"forecast.{name}")
+        if not isinstance(settings, dict):
+            return f"There is no forecast source called {name!r}."
+        try:
+            from .cli import build_forecast_source
+            from .forecast import Place
+
+            source = build_forecast_source(name, dict(settings))
+            # Read from the file this page edits rather than from the running
+            # settings. The two are the same in practice, and this way the
+            # test button works on a configuration that has been changed and
+            # not yet restarted -- which is exactly when somebody presses it.
+            place = Place(
+                latitude=float(config_file.get(current, "station.latitude") or 0.0),
+                longitude=float(config_file.get(current, "station.longitude") or 0.0),
+                altitude=config_file.get(current, "station.altitude"),
+                name=str(config_file.get(current, "station.name") or ""))
+        except Exception as exc:
+            return str(exc)
+        try:
+            return source.check(place)
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
 
     def remove_export(self, name: str) -> str:
         """Delete an export from the configuration. Nothing at the far end."""
@@ -651,6 +750,54 @@ def new_upload_page(admin: Admin, error: str = "",
 </section>'''
 
 
+def new_forecast_page(admin: Admin, error: str = "",
+                      form: dict | None = None) -> str:
+    """A name and a source. The rest waits."""
+    form = form or {}
+    kinds = forecast_kind_choices()
+    # Open-Meteo first and chosen by default: it needs no account, covers
+    # anywhere, and is the one somebody adding their first forecast wants.
+    kinds.sort(key=lambda row: row[0] != "open-meteo")
+    chosen = form.get("kind") or (kinds[0][0] if kinds else "")
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
+        for kind, label, _summary in kinds)
+    explained = "".join(
+        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
+        for _kind, label, summary in kinds if summary)
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return f'''
+<section class="group">
+  <h3>Add a forecast</h3>
+  <p class="lede">The station measures what is happening. A forecast is the
+     other half of what people look at a weather page for. Two sources is the
+     usual arrangement rather than the exception: one for the numbers and one
+     for the warnings, because no service does both well.</p>
+  <p class="lede">Everything here is free and needs no account. Nothing is
+     ever written into the archive -- forecasts live in their own file, and
+     deleting it costs one download.</p>
+  {problem}
+  <form method="post" action="./new-forecast">
+    <div class="field">
+      <label for="f-name">Name</label>
+      <input type="text" id="f-name" name="name" required
+             value="{html.escape(str(form.get("name", "")))}"
+             placeholder="ahead" autocomplete="off" spellcheck="false">
+      <p class="help">Lowercase letters, digits, - and _. A page asks for a
+         forecast by this name, so keep it short: <code>ahead</code>,
+         <code>warnings</code>.</p>
+    </div>
+    <div class="field">
+      <label for="f-kind">Source</label>
+      <select id="f-kind" name="kind">{options}</select>
+      <ul class="kinds">{explained}</ul>
+    </div>
+    <div class="actions"><button type="submit">Create</button></div>
+  </form>
+</section>'''
+
+
 def new_feed_page(admin: Admin, error: str = "",
                   form: dict | None = None) -> str:
     """Two fields: a name and a kind. The rest waits."""
@@ -857,8 +1004,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
     schema = next((s for s in admin.schemas if s.name == active), None)
-    adding = schema is None and active in ("new-export", "new-feed",
-                                          "new-upload")
+    adding = schema is None and active in ADD_PAGES and active not in (
+        "new-plot", "import-plots")
     charting = schema is None and (active in ("new-plot", "import-plots")
                                    or active.startswith("plot:"))
     if schema is None and not adding and not charting:
@@ -882,10 +1029,14 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         "upload": "None yet. An upload sends the readings to a weather "
                   "service: Weather Underground, Windy, CWOP, an MQTT "
                   "broker.",
+        "forecast": "None yet. A forecast says what is coming, and a warning "
+                    "service says when it matters. Both are free and need no "
+                    "account.",
     }
     for kind, heading in (("core", "System"), ("driver", "Drivers"),
                           ("feed", "Feeds"), ("charts", ""),
-                          ("export", "Exports"), ("upload", "Uploads")):
+                          ("export", "Exports"), ("upload", "Uploads"),
+                          ("forecast", "Forecast")):
         if kind == "charts":
             nav.extend(adminplots.nav(admin, active))
             continue
@@ -911,6 +1062,10 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             current = " aria-current='page'" if active == "new-upload" else ""
             nav.append(f'<a class="add" href="./new-upload"{current}>'
                        "+ Add an upload</a>")
+        if kind == "forecast" and not admin.read_only:
+            current = " aria-current='page'" if active == "new-forecast" else ""
+            nav.append(f'<a class="add" href="./new-forecast"{current}>'
+                       "+ Add a forecast</a>")
 
     if charting:
         if active == "new-plot":
@@ -924,7 +1079,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                                     admin.columns(), errors, form)]
     elif adding:
         maker = {"new-feed": new_feed_page, "new-upload": new_upload_page,
-                 "new-export": new_export_page}[active]
+                 "new-export": new_export_page,
+                 "new-forecast": new_forecast_page}[active]
         body = [maker(admin, errors.get("", ""), form)]
     else:
         body = [group_html(g, values, errors) for g in schema.groups]
@@ -945,6 +1101,29 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
      pointed at it stops running rather than sending an empty directory.</p>
   <form method="post" action="./{html.escape(schema.name)}/remove"
         onsubmit="return confirm('Remove the feed {html.escape(name)}?')">
+    <div class="actions"><button class="warn" type="submit">Remove</button></div>
+  </form>
+</section>'''
+
+    if schema is not None and schema.kind == "forecast" and not admin.read_only:
+        name = schema.name.split(":", 1)[-1]
+        extra += f'''
+<section class="group">
+  <h3>Try it</h3>
+  <p class="lede">Fetches once and shows what came back, without storing
+     anything. A source that needs a station id or a region and has not been
+     given one answers with the ones nearest to this station, which is how to
+     find yours.</p>
+  <form method="post" action="./{html.escape(schema.name)}/test">
+    <div class="actions"><button type="submit">Fetch once</button></div>
+  </form>
+</section>
+<section class="group danger">
+  <h3>Remove</h3>
+  <p class="lede">Takes {html.escape(name)} out of the configuration. What it
+     already fetched stays in the forecast file until it is next tidied.</p>
+  <form method="post" action="./{html.escape(schema.name)}/remove"
+        onsubmit="return confirm(\'Remove the forecast source {html.escape(name)}?\')">
     <div class="actions"><button class="warn" type="submit">Remove</button></div>
   </form>
 </section>'''
@@ -1344,8 +1523,13 @@ class _Handler(BaseHTTPRequestHandler):
         parts = self._parts(path)
         names = {s.name for s in self.admin.schemas}
         for part in reversed(parts):
-            if part in names or part in ("new-export", "new-feed",
-                                         "new-plot", "import-plots"):
+            # The "add" pages are not schemas, so they have to be named here.
+            # A missing one does not 404: it falls through to the first
+            # schema and renders the core settings under the heading somebody
+            # clicked, which looks like the link is broken rather than the
+            # list being short. `new-upload` and `new-forecast` were both
+            # missing exactly that way.
+            if part in names or part in ADD_PAGES:
                 return part
             if part.startswith("plot:"):
                 return part
@@ -1462,9 +1646,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._redirect(f"./{action}?saved=1")
             return
 
-        if action in ("new-export", "new-upload"):
-            add = (self.admin.add_export if action == "new-export"
-                   else self.admin.add_upload)
+        if action in ("new-export", "new-upload", "new-forecast"):
+            add = {"new-export": self.admin.add_export,
+                   "new-upload": self.admin.add_upload,
+                   "new-forecast": self.admin.add_forecast}[action]
             error = add(form.get("name", ""), form.get("kind", ""))
             if error:
                 self._reply(200, page(self.admin, action,
@@ -1483,6 +1668,9 @@ class _Handler(BaseHTTPRequestHandler):
             sort, _, name = which.partition(":")
             if sort == "upload":
                 remove, test = self.admin.remove_upload, self.admin.test_upload
+            elif sort == "forecast":
+                remove, test = (self.admin.remove_forecast,
+                                self.admin.test_forecast)
             else:
                 remove, test = self.admin.remove_export, self.admin.test_export
             if action == "remove":

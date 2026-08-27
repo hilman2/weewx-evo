@@ -449,6 +449,72 @@ def main() -> int:
                               config_file.get(after, "exports.website.host"),
                               "example.org")
 
+        print("\na forecast source is added the same way")
+        code, html_ = get(f"{base}/{TOKEN}/new-forecast")
+        failures += not check("the form is there", code, 200)
+        failures += not check("with the sources",
+                              "Open-Meteo" in html_ and "MeteoAlarm" in html_,
+                              True)
+        # Nothing here needs an account, and the page says so -- that is the
+        # difference between this and every commercial forecast API.
+        failures += not check("and says nothing needs an account",
+                              "needs no account" in html_, True)
+
+        code, _ = post(f"{base}/{TOKEN}/new-forecast",
+                       {"name": "ahead", "kind": "open-meteo"})
+        failures += not check("creating redirects to it", code, 303)
+        made = config_file.read(path)
+        failures += not check("it is in the file",
+                              config_file.get(made, "forecast.ahead.kind"),
+                              "open-meteo")
+
+        print("\nand gets a page with that source's own fields")
+        code, html_ = get(f"{base}/{TOKEN}/forecast:ahead")
+        failures += not check("it loads", code, 200)
+        failures += not check("with the model choice", 'name="model"' in html_,
+                              True)
+        failures += not check("and how far ahead", 'name="days"' in html_, True)
+        failures += not check("a way to fetch once", "Fetch once" in html_, True)
+
+        print("\na warning source is a second entry, not a setting")
+        # No service does both the numbers and the warnings well, so two
+        # sources is the ordinary arrangement here rather than the exception.
+        post(f"{base}/{TOKEN}/new-forecast",
+             {"name": "warnings", "kind": "meteoalarm"})
+        both = config_file.read(path)
+        failures += not check("both are there",
+                              sorted(both.get("forecast", {})),
+                              ["ahead", "warnings"])
+        code, html_ = get(f"{base}/{TOKEN}/forecast:warnings")
+        failures += not check("with the country list",
+                              "united-kingdom" in html_, True)
+
+        print("\nits settings save under its own name")
+        post(f"{base}/{TOKEN}/forecast:ahead",
+             {"days": "10", "model": "icon_seamless"})
+        saved = config_file.read(path)
+        failures += not check("days",
+                              config_file.get(saved, "forecast.ahead.days"), 10)
+        failures += not check("the other source is untouched",
+                              config_file.get(saved, "forecast.warnings.kind"),
+                              "meteoalarm")
+        failures += not check("and so is the upload",
+                              config_file.get(saved, "uploads.wu.station"),
+                              "IBAYERN123")
+
+        print("\nremoving one leaves the uploads and exports alone")
+        code, _ = post(f"{base}/{TOKEN}/forecast:warnings/remove", {})
+        failures += not check("it redirects", code, 303)
+        after = config_file.read(path)
+        failures += not check("gone", sorted(after.get("forecast", {})),
+                              ["ahead"])
+        failures += not check("the upload is still there",
+                              config_file.get(after, "uploads.wu.station"),
+                              "IBAYERN123")
+        failures += not check("and the export",
+                              config_file.get(after, "exports.website.host"),
+                              "example.org")
+
         print("\nthe previous version is kept")
         failures += not check("as .bak",
                               path.with_suffix(".toml.bak").exists(), True)
