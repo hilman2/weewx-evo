@@ -828,6 +828,135 @@
     matrix: matrixOption,
   };
 
+  /* ----------------------------------------------------- from a file */
+
+  /* Where the plot definitions land as JSON. One file per plot per span,
+   * written by the `json` feed out of `plots.toml` and published like any
+   * other page. The skin has to be told where, because the two are separate
+   * exports and only the operator knows how they sit on the host. */
+  function chartsPath() {
+    var said = (window.deckConfig && window.deckConfig.chartsPath) || "/json/";
+    return said.charAt(said.length - 1) === "/" ? said : said + "/";
+  }
+
+  function whole(value) {
+    var found = parseInt(value, 10);
+    return isNaN(found) ? 0 : found;
+  }
+
+  /* The file's own series, as the rows the builders read.
+   *
+   * `[start, stop, value]`: a bucket knows how wide it is, which is what
+   * lets a bar be a bar. An unaggregated series has no width, so start and
+   * stop are the same instant and it draws as a line, which is what it is. */
+  function rowsFrom(one) {
+    var when = one.time || [];
+    var values = one.values || [];
+    var every = whole(one.aggregate_interval);
+    var rows = [];
+    for (var i = 0; i < when.length; i++) {
+      rows.push([when[i], every ? when[i] + every : when[i], values[i]]);
+    }
+    return rows;
+  }
+
+  /* What the file says about a series, over what the page guessed.
+   *
+   * This is the point of reading the file at all: `plots.toml` decides what
+   * a chart is -- which readings, what they are called, what colour, line or
+   * bars -- and the page is only somewhere to put it. A skin keeping its own
+   * copy of those answers would be a second definition to hold in step, and
+   * the one somebody edits in the settings would be the one that does
+   * nothing. */
+  function fill(spec, found) {
+    var series = found.series || [];
+    var had = spec.series || [];
+    spec.series = series.map(function (one, index) {
+      var was = had[index] || {};
+      return {
+        label: one.label || was.label || one.obs_type || "",
+        color: one.color || was.color,
+        data: rowsFrom(one),
+        axis: was.axis || 0,
+        type: one.plot_type || was.type,
+        width: one.width || was.width,
+      };
+    });
+    if (found.unit_label && !(spec.units && spec.units.length)) {
+      spec.units = [found.unit_label];
+    }
+    if (found.daynight && !spec.daynight) spec.daynight = found.daynight;
+    return spec;
+  }
+
+  /* How often to look again. The file is rewritten when its feed runs, so
+   * asking more often costs a request and gets the same answer; asking less
+   * often leaves a chart lagging a page whose live figures do not. A minute
+   * is under either. */
+  var LOOK_AGAIN = 60000;
+
+  function fromFile(element, spec) {
+    var name = element.getAttribute("data-plot");
+    var where = chartsPath() + encodeURIComponent(name) + ".json";
+    var entry = null;
+
+    function load(first) {
+      return fetch(where, { cache: "no-store" })
+        .then(function (response) {
+          if (!response.ok) throw new Error(String(response.status));
+          return response.json();
+        })
+        .then(function (found) {
+          fill(spec, found);
+          /* The heading, from the file rather than from the page. The tile
+           * renders it empty: a title written into the HTML would be a second
+           * answer to what this chart is called, and a page published over
+           * FTP cannot read the file to check. */
+          if (found.title) {
+            var card = element.closest(".diagram-tile");
+            var heading = card && card.querySelector("[data-plot-title]");
+            if (heading) heading.textContent = found.title;
+          }
+          if (first) {
+            entry = draw(element, spec);
+          } else if (entry) {
+            /* Not a rebuild: the same chart told to hold newer numbers, so
+             * the axis and anything the reader did to it stay put. */
+            entry.chart.setOption(entry.builder(spec, palette()), true);
+          }
+        })
+        .catch(function (why) {
+          if (!first) return;
+          element.textContent = "no chart data at " + where;
+          element.classList.add("muted");
+          if (window.console) {
+            console.info("deck: " + where + " (" + why.message + ")");
+          }
+        });
+    }
+
+    load(true);
+    window.setInterval(function () {
+      if (!document.hidden) load(false);
+    }, LOOK_AGAIN);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) load(false);
+    });
+  }
+
+  function draw(element, spec) {
+    var builder = BUILDERS[spec.kind || "line"] || lineOption;
+    var option = builder(spec, palette());
+    // A calendar is as tall as the number of years it covers, and ECharts
+    // measures the element rather than growing it.
+    if (option.height) element.style.height = option.height + "px";
+    var chart = echarts.init(element, null, { renderer: "canvas" });
+    chart.setOption(option);
+    var entry = { chart: chart, element: element, spec: spec, builder: builder };
+    charts.push(entry);
+    return entry;
+  }
+
   function build(element) {
     var spec;
     try {
@@ -852,18 +981,114 @@
     }
     if (typeof spec.data === "string") spec.data = window[spec.data] || [];
 
-    var builder = BUILDERS[spec.kind || "line"] || lineOption;
-    var option = builder(spec, palette());
-    // A calendar is as tall as the number of years it covers, and ECharts
-    // measures the element rather than growing it.
-    if (option.height) element.style.height = option.height + "px";
-    var chart = echarts.init(element, null, { renderer: "canvas" });
-    chart.setOption(option);
-    charts.push({ chart: chart, element: element, spec: spec, builder: builder });
-    return chart;
+    // Named a plot: the numbers come out of its file, and keep coming.
+    if (element.hasAttribute("data-plot")) {
+      fromFile(element, spec);
+      return;
+    }
+    return draw(element, spec).chart;
+  }
+
+  /* ------------------------------------------------- a grid of charts */
+
+  /* Which charts exist, from the manifest the `json` feed writes beside the
+   * files. Asked rather than listed, and that is the whole point: the skin
+   * shipped no list of plot names because there is no such list to ship --
+   * `plots.toml` belongs to the installation, and somebody who adds a plot
+   * in the settings should see it on the page without editing a skin. */
+  function fillGrid(container) {
+    var span = container.getAttribute("data-plots");
+    var only = (container.getAttribute("data-only") || "")
+      .split(",").map(function (one) { return one.trim(); })
+      .filter(Boolean);
+
+    fetch(chartsPath() + "index.json", { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then(function (found) {
+        var plots = (found.plots || []).filter(function (one) {
+          return one.group === span;
+        });
+        if (only.length) {
+          /* An explicit list is an order as well as a choice, so it is
+           * walked rather than filtered against. */
+          plots = only.map(function (name) {
+            return plots.filter(function (one) {
+              return one.name === span + name || one.name === name;
+            })[0];
+          }).filter(Boolean);
+        }
+        if (!plots.length) {
+          container.textContent = "";
+          return;
+        }
+        plots.forEach(function (one) {
+          container.appendChild(card(one));
+        });
+        container.querySelectorAll("[data-chart]").forEach(build);
+      })
+      .catch(function (why) {
+        container.textContent = "no chart index at " + chartsPath()
+          + "index.json";
+        container.classList.add("muted");
+        if (window.console) console.info("deck: " + why.message);
+      });
+  }
+
+  /* One tile, built here rather than in the template.
+   *
+   * The template cannot build it: it does not know which plots exist. That
+   * is a fact about where the two files come from -- pages from one feed,
+   * charts from another, published separately and possibly to different
+   * hosts -- and not something a clever template could work around. */
+  function card(plot) {
+    var outer = document.createElement("div");
+    var tile = document.createElement("div");
+    tile.className = "card diagram-tile";
+    tile.setAttribute("data-test", plot.name);
+
+    var inner = document.createElement("div");
+    var body = document.createElement("div");
+
+    var heading = document.createElement("p");
+    heading.className = "label";
+    heading.setAttribute("data-plot-title", plot.name);
+    heading.textContent = plot.title || plot.name;
+
+    var holder = document.createElement("div");
+    holder.className = "value";
+
+    var chart = document.createElement("div");
+    chart.className = "diagram";
+    chart.setAttribute("data-test", plot.name);
+    chart.setAttribute("data-plot", plot.name);
+    chart.setAttribute("data-chart", JSON.stringify(gridSpec()));
+
+    holder.appendChild(chart);
+    body.appendChild(heading);
+    body.appendChild(holder);
+    inner.appendChild(body);
+    tile.appendChild(inner);
+    outer.appendChild(tile);
+    return outer;
+  }
+
+  function gridSpec() {
+    var said = (window.deckConfig && window.deckConfig.chartSpec) || {};
+    return {
+      kind: said.kind || "line",
+      locale: said.locale || "en",
+      format: said.format || "%.1f",
+      curve: said.curve,
+      series: [],
+      units: [],
+    };
   }
 
   function drawAll() {
+    document.querySelectorAll("[data-plots]").forEach(fillGrid);
     document.querySelectorAll("[data-chart]").forEach(build);
   }
 

@@ -447,8 +447,13 @@ def _document(chart: chartdata.Chart, generated: float) -> dict[str, Any]:
         "unit_label": chart.unit_label,
         "series": series,
     }
-    if chart.title:
-        payload["title"] = chart.title
+    # Always a title, because whoever draws this has nowhere else to get
+    # one. A plot that names itself keeps its name; one that does not is
+    # called after what is in it, which is the same fallback the manifest
+    # uses -- and two different answers to "what is this chart called" is
+    # how a page and its index stop agreeing.
+    payload["title"] = chart.title or ", ".join(
+        one["label"] for one in series if one.get("label"))
     if any(v is not None for v in chart.yscale):
         payload["yscale"] = list(chart.yscale)
     if chart.daynight:

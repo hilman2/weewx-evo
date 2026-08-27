@@ -50,6 +50,9 @@
     windRoseColors: $jsonize($DisplayOptions.get('windRose_colors', ["#f3cec9", "#e7a4b6", "#cd7eaf", "#a262a9", "#6f4d96", "#3d3b72"])),
     units: $unit.unit_type_dict,
     basePath: "$get_base_path()",
+    /* Where the plot files are published. A separate export from the pages,
+       so only the operator knows how the two sit on the host. */
+    chartsPath: "$Extras.get('charts_path', '/json/')",
     translations: {
       "Daily": "$gettext('Daily')",
       "Hourly": "$gettext('Hourly')",

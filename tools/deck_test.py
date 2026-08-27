@@ -391,6 +391,130 @@ def check_no_sideways_scrolling() -> list[str]:
     return problems
 
 
+
+def check_diagram_windows_sit_on_the_clock() -> list[str]:
+    """An aggregated chart buckets from the clock, not from "now".
+
+    `get_series` buckets from the start of the span it is given, and Deck's
+    span ran from twenty-four hours ago to this instant. Two things followed,
+    and only the first one looks like a bug at a glance:
+
+      * the stamps were wherever the page happened to be built -- 15:09,
+        15:39 on one run and 15:27, 15:57 on the next;
+      * the last bucket ended at the moment of writing, so the newest reading
+        it could hold was the one before it. A page built at 16:27 stopped at
+        15:57, with half an hour of measurements in the database and not on
+        the chart, under a live figure that said something else.
+
+    Rounding the end up to the next boundary fixes both at once.
+    """
+    import time as _time
+
+    from weewx_evo.skins.deck.tags import DiagramUtil
+
+    snap = DiagramUtil.snap_to_clock
+    problems: list[str] = []
+
+    # 16:27:28 on a Thursday, half-hourly buckets.
+    now = int(_time.mktime((2026, 8, 27, 16, 27, 28, 0, 0, -1)))
+    start, stop = snap(now - 86400, now, 1800)
+    when = _time.localtime(stop)
+    if (when.tm_min, when.tm_sec) not in ((0, 0), (30, 0)):
+        problems.append(f"a half-hourly window ends at "
+                        f"{when.tm_hour:02d}:{when.tm_min:02d}:{when.tm_sec:02d}")
+    if stop <= now:
+        problems.append("the window ends before now, so the newest readings "
+                        "are not in any bucket")
+    if stop - start != 86400:
+        problems.append(f"the window is {stop - start}s long, wanted 86400")
+    if (start - _midnight_of(start)) % 1800:
+        problems.append("the window does not start on a bucket boundary")
+
+    # Already on a boundary: nothing moves, and nothing is invented.
+    exact = int(_time.mktime((2026, 8, 27, 16, 30, 0, 0, 0, -1)))
+    same = snap(exact - 86400, exact, 1800)
+    if same != (exact - 86400, exact):
+        problems.append(f"a window already on the clock was moved to {same}")
+
+    # Daily buckets and coarser are left alone: they start at local midnight,
+    # and snapping those against the epoch would drag them into UTC.
+    left = snap(now - 30 * 86400, now, 86400)
+    if left != (now - 30 * 86400, now):
+        problems.append("a daily window was snapped, which moves it to UTC")
+    if snap(now - 3600, now, 0) != (now - 3600, now):
+        problems.append("a window with no aggregation was moved")
+
+    return problems
+
+
+def _midnight_of(when: int) -> int:
+    import time as _time
+
+    parts = _time.localtime(when)
+    return int(_time.mktime((parts.tm_year, parts.tm_mon, parts.tm_mday,
+                             0, 0, 0, 0, 0, -1)))
+
+
+
+def check_charts_build_themselves(page_html: str, out: Path) -> list[str]:
+    """The tiles are built in the browser, from the files, and keep up.
+
+    None of this can be seen by reading the page: the page is one empty div
+    naming a span. `charts.js` asks the manifest which plots exist, builds a
+    card each, fetches that plot's file and draws it, then asks again.
+
+    So it is run, against a manifest and chart files served from memory.
+    ECharts needs a canvas jsdom has not got, so the drawing is stubbed --
+    what is under test is which files are asked for and what the DOM becomes.
+    """
+    import shutil
+    import subprocess
+
+    from weewx_evo.skins import bundled
+
+    if shutil.which("node") is None:
+        return []
+    if subprocess.run(["node", "-e", "require('jsdom')"],
+                      capture_output=True, check=False).returncode != 0:
+        return []
+
+    where = out / "charts.html"
+    where.parent.mkdir(parents=True, exist_ok=True)
+    where.write_text(page_html, encoding="utf-8")
+    script = Path(__file__).resolve().parent / "deck_charts_test.js"
+    bundle = Path(bundled()["deck"]) / "assets" / "charts.js"
+    finished = subprocess.run(["node", str(script), str(where), str(bundle)],
+                              capture_output=True, text=True, timeout=60,
+                              check=False)
+    if finished.returncode != 0 or not finished.stdout.strip():
+        why = finished.stderr.strip()[:400]
+        return [f"the charts could not be run: {why}"]
+    found = json.loads(finished.stdout)
+
+    problems: list[str] = []
+    if not any(one.endswith("index.json") for one in found["asked"]):
+        problems.append("the page never asked which plots exist")
+    if found["tiles"] == 0:
+        problems.append("the manifest listed plots and no tile was built")
+    # Only this span's. A day page showing the week's charts as well is the
+    # failure a filter on `group` exists to stop.
+    if any(name.startswith("week") for name in found["plots"]):
+        problems.append(f"a day page built the week's charts: {found['plots']}")
+    if found["titles"] and not all(found["titles"]):
+        problems.append("a tile has no heading; the file's title was not used")
+    if found["charts"] == 0:
+        problems.append("tiles were built and nothing was drawn")
+    if found["firstPoint"] is None:
+        problems.append("the drawing got no points")
+    else:
+        when = found["firstPoint"][0]
+        # Seconds in the file, milliseconds on the axis. Off by a thousand
+        # puts every reading in 1970 and the chart draws an empty box.
+        if when < 1e12:
+            problems.append(f"a timestamp reached the axis in seconds: {when}")
+    return problems
+
+
 def main(argv: list[str]) -> int:
     database = Path(argv[1] if len(argv) > 1 else "reference/weewx.sdb")
     if not database.is_file():
@@ -408,6 +532,11 @@ def main(argv: list[str]) -> int:
 
         failures += check_forecast(database, out)
         failures += check_no_sideways_scrolling()
+        failures += check_diagram_windows_sit_on_the_clock()
+
+        front = (out / "index.html").read_text(encoding="utf-8",
+                                               errors="replace")
+        failures += check_charts_build_themselves(front, out / "charts")
 
         forecast_page, _ = with_forecast(database, out / "dom")
         if forecast_page:
@@ -617,9 +746,14 @@ def check_charts(where: str, text: str) -> list[str]:
     """Every chart has a shape the drawing code can use."""
     out = []
     specs = re.findall(r"data-chart='([^']*)'", text)
-    if "index.html" in where and not specs:
-        failures = "the front page has no charts at all"
-        out.append(f"{where}: {failures}")
+    # A page either carries its charts or names the span it wants them for.
+    # The second is the ordinary case now: the tiles are built in the browser
+    # from the manifest, because the template cannot know which plots an
+    # installation has -- `plots.toml` is not shipped with the skin.
+    asked = re.findall(r'data-plots="([^"]*)"', text)
+    if "index.html" in where and not specs and not asked:
+        out.append(f"{where}: the front page neither carries a chart nor "
+                   f"asks for a span of them")
 
     for raw in specs:
         try:

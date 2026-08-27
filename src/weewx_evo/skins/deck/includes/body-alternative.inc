@@ -144,6 +144,34 @@
   #set $combined = {}
 #end if
 
+## Charts by name, out of `plots.toml`.
+##
+## The grid is left empty and filled by `assets/charts.js` from the manifest
+## the `json` feed writes. The template cannot fill it: it does not know
+## which plots exist, because `plots.toml` belongs to the installation and
+## the charts are a separate export from these pages -- possibly to a
+## different host. So the page says which span it wants and stops.
+##
+## What this replaces queried the database once per observation while the
+## page was being written, so a chart was as old as the last render, and the
+## skin held its own opinion about what a chart contains while `plots.toml`
+## and the plot editor in the settings held another that nothing read.
+##
+## `diagram_source = observations` puts the old way back, one context at a
+## time, for a station whose charts are not in `plots.toml` at all.
+#set $diagram_source = $DisplayOptions.get("diagrams", {}).get($context_for_diagrams, {}).get('source', $Extras.get('diagram_source', 'plots'))
+#if $diagram_source == 'plots'
+  ## Named plots, in the order they are named. Empty means every plot the
+  ## manifest has for this span, which is the right default: a station that
+  ## adds one in the settings sees it without editing a skin.
+  #set $only_plots = $DisplayOptions.get("diagrams", {}).get($context_for_diagrams, {}).get('plots', [])
+  ## One name in the settings comes back as a string, not a list of one.
+  #if isinstance($only_plots, str)
+    #set $only_plots = [$only_plots]
+  #end if
+  #set $only_text = ", ".join($only_plots)
+  <div data-plots="$context_for_diagrams" data-only="$only_text"></div>
+#else
 #for $skin_obs in $diagram_context_config
   #if $skin_obs in $combined.keys()
     #set $combined_diagram = $combined[$skin_obs]
@@ -175,6 +203,7 @@
     #end if
   #end if
 #end for
+#end if
 </div>
 
 #if os.path.exists("custom-content-bottom.inc") and $context == 'day' and not $daily_archive

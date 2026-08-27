@@ -521,6 +521,31 @@ class GeneralUtil(SearchList):
 
         return base_path + path
 
+    def get_plot_chart(self, context):
+        """The presentation half of a chart. The numbers come from the file.
+
+        Everything about *what* a chart holds -- readings, labels, colours,
+        line or bars, the unit -- is in the file `plots.toml` produced, and
+        `charts.js` reads it there. What is left here is how this skin draws
+        one: the number format and the language its dates are written in.
+
+        Deliberately this thin. The version of this that the plot tiles
+        replace assembled forty fields from the skin's own per-observation
+        configuration, and every one of them was a second opinion about
+        something `plots.toml` had already settled.
+        """
+        return json.dumps({
+            "kind": "line",
+            "locale": self.get_locale(),
+            # A sensible default; the file's own unit decides the label, and
+            # a plot that wants more decimals says so in `plots.toml`.
+            "format": "%.1f",
+            "curve": self.skin_dict["DisplayOptions"]
+            .get("diagrams", {}).get(context, {}).get("curve"),
+            "series": [],
+            "units": [],
+        })
+
     def asset(self, path):
         """The base path plus a file, with a mark that changes when it does.
 
@@ -1393,6 +1418,56 @@ class DiagramUtil(SearchList):
         self.skin_dict = generator.skin_dict
         self.general_util = GeneralUtil(generator)
 
+    @staticmethod
+    def snap_to_clock(start_ts, end_ts, every):
+        """Put an aggregated window on the clock instead of on "now".
+
+        `get_series` buckets from the start of the span it is handed, and the
+        span here runs from twenty-four hours ago to this instant. So the
+        buckets were stamped wherever the page happened to be built: 15:09,
+        15:39, 16:09 on one run and 15:27, 15:57 on the next. Nobody reads a
+        clock that way, and two charts written a second apart disagreed.
+
+        Worse, and this is the half that shows: the last bucket ended at the
+        moment of writing, so the newest reading it could hold was the one
+        before it. A page built at 16:27 stopped at 15:57 -- half an hour of
+        measurements sitting in the database and not on the chart, while the
+        live figure above it said something else.
+
+        Rounding the end *up* to the next boundary fixes both. The final
+        bucket is then the one we are inside, stamped at its start (which is
+        what the chart plots), so it is a clean time, it is not in the
+        future, and it holds everything measured since.
+
+        Measured from local midnight rather than from the epoch: a half-hour
+        step divides an hour either way, but a step of some hours does not
+        divide a day that starts at 22:00 UTC.
+        """
+        try:
+            step = to_int(every or 0)
+        except (TypeError, ValueError):
+            # `month` and `year` are aggregate intervals here too. They are
+            # anchored to the calendar rather than to a count of seconds, and
+            # a month already begins where a month begins.
+            return start_ts, end_ts
+        if step <= 0 or step >= 86400:
+            # Daily buckets and coarser already start at midnight, and
+            # snapping those against the epoch would move them into UTC.
+            return start_ts, end_ts
+
+        end_ts, start_ts = int(end_ts), int(start_ts)
+        when = time.localtime(end_ts)
+        midnight = int(time.mktime(
+            (when.tm_year, when.tm_mon, when.tm_mday, 0, 0, 0, 0, 0, -1)))
+        past = (end_ts - midnight) % step
+        if past:
+            moved = step - past
+            # The window keeps its length, so a start that was a whole number
+            # of steps from the end stays on a boundary too.
+            end_ts += moved
+            start_ts += moved
+        return start_ts, end_ts
+
     def get_diagram_data(
         self,
         observation,
@@ -1443,18 +1518,21 @@ class DiagramUtil(SearchList):
         if "observations" in obs_props:
             obs_props.pop("observations")
 
+        every = self.get_aggregate_interval(
+            observation=observation,
+            context=context_key,
+            alltime_start=alltime_start,
+            alltime_end=alltime_end,
+            combined_key=combined_key,
+        )
+        start_ts, end_ts = self.snap_to_clock(start_ts, end_ts, every)
+
         obs_start_vt, obs_stop_vt, obs_vt = skinkit.get_series(
             wobs,
             TimeSpan(start_ts, end_ts),
             self.generator.db_manager,
             aggregate_type=aggregate_type,
-            aggregate_interval=self.get_aggregate_interval(
-                observation=observation,
-                context=context_key,
-                alltime_start=alltime_start,
-                alltime_end=alltime_end,
-                combined_key=combined_key,
-            ),
+            aggregate_interval=every,
             **obs_props,
         )
 
