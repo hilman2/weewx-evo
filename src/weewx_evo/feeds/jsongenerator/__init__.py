@@ -486,14 +486,22 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         chosen = (option(f"unit.{group}") or "").strip()
         if chosen:
             overrides[group] = chosen
+    # The station's language, or this feed's own. A chart published as a file
+    # carries the name of every reading in it, and that name is read by
+    # somebody: on a German station these files said "Outside Temperature"
+    # because nothing here ever passed a language along.
+    from ... import language as language_module
+
+    spoken = language_module.get(option("lang") or settings.get("language"))
     try:
         target = units.Target(option("units") or "METRICWX",
-                              overrides)
+                              overrides, language=spoken)
     except ValueError as exc:
         # A unit a group cannot be shown in. Named, and then ignored, rather
         # than stopping a station from producing anything at all.
         log.error("%s -- the overrides are being ignored", exc)
-        target = units.Target(option("units") or "METRICWX")
+        target = units.Target(option("units") or "METRICWX",
+                              language=spoken)
 
     spans = tuple(s.strip() for s
                   in str(option("spans") or "").split(",")
