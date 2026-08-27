@@ -52,11 +52,20 @@ class Ingest:
                  default_driver: str = "ecowitt",
                  registry: drivers.Registry | None = None,
                  access: Access = PRIVATE_ONLY,
-                 limits: Limits | None = None) -> None:
+                 limits: Limits | None = None,
+                 stations: object | None = None,
+                 sightings: object | None = None) -> None:
         self.store = store
         self.token = token
         self.default_driver = default_driver
         self.registry = registry or drivers.DEFAULT
+        #: Which consoles are announced, and what to call them. None means
+        #: nothing is announced, which is every installation that has not been
+        #: through the settings page yet -- so packets keep the identity their
+        #: driver gave them and nothing changes.
+        self.stations = stations
+        #: Where uploads from anything unannounced are noted.
+        self.sightings = sightings
         # Bound to everything, answering only what is on a private network. A
         # console is on the same wifi, and a reverse proxy connects from
         # loopback. Anything further away is a decision somebody makes.
@@ -186,6 +195,7 @@ class Ingest:
 
         stored = 0
         for packet in packets:
+            packet = self._named(packet, name, peer)
             if raw is not None and packet.raw is None:
                 packet = replace(packet, raw=raw)
             if self.store.add(packet):
@@ -199,6 +209,32 @@ class Ingest:
             if stored:
                 self.last_packet = time.time()
         return stored, "ok", response
+
+    def _named(self, packet: Packet, driver: str, peer: str) -> Packet:
+        """Record the packet under its station's name, or note a stranger.
+
+        The identity a driver puts on a packet is the hardware's: an Ecowitt
+        PASSKEY, a Weather Underground ID, a serial. The name is the
+        operator's, and it is what `sources.toml` writes its rules against, so
+        renaming a station must not mean rewriting those rules. Hence the
+        translation here rather than in each driver.
+
+        **Nothing is refused.** An upload from something not announced is
+        stored exactly as it arrived and noted on the settings page. Turning
+        that into a refusal is a separate decision with a separate cost, and
+        making it here would mean an upgrade quietly stops recording a station
+        that has been working for a year.
+        """
+        if self.stations is None:
+            return packet
+        station = self.stations.by_identity(driver, packet.source)
+        if station is not None:
+            return packet if station.name == packet.source else replace(
+                packet, source=station.name)
+        if self.sightings is not None:
+            self.sightings.saw(driver, packet.source, peer,
+                               fields=sorted(packet.data)[:12])
+        return packet
 
     def _redacted(self, driver: object, body: bytes) -> str | None:
         """The upload as it arrived, with whatever the driver calls secret gone.

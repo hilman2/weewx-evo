@@ -2,17 +2,13 @@
 
 Deliberately thin, the same way `driver.py` is thin in the WeeWX build of this
 driver. The socket belongs to the core listener, the protocol to protocol.py,
-the field names to catalog.py, the console list to consoles.py. What is left
-here is the part that has to know about weewx-evo: producing packets, and
-saying what the gateway needs to hear back.
+the field names to catalog.py, and which consoles are recorded to the core.
+What is left here is the part that has to know about weewx-evo: producing
+packets, and saying what the gateway needs to hear back.
 
 Configuration, under `[drivers.ecowitt]` in the configuration file:
 
     [drivers.ecowitt]
-    # The console to answer to. Setting it here settles the question for good
-    # and does not depend on any file surviving.
-    passkey = "3178AB6B42A759F51A5A4AD72E37F8DE"
-
     # What to do with a field the catalog does not know yet:
     #   off     drop it
     #   series  keep it when it continues a known series, report the rest
@@ -25,24 +21,35 @@ Configuration, under `[drivers.ecowitt]` in the configuration file:
     [drivers.ecowitt.field_map_extensions]
     yearlyrainin = "rain_year"
 
-    # Or one console per station, each with its own field map. Two consoles
-    # both number their channels from one, so without this a WN34 on channel 1
-    # of each would overwrite the other.
+    # A field map per console, where there is more than one. Two consoles both
+    # number their channels from one, so without this a WN34 on channel 1 of
+    # each would overwrite the other.
     [drivers.ecowitt.stations.garden]
     passkey = "AAAA..."
     [drivers.ecowitt.stations.roof]
     passkey = "BBBB..."
+
+**Which consoles are recorded is not decided here.** It is `stations.toml`,
+where a console gets a name and an archive, and where the answer covers every
+driver rather than this one. This driver produces packets for whatever it can
+read, with the PASSKEY as the source, and the core turns that into a station.
+
+It used to refuse a console it did not know, and that was wrong in a way that
+only showed with more than one archive: no packet reached the core, so the
+console did not turn up as a stranger either. Two consoles at two sites, and
+the second one existed only in a log line.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ....db.live import Packet
 from ....units import US
 from ...drivers import BaseDriver
-from . import VERSION, catalog, columns, consoles, protocol, report
+from . import VERSION, catalog, columns, protocol, report
 from .mapping import Mapper
 
 log = logging.getLogger(__name__)
@@ -80,31 +87,34 @@ class EcowittDriver(BaseDriver):
         self.max_ahead = int(max_ahead if max_ahead is not None
                              else protocol.MAX_AHEAD)
 
-        # One mapping, or one per console.
-        self.stations = self._read_stations(stations, infer_unknown)
-        self.mapper = None if self.stations else Mapper(
+        # A field map per console, keyed on its PASSKEY, and a default for
+        # everything else. Two consoles both number their channels from one,
+        # so `temp1f` means a different thermometer on each -- that is what a
+        # per-console map is for, and it is knowledge only this driver has.
+        self.maps = self._read_maps(stations, infer_unknown)
+        self.mapper = Mapper(
             extensions=dict(field_map_extensions or {}),
             infer_unknown=infer_unknown,
             max_behind=self.max_behind, max_ahead=self.max_ahead)
-
-        # Which consoles to answer to. Anyone who can reach the port can point a
-        # console at it, and a second one writing the same channels would mix two
-        # sensors into a column that nothing afterwards can separate.
-        # `state` is get/set/delete on strings and nothing else. The driver
-        # cannot reach the archive through it, which is the point: producing
-        # packets is its job, and writing records is not.
-        self.store = consoles.Store(
-            console_file or consoles.path_for(configured=console_file),
-            state=state)
-        self.configured_passkey = str(passkey).strip() if passkey else None
-        self.known = self._known_consoles()
-        self.unknown_consoles: set[str] = set()
-        self.adopted: str | None = None
         self.seen_fields: dict[str, Any] = {}
+        self.consoles: dict[str, int] = {}
 
-        log.info("ecowitt %s: %s", self.version,
-                 f"answering to {len(self.known)} console(s)" if self.known
-                 else "no console on record; the next one to upload is adopted")
+        # `passkey` and `[stations]` used to decide which consoles were
+        # answered at all, and the first console heard was adopted. That
+        # decision has moved to `stations.toml`, where it covers every driver
+        # and can say which archive a console writes into. Refusing here made
+        # a second console invisible: no packet reached the core, so it did
+        # not appear as a stranger either, and the only trace was a log line.
+        if passkey or (stations and any(
+                one.get("passkey") for one in stations.values())):
+            log.warning(
+                "a PASSKEY is configured under [drivers.ecowitt]. This driver "
+                "no longer decides which consoles are recorded; announce them "
+                "as stations instead, where each one gets a name and an "
+                "archive. The field maps under [stations] are still read.")
+
+        log.info("ecowitt %s: %d field map(s), every console recorded",
+                 self.version, len(self.maps) + 1)
 
     @property
     def hardware_name(self) -> str:
@@ -121,14 +131,7 @@ class EcowittDriver(BaseDriver):
         from ....options import Group, Option
 
         return [
-            Group("Console", "Which hardware this driver answers to.", (
-                Option("passkey", "Console PASSKEY", kind="secret",
-                       help="The value the console sends first in every upload. "
-                            "Setting it here settles the question for good. "
-                            "Left empty, the first console heard is adopted and "
-                            "remembered in the database -- which works, but is "
-                            "lost with the database and hands the station to "
-                            "whichever console speaks first after that."),
+            Group("Console", "How this driver reads Ecowitt hardware.", (
                 Option("model", "Model", default="Ecowitt",
                        help="Shown in logs. Cosmetic.", advanced=True),
             ), prefix="drivers.ecowitt"),
@@ -190,9 +193,8 @@ class EcowittDriver(BaseDriver):
 
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
         text = body.decode("utf-8", "replace")
-        name, mapper = self._mapper_for(text, meta.get("source", "?"))
-        if mapper is None:
-            return []
+        passkey = protocol.station_id(text)
+        mapper = self.maps.get(passkey, self.mapper)
 
         packet, guesses = mapper.to_packet(text, now=meta.get("received"))
         self._maybe_report(text, guesses)
@@ -202,7 +204,12 @@ class EcowittDriver(BaseDriver):
 
         stamp = packet.pop("dateTime")
         self.seen_fields.update(packet)
-        source = name or protocol.station_id(text) or DRIVER_NAME
+        if passkey:
+            self.consoles[passkey] = int(time.time())
+        # The PASSKEY, not a name. It is what the hardware says it is, and the
+        # core turns it into a station name -- so renaming a station does not
+        # mean touching this driver or its field maps.
+        source = passkey or DRIVER_NAME
         return [Packet(
             dateTime=int(stamp),
             # Ecowitt uploads are imperial whatever the console displays. That
@@ -226,10 +233,11 @@ class EcowittDriver(BaseDriver):
         return {
             "version": self.version,
             "model": self.model,
-            "consoles": sorted(self.known),
-            "consoles_kept_in": self.store.where,
-            "adopted": self.adopted,
-            "refused": sorted(self.unknown_consoles),
+            # Which consoles have uploaded, not which ones are allowed to.
+            # Whether a console is recorded is the core's answer now, and it
+            # is on the stations page.
+            "consoles": sorted(self.consoles),
+            "field_maps": sorted(self.maps),
             "fields_seen": len(self.seen_fields),
         }
 
@@ -261,98 +269,34 @@ class EcowittDriver(BaseDriver):
 
     # -- consoles --------------------------------------------------------
 
-    def _read_stations(self, configured: dict | None,
-                       infer_unknown: str) -> dict[str, tuple[str, Mapper]]:
-        """Return {PASSKEY: (name, Mapper)} for a station with several consoles."""
+    def _read_maps(self, configured: dict | None,
+                   infer_unknown: str) -> dict[str, Mapper]:
+        """A field map per console, keyed on its PASSKEY.
+
+        `[stations]` used to carry a name as well, and the name decided what
+        the readings were recorded under. That belongs to `stations.toml` now,
+        where it is one name per console across every driver and carries the
+        archive with it. A name left here is read and reported, so nobody is
+        left wondering why it stopped having an effect.
+        """
         if not configured:
             return {}
-        stations = {}
+        made: dict[str, Mapper] = {}
         for name, options in configured.items():
             passkey = options.get("passkey")
             if not passkey:
                 raise ValueError(
                     f"station {name!r} has no 'passkey'. It is the value the console "
-                    "sends first in every upload.")
-            stations[str(passkey).strip()] = (name, Mapper(
+                    "sends first in every upload, and what its field map hangs on.")
+            made[str(passkey).strip()] = Mapper(
                 extensions=dict(options.get("field_map_extensions", {})),
                 infer_unknown=options.get("infer_unknown", infer_unknown),
-                max_behind=self.max_behind, max_ahead=self.max_ahead))
-        log.info("listening for %d consoles: %s",
-                 len(stations), ", ".join(sorted(n for n, _ in stations.values())))
-        return stations
+                max_behind=self.max_behind, max_ahead=self.max_ahead)
+        log.info("field maps for %d console(s)", len(made))
+        return made
 
     def _mappers(self) -> list[Mapper]:
-        if self.mapper is not None:
-            return [self.mapper]
-        return [mapper for _name, mapper in self.stations.values()]
-
-    def _known_consoles(self) -> set[str]:
-        """The PASSKEYs this driver answers to.
-
-        From the configuration, from [stations], or from where the first console
-        ever heard was recorded. Empty means nothing has been heard yet, and the
-        next console to upload is adopted.
-        """
-        known = set(self.stations)
-        if self.configured_passkey:
-            known.add(self.configured_passkey)
-        if known:
-            return known
-        remembered = set(self.store.read())
-        if remembered:
-            log.info("answering to %d console(s) on record in the %s",
-                     len(remembered), self.store.where)
-        return remembered
-
-    def _mapper_for(self, text: str, client: str) -> tuple[str | None, Mapper | None]:
-        """Which mapping this upload belongs to, or None to leave it alone."""
-        passkey = protocol.station_id(text)
-
-        if not self.known:
-            self._adopt(passkey, client)
-
-        if passkey not in self.known:
-            self._refuse(passkey, client)
-            return None, None
-
-        if self.mapper is not None:
-            return None, self.mapper
-        return self.stations[passkey]
-
-    def _adopt(self, passkey: str, client: str) -> None:
-        """Record the first console ever heard, and answer to it from then on."""
-        self.known.add(passkey)
-        self.adopted = passkey
-        where = self.store.add(passkey, f"first console seen, from {client}")
-        log.info(
-            "console %r at %s is now this driver's station, on record in the %s. "
-            "Uploads from any other console are refused until it is named under "
-            "[stations].", passkey, client, where or "log only")
-        self._suggest_passkey(passkey)
-
-    def _suggest_passkey(self, passkey: str) -> None:
-        """Point at the setting that does not depend on a file surviving.
-
-        The file is a convenience. A copied database, a rebuilt machine or a
-        directory nobody backed up leaves it behind, and then the next console
-        to upload becomes the station. One line in the configuration does not
-        have that problem, so say so where somebody will see it.
-        """
-        if self.configured_passkey or self.stations:
-            return
-        log.info("to keep it independent of anything stored, put it in the "
-                 "configuration: passkey = %r under [drivers.ecowitt].", passkey)
-
-    def _refuse(self, passkey: str, client: str) -> None:
-        if passkey in self.unknown_consoles:
-            return
-        self.unknown_consoles.add(passkey)
-        log.warning(
-            "an upload from %s carries PASSKEY %r, which is not one of this "
-            "driver's consoles. Ignoring it. If it is yours, add it under "
-            "[stations] with its own field map: two consoles number their "
-            "channels from one, and would otherwise write into the same fields.",
-            client, passkey)
+        return [self.mapper, *self.maps.values()]
 
     # -- reporting -------------------------------------------------------
 

@@ -25,7 +25,7 @@ if SRC not in sys.path:
 from weewx_evo.ingest.plugins import ecowitt as _ecowitt  # noqa: E402
 
 sys.modules.setdefault("ecowitt", _ecowitt)
-for _name in ("catalog", "columns", "consoles", "driver", "infer",
+for _name in ("catalog", "columns", "driver", "infer",
               "mapping", "protocol", "report"):
     __import__(f"weewx_evo.ingest.plugins.ecowitt.{_name}")
     sys.modules.setdefault(f"ecowitt.{_name}",

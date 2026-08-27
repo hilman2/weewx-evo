@@ -134,6 +134,8 @@ def tests() -> list[Test]:
              "the realtime files, field by field"),
         Test("forecast", ["forecast_test.py"],
              "Open-Meteo, DWD, MeteoAlarm and NWS, from recorded responses"),
+        Test("stations", ["stations_test.py"],
+             "announced consoles, strangers noticed, neither guessed at"),
         Test("shim", ["shim_test.py"],
              "a WeeWX driver, run in its own process, delivering to us",
              needs=("weewx",)),
@@ -158,7 +160,7 @@ def tests() -> list[Test]:
 
         # -- the driver's own suite --------------------------------------
         Test("ecowitt", ["-m", "pytest", "tests/ecowitt", "-q"],
-             "the Ecowitt driver's own suite, 83 tests",
+             "the Ecowitt driver's own suite, 73 tests",
              needs=("pytest",)),
 
         # -- and the check that finds what no test does -------------------

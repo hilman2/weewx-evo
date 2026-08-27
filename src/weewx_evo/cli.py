@@ -42,6 +42,7 @@ from . import forecast as forecast_registry
 from . import options as option_defs
 from . import plots as plot_defs
 from . import settings as settings_state
+from . import stations as stations_module
 from . import units, weewxconf
 from . import uploads as upload_registry
 from .admin import Admin, AdminServer
@@ -277,6 +278,28 @@ def _accepts(driver: Any, keyword: str) -> bool:
         return False
 
 
+def read_stations(cfg: Settings, live: object | None = None) -> tuple:
+    """The announced consoles, and where strangers get noted.
+
+    Two halves stored two ways, on purpose. `stations.toml` is decided by a
+    person and belongs beside the other files somebody edits and diffs.
+    Sightings are observed, change every few seconds and go stale, so they sit
+    in the live database next to the readings that produced them.
+
+    A missing file is an installation that has not announced anything yet.
+    That is every existing one, and it keeps working: packets go on carrying
+    whatever identity their driver read off the hardware.
+    """
+    from .ingest.sightings import Sightings
+
+    where = stations_module.path_for(Path(cfg.get("live_db")).parent)
+    register = stations_module.load(where)
+    if len(register):
+        log.info("%d station(s) announced in %s: %s", len(register), where,
+                 ", ".join(sorted(one.name for one in register)))
+    return register, Sightings(live)
+
+
 def read_sources(cfg: Settings, path: Path | None = None) -> SourcePolicy:
     """Which station wins for which field.
 
@@ -339,9 +362,11 @@ def cmd_listen(args: argparse.Namespace) -> int:
     warn_if_open(access, "The listener")
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
+    announced, sightings = read_stations(cfg, live)
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
-                    access=access, limits=limits)
+                    access=access, limits=limits,
+                    stations=announced, sightings=sightings)
     if cfg.get("token") is None:
         log.warning("no token set: anything that can reach this port can write "
                     "to the measurement series")
@@ -751,9 +776,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     warn_if_open(access, "The listener")
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
+    announced, sightings = read_stations(cfg, live)
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
-                    access=access, limits=limits)
+                    access=access, limits=limits,
+                    stations=announced, sightings=sightings)
     if cfg.get("token") is None:
         log.warning("no token set: anything that can reach this port can write "
                     "to the measurement series")

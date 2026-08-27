@@ -69,14 +69,21 @@ class WundergroundDriver(BaseDriver):
 
     def __init__(self, station_id: str | None = None,
                  indoor: bool = True) -> None:
-        #: Which station to accept, when more than one posts here. Empty means
-        #: all of them, which is right while there is one.
-        self.station_id = (station_id or "").strip()
+        # `station_id` used to say which station was accepted here. Which
+        # consoles are recorded is `stations.toml`'s answer now, where it
+        # covers every driver and carries a name and an archive with it.
+        # Refusing here would make a console invisible rather than merely
+        # unrecorded: no packet reaches the core, so it never appears as a
+        # stranger to be adopted either.
+        if (station_id or "").strip():
+            log.warning(
+                "a station_id is configured under [drivers.wunderground]. "
+                "This driver no longer decides which consoles are recorded; "
+                "announce them as stations instead.")
         self.indoor = indoor
         self.seen: dict[str, int] = {}
         self.unknown: dict[str, str] = {}
         self.received = 0
-        self.refused = 0
 
     @property
     def hardware_name(self) -> str:
@@ -93,13 +100,7 @@ class WundergroundDriver(BaseDriver):
         from ....options import Group, Option
 
         return [
-            Group("Station", "Which console this driver answers to.", (
-                Option("station_id", "Station ID",
-                       help="The ID the console sends. Only uploads carrying "
-                            "it are taken. Empty accepts whatever arrives, "
-                            "which is right while one station posts here -- "
-                            "and each station is recorded under its own ID "
-                            "either way."),
+            Group("Readings", "What to take from a Weather Underground upload.", (
                 Option("indoor", "Record indoor readings", kind="bool",
                        default=True,
                        help="Consoles report the temperature and humidity of "
@@ -140,12 +141,9 @@ class WundergroundDriver(BaseDriver):
         if not data:
             return []
 
+        # The ID the console was told to send. Passed on as the source, and
+        # the core turns it into a station name; nothing is refused here.
         who = (data.get("ID") or "").strip()
-        if self.station_id and who != self.station_id:
-            self.refused += 1
-            log.warning("upload from station %r; this driver is set to %r",
-                        who, self.station_id)
-            return []
 
         readings = self._readings(data)
         if not readings:
@@ -254,7 +252,6 @@ class WundergroundDriver(BaseDriver):
         return {
             "protocol": "weather underground",
             "uploads": self.received,
-            "refused": self.refused,
             "stations": sorted(self.seen),
             "unknown_fields": sorted(self.unknown),
         }
