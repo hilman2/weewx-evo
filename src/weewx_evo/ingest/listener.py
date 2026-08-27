@@ -66,6 +66,11 @@ class Ingest:
         self.stations = stations
         #: Where uploads from anything unannounced are noted.
         self.sightings = sightings
+        #: Called after packets are stored, for feeds that want every reading
+        #: rather than every record. A callback rather than a reference to the
+        #: feed runner: the listener has no business knowing feeds exist, and
+        #: the two are wired together where both are already in scope.
+        self.on_packets: object | None = None
         # Bound to everything, answering only what is on a private network. A
         # console is on the same wifi, and a reverse proxy connects from
         # loopback. Anything further away is a decision somebody makes.
@@ -208,6 +213,13 @@ class Ingest:
             self.accepted += stored
             if stored:
                 self.last_packet = time.time()
+        if stored and self.on_packets is not None:
+            try:
+                self.on_packets()
+            except Exception:
+                # A feed that cannot be woken must not cost the reading that
+                # was being stored when it happened.
+                log.exception("could not hand the reading on to the feeds")
         return stored, "ok", response
 
     def _named(self, packet: Packet, driver: str, peer: str) -> Packet:
@@ -227,6 +239,14 @@ class Ingest:
         """
         if self.stations is None:
             return packet
+        # The settings page writes that file and this is a different process.
+        # Without re-reading it, a console adopted on the page keeps arriving
+        # as a stranger until somebody restarts the service -- and restarting
+        # a listener to register a station is what people do not do, after
+        # which the page looks broken.
+        refresh = getattr(self.stations, "refresh", None)
+        if refresh is not None:
+            refresh()
         station = self.stations.by_identity(driver, packet.source)
         if station is not None:
             return packet if station.name == packet.source else replace(

@@ -61,7 +61,25 @@ from typing import Any, Protocol, runtime_checkable
 #: `schedule` is for what is not tied to one record -- a monthly summary, a
 #: nightly export. `packet` is for something wanting every reading as it
 #: arrives, which is what a live display wants.
+#:
+#: A feed class sets the one it was written for. The operator can move it
+#: between `record` and `schedule`, because that is a question about this
+#: installation: hourly charts on a slow machine, a summary once a night.
+#: `packet` is not offered as a choice -- a feed that wants every reading is
+#: built for it and one that is not would only run oftener without producing
+#: anything new.
 TRIGGERS = ("record", "packet", "schedule")
+
+#: What an operator may choose between, with what to call it.
+CHOOSABLE_TRIGGERS = (
+    ("record", "with the archive, whenever a record lands"),
+    ("schedule", "on its own clock"),
+)
+
+#: The archive a feed with no `archive` set reads from. Matches
+#: `stations.DEFAULT_ARCHIVE`: a station writes into an archive and a feed
+#: reads out of one, so they have to agree about the name.
+DEFAULT_ARCHIVE = "default"
 
 ENTRY_POINT_GROUP = "weewx_evo.feeds"
 
@@ -201,3 +219,71 @@ class Feed(Protocol):
         feed -- a broken template must not cost the upload of everything else.
         """
         ...
+
+
+def archive_names() -> list[tuple[str, str]]:
+    """The archives a feed can read from, for the settings page.
+
+    Taken from `stations.toml`, because that is where an archive gets named:
+    a station says which one it writes into, and this says which one a feed
+    reads out of. Two lists of archive names would be one list and one way of
+    getting it wrong.
+    """
+    from .. import stations
+
+    try:
+        register = stations.load(stations.path_for(_config_dir()))
+        found = register.archives()
+    except Exception:
+        log.debug("could not read the archives", exc_info=True)
+        found = [DEFAULT_ARCHIVE]
+    return [(one, one) for one in found]
+
+
+def _config_dir() -> Path:
+    """Where the configuration lives, as the running process sees it."""
+    from .. import settings as settings_module
+
+    running = settings_module.running()
+    where = getattr(running, "path", None) if running else None
+    return Path(where).parent if where else Path(".")
+
+
+def schedule_options() -> list:
+    """When a feed runs and what it reads. Added to every feed's page.
+
+    Separate from a feed's own settings because it is the same question for
+    all of them, and because the answer used to be "whenever a record lands"
+    with no way to say otherwise. `realtime` declared `packet` and got the
+    archive interval anyway, which is the opposite of what that file is for.
+    """
+    from ..options import Group, Option
+
+    return [
+        Group("When it runs",
+              "A feed produces files. This says what sets it going and which "
+              "measurement series it reads.", (
+                  Option("trigger", "Produce", kind="choice", default="record",
+                         choices=CHOOSABLE_TRIGGERS,
+                         help="With the archive is right for anything built "
+                              "out of archive records: there is nothing new "
+                              "to draw before the next one. Its own clock is "
+                              "for what does not follow the records -- a "
+                              "nightly summary, or expensive charts on a "
+                              "machine that should not redraw them every "
+                              "five minutes."),
+                  Option("every", "How often", kind="duration", default="1h",
+                         help="Only when it runs on its own clock. Rounded to "
+                              "the clock, so an hourly feed produces on the "
+                              "hour rather than an hour after the service "
+                              "started."),
+                  Option("archive", "Reads from", kind="choice",
+                         default=DEFAULT_ARCHIVE,
+                         choices=((DEFAULT_ARCHIVE, DEFAULT_ARCHIVE),),
+                         choices_from=archive_names,
+                         help="Which measurement series this feed reports on. "
+                              "With one archive there is nothing to choose; "
+                              "with a station at each of two sites, this is "
+                              "which site the page is about."),
+              ), prefix=""),
+    ]

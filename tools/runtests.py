@@ -134,6 +134,8 @@ def tests() -> list[Test]:
              "the realtime files, field by field"),
         Test("forecast", ["forecast_test.py"],
              "Open-Meteo, DWD, MeteoAlarm and NWS, from recorded responses"),
+        Test("feedtiming", ["feedtiming_test.py"],
+             "every trigger a feed declares is one the runner acts on"),
         Test("stations", ["stations_test.py"],
              "announced consoles, strangers noticed, neither guessed at"),
         Test("shim", ["shim_test.py"],

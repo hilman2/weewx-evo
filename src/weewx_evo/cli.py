@@ -278,7 +278,20 @@ def _accepts(driver: Any, keyword: str) -> bool:
         return False
 
 
-def read_stations(cfg: Settings, live: object | None = None) -> tuple:
+def stations_path(args: argparse.Namespace, cfg: Settings) -> Path:
+    """Where stations.toml lives: beside the configuration, like plots.toml.
+
+    Not beside the database. Both are usually the same directory, but this is
+    a file a person edits and diffs, so it belongs with the others of that
+    kind -- and the settings page looks for it there.
+    """
+    if getattr(args, "config", None):
+        return stations_module.path_for(Path(args.config).parent)
+    return stations_module.path_for(Path(cfg.get("live_db")).parent)
+
+
+def read_stations(args: argparse.Namespace, cfg: Settings,
+                  live: object | None = None) -> tuple:
     """The announced consoles, and where strangers get noted.
 
     Two halves stored two ways, on purpose. `stations.toml` is decided by a
@@ -292,7 +305,7 @@ def read_stations(cfg: Settings, live: object | None = None) -> tuple:
     """
     from .ingest.sightings import Sightings
 
-    where = stations_module.path_for(Path(cfg.get("live_db")).parent)
+    where = stations_path(args, cfg)
     register = stations_module.load(where)
     if len(register):
         log.info("%d station(s) announced in %s: %s", len(register), where,
@@ -362,7 +375,7 @@ def cmd_listen(args: argparse.Namespace) -> int:
     warn_if_open(access, "The listener")
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
-    announced, sightings = read_stations(cfg, live)
+    announced, sightings = read_stations(args, cfg, live)
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
                     access=access, limits=limits,
@@ -776,7 +789,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     warn_if_open(access, "The listener")
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
-    announced, sightings = read_stations(cfg, live)
+    announced, sightings = read_stations(args, cfg, live)
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
                     access=access, limits=limits,
@@ -838,6 +851,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         # Once at startup, so a restart does not leave yesterday's pages
         # up until the next record lands a minute later.
         feeds.record_written()
+        # And every reading, for a feed that asked for one. `realtime.txt` is
+        # polled every ten seconds by the scripts that read it, so producing
+        # it on the archive record made it as old as the interval -- which is
+        # the one thing that file is not supposed to be.
+        ingest.on_packets = feeds.packet_stored
 
 
     # The local web server for whatever the feeds produced. Its own port:
@@ -1562,15 +1580,17 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         factory = feed_registry.factory_for(kind)
         if factory is None:
             continue
-        groups = list(factory.options()) if hasattr(factory, "options") else []
+        # When it runs and which archive it reads, on every feed's page. The
+        # same question for all of them, so it is asked in one place rather
+        # than left to each feed to remember.
+        groups = list(feed_registry.schedule_options())
+        groups += list(factory.options()) if hasattr(factory, "options") else []
         # A skin declares its own settings, and they belong on the page of
         # the feed that runs it -- there is no separate skin page, because a
         # skin is only ever configured through the feed it belongs to.
         if hasattr(factory, "skin_options"):
             groups += factory.skin_options(str(settings.get("skin") or ""),
                                            settings.get("skins_dir"))
-        if not groups:
-            continue
         schemas.append(option_defs.Schema(
             name=f"feed:{name}", label=f"Feed: {name} ({kind})", kind="feed",
             help=feed_registry.describe(kind),
@@ -2419,6 +2439,51 @@ def feed_dirs(cfg: Settings,
     return out
 
 
+def feed_schedule(args: argparse.Namespace) -> dict:
+    """When each configured feed runs, and which archive it reads.
+
+    Read here rather than asked of the feed class, because it is the
+    operator's answer and not the author's. A feed declares the trigger it
+    was written for; this is where that can be overridden for one
+    installation -- hourly charts on a slow machine, a summary once a night.
+
+    A feed that says nothing runs on the archive record, which is what every
+    feed did when there was no choice.
+    """
+    from . import feeds as feed_registry
+    from .options import parse_duration
+
+    out: dict[str, dict] = {}
+    for name, settings in (configured_feeds(args) or {}).items():
+        if not isinstance(settings, dict):
+            continue
+        factory = feed_registry.factory_for(str(settings.get("kind", "")))
+        # The class's own trigger is the default: `realtime` is written for
+        # every reading and should not have to be configured into it.
+        declared = getattr(factory, "trigger", "record") if factory else "record"
+        wanted = str(settings.get("trigger") or declared)
+        if wanted not in feed_registry.TRIGGERS:
+            log.warning("the feed %r asks to run on %r, which is not one of "
+                        "%s; running it with the archive", name, wanted,
+                        ", ".join(feed_registry.TRIGGERS))
+            wanted = "record"
+        every = 0.0
+        if wanted == "schedule":
+            try:
+                every = float(parse_duration(settings.get("every") or "1h"))
+            except Exception:
+                log.warning("the feed %r has an unreadable schedule %r; "
+                            "using an hour", name, settings.get("every"))
+                every = 3600.0
+        out[name] = {
+            "trigger": wanted,
+            "every": every,
+            "archive": str(settings.get("archive")
+                           or feed_registry.DEFAULT_ARCHIVE),
+        }
+    return out
+
+
 def build_feeds(args: argparse.Namespace, cfg: Settings,
                 charts: plot_defs.PlotSet) -> list:
     """The feeds this configuration asks for, in the order they run.
@@ -2739,7 +2804,8 @@ def start_feeds(args: argparse.Namespace,
         return None
 
     runner = feed_runner.Runner(build_feeds(args, cfg, charts),
-                                archive_path=Path(cfg.get("archive_db")))
+                                archive_path=Path(cfg.get("archive_db")),
+                                schedule=feed_schedule(args))
     runner.start()
     where = feed_dirs(cfg, args)
     log.info("%d chart(s) from %s, written to %s", len(charts),
