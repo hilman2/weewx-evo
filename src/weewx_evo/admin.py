@@ -531,7 +531,15 @@ class Admin:
             import time
             self.saved_at = time.time()
             for _group, option in schema:
-                if option.restart and before.get(option.name) != parsed.get(option.name):
+                # Only settings this form actually carried. `parse` was asked
+                # for what was present, so everything else is missing from
+                # `parsed` rather than changed to nothing -- and comparing
+                # against it marked every restart-needing setting on the page
+                # every time anything at all was saved. One save of the
+                # station name claimed a dozen of them.
+                if not option.restart or option.name not in parsed:
+                    continue
+                if before.get(option.name) != parsed[option.name]:
                     self.restart_pending.add(option.label)
         return {}
 
@@ -1179,18 +1187,30 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                   + html.escape("; ".join(errors.values())) + "</div>")
     elif errors:
         general = errors.get("")
-        banner = (f'<div class="banner bad">{html.escape(general)}</div>'
-                  if general else
-                  f'<div class="banner bad">{len(errors)} setting(s) need '
-                  'looking at. Nothing was saved.</div>')
+        if general:
+            banner = f'<div class="banner bad">{html.escape(general)}</div>'
+        else:
+            # Named, not counted. The message is also printed beside each
+            # field, but a settings page is long and "3 setting(s) need
+            # looking at" leaves somebody scrolling for the red one.
+            labels = {option.name: option.label
+                      for _group, option in (schema or ())}
+            named = ", ".join(html.escape(labels.get(where, where))
+                              for where in errors if where)
+            banner = ('<div class="banner bad">Nothing was saved. Look at '
+                      f'{named}.</div>')
     elif message:
         banner = f'<div class="banner ok">{html.escape(message)}</div>'
 
     restart = ""
     if admin.restart_pending:
         items = ", ".join(sorted(html.escape(x) for x in admin.restart_pending))
-        restart = ('<div class="banner warn">Saved. The service is restarting '
-                   f"to apply {items}. It is back in a second or two.</div>")
+        # What it actually does, which is nothing: exports and uploads are
+        # picked up while running, these are not. Saying "restarting" when
+        # nothing restarts sends somebody looking for a service that is
+        # already up, and the setting they changed still is not in effect.
+        restart = ('<div class="banner warn">Saved, and waiting for a '
+                   f"restart to take effect: {items}.</div>")
 
     own_form = adding or charting
     if charting:
@@ -1210,9 +1230,20 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         title=html.escape(heading),
         body_form_open="" if own_form else f'<form method="post" action="./{html.escape(active)}">',
         body_form_close="" if own_form else "</form>",
+        # After the save form closes, never inside it. `extra` is Try it and
+        # Remove, and each of those is a form of its own -- and HTML has no
+        # nested forms. A browser drops the inner `<form>` and keeps its
+        # `</form>`, which closes the outer one early: the Save button then
+        # belongs to no form at all and does nothing when clicked, while Try
+        # it silently submits a save instead. Every export, feed, upload and
+        # forecast page was like that. Reading the HTML as text cannot see
+        # it -- every tag is there and every one is closed -- so
+        # `tools/adminpage.py` parses the page and asks which form each
+        # button ended up in.
+        extra=extra,
         nav="\n".join(nav),
         banner=banner + restart,
-        body="\n".join(body) + extra,
+        body="\n".join(body),
         action=html.escape(schema.name if schema else active),
         readonly=("<p class='lede'>Started read-only: nothing can be saved.</p>"
                   if admin.read_only else ""),
@@ -1400,6 +1431,7 @@ _PAGE = """<!doctype html>
       {body}
       {save}
     {body_form_close}
+    {extra}
     <footer>
       Written to <code>{file}</code>, which stays editable by hand.
       Every setting on this page comes from the component that owns it.
@@ -1550,7 +1582,15 @@ class _Handler(BaseHTTPRequestHandler):
             body = json.dumps(_describe(self.admin), indent=2).encode()
             self._reply(200, body, "application/json")
             return
-        self._reply(200, page(self.admin, self._which(parsed.path)))
+        # A save redirects here so that a reload does not save again. Saying
+        # nothing on arrival is how a page that worked looks like one that
+        # did not: the form comes back identical and there is no sign
+        # anything happened.
+        said = parse_qs(parsed.query)
+        message = ("Saved." if "saved" in said
+                   else "Removed." if "removed" in said else "")
+        self._reply(200, page(self.admin, self._which(parsed.path),
+                              message=message))
 
     def do_POST(self) -> None:
         if not self._permitted():

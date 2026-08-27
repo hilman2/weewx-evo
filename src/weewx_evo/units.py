@@ -585,6 +585,7 @@ _US: dict[str, str] = {
     "group_count": "count",
     "group_data": "byte",
     "group_db": "dB",
+    "group_dbm": "dBm",
     "group_degree_day": "degree_F_day",
     "group_deltatime": "second",
     "group_direction": "degree_compass",
@@ -597,6 +598,7 @@ _US: dict[str, str] = {
     "group_illuminance": "lux",
     "group_interval": "minute",
     "group_length": "inch",
+    "group_lengthmm": "inch",
     "group_localtime": "local_djd",
     "group_humidity_absolute": "gram_per_meter_cubed",
     "group_mixingratio": "gram_per_kilogram",
@@ -605,13 +607,16 @@ _US: dict[str, str] = {
     "group_power": "watt",
     "group_pressure": "inHg",
     "group_pressurerate": "inHg_per_hour",
+    "group_pressurevpd": "kPa",
     "group_radiation": "watt_per_meter_squared",
     "group_rain": "inch",
     "group_rainrate": "inch_per_hour",
     "group_speed": "mile_per_hour",
     "group_speed2": "mile_per_hour2",
+    "group_sunhours": "hour",
     "group_temperature": "degree_F",
     "group_time": "unix_epoch",
+    "group_usiecm": "microsiemens_per_centimeter",
     "group_uv": "uv_index",
     "group_volt": "volt",
     "group_volume": "gallon",
@@ -626,6 +631,7 @@ _METRIC: dict[str, str] = {
     "group_count": "count",
     "group_data": "byte",
     "group_db": "dB",
+    "group_dbm": "dBm",
     "group_degree_day": "degree_C_day",
     "group_deltatime": "second",
     "group_direction": "degree_compass",
@@ -638,6 +644,7 @@ _METRIC: dict[str, str] = {
     "group_illuminance": "lux",
     "group_interval": "minute",
     "group_length": "cm",
+    "group_lengthmm": "mm",
     "group_localtime": "local_djd",
     "group_humidity_absolute": "gram_per_meter_cubed",
     "group_mixingratio": "gram_per_kilogram",
@@ -646,13 +653,16 @@ _METRIC: dict[str, str] = {
     "group_power": "watt",
     "group_pressure": "mbar",
     "group_pressurerate": "mbar_per_hour",
+    "group_pressurevpd": "kPa",
     "group_radiation": "watt_per_meter_squared",
     "group_rain": "cm",
     "group_rainrate": "cm_per_hour",
     "group_speed": "km_per_hour",
     "group_speed2": "km_per_hour2",
+    "group_sunhours": "hour",
     "group_temperature": "degree_C",
     "group_time": "unix_epoch",
+    "group_usiecm": "microsiemens_per_centimeter",
     "group_uv": "uv_index",
     "group_volt": "volt",
     "group_volume": "liter",
@@ -667,6 +677,7 @@ _METRICWX: dict[str, str] = {
     "group_count": "count",
     "group_data": "byte",
     "group_db": "dB",
+    "group_dbm": "dBm",
     "group_degree_day": "degree_C_day",
     "group_deltatime": "second",
     "group_direction": "degree_compass",
@@ -679,6 +690,7 @@ _METRICWX: dict[str, str] = {
     "group_illuminance": "lux",
     "group_interval": "minute",
     "group_length": "cm",
+    "group_lengthmm": "mm",
     "group_localtime": "local_djd",
     "group_humidity_absolute": "gram_per_meter_cubed",
     "group_mixingratio": "gram_per_kilogram",
@@ -687,13 +699,16 @@ _METRICWX: dict[str, str] = {
     "group_power": "watt",
     "group_pressure": "mbar",
     "group_pressurerate": "mbar_per_hour",
+    "group_pressurevpd": "kPa",
     "group_radiation": "watt_per_meter_squared",
     "group_rain": "mm",
     "group_rainrate": "mm_per_hour",
     "group_speed": "meter_per_second",
     "group_speed2": "meter_per_second2",
+    "group_sunhours": "hour",
     "group_temperature": "degree_C",
     "group_time": "unix_epoch",
+    "group_usiecm": "microsiemens_per_centimeter",
     "group_uv": "uv_index",
     "group_volt": "volt",
     "group_volume": "liter",
@@ -748,6 +763,7 @@ LABELS: dict[str, Any] = {
     "count": "",
     "cubic_foot": " ft³",
     "dB": " dB",
+    "dBm": " dBm",
     "day": [" day", " days"],
     "degree_C": "°C",
     "degree_C_day": "°C-day",
@@ -786,6 +802,7 @@ LABELS: dict[str, Any] = {
     "meter_per_second": " m/s",
     "meter_per_second2": " m/s",
     "microgram_per_meter_cubed": [" µg/m³"],
+    "microsiemens_per_centimeter": " µS/cm",
     "milligram_per_meter_cubed": [" mg/m³"],
     "gram_per_meter_cubed": [" g/m³"],
     "gram_per_kilogram": [" g/kg"],
@@ -863,6 +880,7 @@ FORMATS: dict[str, str] = {
     "meter_per_second": "%.1f",
     "meter_per_second2": "%.1f",
     "microgram_per_meter_cubed": "%.0f",
+    "microsiemens_per_centimeter": "%.0f",
     "milligram_per_meter_cubed": "%.1f",
     "gram_per_meter_cubed": "%.1f",
     "gram_per_kilogram": "%.1f",
@@ -887,6 +905,58 @@ FORMATS: dict[str, str] = {
 }
 
 
+# -- what the drivers in this process know ---------------------------------
+
+#: Which group each field a driver reports belongs to. `GROUPS` above is the
+#: standard schema and nothing more; a station with a soil probe, a lightning
+#: sensor and four extra thermometers has a hundred columns that are not in
+#: it, and only the driver knows what they measure.
+#:
+#: Held here rather than passed from hand to hand. It was passed once -- the
+#: parameter below, and `extra_groups` on `Tags` and `chartdata` -- and ten
+#: other places that format a value never got it: the MQTT document, the live
+#: document, the realtime files, every upload, the WeeWX compatibility layer,
+#: and both commands that render without starting a listener. The symptom is
+#: always the same and always looks like something else: a number printed
+#: bare, in whatever the station happened to send it in, on a page where
+#: everything beside it is converted.
+#:
+#: Process-wide state, deliberately, and safe here for the reason
+#: `settings.running()` is safe: this module is only ever imported, so there
+#: is exactly one of it. Never put this in `cli.py` -- that file is also
+#: `__main__` and its globals exist twice.
+_CONTRIBUTED: dict[str, str] = {}
+
+
+def contribute(groups: dict[str, str]) -> None:
+    """Record what the drivers say about their own fields.
+
+    Replaces rather than adds to. It is called with the whole answer from the
+    whole registry, and a reload that drops a driver has to drop its fields
+    with it -- otherwise a column keeps a group nothing reports any more.
+    """
+    global _CONTRIBUTED
+    _CONTRIBUTED = {str(field): str(group)
+                    for field, group in (groups or {}).items() if group}
+
+
+def contributed() -> dict[str, str]:
+    """What the drivers said. A copy: this is not somewhere to write."""
+    return dict(_CONTRIBUTED)
+
+
+def all_groups() -> dict[str, str]:
+    """Every reading this process can name a group for.
+
+    The standard schema with the drivers' own on top, which is the same order
+    `group_of` answers in. WeeWX's `obs_group_dict` is the same idea, and a
+    skin extension reading it through the compatibility layer gets this.
+    """
+    merged = dict(GROUPS)
+    merged.update(_CONTRIBUTED)
+    return merged
+
+
 # -- asking questions of the tables ----------------------------------------
 
 
@@ -894,9 +964,10 @@ def group_of(obs_type: str, aggregate: str | None = None,
              extra: dict[str, str] | None = None) -> str | None:
     """Which group a reading belongs to, or None if nothing knows.
 
-    `extra` is what a driver contributed. It wins over the built-in table: a
-    driver knows its own fields, and the core's list is only the standard
-    schema.
+    Asked in order: what this call was handed, then what the drivers in this
+    process said, then the standard schema. Both of the first two beat the
+    last one, and for the same reason -- a driver knows its own fields, and
+    the core's list is only the standard schema.
 
     Some aggregates change the answer. The *time* of today's maximum is a
     time, not a temperature, and a count of readings is a count.
@@ -905,6 +976,8 @@ def group_of(obs_type: str, aggregate: str | None = None,
         return AGGREGATE_GROUPS[aggregate]
     if extra and obs_type in extra:
         return extra[obs_type]
+    if obs_type in _CONTRIBUTED:
+        return _CONTRIBUTED[obs_type]
     return GROUPS.get(obs_type)
 
 

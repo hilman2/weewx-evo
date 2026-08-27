@@ -104,6 +104,27 @@ def status_of(driver: object) -> dict[str, Any]:
         return {}
 
 
+def groups_of(driver: object) -> dict[str, str]:
+    """Which unit group each of this driver's fields belongs to.
+
+    Optional, like `status`. A driver that reports nothing but the standard
+    schema has nothing to say here; one that reports soil conductivity, four
+    extra thermometers and the signal strength of every sensor is the only
+    thing that knows what those columns measure.
+    """
+    fn = getattr(driver, "unit_groups", None)
+    if fn is None:
+        return {}
+    try:
+        return dict(fn() or {})
+    except Exception:
+        # A driver that cannot answer must not stop the ones that can, and
+        # must not stop the process either. What it costs is unconverted
+        # numbers on a page, which is what happens without it anyway.
+        log.exception("driver unit_groups failed")
+        return {}
+
+
 class _FunctionDriver(BaseDriver):
     """Wraps a plain `(body, meta) -> packets` function."""
 
@@ -226,6 +247,23 @@ class Registry:
 
     def aliases_of(self, name: str) -> list[str]:
         return list(self._aliases.get(name, ()))
+
+    def unit_groups(self) -> dict[str, str]:
+        """What every driver here says about its own fields, in one table.
+
+        Canonical names only: an alias shares its driver's instance, and
+        asking twice would only merge the same answer into itself.
+
+        Two drivers claiming the same field with different groups is possible
+        and not worth arbitrating: the last one wins, sorted by name so the
+        answer is at least the same on every start. Two stations reporting the
+        same column in different quantities is a configuration problem, and
+        one that shows up as a wrong unit rather than as silence.
+        """
+        merged: dict[str, str] = {}
+        for name in sorted(self.canonical_names()):
+            merged.update(groups_of(self.get(name)))
+        return merged
 
     def close(self) -> None:
         for driver in self._drivers.values():

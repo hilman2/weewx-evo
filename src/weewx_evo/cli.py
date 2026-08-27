@@ -242,6 +242,28 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
             log.info("driver %r configured (%s)%s", name, settings or "state only",
                      f", also serving {', '.join(also)}" if also else "")
 
+    install_driver_groups()
+
+
+def install_driver_groups() -> None:
+    """Tell the core what the drivers call their own fields.
+
+    Without this a station's own columns -- `extraTemp9`, `soilEC1`, the
+    signal strength of every sensor -- have no unit group, so nothing
+    converts them and nothing prints a unit after them. The number is right
+    and it is in whatever the console sent, on a page where everything beside
+    it is in the units the page asked for.
+
+    Recorded in `units` rather than handed to each renderer. It was handed
+    once, and the ten places that never got it were the MQTT document, the
+    live document, the realtime files, every upload, the WeeWX compatibility
+    layer, and the two commands that render without a listener.
+    """
+    groups = drivers.DEFAULT.unit_groups()
+    units.contribute(groups)
+    if groups:
+        log.debug("%d field(s) named by the drivers", len(groups))
+
 
 def _accepts(driver: Any, keyword: str) -> bool:
     """Whether a driver's constructor takes this keyword."""
@@ -2385,6 +2407,11 @@ def cmd_plots_run(args: argparse.Namespace) -> int:
     from .series import Reader
 
     cfg = settings_for(args)
+    # This renders without starting a listener, so nothing has configured the
+    # drivers -- and a chart of a column only the driver can name would come
+    # out unconverted and unlabelled. Their field names cost nothing to ask
+    # for and are the same whether the driver is configured or not.
+    install_driver_groups()
     charts = load_plots(args, cfg)
     if not len(charts):
         print("No plots are defined. See `weewx-evo plots import`.",

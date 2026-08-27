@@ -245,6 +245,62 @@ def main() -> int:
         http.stop()
         live.close()
         archive.close()
+        print("\nwhat the driver calls its own fields reaches the core")
+        # The core's table is the standard schema and nothing else. A station
+        # with a soil probe, a lightning sensor and four extra thermometers
+        # has a hundred columns that are not in it, and only the driver knows
+        # what they measure.
+        #
+        # This was declared and never asked for: `unit_groups()` existed on
+        # the driver, `group_of` took an `extra`, and the ten places that
+        # format a value never got one. Every such column came out bare -- the
+        # right number, in whatever the console sent, on a page where
+        # everything beside it was converted.
+        from weewx_evo import units
+        from weewx_evo.cli import install_driver_groups
+
+        before = units.unit_of("extraTemp9", units.METRICWX)
+        failures += not check("the core does not know extraTemp9 on its own",
+                              before, (None, None))
+
+        install_driver_groups()
+
+        stored, group = units.unit_of("extraTemp9", units.US)
+        failures += not check("the driver says it is a temperature", group,
+                              "group_temperature")
+        failures += not check("so a US archive holds it in Fahrenheit",
+                              stored, "degree_F")
+        failures += not check("and a metric page asks for Celsius",
+                              units.unit_of("extraTemp9", units.METRICWX)[0],
+                              "degree_C")
+
+        # Groups WeeWX has no unit for at all. Without one the value is typed
+        # and still printed bare, which is the same failure one step later.
+        for reading, wanted in (("soilEC1", "microsiemens_per_centimeter"),
+                                ("vpd", "kPa"),
+                                ("wh65_rssi", "dBm")):
+            failures += not check(f"{reading} has a unit",
+                                  units.unit_of(reading, units.METRICWX)[0],
+                                  wanted)
+        failures += not check("and something to print after it",
+                              units.label("microsiemens_per_centimeter"),
+                              " \u00b5S/cm")
+
+        # The standard schema still wins where it has an answer, and the
+        # merged view is what a WeeWX skin extension reads.
+        failures += not check("outTemp is still what it always was",
+                              units.group_of("outTemp"), "group_temperature")
+        everything = units.all_groups()
+        failures += not check("both tables are in the merged view",
+                              ("outTemp" in everything
+                               and "extraTemp9" in everything), True)
+
+        # A call that hands its own table still wins: a feed may know better
+        # than the driver about its own columns.
+        failures += not check("a caller's own table beats both",
+                              units.group_of("extraTemp9",
+                                             extra={"extraTemp9": "group_percent"}),
+                              "group_percent")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

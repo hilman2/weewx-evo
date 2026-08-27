@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -24,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from weewx_evo import config as config_file
-from weewx_evo.admin import MARKER, Admin, AdminServer
+from weewx_evo.admin import ADD_PAGES, MARKER, Admin, AdminServer
 from weewx_evo.cli import all_schemas
 from weewx_evo.ratelimit import Limits
 
@@ -123,6 +124,32 @@ def upload(url: str, fields: dict, files: dict) -> str:
 def said(html: str, kind: str = "ok") -> str:
     found = re.search(f'<p class="{kind}">([^<]*)', html)
     return found.group(1) if found else ""
+
+
+
+def _no_javascript() -> str:
+    """A node with jsdom, or a word saying why not."""
+    if shutil.which("node") is None:
+        return "there is no node on PATH"
+    found = subprocess.run(["node", "-e", "require('jsdom')"],
+                           capture_output=True, text=True, check=False)
+    if found.returncode != 0:
+        return "node is there but jsdom is not (npm install -g jsdom)"
+    return ""
+
+
+def _buttons(tmp: Path, name: str, rendered: str) -> dict:
+    """What a browser makes of the page: which form each control is in."""
+    where = tmp / f"page-{name.replace(':', '-')}.html"
+    where.write_text(rendered, encoding="utf-8")
+    script = Path(__file__).resolve().parent / "admin_page_test.js"
+    finished = subprocess.run(["node", str(script), str(where)],
+                              capture_output=True, text=True, timeout=60,
+                              check=False)
+    if finished.returncode != 0 or not finished.stdout.strip():
+        raise RuntimeError(f"could not parse {name}: "
+                           f"{finished.stderr.strip()[:300]}")
+    return json.loads(finished.stdout)
 
 
 def main() -> int:
@@ -279,6 +306,46 @@ def main() -> int:
                               "all")
         failures += not check("the core's settings are untouched",
                               config_file.get(saved, "station.name"), "Kirchdorf")
+
+        print("\nevery button on every page is wired to something")
+        # Read as text this page was perfect: every tag present, every one
+        # closed. The nesting was wrong, and only a parser that follows the
+        # HTML rules sees what that costs. Try it and Remove were rendered
+        # inside the save form; HTML has no nested forms, so a browser drops
+        # the inner `<form>` and keeps its `</form>`, closing the outer one
+        # early. Save then belonged to no form and did nothing at all, and
+        # Try it quietly submitted a save. Every export, feed, upload and
+        # forecast page was like that, and none of the other checks here
+        # noticed.
+        why = _no_javascript()
+        if why:
+            print(f"  -- skipped: {why}")
+        else:
+            for where in [s.name for s in admin.schemas] + list(ADD_PAGES):
+                code, rendered = get(f"{base}/{TOKEN}/{where}")
+                if code != 200:
+                    failures += not check(f"{where} loads", code, 200)
+                    continue
+                seen = _buttons(tmp, where, rendered)
+                failures += not check(f"{where}: no button belongs to nothing",
+                                      seen["orphans"], [])
+                failures += not check(f"{where}: no field goes nowhere",
+                                      seen["strandedFields"], [])
+                # An add-page has one button and it submits the page: that
+                # is the page. What must never happen is a *second* action
+                # sharing the first one's form, because then it is not a
+                # second action at all -- Try it and Remove each need an
+                # address of their own.
+                for button in seen["buttons"]:
+                    if button["label"] not in ("Test the connection",
+                                               "Fetch once", "Send one now",
+                                               "Remove"):
+                        continue
+                    failures += not check(
+                        f"{where}: {button['label']!r} posts somewhere of "
+                        f"its own",
+                        (button["action"] or "").endswith(
+                            ("/test", "/remove")), True)
 
         print("\nthe schema is available as data")
         code, raw = get(f"{base}/{TOKEN}/schema.json")

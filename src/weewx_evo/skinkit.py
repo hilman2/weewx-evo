@@ -733,7 +733,11 @@ def _install_modules() -> None:
             ValueTuple(vt)[2])
     unit_module.convertStd = lambda vt, system: ValueTuple(vt)
     unit_module.getStandardUnitType = units.unit_of
-    unit_module.obs_group_dict = dict(units.GROUPS)
+    # The standard schema *and* what the drivers said, because a skin
+    # extension reading this to decide how to draw a column has the same
+    # problem the core does: `extraTemp9` is not in the standard schema and
+    # only the driver knows it is a temperature.
+    unit_module.obs_group_dict = units.all_groups()
     unit_module.std_groups = units.SYSTEMS
     unit_module.unit_constants = {"US": units.US, "METRIC": units.METRIC,
                                   "METRICWX": units.METRICWX}
