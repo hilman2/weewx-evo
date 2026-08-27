@@ -3,7 +3,7 @@
 Jede öffentliche Klasse, Funktion und Methode, ihre Datei und die
 Wiki-Seite, die sie beschreibt.
 
-**Erzeugt:** 2026-08-27 10:40 · `python tools/docsindex.py`
+**Erzeugt:** 2026-08-27 10:56 · `python tools/docsindex.py`
 
 Private Namen (`_foo`) fehlen, `__init__` ist dabei. Wer einen Namen
 sucht, benutzt die Suche des Browsers.

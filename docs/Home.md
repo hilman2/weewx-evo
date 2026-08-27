@@ -74,6 +74,7 @@ Lizenzdatei daneben liegen.
 | [Uploads](Uploads) | Die Messwerte an einen Wetterdienst |
 | [MQTT](MQTT) | Der eigene Client, und was ihn nötig macht |
 | [Forecast](Forecast) | Vorhersage und Warnungen, vier Quellen |
+| [Plugins](Plugins) | Was nicht im Kern liegt, und der Katalog dafür |
 | [Multiple-Sources](Multiple-Sources) | Mehrere Stationen, eine Messreihe |
 
 ### Verarbeitung und Speicherung

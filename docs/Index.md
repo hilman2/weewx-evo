@@ -3,7 +3,7 @@
 Welche Datei zu welcher Wiki-Seite gehört, und wo die Seite dem Code
 hinterherhinkt.
 
-**Erzeugt:** 2026-08-27 10:40 · `python tools/docsindex.py`
+**Erzeugt:** 2026-08-27 10:56 · `python tools/docsindex.py`
 
 Diese Seite wird erzeugt. Von Hand geändert wird sie beim nächsten Lauf
 überschrieben — die Zuordnung steht in den `covers`-Blöcken am Ende jeder
@@ -28,7 +28,7 @@ python tools/docsindex.py --accept <Seite>.md
 
 | | |
 |---|---|
-| Wiki-Seiten | 33 |
+| Wiki-Seiten | 34 |
 | Abgedeckte Dateien | 88 von 140 |
 | Seiten zu prüfen | 21 |
 | Dateien ohne Seite | 52 |
@@ -37,12 +37,12 @@ python tools/docsindex.py --accept <Seite>.md
 
 | Seite | Geändert seit der Seite | Datei zuletzt | Seite zuletzt |
 |---|---|---|---|
+| ⚠️ [Erste Schritte](Getting-Started) | `README.md` | 2026-08-27 10:55 | 2026-08-26 16:03 |
 | ⚠️ [Feeds](Feeds) | `src/weewx_evo/feeds/__init__.py`, `src/weewx_evo/feeds/jsongenerator/__init__.py`, `src/weewx_evo/feeds/diagnostic/__init__.py` (+1) | 2026-08-27 10:35 | 2026-08-26 16:02 |
 | ⚠️ [Die Einstellungsseite](Admin-Page) | `tools/adminpage.py`, `src/weewx_evo/admin.py` | 2026-08-27 10:33 | 2026-08-26 16:01 |
 | ⚠️ [Abgeleitete Messwerte](Derived-Readings) | `tools/derive_test.py`, `src/weewx_evo/derive.py` | 2026-08-27 10:33 | 2026-08-26 15:46 |
 | ⚠️ [Einheiten](Units) | `tools/unitcheck.py`, `src/weewx_evo/units.py` | 2026-08-27 10:33 | 2026-08-26 16:07 |
 | ⚠️ [CLI-Referenz](CLI-Reference) | `src/weewx_evo/cli.py` | 2026-08-27 10:33 | 2026-08-26 15:39 |
-| ⚠️ [Erste Schritte](Getting-Started) | `README.md` | 2026-08-27 10:33 | 2026-08-26 16:03 |
 | ⚠️ [Zeitreihen](Series) | `src/weewx_evo/series.py`, `tools/seriestest.py` | 2026-08-27 10:29 | 2026-08-26 16:06 |
 | ⚠️ [Mitarbeiten](Contributing) | `CLAUDE.md`, `src/weewx_evo/aggregate.py` | 2026-08-26 23:59 | 2026-08-26 15:55 |
 | ⚠️ [Konfiguration](Configuration) | `src/weewx_evo/options.py`, `tools/settings_test.py`, `src/weewx_evo/settings.py` (+1) | 2026-08-26 23:56 | 2026-08-26 16:03 |
@@ -75,7 +75,7 @@ python tools/docsindex.py --accept <Seite>.md
 | ✅ | [Die Live-Datenbank](Database-Live) | 1 | 2026-08-26 12:25 | 2026-08-26 15:41 |
 | ⚠️ | [Einheiten](Units) | 2 | 2026-08-27 10:33 | 2026-08-26 16:07 |
 | ⚠️ | [Einstellungen A–Z](Settings-Reference) | 6 | 2026-08-26 23:56 | 2026-08-26 16:02 |
-| ⚠️ | [Erste Schritte](Getting-Started) | 1 | 2026-08-27 10:33 | 2026-08-26 16:03 |
+| ⚠️ | [Erste Schritte](Getting-Started) | 1 | 2026-08-27 10:55 | 2026-08-26 16:03 |
 | ⚠️ | [Exports](Exports) | 7 | 2026-08-26 23:53 | 2026-08-26 16:04 |
 | ⚠️ | [Feeds](Feeds) | 5 | 2026-08-27 10:35 | 2026-08-26 16:02 |
 | — | [Glossar](Glossary) | — | — | 2026-08-26 15:56 |
@@ -84,6 +84,7 @@ python tools/docsindex.py --accept <Seite>.md
 | ⚠️ | [Mehrere Quellen](Multiple-Sources) | 2 | 2026-08-26 23:47 | 2026-08-26 15:45 |
 | ⚠️ | [Mitarbeiten](Contributing) | 4 | 2026-08-26 23:59 | 2026-08-26 15:55 |
 | — | [MQTT](MQTT) | — | — | 2026-08-27 10:39 |
+| — | [Plugins](Plugins) | — | — | 2026-08-27 10:56 |
 | ⚠️ | [Sicherheit](Security) | 2 | 2026-08-26 23:43 | 2026-08-26 15:52 |
 | ⚠️ | [Sonne](Sun) | 2 | 2026-08-26 23:55 | 2026-08-26 15:48 |
 | ⚠️ | [Tagesstatistiken](Daily-Summaries) | 1 | 2026-08-26 23:56 | 2026-08-26 15:42 |
@@ -93,7 +94,7 @@ python tools/docsindex.py --accept <Seite>.md
 | — | [Uploads](Uploads) | — | — | 2026-08-27 10:38 |
 | — | [Vorhersage](Forecast) | — | — | 2026-08-27 10:40 |
 | ⚠️ | [Web-Server](Web-Server) | 2 | 2026-08-26 23:43 | 2026-08-26 16:02 |
-| ✅ | [weewx-evo](Home) | 7 | 2026-08-27 10:33 | 2026-08-27 10:40 |
+| ✅ | [weewx-evo](Home) | 7 | 2026-08-27 10:55 | 2026-08-27 10:56 |
 | ✅ | [WeeWX-Kompatibilität](WeeWX-Compatibility) | 2 | 2026-08-26 23:53 | 2026-08-27 10:40 |
 | ⚠️ | [Zeitreihen](Series) | 2 | 2026-08-27 10:29 | 2026-08-26 16:06 |
 
@@ -236,7 +237,7 @@ python tools/docsindex.py --accept <Seite>.md
 | `deploy/compose.yml` | 86 | ⚠️ [Deployment](Deployment) | 2026-08-26 16:17 |
 | `deploy/Dockerfile` | 56 | ⚠️ [Deployment](Deployment) | 2026-08-26 20:40 |
 | `deploy/split.yml` | 75 | [Architektur](Architecture) · [Deployment](Deployment) | 2026-08-26 12:01 |
-| `README.md` | 382 | ⚠️ [Erste Schritte](Getting-Started) · [weewx-evo](Home) | 2026-08-27 10:33 |
+| `README.md` | 421 | ⚠️ [Erste Schritte](Getting-Started) · [weewx-evo](Home) | 2026-08-27 10:55 |
 | `CLAUDE.md` | 725 | ⚠️ [Mitarbeiten](Contributing) · [weewx-evo](Home) | 2026-08-26 23:59 |
 | `pyproject.toml` | 134 | [weewx-evo](Home) · [Testing](Testing) | 2026-08-27 10:33 |
 | `.gitignore` | 43 | [Mitarbeiten](Contributing) | 2026-08-26 15:38 |

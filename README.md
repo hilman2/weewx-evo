@@ -104,6 +104,34 @@ weewx-evo driver list
 weewx-evo driver remove acurite
 ```
 
+### Plugins, und wo sie stehen
+
+Ein Treiber ist ein Verzeichnis neben den Daten. Alles andere — Exports,
+Uploads, Feeds, Vorhersagequellen — ist ein pip-Paket mit einem Entry Point:
+
+```toml
+[project.entry-points."weewx_evo.exports"]
+sftp = "weewx_evo_sftp:SftpExport"
+```
+
+Mehr ist es nicht. Nach `pip install` steht die Sache in `export list`, in der
+Auswahl auf der Einstellungsseite und als `kind = "sftp"` in der Konfiguration.
+
+**Ein Plugin darf, was der Kern nicht darf: eine Abhängigkeit nehmen.** Der
+Kern läuft auf der Standardbibliothek, damit `pip install weewx-evo` auf einem
+Pi ohne Compiler funktioniert. Ein Plugin hat diese Verpflichtung nicht.
+
+Welche es gibt, steht in einem eigenen Repo statt in diesem:
+
+- **[weewx-evo-plugins](https://github.com/hilman2/weewx-evo-plugins)** — der
+  Katalog. Ein Eintrag je Plugin, jeder zeigt auf dessen eigenes Repository.
+- **[weewx-evo-sftp](https://github.com/hilman2/weewx-evo-sftp)** — der erste:
+  ein Export für einen Host mit SSH, aber ohne rsync.
+
+Ein Repo je Plugin, nicht eins für alle. Der Fehler, den das vermeidet, ist
+der von `weewx-DWD`: zehn unabhängige Dinge in einem Paket, wo eine Änderung
+am Radar-Code die Vorhersage kaputt macht.
+
 ### Kann ein Treiber Amok laufen?
 
 Im Prozess: **nein, nicht verhinderbar.** Ein Treiber ist Python im selben
