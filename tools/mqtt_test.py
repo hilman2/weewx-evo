@@ -199,6 +199,26 @@ class Broker(threading.Thread):
             except OSError:
                 pass
 
+    # -- waiting ---------------------------------------------------------
+
+    def until(self, condition, seconds: float = 5.0) -> bool:
+        """Wait for the broker to have seen something. Never a fixed sleep.
+
+        A sleep long enough on this machine today is too short on a loaded
+        one, and the failure it produces looks like a protocol bug. This
+        polls instead, so a slow machine is slow rather than wrong.
+        """
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            with self._lock:
+                if condition(self):
+                    return True
+            time.sleep(0.005)
+        return False
+
+    def messages(self, count: int, seconds: float = 5.0) -> bool:
+        return self.until(lambda b: len(b.published) >= count, seconds)
+
     def stop(self) -> None:
         self._stop.set()
         try:
@@ -220,9 +240,10 @@ def test_connect_bytes() -> None:
                         username="user", password="pw", keepalive=45)
         client.connect()
         client.close()
+        ok("the connection arrived",
+           broker.until(lambda b: len(b.connects) >= 1))
     finally:
         broker.stop()
-    time.sleep(0.05)
     check("one connection arrived", len(broker.connects), 1)
     got = broker.connects[0]
     check("protocol name", got["name"], "MQTT")
@@ -243,10 +264,10 @@ def test_publish_and_retain() -> None:
         client.connect()
         client.publish("weather/outTemp_C", "21.4", retain=True)
         client.publish("weather/loop", '{"outTemp_C":21.4}', qos=1)
+        ok("both messages arrived", broker.messages(2))
         client.close()
     finally:
         broker.stop()
-    time.sleep(0.05)
     check("two messages arrived", len(broker.published), 2)
     topic, payload, qos, retain = broker.published[0]
     check("topic", topic, "weather/outTemp_C")
@@ -274,10 +295,10 @@ def test_qos1_waits_for_its_own_puback() -> None:
                         on_message=lambda t, p: delivered.append((t, p)))
         client.connect()
         client.publish("weather/loop", "x", qos=1)
+        ok("the message arrived", broker.messages(1))
         client.close()
     finally:
         broker.stop()
-    time.sleep(0.05)
     check("the publish completed", len(broker.published), 1)
     check("the stray message was delivered, not mistaken for the PUBACK",
           delivered, [("noise/x", b"hello")])
@@ -313,10 +334,11 @@ def test_reconnect_keeps_subscriptions() -> None:
             pass
         # The next publish reconnects, and the subscription must come with it.
         client.publish("weather/x", "2")
+        ok("the second connection subscribed again",
+           broker.until(lambda b: len(b.subscribed) >= 2))
         client.close()
     finally:
         broker.stop()
-    time.sleep(0.05)
     check("subscribed twice: once, then again after the drop",
           broker.subscribed, ["commands/#", "commands/#"])
     check("two connections were made", len(broker.connects), 2)
@@ -363,10 +385,12 @@ def test_the_upload_shapes_a_record() -> None:
         upload = MqttUpload(host="127.0.0.1", port=broker.port,
                             unit_system="METRICWX")
         result = upload.post([record])
+        ok("everything published arrived",
+           broker.until(lambda b: any(t == "weather/loop"
+                                      for t, _p, _q, _r in b.published)))
         upload.close()
     finally:
         broker.stop()
-    time.sleep(0.05)
     ok("something was published", result.sent > 0)
     check("the record was marked sent", result.through, 1756308600)
 
@@ -394,10 +418,12 @@ def test_the_upload_converts() -> None:
                             unit_system="METRICWX", individual=True,
                             aggregate=False)
         upload.post([record])
+        ok("the reading arrived",
+           broker.until(lambda b: any(t == "weather/outTemp_C"
+                                      for t, _p, _q, _r in b.published)))
         upload.close()
     finally:
         broker.stop()
-    time.sleep(0.05)
     topics = {topic: payload for topic, payload, _q, _r in broker.published}
     ok("published in Celsius", "weather/outTemp_C" in topics)
     check("converted", round(float(topics["weather/outTemp_C"]), 1), 23.4)
