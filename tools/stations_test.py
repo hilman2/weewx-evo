@@ -327,6 +327,29 @@ def the_settings_page() -> None:
             check("and nothing was added",
                   len(stations.load(tmp / "stations.toml")), 2)
 
+            print("\nwhat a station sends, and the upload behind it")
+            # The reason this is on the page: a field with no column is
+            # dropped at every archive interval, and until now it said so
+            # only in a log line and a file in /var/tmp.
+            from weewx_evo import adminstations
+            from weewx_evo.db.live import Packet
+
+            live2 = LiveStore(tmp / "live.sdb", interval_seconds=60)
+            live2.add(Packet(
+                dateTime=1787800000, usUnits=1, source="garden",
+                data={"outTemp": 68.4, "somethingNew": 1.5},
+                raw="ID=evo-x&PASSWORD=[redacted]&tempf=68.4&somethingNew=1.5"))
+            live2.close()
+
+            station = stations.load(tmp / "stations.toml").by_name("garden")
+            found = adminstations.what_it_sends(admin, station)
+            check("it knows what arrived",
+                  found.get("sent"), ["outTemp", "somethingNew"])
+            check("and keeps the upload to hand on",
+                  "somethingNew=1.5" in found.get("raw", ""), True)
+            check("with the secret already out of it",
+                  "[redacted]" in found.get("raw", ""), True)
+
             print("\nremoving one")
             status, _ = post(f"{base}/stations/roof/remove", {})
             check("redirects", status, 303)

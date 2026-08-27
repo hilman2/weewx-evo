@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from weewx_evo import config as config_file
-from weewx_evo.admin import ADD_PAGES, MARKER, Admin, AdminServer
+from weewx_evo.admin import ADD_PAGES, MARKER, OWN_PAGES, Admin, AdminServer
 from weewx_evo.cli import all_schemas
 from weewx_evo.ratelimit import Limits
 
@@ -307,6 +307,15 @@ def main() -> int:
         failures += not check("the core's settings are untouched",
                               config_file.get(saved, "station.name"), "Kirchdorf")
 
+        # A station, so the stations page has rows with buttons on them.
+        # An empty table renders no forms and would pass the check below
+        # without testing anything.
+        from weewx_evo import stations as station_defs
+        register = station_defs.Register()
+        register.add(station_defs.Station("garden", "wunderground",
+                                          "evo-abc123"))
+        station_defs.save(station_defs.path_for(path.parent), register)
+
         print("\nevery button on every page is wired to something")
         # Read as text this page was perfect: every tag present, every one
         # closed. The nesting was wrong, and only a parser that follows the
@@ -321,7 +330,14 @@ def main() -> int:
         if why:
             print(f"  -- skipped: {why}")
         else:
-            for where in [s.name for s in admin.schemas] + list(ADD_PAGES):
+            # OWN_PAGES too. The stations page renders a form per row --
+            # adopt, ignore, remove -- and was left out of this list when it
+            # was added, so it shipped with all three inside the save form
+            # and Remove doing nothing. That is the failure this check exists
+            # for, missed because the list of pages was short.
+            pages = ([s.name for s in admin.schemas]
+                     + list(ADD_PAGES) + list(OWN_PAGES))
+            for where in pages:
                 code, rendered = get(f"{base}/{TOKEN}/{where}")
                 if code != 200:
                     failures += not check(f"{where} loads", code, 200)

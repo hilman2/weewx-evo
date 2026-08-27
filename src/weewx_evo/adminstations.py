@@ -36,6 +36,12 @@ NEWLINE = "\n"
 #: and the operator copies it over. Anything else has to be adopted: its
 #: identity comes off the wire and cannot be chosen.
 TELLABLE = {
+    "ecowitt": (
+        "Ecowitt",
+        ("A GW1000, GW2000, HP2551 or anything else set to the Ecowitt "
+         "protocol. Server, port and path are yours to set; the identity is "
+         "not, so it is read off the first upload."),
+    ),
     "wunderground": (
         "Weather Underground protocol",
         ("Almost any console with a Custom Server field: Ambient, Froggit, "
@@ -48,6 +54,18 @@ TELLABLE = {
          "weewx-evo weewx-driver."),
     ),
 }
+
+#: Drivers whose hardware carries its own identity, so we cannot hand one out
+#: and have to read it off the first upload instead. The console can still be
+#: told where to send, which is what separates these from hardware that has to
+#: be adopted outright.
+LEARNS_ITS_IDENTITY = frozenset({"ecowitt"})
+
+#: What a station carries until its console has uploaded once.
+#: A placeholder rather than an empty string: the identity has to
+#: stay unique, or two consoles being set up at once would collide
+#: on "" and the second would be refused for no visible reason.
+AWAITING = "awaiting:"
 
 
 # -- what the admin object does -------------------------------------------
@@ -73,6 +91,27 @@ def store(admin: Any, register: station_defs.Register, note: str = "") -> str:
     return ""
 
 
+def live_db(admin: Any) -> Path | None:
+    """Where the live database is, as this process can reach it.
+
+    Three ways it can be written and all three turn up. The environment wins,
+    because that is the order everything else uses and a container sets
+    `WEEWX_EVO_LIVE`. A path in the file may be relative, and relative to the
+    file rather than to whatever directory the settings page was started in --
+    which is what made this page say a station had never been heard from while
+    the database beside it held four hundred of its packets.
+    """
+    import os
+
+    where = os.environ.get("WEEWX_EVO_LIVE") or admin.config().get("live_db")
+    if not where:
+        where = "live.sdb"
+    found = Path(str(where))
+    if not found.is_absolute():
+        found = Path(admin.path).parent / found
+    return found if found.exists() else None
+
+
 def sightings_for(admin: Any):
     """The strangers, out of the live database.
 
@@ -83,10 +122,8 @@ def sightings_for(admin: Any):
     from .db.live import LiveStore
     from .ingest.sightings import Sightings
 
-    where = admin.config().get("live_db")
-    if not where:
-        where = str(Path(admin.path).parent / "live.sdb")
-    if not Path(where).exists():
+    where = live_db(admin)
+    if where is None:
         return Sightings(None)
     try:
         return Sightings(LiveStore(where))
@@ -103,8 +140,8 @@ def last_seen(admin: Any, names: list[str]) -> dict[str, int]:
     """
     if not names:
         return {}
-    where = admin.config().get("live_db")
-    if not where or not Path(str(where)).exists():
+    where = live_db(admin)
+    if where is None:
         return {}
     try:
         import sqlite3
@@ -147,19 +184,67 @@ def adopt(admin: Any, driver: str, identity: str, name: str,
 
 
 def announce(admin: Any, name: str, driver: str, archive: str = "") -> tuple:
-    """Create a station and hand out an identity. Returns (station, error)."""
+    """Create a station. Returns (station, error).
+
+    Two shapes, and which one depends on where the identity comes from.
+    Where we hand it out it goes straight onto the station and the operator
+    copies it onto the console. Where the hardware carries its own -- an
+    Ecowitt PASSKEY -- the station is created waiting for it, and `learn()`
+    fills it in from the first upload that has nowhere else to go.
+    """
     register = load(admin)
-    identity = register.identity_for(driver)
+    waiting = driver in LEARNS_ITS_IDENTITY
+    identity = "" if waiting else register.identity_for(driver)
     station = station_defs.Station(
-        name=(name or "").strip().lower(), driver=driver, identity=identity,
+        name=(name or "").strip().lower(), driver=driver,
+        identity=identity or f"{AWAITING}{name}".strip(),
         archive=(archive or station_defs.DEFAULT_ARCHIVE).strip(),
-        learnt=False)
+        learnt=waiting)
     problem = register.why_not(station)
     if problem:
         return None, problem
     register.stations.append(station)
     error = store(admin, register, f"{station.name} announced")
     return (None, error) if error else (station, "")
+
+
+def learn(admin: Any, name: str) -> tuple:
+    """Give a waiting station the identity off the wire. Returns (found, error).
+
+    The wizard's other half, for hardware that will not be told what to call
+    itself. The operator has just set the console to upload here and is
+    standing in front of it, which is the one moment adoption is a decision
+    somebody is making rather than something happening to them.
+
+    The newest sighting on that driver wins. With one console being set up
+    there is one, and asking somebody to pick from a list of one is a worse
+    page than showing what was found.
+    """
+    register = load(admin)
+    station = register.by_name(name)
+    if station is None:
+        return None, f"There is no station called {name!r}."
+    if not station.identity.startswith(AWAITING):
+        return station, ""          # already learnt; nothing to do
+
+    waiting = [one for one in sightings_for(admin).waiting()
+               if one.driver == station.driver and one.identity]
+    if not waiting:
+        return None, ""             # nothing has arrived yet, which is normal
+
+    from dataclasses import replace as _replace
+
+    found = waiting[0]
+    filled = _replace(station, identity=found.identity, learnt=True)
+    problem = register.why_not(filled, replacing=station.name)
+    if problem:
+        return None, problem
+    register.stations[register.stations.index(station)] = filled
+    error = store(admin, register, f"{station.name} learnt its identity")
+    if error:
+        return None, error
+    sightings_for(admin).forget(found.driver, found.identity)
+    return filled, ""
 
 
 def remove(admin: Any, name: str) -> str:
@@ -218,19 +303,28 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
 
     rows = []
     for one in sorted(register, key=lambda s: s.name):
-        mark = "read off the hardware" if one.learnt else "copied onto the console"
+        waiting = one.identity.startswith(AWAITING)
+        if waiting:
+            shown = ('<span class="note">waiting for its first upload</span>'
+                     f'<br><a href="./new-station?learn='
+                     f'{html.escape(one.name)}">what to enter</a>')
+        else:
+            mark = ("read off the hardware" if one.learnt
+                    else "copied onto the console")
+            shown = (f'<code>{html.escape(one.identity)}</code>'
+                     f'<br><span class="note">{mark}</span>')
         rows.append(f'''
     <tr>
       <td><strong>{html.escape(one.name)}</strong>
           {f'<br><span class="note">{html.escape(one.note)}</span>' if one.note else ""}</td>
       <td>{html.escape(one.driver)}</td>
-      <td><code>{html.escape(one.identity)}</code>
-          <br><span class="note">{mark}</span></td>
+      <td>{shown}</td>
       <td>{html.escape(one.archive)}</td>
       <td>{html.escape(_ago(when.get(one.name, 0)))}</td>
       <td><form method="post" action="./stations/{html.escape(one.name)}/remove">
-            <button type="submit" class="danger">Remove</button></form></td>
-    </tr>''')
+            <button type="submit" class="quiet">Remove</button></form></td>
+    </tr>
+    <tr class="sendsrow"><td colspan="6">{_what_it_sends_html(admin, one)}</td></tr>''')
     announced = f'''
   <table class="stations">
     <thead><tr><th>Name</th><th>Driver</th><th>Identity</th><th>Archive</th>
@@ -413,7 +507,21 @@ def _what_to_enter(admin: Any, station: Any) -> str:
     if host in ("", "0.0.0.0", "::"):
         host = _own_address()
 
-    if station.driver == "wunderground":
+    waiting = station.identity.startswith(AWAITING)
+
+    if station.driver == "ecowitt":
+        rows = [
+            ("Protocol", "Ecowitt"),
+            ("Server / Hostname", host),
+            ("Port", str(port)),
+            ("Path", f"/{token}/ecowitt/" if token else "/ecowitt/"),
+            ("Upload Interval", "16 or 60 seconds"),
+        ]
+        note = ("Ecowitt consoles take a path, so the token goes there rather "
+                "than into a password field. The console names itself with a "
+                "PASSKEY of its own, which is why there is nothing to type for "
+                "an identity: it is read off the first upload.")
+    elif station.driver == "wunderground":
         rows = [
             ("Protocol", "Wunderground"),
             ("Server / Hostname", host),
@@ -439,6 +547,26 @@ def _what_to_enter(admin: Any, station: Any) -> str:
         f'<td><code>{html.escape(str(value))}</code></td></tr>'
         for label, value in rows)
 
+    if waiting:
+        # The other half of the wizard. The operator is standing at the
+        # console, so this is the moment to read its identity off the wire --
+        # rather than at some point in service, to whichever console happens
+        # to speak first.
+        after = f'''
+  <form method="post" action="./stations/{html.escape(station.name)}/learn">
+    <div class="actions"><button type="submit">It is uploading now</button></div>
+  </form>
+  <p class="lede">This console names itself and cannot be told what to call
+     itself, so press that once it is sending. The first upload from an
+     Ecowitt console this installation does not know yet becomes
+     <strong>{html.escape(station.name)}</strong>.</p>'''
+    else:
+        after = '''
+  <p class="lede">The first upload appears on
+     <a href="./stations">the stations page</a> as a reading under this name.
+     Until then the console is not sending, or is not reaching this
+     address.</p>'''
+
     return f'''
 <section class="group">
   <h3>Enter this into the console</h3>
@@ -446,9 +574,7 @@ def _what_to_enter(admin: Any, station: Any) -> str:
      announced. It has not sent anything yet.</p>
   <table class="stations enter">{table}</table>
   <p class="help">{html.escape(note)}</p>
-  <p class="lede">The first upload appears on
-     <a href="./stations">the stations page</a> as a reading under this name.
-     Until then the console is not sending, or is not reaching this address.</p>
+  {after}
 </section>'''
 
 
@@ -474,3 +600,98 @@ def _own_address() -> str:
             return socket.gethostbyname(socket.gethostname())
         except Exception:
             return "this machine's address"
+
+
+def what_it_sends(admin: Any, station: Any) -> dict:
+    """What arrives from one station, and what the archive can hold.
+
+    The point of this is the last column. A console gains a sensor and the
+    reading turns up in every upload, is stored in the live table, and is
+    dropped at every archive interval because nothing made a column for it.
+    The archive says so in the log -- once per name per run, into a file
+    nobody is tailing -- and the driver writes a report to `/var/tmp`.
+    Neither is anywhere somebody looks.
+
+    So it is asked here, of the same live table the readings are in, and it
+    comes with the upload that produced it. That upload is already redacted:
+    the driver takes its own secrets out (`redact`) before it is stored, which
+    it does precisely so this can be handed to somebody else.
+    """
+    where = live_db(admin)
+    if where is None:
+        return {}
+    try:
+        import sqlite3
+        db = sqlite3.connect(f"file:{where}?mode=ro", uri=True)
+    except Exception:
+        log.debug("could not open the live table", exc_info=True)
+        return {}
+    try:
+        row = db.execute(
+            "SELECT data, raw, dateTime FROM packet WHERE source = ? "
+            "ORDER BY dateTime DESC LIMIT 1", (station.name,)).fetchone()
+    except Exception:
+        log.debug("could not read what %r sends", station.name, exc_info=True)
+        return {}
+    finally:
+        db.close()
+    if row is None:
+        return {}
+
+    import json as _json
+
+    try:
+        sent = sorted(_json.loads(row[0]) or {})
+    except ValueError:
+        return {}
+    known = admin.columns()
+    # An empty schema means the archive could not be read, not that every
+    # field is homeless. Saying "45 dropped" there would be a false alarm on
+    # a page whose whole job is telling the truth about what is stored.
+    homeless = sorted(set(sent) - known) if known else []
+    return {
+        "sent": sent,
+        "stored": sorted(set(sent) & known) if known else sent,
+        "homeless": homeless,
+        "raw": row[1] or "",
+        "when": int(row[2] or 0),
+    }
+
+
+def _what_it_sends_html(admin: Any, station: Any) -> str:
+    """One folded row per station: the fields, and the upload behind them."""
+    found = what_it_sends(admin, station)
+    if not found:
+        return ""
+
+    homeless = found["homeless"]
+    summary = (f"{len(found['sent'])} fields, {len(found['stored'])} in the "
+               f"archive")
+    if homeless:
+        summary += f", {len(homeless)} with nowhere to go"
+
+    missing = ""
+    if homeless:
+        names = ", ".join(html.escape(one) for one in homeless)
+        missing = f'''
+    <p class="err">No column for: <code>{names}</code>. These arrive and are
+       dropped at every archive interval. <code>weewx-evo columns --add</code>
+       creates them; back the database up first.</p>'''
+
+    raw = ""
+    if found["raw"]:
+        # Already redacted by the driver, which is why it can be shown at all
+        # and why it is worth showing: this is what an issue about a new
+        # sensor needs, and the alternative is asking somebody to reconfigure
+        # a console and wait for an interval.
+        raw = f'''
+    <p class="help">The last upload, with whatever the driver calls secret
+       already removed. This is what to paste into an issue about a sensor
+       nothing here recognises.</p>
+    <textarea class="rawupload" rows="4" readonly
+              onclick="this.select()">{html.escape(found["raw"])}</textarea>'''
+
+    return f'''
+  <details class="sends">
+    <summary>{html.escape(summary)}</summary>{missing}{raw}
+  </details>'''

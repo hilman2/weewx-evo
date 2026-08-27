@@ -1131,8 +1131,11 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     elif standing:
         body = [adminstations.overview(admin, message, errors.get("", ""))]
     elif active == "new-station":
-        body = [adminstations.new(admin, errors.get("", ""), form,
-                                  made=(form or {}).get("_made"))]
+        made = (form or {}).get("_made")
+        if made is None and (form or {}).get("learn"):
+            # Coming back to a station that is still waiting for its console.
+            made = adminstations.load(admin).by_name(str(form["learn"]))
+        body = [adminstations.new(admin, errors.get("", ""), form, made=made)]
     elif adding:
         maker = {"new-feed": new_feed_page, "new-upload": new_upload_page,
                  "new-export": new_export_page,
@@ -1260,7 +1263,13 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         restart = ('<div class="banner warn">Saved, and waiting for a '
                    f"restart to take effect: {items}.</div>")
 
-    own_form = adding or charting
+    # `standing` too: the stations page is a list of rows with a form on
+    # each -- adopt, ignore, remove. Wrapped in the save form those are nested
+    # forms, which HTML does not have: the browser drops the inner <form>,
+    # keeps its </form>, and the outer one closes early. The buttons then
+    # belong to no form at all, or to the wrong one. Same failure the exports
+    # and feeds had, which is what `tools/admin_page_test.js` was written for.
+    own_form = adding or charting or standing
     if charting:
         heading = ("Add a chart" if active == "new-plot"
                    else "Import charts" if active == "import-plots"
@@ -1462,6 +1471,46 @@ _PAGE = """<!doctype html>
            color: #fff; background: var(--accent); border: 1px solid transparent; }}
   button:hover {{ filter: brightness(1.08); }}
   .hint {{ font-size: .8125rem; color: var(--dim); }}
+
+  /* -- the stations page ------------------------------------------- */
+  /* A list of consoles rather than a form, so it is a table. Laid out
+     rather than left to the browser: the identity is a 32-character hex
+     string and, left to itself, it takes the width from every column that
+     has something to say. */
+  table.stations {{ width: 100%; border-collapse: collapse;
+      font-size: .875rem; margin: .4rem 0 0; }}
+  table.stations th {{ text-align: left; font-weight: 600; color: var(--dim);
+      font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
+      padding: 0 .6rem .4rem 0; white-space: nowrap; }}
+  table.stations td {{ padding: .55rem .6rem .55rem 0; vertical-align: top;
+      border-top: 1px solid var(--line); }}
+  table.stations tr:first-child td {{ border-top: 0; }}
+  /* The identity is the widest thing here and the least often read. It
+     breaks rather than pushing the columns somebody is looking at. */
+  table.stations code {{ font-family: var(--mono); font-size: .8125rem;
+      word-break: break-all; }}
+  table.stations .note {{ font-size: .75rem; color: var(--dim); }}
+  table.stations td form {{ display: inline; margin: 0; }}
+  table.stations input[type=text] {{ font-size: .8125rem; padding: .3rem .5rem;
+      width: 9rem; }}
+  /* Remove and Ignore are not what anybody came to the page to press. */
+  button.quiet {{ background: transparent; color: var(--dim);
+      border-color: var(--line); padding: .3rem .8rem; }}
+  button.quiet:hover {{ color: var(--bad); border-color: var(--bad);
+      filter: none; }}
+  table.stations.enter th {{ text-transform: none; letter-spacing: 0;
+      font-size: .8125rem; padding-right: 1.2rem; white-space: nowrap; }}
+  /* What a station sends, folded away under it. */
+  tr.sendsrow td {{ border-top: 0; padding-top: 0; }}
+  details.sends summary {{ font-size: .75rem; color: var(--dim);
+      cursor: pointer; }}
+  details.sends summary:hover {{ color: var(--ink); }}
+  details.sends[open] summary {{ margin-bottom: .4rem; }}
+  textarea.rawupload {{ width: 100%; font-family: var(--mono);
+      font-size: .75rem; background: var(--sunk, #00000022);
+      color: var(--dim); border: 1px solid var(--line); border-radius: .3rem;
+      padding: .5rem; resize: vertical; }}
+
   footer {{ margin-top: 2rem; font-size: .75rem; color: var(--dim); }}
   footer code {{ font-family: var(--mono); }}
 </style>
@@ -1638,8 +1687,12 @@ class _Handler(BaseHTTPRequestHandler):
         said = parse_qs(parsed.query)
         message = ("Saved." if "saved" in said
                    else "Removed." if "removed" in said else "")
+        # `?learn=name` reopens the wizard on a station still waiting for its
+        # console, so the values to type in are one link away rather than
+        # gone once the page was left.
+        form = {"learn": said["learn"][0]} if said.get("learn") else None
         self._reply(200, page(self.admin, self._which(parsed.path),
-                              message=message))
+                              message=message, form=form))
 
     def do_POST(self) -> None:
         if not self._permitted():
@@ -1826,6 +1879,16 @@ class _Handler(BaseHTTPRequestHandler):
             error = adminstations.ignore(
                 self.admin, form.get("driver", ""), form.get("identity", ""),
                 on=(action == "ignore"))
+        elif action == "learn" and len(parts) >= 3:
+            found, error = adminstations.learn(self.admin, parts[-2])
+            if not error and found is None:
+                # Nothing has uploaded yet. Not a failure: the console may
+                # take a minute, and saying "no" would read as "wrong".
+                self._reply(200, page(
+                    self.admin, "stations",
+                    errors={"": "Nothing new has uploaded yet. Give the "
+                                "console a minute and press it again."}))
+                return
         elif action == "remove" and len(parts) >= 3:
             error = adminstations.remove(self.admin, parts[-2])
         else:
