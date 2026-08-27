@@ -111,14 +111,18 @@ ignore = [
 # doing its job: the run has to reach the end to report a count.
 "tools/*" = ["S101", "S105", "S106", "S112", "S310", "S603", "S607"]
 "tests/*" = ["S101", "S105", "S106", "S112", "S310", "S603", "S607"]
-# The Ecowitt driver and its tests came from weewx-ecowitt, which is still
-# its own repository, and a fix should be able to travel either way. That
-# is worth more than `"%s" % x` becoming an f-string in 57 places: a
-# reformatted file makes every future diff between the two unreadable.
+# The Ecowitt driver is core, not a mirror of anything -- so this is a debt
+# rather than a policy, and it is written down as one. What is left under it
+# is 64 findings, and 51 of them are `"%s" % x` wanting to be an f-string in
+# code that 59 tests say is right.
 #
-# The Deck skin was under the same rule and is not any more -- see its
-# README. The difference is that upstream there is gone, and this one is
-# not.
+# Not done yet because ruff's own fix for that rule produces `"{}".format(x)`,
+# which the next rule then objects to -- so the automatic pass leaves the file
+# worse and half-converted. Doing it properly means reading every one of the
+# 64, and that is its own commit, not a side effect of another.
+#
+# `catalog.py` is generated: its long line comes from the generator, and the
+# fix belongs there.
 "src/weewx_evo/ingest/plugins/ecowitt/*" = ["UP031", "ISC004", "SIM115",
                                             "PLW1641", "E501"]
 "tests/ecowitt/*" = ["UP031", "ISC004", "SIM115", "B017", "E501"]

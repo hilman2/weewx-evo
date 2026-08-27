@@ -220,12 +220,18 @@ class Readings:
         return None if converted is None else float(converted)
 
     def text(self, obs: str, unit: str | None = None,
-             places: int = 1) -> str | None:
-        """A reading as the string that goes in a query, or None."""
+             spec: str = ".1f") -> str | None:
+        """A reading as the string that goes in a query, or None.
+
+        `spec` is a format spec, not a number of decimals, because the width
+        is part of these protocols: Weather Underground writes humidity as
+        `061` and wind speed as `003.1`. Zero-padding looks like decoration
+        and is not -- it is what the field is defined as.
+        """
         value = self.get(obs, unit)
         if value is None:
             return None
-        return f"{value:.{places}f}"
+        return format(value, spec)
 
 
 # ---------------------------------------------------------------------------
@@ -379,17 +385,20 @@ def describe(kind: str) -> str:
     return DEFAULT.describe(kind)
 
 
-def when_options() -> list:
+def when_options(trigger: str = "record", every: int = 900,
+                 catch_up: int = 12) -> list:
     """The "when it runs" group, which every upload has the same.
 
     One copy, because four services with four subtly different wordings for
-    the same three choices is how a settings page stops being readable.
+    the same three choices is how a settings page stops being readable. The
+    defaults are arguments because CWOP asks for one report every ten minutes
+    and means it, while the rest want one per archive record.
     """
     from ..options import Group, Option
 
     return [
         Group("When it runs", "", (
-            Option("trigger", "Post", kind="choice", default="record",
+            Option("trigger", "Post", kind="choice", default=trigger,
                    choices=(("record", "after every archive record"),
                             ("interval", "on its own schedule"),
                             ("manual", "only when asked")),
@@ -398,10 +407,10 @@ def when_options() -> list:
                         "Its own schedule is for a service that asks for less "
                         "often than the archive interval."),
             Option("every", "Its own schedule", kind="duration",
-                   default=900, minimum=60, maximum=86400,
+                   default=every, minimum=60, maximum=86400,
                    help="Only used with 'on its own schedule'."),
             Option("catch_up", "Send up to this many missed records",
-                   kind="int", default=12, minimum=0, maximum=288,
+                   kind="int", default=catch_up, minimum=0, maximum=288,
                    advanced=True,
                    help="After a connection was down. Zero means send only "
                         "the newest. The limit exists so that a station "
