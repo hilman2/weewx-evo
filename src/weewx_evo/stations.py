@@ -105,6 +105,59 @@ class Register:
 
     stations: list[Station] = field(default_factory=list)
     path: Path | None = None
+    #: When the file was last read, and how recently that was checked.
+    stamp: float = 0.0
+    checked: float = 0.0
+
+    # -- keeping up with the file --------------------------------------
+
+    def refresh(self, every: float = 5.0) -> bool:
+        """Re-read the file if it has changed. True when it did.
+
+        The settings page writes this file and the listener is a different
+        process, so without this an adopted console keeps arriving as a
+        stranger until somebody restarts the service. Restarting a listener to
+        register a station is exactly the sort of thing people do not do, and
+        then the page looks broken.
+
+        A `stat` every few seconds rather than on every upload. A console
+        posts every sixteen seconds, so the cost is nil either way, but there
+        is no reason to ask the filesystem more often than the answer can
+        change.
+        """
+        import time as clock
+
+        if self.path is None:
+            return False
+        now = clock.time()
+        if now - self.checked < every:
+            return False
+        self.checked = now
+        try:
+            stamp = self.path.stat().st_mtime
+        except OSError:
+            # Deleted while running. Keep what we have rather than forgetting
+            # every station because a file went missing for a moment.
+            return False
+        if stamp == self.stamp:
+            return False
+
+        try:
+            fresh = load(self.path)
+        except Exception:
+            # A half-written or hand-edited file that does not parse. The
+            # previous stations stay, because the alternative is recording
+            # nothing under any name until somebody notices.
+            log.exception("could not re-read %s; keeping the stations already "
+                          "loaded", self.path)
+            self.stamp = stamp
+            return False
+        self.stations = fresh.stations
+        self.stamp = stamp
+        log.info("%s changed: %d station(s) now announced (%s)", self.path,
+                 len(self.stations),
+                 ", ".join(sorted(one.name for one in self.stations)) or "none")
+        return True
 
     # -- looking things up ---------------------------------------------
 
@@ -242,7 +295,12 @@ def load(path: str | Path) -> Register:
         return Register(path=path)
     with open(path, "rb") as fp:
         raw = tomllib.load(fp)
-    return from_dict(raw, path=path)
+    made = from_dict(raw, path=path)
+    try:
+        made.stamp = path.stat().st_mtime
+    except OSError:
+        pass
+    return made
 
 
 def from_dict(raw: dict[str, Any], path: Path | None = None) -> Register:

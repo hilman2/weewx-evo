@@ -108,7 +108,30 @@ def main() -> int:
         quiet = Settings(CORE, config=config, args=args_with(), path=path)
         failures += not check("the file still wins", quiet.get("port"), 8100)
 
+
+        print("\nand the page says so, rather than saving into the void")
+        # The rest of this file proves the order is right. This proves the
+        # operator is told: the page writes the file, the environment beats
+        # the file, so without a word on the field a save changes nothing
+        # and looks like it worked. `deploy/compose.yml` shipped
+        # WEEWX_EVO_INTERVAL with a default of 300 for exactly this reason,
+        # which made the archive interval unsettable on the page.
+        from weewx_evo.admin import field, overridden
+
+        interval = next(o for g in CORE.groups for o in g.options
+                        if o.name == "interval")
+        port = next(o for g in CORE.groups for o in g.options
+                    if o.name == "port")
+        failures += not check("the field knows what beats it",
+                              overridden(interval), "WEEWX_EVO_INTERVAL")
+        failures += not check("and a field nothing beats says nothing",
+                              overridden(port), "")
+        failures += not check("the page shows it on the field",
+                              "WEEWX_EVO_INTERVAL" in field(interval, 300), True)
+
         del os.environ["WEEWX_EVO_INTERVAL"]
+        failures += not check("and stops once it is unset",
+                              overridden(interval), "")
 
         print("\nolder environment names still work")
         os.environ["WEEWX_EVO_RETENTION_DAYS"] = "3"

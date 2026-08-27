@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import adminplots
+from . import adminplots, adminstations
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
 from .options import UNITS, Group, Option, Schema, split_duration
@@ -133,7 +133,11 @@ NEWLINE = chr(10)
 #: listed. One list, used by both the router and the renderer, because two
 #: lists is how one of them ends up short.
 ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
-             "new-plot", "import-plots")
+             "new-plot", "import-plots", "new-station")
+
+#: Pages that are neither a schema nor a form to create one. They render
+#: themselves, the way the chart pages do.
+OWN_PAGES = ("stations",)
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -546,6 +550,31 @@ class Admin:
 
 # -- rendering -----------------------------------------------------------
 
+def overridden(option: Option) -> str:
+    """The environment variable outranking this setting, if there is one.
+
+    The order is argument, environment, file, weewx.conf, default, and this
+    page writes the file. So a variable set in the deployment wins, and the
+    page would otherwise accept a value, store it, and change nothing: no
+    error, no warning, and a field that keeps showing what was typed while
+    the process goes on using something else.
+
+    Read straight from the environment rather than through a Settings
+    instance. The page edits a file it is given the path to and holds no
+    resolved settings, and building some here would answer for this process
+    rather than for the one doing the archiving.
+    """
+    import os
+
+    from .settings import ENV_ALIASES
+
+    primary = "WEEWX_EVO_" + option.name.replace(".", "_").upper()
+    for env_name in [primary, *[n for n, _ in ENV_ALIASES.get(option.name, ())]]:
+        if os.environ.get(env_name):
+            return env_name
+    return ""
+
+
 def field(option: Option, value: Any, error: str = "") -> str:
     """One setting as a form field."""
     name = html.escape(option.name)
@@ -636,6 +665,13 @@ def field(option: Option, value: Any, error: str = "") -> str:
         out.append(f'<p class="err">{html.escape(error)}</p>')
     if option.help:
         out.append(f'<p class="help">{html.escape(option.help)}</p>')
+    beaten = overridden(option)
+    if beaten:
+        out.append(
+            f'<p class="err">Saving this changes nothing while '
+            f'<code>{html.escape(beaten)}</code> is set in the environment: '
+            f'that outranks the configuration file. Unset it, or change it '
+            f'where it is set.</p>')
     if option.restart:
         out.append('<p class="note">Restarts the service when saved.</p>')
     out.append("</div>")
@@ -1016,7 +1052,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         "new-plot", "import-plots")
     charting = schema is None and (active in ("new-plot", "import-plots")
                                    or active.startswith("plot:"))
-    if schema is None and not adding and not charting:
+    standing = schema is None and active in OWN_PAGES
+    if schema is None and not adding and not charting and not standing:
         schema = admin.schemas[0]
         active = schema.name
 
@@ -1041,12 +1078,18 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "service says when it matters. Both are free and need no "
                     "account.",
     }
-    for kind, heading in (("core", "System"), ("driver", "Drivers"),
+    for kind, heading in (("core", "System"), ("stations", ""),
+                          ("driver", "Drivers"),
                           ("feed", "Feeds"), ("charts", ""),
                           ("export", "Exports"), ("upload", "Uploads"),
                           ("forecast", "Forecast")):
         if kind == "charts":
             nav.extend(adminplots.nav(admin, active))
+            continue
+        if kind == "stations":
+            # Before the drivers, because it is the first thing set up: a
+            # driver reads a protocol, a station is the console itself.
+            nav.extend(adminstations.nav(admin, active))
             continue
         rows = [s for s in admin.schemas if s.kind == kind]
         if not rows and kind not in empty:
@@ -1085,6 +1128,11 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         else:
             body = [adminplots.edit(admin, active.split(":", 1)[1],
                                     admin.columns(), errors, form)]
+    elif standing:
+        body = [adminstations.overview(admin, message, errors.get("", ""))]
+    elif active == "new-station":
+        body = [adminstations.new(admin, errors.get("", ""), form,
+                                  made=(form or {}).get("_made"))]
     elif adding:
         maker = {"new-feed": new_feed_page, "new-upload": new_upload_page,
                  "new-export": new_export_page,
@@ -1223,7 +1271,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         # export" over a form that was nothing of the sort.
         headings = {"new-feed": "Add a feed", "new-export": "Add an export",
                     "new-upload": "Add an upload",
-                    "new-forecast": "Add a forecast"}
+                    "new-forecast": "Add a forecast",
+                    "new-station": "Add a station", "stations": "Stations"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
     return _PAGE.format(
@@ -1565,7 +1614,7 @@ class _Handler(BaseHTTPRequestHandler):
             # clicked, which looks like the link is broken rather than the
             # list being short. `new-upload` and `new-forecast` were both
             # missing exactly that way.
-            if part in names or part in ADD_PAGES:
+            if part in names or part in ADD_PAGES or part in OWN_PAGES:
                 return part
             if part.startswith("plot:"):
                 return part
@@ -1690,6 +1739,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._redirect(f"./{action}?saved=1")
             return
 
+        # The stations page. Its own verbs, because adopting a stranger and
+        # creating a station are not the same act: one takes an identity off
+        # the wire, the other hands one out.
+        if action == "new-station" or "stations" in parts:
+            self._station_action(action, parts, form)
+            return
+
         if action in ("new-export", "new-upload", "new-forecast"):
             add = {"new-export": self.admin.add_export,
                    "new-upload": self.admin.add_upload,
@@ -1738,6 +1794,47 @@ class _Handler(BaseHTTPRequestHandler):
             return
         # Redirect after a save, so a reload does not save again.
         self._redirect(f"./{which}?saved=1")
+
+    def _station_action(self, action: str, parts: list, form: dict) -> None:
+        """Adopt, ignore, remove, or announce a new one.
+
+        All of them end in a redirect rather than a rendered page. The browser
+        would otherwise offer to repeat the POST on reload, and repeating
+        "adopt" is a duplicate name error on a page that just worked.
+        """
+        if action == "new-station":
+            station, error = adminstations.announce(
+                self.admin, form.get("name", ""), form.get("driver", ""),
+                form.get("archive", ""))
+            if error:
+                self._reply(200, page(self.admin, "new-station",
+                                      errors={"": error}, form=form))
+                return
+            # Straight to what has to be typed into the console. That is the
+            # point of the page, and it is the one screen somebody needs in
+            # front of them while standing at the hardware.
+            self._reply(200, page(self.admin, "new-station",
+                                  form={"_made": station}))
+            return
+
+        error = ""
+        if action == "adopt":
+            error = adminstations.adopt(
+                self.admin, form.get("driver", ""), form.get("identity", ""),
+                form.get("name", ""), form.get("archive", ""))
+        elif action in ("ignore", "unignore"):
+            error = adminstations.ignore(
+                self.admin, form.get("driver", ""), form.get("identity", ""),
+                on=(action == "ignore"))
+        elif action == "remove" and len(parts) >= 3:
+            error = adminstations.remove(self.admin, parts[-2])
+        else:
+            error = f"Unknown station action {action!r}."
+
+        if error:
+            self._reply(200, page(self.admin, "stations", errors={"": error}))
+            return
+        self._redirect("./stations?saved=1")
 
     def _redirect(self, where: str) -> None:
         self._reply(303, b"", "text/plain", {"Location": where})

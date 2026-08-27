@@ -222,6 +222,120 @@ def nothing_announced_changes_nothing() -> None:
             live.close()
 
 
+def the_settings_page() -> None:
+    """Announce one, adopt a stranger, fold one away. Through the real page.
+
+    Driven over HTTP rather than by calling the functions, because the bugs
+    this page can have are in the wiring: a button in the wrong form, a POST
+    that answers 200 where it should redirect, an action that reaches the
+    wrong list. None of those show when the functions are called directly.
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    from weewx_evo.admin import Admin, AdminServer
+    from weewx_evo.cli import all_schemas
+    from weewx_evo.ingest.sightings import Sightings
+    from weewx_evo.ratelimit import Limits
+
+    print("\nthe stations page, driven over HTTP")
+    token = "a" * 32
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_args, **_kwargs):
+            return None
+
+    def post(url, form):
+        data = urllib.parse.urlencode(form).encode()
+        opener = urllib.request.build_opener(NoRedirect)
+        try:
+            with opener.open(urllib.request.Request(url, data=data),
+                             timeout=5) as answer:
+                return answer.status, answer.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode("utf-8", "replace")
+
+    def get(url):
+        with urllib.request.urlopen(url, timeout=5) as answer:
+            return answer.status, answer.read().decode("utf-8", "replace")
+
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        path = tmp / "evo.toml"
+        # The upload token too, not just the admin one. They are different
+        # tokens on different ports, and it is the upload token a console has
+        # to be told -- so the page has to read it from the configuration.
+        path.write_text(
+            f'live_db = "{(tmp / "live.sdb").as_posix()}"\n'
+            f'token = "{"u" * 32}"\n', encoding="utf-8")
+        live = LiveStore(tmp / "live.sdb", interval_seconds=60)
+        # A stranger the listener would have noted.
+        Sightings(live).saw("ecowitt", "STRANGER1", "192.168.33.51",
+                            fields=["outTemp", "humidity"])
+        live.close()
+
+        admin = Admin(path, lambda: all_schemas(path), token,
+                      limits=Limits(rate=0, failures=0))
+        server = AdminServer(admin, "127.0.0.1", 0)
+        server.start()
+        base = f"http://127.0.0.1:{server.port}/{token}"
+        try:
+            status, body = get(f"{base}/stations")
+            check("the page is there", status, 200)
+            check("and the stranger is on it", "STRANGER1" in body, True)
+
+            print("\nannouncing one hands out an identity to copy over")
+            status, body = post(f"{base}/new-station",
+                                {"name": "garden", "driver": "wunderground",
+                                 "archive": "default"})
+            check("it answers with what to enter", status, 200)
+            check("naming the console", "garden" in body, True)
+            check("and the identity it was given", "evo-" in body, True)
+            check("with the upload token to type in",
+                  ("u" * 32) in body, True)
+
+            print("\nadopting the stranger")
+            status, _ = post(f"{base}/stations/adopt",
+                             {"driver": "ecowitt", "identity": "STRANGER1",
+                              "name": "roof"})
+            check("it redirects rather than rendering", status, 303)
+
+            _, body = get(f"{base}/stations")
+            check("both are announced now",
+                  "garden" in body and "roof" in body, True)
+            check("and the stranger is off the waiting list",
+                  body.count("STRANGER1"), 1)   # only as the adopted station
+
+            print("\nwhat the file says")
+            register = stations.load(tmp / "stations.toml")
+            check("two stations", len(register), 2)
+            check("the announced one got an evo- identity",
+                  register.by_name("garden").identity.startswith("evo-"), True)
+            check("and is marked as ours to hand out",
+                  register.by_name("garden").learnt, False)
+            check("the adopted one kept the hardware's",
+                  register.by_name("roof").identity, "STRANGER1")
+            check("and is marked as read off it",
+                  register.by_name("roof").learnt, True)
+
+            print("\na name already taken is refused, and says so")
+            status, body = post(f"{base}/new-station",
+                                {"name": "garden", "driver": "wunderground"})
+            check("the page comes back", status, 200)
+            check("saying what is wrong", "already a station" in body, True)
+            check("and nothing was added",
+                  len(stations.load(tmp / "stations.toml")), 2)
+
+            print("\nremoving one")
+            status, _ = post(f"{base}/stations/roof/remove", {})
+            check("redirects", status, 303)
+            check("and it is gone",
+                  stations.load(tmp / "stations.toml").by_name("roof"), None)
+        finally:
+            server.stop()
+
+
 def main() -> int:
     drivers.DEFAULT.load()
     the_register()
@@ -231,6 +345,7 @@ def main() -> int:
     the_sightings()
     an_upload_from_each()
     nothing_announced_changes_nothing()
+    the_settings_page()
 
     print()
     if failures:
