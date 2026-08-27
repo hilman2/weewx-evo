@@ -16,6 +16,7 @@ database and never through each other.
     weewx-evo config     # show, change, check and import settings
     weewx-evo admin      # the settings page, on its own port
     weewx-evo export     # move what a feed produced somewhere
+    weewx-evo upload     # send the readings to a weather service
     weewx-evo web        # serve what a feed produced
     weewx-evo plots      # the charts, and the JSON behind them
 """
@@ -39,6 +40,7 @@ from . import feedrunner as feed_runner
 from . import options as option_defs
 from . import plots as plot_defs
 from . import settings as settings_state
+from . import uploads as upload_registry
 from . import weewxconf
 from .admin import Admin, AdminServer
 from .archiver import Archiver
@@ -54,6 +56,9 @@ from .ratelimit import Limits, announce
 from .settings import Settings
 from .settings import load as load_settings
 from .sources import Policy as SourcePolicy
+from .uploads import records as upload_records
+from .uploads import runner as upload_runner
+from .uploads.progress import Progress
 from .webserver import WebServer, site_from
 
 log = logging.getLogger("weewx_evo")
@@ -368,6 +373,15 @@ def cmd_archive(args: argparse.Namespace) -> int:
             # exactly this. Wired here because it is the one place that has
             # both, and neither has to know about the other.
             feeds.on_produced = runner.feed_produced
+
+    # The uploads. Their own threads, for the same reason as the exports: a
+    # weather service that has stopped answering must sit in its own timeout
+    # rather than in the archiver's tick.
+    uploader = None
+    scheduled_uploads = build_upload_schedule(args, cfg)
+    if scheduled_uploads:
+        uploader = upload_runner.Runner(scheduled_uploads)
+        uploader.start()
     last_prune = 0.0
     try:
         while not stopping.is_set():
@@ -383,6 +397,10 @@ def cmd_archive(args: argparse.Namespace) -> int:
                         # Sets a flag and returns. Nothing about an upload
                         # happens on this thread.
                         runner.record_written()
+                    if uploader is not None:
+                        uploader.record_written()
+                    if uploader is not None:
+                        uploader.record_written()
                 # The raw uploads go first and far more often: they are a
                 # debugging copy with an hour's life, not part of the series.
                 forgotten = live.forget_raw(time.time() - cfg.get("raw_retention"))
@@ -400,9 +418,118 @@ def cmd_archive(args: argparse.Namespace) -> int:
     finally:
         if runner is not None:
             runner.stop()
+        if uploader is not None:
+            uploader.stop()
         live.close()
         archive.close()
     return 0
+
+
+def cmd_upload_list(args: argparse.Namespace) -> int:
+    upload_registry.DEFAULT.load()
+    print(f"services available: {', '.join(upload_registry.kinds())}")
+    print()
+
+    entries = configured_uploads(args)
+    if not entries:
+        print("None configured. An upload sends the readings themselves to a")
+        print("weather service, which is different from an export -- that")
+        print("moves the files a feed produced.")
+        print()
+        print("  [uploads.wu]")
+        print('  kind = "wunderground"')
+        print('  station = "IBAYERN123"')
+        print('  password = "..."')
+        return 0
+
+    print(f"configured ({len(entries)}):")
+    for name, settings in sorted(entries.items()):
+        kind = settings.get("kind", "?")
+        who = (settings.get("station") or settings.get("wid")
+               or settings.get("host") or "?")
+        trigger = settings.get("trigger", "record")
+        when = ("after every record" if trigger == "record"
+                else "only when asked" if trigger == "manual"
+                else f"every {option_defs.format_duration(settings.get('every', 900))}")
+        print(f"  {name:<16} {kind:<14} {who}")
+        print(f"  {'':<16} {when}")
+    return 0
+
+
+def cmd_upload_check(args: argparse.Namespace) -> int:
+    """Ask each service whether it accepts the account.
+
+    Worth more than the equivalent for an export: these services answer a
+    wrong password with HTTP 200 and a word in the body, so a rejected upload
+    looks exactly like a working one until somebody goes and looks at the map.
+    """
+    entries = configured_uploads(args)
+    if args.name:
+        entries = {k: v for k, v in entries.items() if k == args.name}
+        if not entries:
+            print(f"No upload called {args.name!r}.", file=sys.stderr)
+            return 1
+    if not entries:
+        print("None configured.")
+        return 0
+
+    cfg = settings_for(args)
+    problems = 0
+    for name, settings in sorted(entries.items()):
+        settings = dict(settings)
+        if str(settings.get("kind", "")) == "cwop":
+            settings.setdefault("latitude", cfg.get("station.latitude"))
+            settings.setdefault("longitude", cfg.get("station.longitude"))
+        try:
+            upload = build_upload(name, settings)
+        except ValueError as exc:
+            print(f"  {name}: {exc}")
+            problems += 1
+            continue
+        try:
+            print(f"  {name}: {upload.check()}")
+        except Exception as exc:
+            print(f"  {name}: {type(exc).__name__}: {exc}")
+            problems += 1
+        finally:
+            close = getattr(upload, "close", None)
+            if close is not None:
+                close()
+    return 1 if problems else 0
+
+
+def cmd_upload_run(args: argparse.Namespace) -> int:
+    """Send now, whatever the trigger says."""
+    entries = configured_uploads(args)
+    if args.name:
+        entries = {k: v for k, v in entries.items() if k == args.name}
+        if not entries:
+            print(f"No upload called {args.name!r}.", file=sys.stderr)
+            return 1
+    if not entries:
+        print("None configured.")
+        return 0
+
+    cfg = settings_for(args)
+    scheduled = build_upload_schedule(args, cfg)
+    if args.name:
+        scheduled = [s for s in scheduled if s.name == args.name]
+    if args.again:
+        # Forget where each one got to, so the next run sends again. For a
+        # service that lost a reading and will take it back.
+        for entry in scheduled:
+            entry.progress.forget(entry.name)
+
+    problems = 0
+    for entry in scheduled:
+        entry.run()
+        print(f"  {entry.name}: {entry.last_summary}")
+        if entry.failures or entry.blocked:
+            problems += 1
+        close = getattr(entry.upload, "close", None)
+        if close is not None:
+            close()
+    return 1 if problems else 0
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -533,6 +660,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # both, and neither has to know about the other.
             feeds.on_produced = runner.feed_produced
 
+    # The uploads, each in its own thread as well. An export moves the files
+    # a feed produced; an upload sends the readings to a weather service.
+    # Neither knows about the other, and both stay off this loop.
+    uploader = None
+    scheduled_uploads = build_upload_schedule(args, cfg)
+    if scheduled_uploads:
+        uploader = upload_runner.Runner(scheduled_uploads)
+        uploader.start()
+
     stopping = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stopping.set())
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
@@ -567,7 +703,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         restarting = True
                         stopping.set()
                         continue
-                    apply_live(args, cfg, web, runner)
+                    apply_live(args, cfg, web, runner, uploader)
 
                 n = archiver.process_due(grace=cfg.get("grace"))
                 if n:
@@ -600,6 +736,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             feeds.stop()
         if runner is not None:
             runner.stop()
+        if uploader is not None:
+            uploader.stop()
         if web is not None:
             web.stop()
         http.stop()
@@ -993,6 +1131,25 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         schema.groups = tuple(
             replace_group(group, f"exports.{name}") for group in schema.groups)
         schemas.append(schema)
+
+    # One page per configured upload. Two Weather Underground accounts -- a
+    # main station and a spare -- are two entries, the same as everywhere
+    # else here.
+    for name, settings in sorted((configured.get("uploads") or {}).items()):
+        if not isinstance(settings, dict):
+            continue
+        kind = str(settings.get("kind", "")).strip()
+        factory = upload_registry.DEFAULT.factory_for(kind)
+        if factory is None:
+            continue
+        schema = option_defs.schema_of(
+            factory, name=f"upload:{name}",
+            label=f"Upload: {name} ({kind})", kind="upload")
+        if schema is None:
+            continue
+        schema.groups = tuple(
+            replace_group(group, f"uploads.{name}") for group in schema.groups)
+        schemas.append(schema)
     return schemas
 
 
@@ -1178,8 +1335,68 @@ def configured_exports(args: argparse.Namespace) -> dict[str, dict]:
             if isinstance(settings, dict)}
 
 
+def configured_uploads(args: argparse.Namespace) -> dict[str, dict]:
+    """What the configuration file says about uploads, by name."""
+    cfg = settings_for(args)
+    section = cfg.config.get("uploads") or {}
+    return {name: dict(settings) for name, settings in section.items()
+            if isinstance(settings, dict)}
+
+
+def build_upload(name: str, settings: dict) -> object:
+    """Make one upload from its settings. Raises with a usable message."""
+    kind = str(settings.pop("kind", "")).strip()
+    if not kind:
+        raise ValueError(f"upload {name!r} does not say what kind it is. "
+                         f'Add kind = "wunderground" or one of: '
+                         f"{', '.join(upload_registry.kinds())}.")
+    factory = upload_registry.DEFAULT.factory_for(kind)
+    if factory is None:
+        raise ValueError(f"upload {name!r} is of kind {kind!r}, which is not "
+                         f"one of: {', '.join(upload_registry.kinds())}")
+    schema = option_defs.schema_of(factory, name=kind, label=kind)
+    if schema is not None:
+        parsed, errors = schema.parse(settings, only_present=True)
+        if errors:
+            first = next(iter(errors.values()))
+            raise ValueError(f"upload {name!r}: {first}")
+        settings = parsed
+    return factory(**settings)
+
+
+def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
+    """What the uploads are, right now.
+
+    They read the archive themselves rather than being handed a record: the
+    components here talk through the database, and it is what makes a restart
+    cost nothing and a catch-up possible at all.
+    """
+    configured = configured_uploads(args)
+    if not configured:
+        return []
+    base = Path(getattr(args, "config", None) or ".").parent
+    archive = Path(cfg.get("archive_db") or "data/weewx.sdb")
+    if not archive.is_absolute():
+        archive = base / archive
+    # Beside the archive, not in it. Losing this file costs one repeated
+    # post, which every one of these services treats as an overwrite.
+    progress = Progress(archive.parent / "uploads.json")
+    records = upload_records.source(archive)
+
+    def with_station(name: str, settings: dict) -> object:
+        # CWOP needs a position and almost nobody wants to type it twice.
+        # Filled in from the station rather than required, and only when the
+        # upload did not say its own.
+        if str(settings.get("kind", "")) == "cwop":
+            settings.setdefault("latitude", cfg.get("station.latitude"))
+            settings.setdefault("longitude", cfg.get("station.longitude"))
+        return build_upload(name, settings)
+
+    return upload_runner.build(configured, with_station, progress, records)
+
+
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
-               runner: Any) -> None:
+               runner: Any, uploader: Any = None) -> None:
     """Apply a changed configuration to a running process.
 
     Everything that can be rebuilt in place, in one function. Scattering
@@ -1198,6 +1415,13 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             runner.start()
             log.info("%d export(s) running", len(fresh))
 
+    if uploader is not None:
+        fresh = build_upload_schedule(args, cfg)
+        if _uploads_differ(fresh, uploader):
+            # An upload added on the settings page joins the running set.
+            uploader.replace(fresh)
+            log.info("%d upload(s) running", len(fresh))
+
     if web is not None and web.site.update(
             served_directories(args, cfg),
             str(cfg.get("web.default") or ""),
@@ -1208,6 +1432,20 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
 
     # The charts are read on every feed run, so nothing is needed for them
     # here. If that ever changes, this is where it goes.
+
+
+def _uploads_differ(fresh: list, uploader: Any) -> bool:
+    """Whether the uploads have actually changed.
+
+    Compared on what would change behaviour rather than on identity: writing
+    the file for an unrelated setting must not tear down a connection that is
+    working.
+    """
+    def shape(entries: list) -> list:
+        return [(s.name, type(s.upload).__name__, s.trigger, s.every,
+                 sorted(s.upload.status().items())) for s in entries]
+
+    return shape(uploader.uploads if uploader is not None else []) != shape(fresh)
 
 
 def _differs(fresh: list, runner: Any) -> bool:
@@ -1995,6 +2233,25 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--all", action="store_true",
                    help="send everything, not only what changed")
     q.set_defaults(func=cmd_export_run)
+
+    p = sub.add_parser("upload", help="send the readings to a weather service")
+    upload_sub = p.add_subparsers(dest="upload_command", required=True)
+
+    q = upload_sub.add_parser("list", help="what is available and configured")
+    add_common(q)
+    q.set_defaults(func=cmd_upload_list)
+
+    q = upload_sub.add_parser("check", help="ask the service, publish nothing")
+    add_common(q)
+    q.add_argument("name", nargs="?", help="just this one")
+    q.set_defaults(func=cmd_upload_check)
+
+    q = upload_sub.add_parser("run", help="send now")
+    add_common(q)
+    q.add_argument("name", nargs="?", help="just this one")
+    q.add_argument("--again", action="store_true",
+                   help="forget how far it got, so the last records go again")
+    q.set_defaults(func=cmd_upload_run)
 
     p = sub.add_parser("web", help="serve what the feeds produced")
     add_common(p)

@@ -383,6 +383,72 @@ def main() -> int:
                               config_file.get(after, "exports.website.host"),
                               "example.org")
 
+        print("\nan upload can be added the same way")
+        code, html_ = get(f"{base}/{TOKEN}/new-upload")
+        failures += not check("the form is there", code, 200)
+        failures += not check("with the services",
+                              "Weather Underground" in html_ and "CWOP" in html_,
+                              True)
+
+        code, _ = post(f"{base}/{TOKEN}/new-upload",
+                       {"name": "wu", "kind": "wunderground"})
+        failures += not check("creating redirects to it", code, 303)
+        made = config_file.read(path)
+        failures += not check("it is in the file",
+                              config_file.get(made, "uploads.wu.kind"),
+                              "wunderground")
+
+        print("\nand gets a page with the service's own fields")
+        code, html_ = get(f"{base}/{TOKEN}/upload:wu")
+        failures += not check("it loads", code, 200)
+        failures += not check("with the station id field",
+                              'name="station"' in html_, True)
+        failures += not check("and the key as a password field",
+                              'type="password"' in html_, True)
+        # Publishing the inside of somebody's house is a decision, so it is a
+        # setting and it is off. A page that does not offer it would be
+        # making the decision for them.
+        failures += not check("indoor readings are offered and off",
+                              "indoor temperature" in html_.lower(), True)
+        failures += not check("a way to try it", "Test the account" in html_, True)
+        failures += not check("and a way to remove it", "Remove" in html_, True)
+
+        print("\nits settings save under its own name")
+        post(f"{base}/{TOKEN}/upload:wu",
+             {"station": "IBAYERN123", "password": "s3cret",
+              "trigger": "record"})
+        saved = config_file.read(path)
+        failures += not check("station",
+                              config_file.get(saved, "uploads.wu.station"),
+                              "IBAYERN123")
+        failures += not check("password",
+                              config_file.get(saved, "uploads.wu.password"),
+                              "s3cret")
+        failures += not check("the export is untouched",
+                              config_file.get(saved, "exports.website.host"),
+                              "example.org")
+
+        print("\ntwo services live side by side")
+        post(f"{base}/{TOKEN}/new-upload", {"name": "windy", "kind": "windy"})
+        both = config_file.read(path)
+        failures += not check("both are there",
+                              sorted(both.get("uploads", {})), ["windy", "wu"])
+        failures += not check("the first kept its station",
+                              config_file.get(both, "uploads.wu.station"),
+                              "IBAYERN123")
+
+        print("\nremoving an upload does not touch the exports")
+        # The route carries what sort of thing it is as well as the name.
+        # Without that, `upload:wu/remove` reaches the exports and deletes
+        # whatever happens to share the name -- or nothing, silently.
+        code, _ = post(f"{base}/{TOKEN}/upload:windy/remove", {})
+        failures += not check("it redirects", code, 303)
+        after = config_file.read(path)
+        failures += not check("gone", sorted(after.get("uploads", {})), ["wu"])
+        failures += not check("the export is still there",
+                              config_file.get(after, "exports.website.host"),
+                              "example.org")
+
         print("\nthe previous version is kept")
         failures += not check("as .bak",
                               path.with_suffix(".toml.bak").exists(), True)

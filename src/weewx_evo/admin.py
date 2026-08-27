@@ -78,6 +78,29 @@ def export_kind_choices() -> list[tuple[str, str, str]]:
                     getattr(factory, "summary", "")))
     return out
 
+def upload_kinds() -> list[str]:
+    """The kinds of upload that can be added. Asked, not listed."""
+    from . import uploads
+
+    return uploads.kinds()
+
+
+def upload_kind_choices() -> list[tuple[str, str, str]]:
+    """Each service, what it is called, and what it is for.
+
+    The same reasoning as the exports: a dropdown reading
+    `ambient / cwop / mqtt` asks somebody to already know the answer.
+    """
+    from . import uploads
+
+    out = []
+    for kind in uploads.kinds():
+        factory = uploads.DEFAULT.factory_for(kind)
+        out.append((kind, getattr(factory, "label", kind),
+                    getattr(factory, "summary", "")))
+    return out
+
+
 #: Prefix for the hidden field that says "this checkbox was on the form".
 #: A browser sends nothing for an unticked box, which is indistinguishable
 #: from a field that was never there -- and the two must mean different
@@ -229,6 +252,81 @@ class Admin:
                 return f"Could not write {self.path}: {exc}"
         self.refresh()
         return ""
+
+    def add_upload(self, name: str, kind: str) -> str:
+        """Create an upload. Returns an error, or empty if it worked.
+
+        Name and kind only, like an export: asking for a station id and a
+        password before there is anything to save them in is how a form
+        loses what somebody typed.
+        """
+        if self.read_only:
+            return "This admin page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return ("A name may hold lowercase letters, digits, - and _, and "
+                    "must start with a letter. It becomes a heading.")
+        if kind not in upload_kinds():
+            return f"{kind!r} is not one of: {', '.join(upload_kinds())}"
+
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"uploads.{name}") is not None:
+                return f"There is already an upload called {name!r}."
+            config_file.put(current, f"uploads.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def remove_upload(self, name: str) -> str:
+        """Delete an upload. Nothing is withdrawn from the service."""
+        if self.read_only:
+            return "This admin page was started read-only."
+        with self._lock:
+            current = self.config()
+            section = current.get("uploads")
+            if not isinstance(section, dict) or name not in section:
+                return f"There is no upload called {name!r}."
+            del section[name]
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def test_upload(self, name: str) -> str:
+        """Try one service and say what it answered.
+
+        Worth more here than anywhere else on this page: every one of these
+        services answers a wrong password with a cheerful HTTP 200 and a word
+        in the body, so an upload that is silently rejected looks exactly like
+        one that is working.
+        """
+        settings = config_file.get(self.config(), f"uploads.{name}")
+        if not isinstance(settings, dict):
+            return f"There is no upload called {name!r}."
+        try:
+            from .cli import build_upload
+
+            upload = build_upload(name, dict(settings))
+        except Exception as exc:
+            return str(exc)
+        try:
+            return upload.check()
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
+        finally:
+            close = getattr(upload, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:
+                    log.debug("upload %s did not close cleanly", name)
 
     def remove_export(self, name: str) -> str:
         """Delete an export from the configuration. Nothing at the far end."""
@@ -507,6 +605,52 @@ def new_export_page(admin: Admin, error: str = "", form: dict | None = None) -> 
 </section>'''
 
 
+def new_upload_page(admin: Admin, error: str = "",
+                    form: dict | None = None) -> str:
+    """The form that creates one. A name and a service."""
+    form = form or {}
+    kinds = upload_kind_choices()
+    # Weather Underground first: it is what most people mean by publishing
+    # their readings, and it is the one they came here to set up.
+    kinds.sort(key=lambda row: row[0] != "wunderground")
+    chosen = form.get("kind") or (kinds[0][0] if kinds else "")
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
+        for kind, label, _summary in kinds)
+    explained = "".join(
+        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
+        for _kind, label, summary in kinds if summary)
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return f'''
+<section class="group">
+  <h3>Add an upload</h3>
+  <p class="lede">An export moves the files a feed produced. An upload sends
+     the readings themselves to a weather service, so they appear on its map
+     alongside everybody else\'s. Give it a name and a service; the account
+     details are on the page that appears next.</p>
+  {problem}
+  <form method="post" action="./new-upload">
+    <div class="field">
+      <label for="f-name">Name</label>
+      <input type="text" id="f-name" name="name" required
+             value="{html.escape(str(form.get("name", "")))}"
+             placeholder="wu" autocomplete="off" spellcheck="false">
+      <p class="help">Lowercase letters, digits, - and _. It becomes a
+         heading here and nothing else, so <code>wu</code> or
+         <code>windy</code> is enough. Two accounts on the same service are
+         two uploads with different names.</p>
+    </div>
+    <div class="field">
+      <label for="f-kind">Service</label>
+      <select id="f-kind" name="kind">{options}</select>
+      <ul class="kinds">{explained}</ul>
+    </div>
+    <div class="actions"><button type="submit">Create</button></div>
+  </form>
+</section>'''
+
+
 def new_feed_page(admin: Admin, error: str = "",
                   form: dict | None = None) -> str:
     """Two fields: a name and a kind. The rest waits."""
@@ -713,7 +857,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
     schema = next((s for s in admin.schemas if s.name == active), None)
-    adding = schema is None and active in ("new-export", "new-feed")
+    adding = schema is None and active in ("new-export", "new-feed",
+                                          "new-upload")
     charting = schema is None and (active in ("new-plot", "import-plots")
                                    or active.startswith("plot:"))
     if schema is None and not adding and not charting:
@@ -734,10 +879,13 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                 "CSV, a JSON document, a chart, a whole website.",
         "export": "None yet. An export moves what a feed produced: FTP, "
                   "rsync, a copy to a mounted share.",
+        "upload": "None yet. An upload sends the readings to a weather "
+                  "service: Weather Underground, Windy, CWOP, an MQTT "
+                  "broker.",
     }
     for kind, heading in (("core", "System"), ("driver", "Drivers"),
                           ("feed", "Feeds"), ("charts", ""),
-                          ("export", "Exports")):
+                          ("export", "Exports"), ("upload", "Uploads")):
         if kind == "charts":
             nav.extend(adminplots.nav(admin, active))
             continue
@@ -759,6 +907,10 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             current = " aria-current='page'" if active == "new-export" else ""
             nav.append(f'<a class="add" href="./new-export"{current}>'
                        "+ Add an export</a>")
+        if kind == "upload" and not admin.read_only:
+            current = " aria-current='page'" if active == "new-upload" else ""
+            nav.append(f'<a class="add" href="./new-upload"{current}>'
+                       "+ Add an upload</a>")
 
     if charting:
         if active == "new-plot":
@@ -771,9 +923,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             body = [adminplots.edit(admin, active.split(":", 1)[1],
                                     admin.columns(), errors, form)]
     elif adding:
-        body = [new_feed_page(admin, errors.get("", ""), form)
-                if active == "new-feed"
-                else new_export_page(admin, errors.get("", ""), form)]
+        maker = {"new-feed": new_feed_page, "new-upload": new_upload_page,
+                 "new-export": new_export_page}[active]
+        body = [maker(admin, errors.get("", ""), form)]
     else:
         body = [group_html(g, values, errors) for g in schema.groups]
 
@@ -793,6 +945,30 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
      pointed at it stops running rather than sending an empty directory.</p>
   <form method="post" action="./{html.escape(schema.name)}/remove"
         onsubmit="return confirm('Remove the feed {html.escape(name)}?')">
+    <div class="actions"><button class="warn" type="submit">Remove</button></div>
+  </form>
+</section>'''
+
+    if schema is not None and schema.kind == "upload" and not admin.read_only:
+        name = schema.name.split(":", 1)[-1]
+        extra += f'''
+<section class="group">
+  <h3>Try it</h3>
+  <p class="lede">Checks that the service accepts the account, without
+     publishing a reading. Worth doing: most of these answer a wrong password
+     with a cheerful "OK" and a word in the body, so an upload that is being
+     silently rejected looks exactly like one that is working.</p>
+  <form method="post" action="./{html.escape(schema.name)}/test">
+    <div class="actions"><button type="submit">Test the account</button></div>
+  </form>
+</section>
+<section class="group danger">
+  <h3>Remove</h3>
+  <p class="lede">Takes {html.escape(name)} out of the configuration. The
+     readings already published stay where they are; this only stops sending
+     more.</p>
+  <form method="post" action="./{html.escape(schema.name)}/remove"
+        onsubmit="return confirm(\'Remove the upload {html.escape(name)}?\')">
     <div class="actions"><button class="warn" type="submit">Remove</button></div>
   </form>
 </section>'''
@@ -1286,30 +1462,37 @@ class _Handler(BaseHTTPRequestHandler):
             self._redirect(f"./{action}?saved=1")
             return
 
-        if action == "new-export":
-            error = self.admin.add_export(form.get("name", ""),
-                                          form.get("kind", ""))
+        if action in ("new-export", "new-upload"):
+            add = (self.admin.add_export if action == "new-export"
+                   else self.admin.add_upload)
+            error = add(form.get("name", ""), form.get("kind", ""))
             if error:
-                self._reply(200, page(self.admin, "new-export",
+                self._reply(200, page(self.admin, action,
                                       errors={"": error}, form=form))
                 return
             name = form["name"].strip().lower()
-            self._redirect(f"./export:{name}")
+            self._redirect(f"./{action.split('-', 1)[1]}:{name}")
             return
 
-        # Testing or removing one. The name comes before the verb.
+        # Testing or removing one. The name comes before the verb, and what
+        # sort of thing it is comes before the name: `upload:wu/test` and
+        # `export:site/test` are different buttons on different pages, and
+        # sending both to the exports would delete the wrong entry.
         if action in ("test", "remove") and len(parts) >= 2:
             which = parts[-2]
-            name = which.split(":", 1)[-1]
+            sort, _, name = which.partition(":")
+            if sort == "upload":
+                remove, test = self.admin.remove_upload, self.admin.test_upload
+            else:
+                remove, test = self.admin.remove_export, self.admin.test_export
             if action == "remove":
-                error = self.admin.remove_export(name)
+                error = remove(name)
                 if error:
                     self._reply(200, page(self.admin, which, errors={"": error}))
                     return
                 self._redirect("./core?removed=1")
                 return
-            said = self.admin.test_export(name)
-            self._reply(200, page(self.admin, which, message=said))
+            self._reply(200, page(self.admin, which, message=test(name)))
             return
 
         which = self._which(parsed.path)

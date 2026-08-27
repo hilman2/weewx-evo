@@ -188,6 +188,20 @@ class Runner:
             else:
                 log.info("upload %s runs every %ds", scheduled.name, scheduled.every)
 
+    def replace(self, uploads: list[Scheduled]) -> None:
+        """Swap in a new set, after the configuration changed.
+
+        A method rather than three assignments at the call site: the events
+        and the stop flag have to be rebuilt with the list, and a caller that
+        remembers two of the three gets a runner whose threads never wake.
+        """
+        self.stop()
+        self.uploads = uploads
+        self._stopping = threading.Event()
+        self._wake = {s.name: threading.Event() for s in uploads}
+        self._threads = []
+        self.start()
+
     def record_written(self) -> None:
         """A new archive record landed.
 
