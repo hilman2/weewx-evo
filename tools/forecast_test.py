@@ -96,9 +96,12 @@ OPEN_METEO = {
         "cloud_cover": [40, 75, 95],
     },
     "daily": {
-        # Local midnight expressed as UTC: 1787788800 is 2026-08-27T00:00Z,
-        # and the day in Berlin starts two hours earlier in absolute terms.
-        "time": [1787788800, 1787875200],
+        # The same instant the hours start at, and not by accident: with
+        # `timeformat=unixtime` Open-Meteo returns true epochs, so the first
+        # day and the first hour of it are the same moment. This fixture used
+        # to carry the two 7200 apart, which is what let the reader subtract
+        # an offset it should never have subtracted and still pass.
+        "time": [1787781600, 1787868000],
         "temperature_2m_max": [31.5, 28.4],
         "temperature_2m_min": [16.6, 17.2],
         "precipitation_sum": [0.0, 4.2],
@@ -126,12 +129,22 @@ def test_open_meteo() -> None:
     close("while its neighbours are intact", got.hours[2].rain, 1.4)
 
     check("two days", len(got.days), 2)
-    # This is the one. Their daily stamp is local midnight written as UTC, so
-    # the offset comes off to get the actual instant. Without it a "day" in
-    # Berlin starts at 02:00 and every daily figure is keyed to the wrong
-    # date for two hours -- which flips at the daylight-saving boundary.
-    check("the day starts at local midnight",
-          got.days[0].dateTime, 1787788800 - 7200)
+    # This is the one, and it is asked as the property rather than as a
+    # number: a day has to *begin at local midnight*. Checking it against an
+    # arithmetic expression is how the old version passed -- the fixture and
+    # the reader were wrong in the same direction, so they agreed.
+    #
+    # What it cost: every day landed at 22:00 the evening before, so
+    # `days(start=midnight)` dropped the real today and the card labelled
+    # "Today" carried tomorrow's numbers. It showed as a page whose daily
+    # line disagreed with its own hourly line -- a thunderstorm above a
+    # column of overcast hours -- which reads as a moody source.
+    for day in got.days:
+        when = time.localtime(day.dateTime)
+        ok(f"a day begins at midnight, not {when.tm_hour:02d}:{when.tm_min:02d}",
+           (when.tm_hour, when.tm_min) == (0, 0))
+    check("and the first day is the day the hours start on",
+          got.days[0].dateTime, got.hours[0].dateTime)
     close("the maximum", got.days[0].tempMax, 31.5)
     # Sunrise and sunset are instants, not dates: they are already right.
     check("sunrise is left alone", got.days[0].sunrise, 1787806920)

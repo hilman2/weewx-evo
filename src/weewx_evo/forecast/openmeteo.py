@@ -169,7 +169,6 @@ class OpenMeteo(BaseSource):
         is the only way to check this without the network.
         """
         reading = Reading(source="open-meteo")
-        offset = int(data.get("utc_offset_seconds") or 0)
         # Their "issued" is not in the response, so the generation time is
         # the honest answer: this is when the numbers were produced for us.
         hourly = data.get("hourly") or {}
@@ -197,11 +196,21 @@ class OpenMeteo(BaseSource):
         daily = data.get("daily") or {}
         times = daily.get("time") or []
         for index, when in enumerate(times):
-            # Their daily timestamp is local midnight expressed as UTC, so
-            # the offset has to come off to get the actual instant. Without
-            # this a day in Berlin starts at 02:00 and the whole column is
-            # keyed to the wrong date twice a year.
-            day = Day(dateTime=int(when) - offset, usUnits=units.METRICWX)
+            # Taken as it comes, exactly like the hours above. With
+            # `timeformat=unixtime` the value already *is* the instant local
+            # midnight happened -- 1787781600 is 22:00 UTC on the 26th, which
+            # is midnight on the 27th in Berlin.
+            #
+            # This used to subtract `utc_offset_seconds`, on the belief that
+            # the number was local midnight written down as though it were
+            # UTC. That is the `iso8601` convention, not this one, and the
+            # cost was two hours a day: every row landed at 22:00 the evening
+            # before, `days(start=midnight)` then dropped the real today, and
+            # the card labelled "Today" carried tomorrow's numbers. It showed
+            # as a page whose daily line and hourly line disagreed -- a
+            # thunderstorm above a column of overcast hours -- which reads as
+            # a moody source rather than as an off-by-one.
+            day = Day(dateTime=int(when), usUnits=units.METRICWX)
             for theirs, ours in DAILY:
                 column = daily.get(theirs)
                 if not column or index >= len(column):

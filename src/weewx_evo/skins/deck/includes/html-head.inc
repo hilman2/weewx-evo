@@ -7,7 +7,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 
-<link rel="stylesheet" href="$get_base_path(path='assets/deck.css')" />
+<link rel="stylesheet" href="$asset('assets/deck.css')" />
 
 <link
   rel="icon"
@@ -85,9 +85,9 @@
 ## ECharts, then the page's own two files. `defer` on all three: they run
 ## in order, after the document is parsed, and none of them blocks the
 ## first paint. Local -- see vendor/echarts-LICENSE.txt.
-<script src="$get_base_path(path='vendor/echarts.min.js')" defer></script>
-<script src="$get_base_path(path='assets/charts.js')" defer></script>
-<script src="$get_base_path(path='assets/deck.js')" defer></script>
+<script src="$asset('vendor/echarts.min.js')" defer></script>
+<script src="$asset('assets/charts.js')" defer></script>
+<script src="$asset('assets/deck.js')" defer></script>
 
 <script>
   if ("serviceWorker" in navigator) {

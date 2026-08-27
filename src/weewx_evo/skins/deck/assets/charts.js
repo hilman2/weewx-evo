@@ -240,10 +240,34 @@
     };
   }
 
+  var HOUR = 3600 * 1000;
+
   function timeAxis(colours, spec) {
     return {
       type: "time",
       boundaryGap: false,
+      /* Ticks on the clock, not on whenever the page happened to be built.
+       *
+       * Left alone, a time axis anchors its steps to the extent of the data,
+       * and the extent ends at the moment the feed ran. A chart generated at
+       * 15:43 came out labelled 15:09, 15:39, 16:09 -- legible, but nobody
+       * reads a clock that way, and two charts on one page each got their own
+       * offset because each was written a second apart.
+       *
+       * Pinning the ends to whole hours fixes the anchor, and refusing a step
+       * under an hour stops it choosing 4.5 hours for a 27-hour span. Up to
+       * an hour of empty axis appears on the right; that is the room the next
+       * reading is about to arrive into. */
+      min: function (extent) {
+        return Math.floor(extent.min / HOUR) * HOUR;
+      },
+      max: function (extent) {
+        var end = Math.ceil(extent.max / HOUR) * HOUR;
+        /* A chart of one point, or one whose last reading lands exactly on
+         * the hour: an axis with no width draws nothing at all. */
+        return end <= Math.floor(extent.min / HOUR) * HOUR ? end + HOUR : end;
+      },
+      minInterval: HOUR,
       axisLine: { lineStyle: { color: colours.line } },
       axisTick: { show: false },
       axisLabel: {

@@ -79,8 +79,15 @@ class Entry:
         if self.kind != "day" or self.owner is None:
             return []
         start = int(self.item.dateTime)
-        return self.owner.between(max(start, int(time.time()) - 3600),
-                                  start + 86400, step)
+        stop = start + 86400
+        now = int(time.time())
+        # Today starts at the hour we are in, and a day still ahead starts
+        # where it starts. Written as "is now inside this day" rather than as
+        # `max(start, now)`, which quietly returns nothing for a day already
+        # over -- and a source told to fetch `past_days` has those.
+        if start <= now < stop:
+            start = now - 3600
+        return self.owner.between(start, stop, step)
 
     @property
     def dateTime(self) -> Value:  # noqa: N802 - the column's name

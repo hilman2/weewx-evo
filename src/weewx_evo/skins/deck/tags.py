@@ -521,6 +521,34 @@ class GeneralUtil(SearchList):
 
         return base_path + path
 
+    def asset(self, path):
+        """The base path plus a file, with a mark that changes when it does.
+
+        Without one, a stylesheet is cached for as long as the web server
+        says -- an hour here -- and a page served in that window has new
+        markup and the old rules. It does not look like a caching problem: it
+        looks like the design broke. Seven day tiles came out as native grey
+        buttons because the HTML had become `<button>` and the CSS that
+        strips a button back had not arrived yet.
+
+        Eight characters of the file's own content. A version number would
+        not do: the file changes far more often than the version does, and
+        that is exactly the window this is for.
+        """
+        import hashlib
+        import os.path
+
+        base = self.get_base_path(path=path)
+        try:
+            found = os.path.join(self.generator.skin_dir, path)
+            with open(found, "rb") as handle:
+                digest = hashlib.sha256(handle.read()).hexdigest()[:8]
+        except Exception:
+            # A file this skin does not ship, or one it cannot read. The
+            # link still has to work; it just goes unmarked.
+            return base
+        return f"{base}?v={digest}"
+
     def show_yesterday(self):
         if "yesterday" in self.generator_to_date:
             return True
