@@ -285,7 +285,14 @@ class Generator:
                  config_dict: dict[str, Any], reader: Reader,
                  target: units.Target, tags: Any,
                  language: str | None = None,
-                 derived: Sequence[str] = ()) -> None:
+                 derived: Sequence[str] = (),
+                 skin_dir: str = "") -> None:
+        #: Where the skin's own files are. WeeWX's report generator has this
+        #: and extensions use it -- to hash a stylesheet for a cache-busting
+        #: link, to read a file the skin ships. Empty is survivable: an
+        #: extension that needs it has to cope, because a skin can be run
+        #: from a place that has no directory of its own.
+        self.skin_dir = str(skin_dir or "")
         self.skin_dict = skin_dict
         #: What weewx.conf would have been. `StdReport` answers for any
         #: report name with this skin's own settings; the rest is what the

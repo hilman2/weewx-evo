@@ -90,7 +90,10 @@ window.MutationObserver = function (fn) {
 const wanted = [...window.document.querySelectorAll("script[src]")]
   .map((tag) => tag.getAttribute("src"))
   .filter((src) => src && !/^https?:/.test(src))
-  .map((src) => path.join(assetsDir, path.basename(src)))
+  /* The link carries the file's own content as `?v=...` so a browser cannot
+   * serve yesterday's stylesheet with today's markup. On disk there is no
+   * query, so it comes off before the name is used. */
+  .map((src) => path.join(assetsDir, path.basename(src.split("?")[0])))
   .filter((file) => fs.existsSync(file));
 
 /* Inline scripts first: `window.deckLivePoll` and the translations are set

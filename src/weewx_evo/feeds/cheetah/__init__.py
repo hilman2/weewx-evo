@@ -323,7 +323,8 @@ class CheetahFeed:
         generator = skinkit.Generator(conf, {}, self.reader,
                                       self.tags.target, self.tags,
                                       language=self.language,
-                                      derived=self.derived)
+                                      derived=self.derived,
+                                      skin_dir=str(self.skin))
         lookup = generator.db_binder
 
         found: list[Any] = []
