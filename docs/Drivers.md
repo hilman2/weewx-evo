@@ -1,19 +1,18 @@
-# Treiber
+# Drivers
 
 `ingest/drivers.py`, `ingest/envelope.py`, `ingest/parsers.py`,
 `ingest/state.py`, `ingest/plugins/`, `ingest/userdrivers.py`.
 
-## Der Schnitt
+## The seam
 
-**Der Kern besitzt den Socket.** Threads, Shutdown, Body-Limits, IPv6, die
-Token-Prüfung und das Schreiben in die Live-Tabelle. Das ist für jedes Protokoll
-dasselbe, es ist die Stelle, an der Push-Treiber schiefgehen, und es einmal zu
-machen heißt, es einmal zu machen.
+**The core owns the socket.** Threads, shutdown, body limits, IPv6, the token
+check and writing to the live table. That is the same for every protocol, it is
+where push drivers go wrong, and doing it once means doing it once.
 
-**Der Treiber besitzt alles andere.** Parsen, Feldnamen, Einheiten, welchem
-Gerät er überhaupt antwortet, und **was dieses Gerät zurückhören muss**.
+**The driver owns everything else.** Parsing, field names, units, which device
+it answers at all, and **what that device has to hear back**.
 
-## Die Schnittstelle
+## The interface
 
 ```python
 class Driver(Protocol):
@@ -21,14 +20,14 @@ class Driver(Protocol):
         ...
 ```
 
-`meta` trägt `received` (Ankunftszeit, unix) und `source` (die Peer-Adresse).
+`meta` carries `received` (arrival time, unix) and `source` (the peer address).
 
-**Eine leere Liste zurückzugeben ist normal und kein Fehler**: Konsolen senden
-Probeanfragen, Heartbeats und Uploads ohne Messwerte darin.
+**Returning an empty list is normal and not an error**: consoles send probe
+requests, heartbeats and uploads with no readings in them.
 
 ### `BaseDriver`
 
-Für einen Treiber, der nur parsen muss. Defaults für alles andere.
+For a driver that only has to parse. Defaults for everything else.
 
 ```python
 from weewx_evo.ingest.drivers import BaseDriver
@@ -40,23 +39,22 @@ class MyDriver(BaseDriver):
         return [...]
 ```
 
-| Attribut / Methode | Bedeutung |
+| Attribute / method | What it means |
 |---|---|
-| `response` | `(bytes, content_type)` — was das Gerät hören will |
-| `packets(body, meta)` | Der Kern der Sache |
-| `status()` | Was auf `/status` erscheinen soll. Optional |
-| `close()` | Freigeben, was gehalten wird. Optional |
-| `options()` | Die Einstellungen dieses Treibers, als `Group`-Liste. Optional |
-| `redact(raw)` | Der Upload mit dem Geheimen entfernt. Optional |
+| `response` | `(bytes, content_type)` — what the device wants to hear |
+| `packets(body, meta)` | The heart of it |
+| `status()` | What should appear at `/status`. Optional |
+| `close()` | Release what is held. Optional |
+| `options()` | This driver's settings, as a list of `Group`s. Optional |
+| `redact(raw)` | The upload with the secret parts removed. Optional |
 
-Weitere optionale Haken, die die Ecowitt-Implementierung zeigt:
+Further optional hooks, as the Ecowitt implementation shows:
 `hardware_name()`, `unit_groups()`, `missing_columns(known)`.
 
-### `options()` deklariert die Einstellungen
+### `options()` declares the settings
 
-Ein Treiber, der eine Einstellung dazubekommt, bekommt ein Formularfeld,
-Validierung und einen Kommentar in der geschriebenen Datei — ohne dass sich
-irgendwo sonst etwas ändert.
+A driver that gains a setting gains a form field, validation and a comment in
+the written file — without anything changing anywhere else.
 
 ```python
 @staticmethod
@@ -71,141 +69,137 @@ def options():
 
 → [Configuration](Configuration)
 
-### Die Deklaration wird angewandt, nicht nur dokumentiert
+### The declaration is applied, not merely documented
 
-Ein Treiber sagt `kind="duration"` und bekäme dann den String `"4h"` gereicht,
-weil das ist, was in der Konfigurationsdatei steht. **Dass jeder Treiber seine
-Werte noch einmal selbst parst, ist genau das, was das Options-Schema verhindern
-soll** — und einer, der es vergisst, bekommt beim Start ein `ValueError`,
-abgefangen, und läuft danach still auf seinem Default.
+A driver says `kind="duration"` and would then be handed the string `"4h"`,
+because that is what stands in the configuration file. **Every driver parsing
+its values a second time itself is exactly what the option schema is there to
+prevent** — and one that forgets gets a `ValueError` at startup, caught, and
+then runs quietly on its default.
 
-`drivers._parsed()` wendet deshalb die Deklaration des Treibers **einmal** an,
-bevor er gebaut wird. Was das Schema nicht verstehen kann, wird verworfen statt
-weitergereicht: der Treiber fällt auf seinen eigenen Default zurück und die
-Station zeichnet weiter auf. **Laut gesagt**, weil die Einstellung dann nicht
-tut, was derjenige denkt, der sie geschrieben hat.
+`drivers._parsed()` therefore applies the driver's declaration **once**, before
+it is built. What the schema cannot make sense of is discarded rather than
+passed on: the driver falls back to its own default and the station carries on
+recording. **Said out loud**, because the setting then does not do what whoever
+wrote it thinks.
 
-## Die Registry
+## The registry
 
-`drivers.Registry` hält **Instanzen, keine Klassen**: ein Treiber hält
-Konfiguration und Zustand — welchen Konsolen er antwortet, welche Feldabbildung
-zu welcher gehört — und das muss zwischen zwei Uploads überleben.
+`drivers.Registry` holds **instances, not classes**: a driver holds
+configuration and state — which consoles it answers, which field mapping belongs
+to which — and that has to survive between two uploads.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `register(name, driver, replace=False)` | Eine fertige Instanz |
-| `register_factory(name, factory, aliases=())` | Etwas, das gebaut wird, sobald seine Konfiguration bekannt ist |
-| `configure(name, options)` | Die Factory mit ihren Optionen bauen und installieren |
-| `_parsed(factory, options)` | Die Optionen in der Form, die der Treiber deklariert hat |
+| `register(name, driver, replace=False)` | A finished instance |
+| `register_factory(name, factory, aliases=())` | Something to be built once its configuration is known |
+| `configure(name, options)` | Build the factory with its options and install it |
+| `_parsed(factory, options)` | The options in the shape the driver declared |
 | `get(name)`, `known(name)`, `names()` | |
-| `canonical_names()` | Namen, die kein Alias eines anderen Treibers sind |
+| `canonical_names()` | Names that are not an alias of another driver |
 | `aliases_of(name)` | |
-| `load()` | Holen, was installiert ist |
+| `load()` | Fetch what is installed |
 | `close()` | |
 
-`aliases` sind andere Namen für denselben Treiber — ein zweites Protokoll, das
-er auch liest. Ecowitt hat `wunderground` als Alias. Einen zu konfigurieren
-konfiguriert alle: **zwei Instanzen desselben Treibers würden je eine Station
-adoptieren und je einen eigenen Zustand führen.** Deshalb gibt
-`canonical_names()` nur die echten zurück.
+`aliases` are other names for the same driver — a second protocol it also reads.
+Ecowitt has `wunderground` as an alias. Configuring one configures all: **two
+instances of the same driver would adopt one station each and keep one state
+each.** Which is why `canonical_names()` returns only the real ones.
 
-`load()` meldet einen kaputten Treiber, wird aber **nie fatal**. Ein Paket, das
-sich nicht importieren lässt, darf den Listener nicht mitnehmen: die anderen
-Protokolle haben weiter Messwerte, die ankommen.
+`load()` reports a broken driver but is **never fatal**. A package that will not
+import must not take the listener with it: the other protocols still have
+readings coming in.
 
-## Woher Treiber kommen
+## Where drivers come from
 
-### 1. Mitgeliefert — `ingest/plugins/`
+### 1. Bundled — `ingest/plugins/`
 
-Unsere. Ein Unterordner je Treiber, jedes ein Paket mit einem
-`load(registry)`. **Nichts wird von Hand aufgezählt**: jedes Unterverzeichnis
-wird probiert, also heißt einen Treiber hinzuzufügen, ein Verzeichnis
-hinzuzufügen.
+Ours. One subfolder per driver, each a package with a `load(registry)`.
+**Nothing is listed by hand**: every subdirectory is tried, so adding a driver
+means adding a directory.
 
 ```python
 # ingest/plugins/__init__.py
-def bundled() -> list[str]  # die Treiberpakete in diesem Verzeichnis
-def load(registry) -> list[str]  # jedes registrieren, Namen zurück
+def bundled() -> list[str]  # the driver packages in this directory
+def load(registry) -> list[str]  # register each, return the names
 ```
 
-Dass wichtige Treiber hier liegen, ist eine Entscheidung über **Pflege**, nicht
-über Kopplung: ein Treiber im Repo hängt an derselben Schnittstelle wie einer
-von außen und ließe sich herausziehen, ohne dass der Kern es merkt.
+Important drivers living here is a decision about **maintenance**, not about
+coupling: a driver in the repo hangs off the same interface as one from outside
+and could be pulled out without the core noticing.
 
-### 2. Installiert — `<datenverzeichnis>/drivers/`
+### 2. Installed — `<data directory>/drivers/`
 
-Fremde. Sie liegen **außerhalb** des Pakets, damit ein Upgrade sie nicht anfasst
-und nichts darin für unseres gehalten wird.
+Third-party ones. They live **outside** the package, so that an upgrade does not
+touch them and nothing in there is taken for ours.
 
 ```bash
-weewx-evo driver install https://github.com/jemand/weewx-evo-acurite
-weewx-evo driver install ./treiber.zip
-weewx-evo driver install ./ein-verzeichnis
+weewx-evo driver install https://github.com/someone/weewx-evo-acurite
+weewx-evo driver install ./driver.zip
+weewx-evo driver install ./a-directory
 weewx-evo driver list
 weewx-evo driver remove acurite
 ```
 
 `userdrivers.py`:
 
-| Funktion | Bedeutung |
+| Function | What it means |
 |---|---|
-| `directory(configured, archive)` | Wo sie liegen. `--driver-dir`, dann `driver_dir`, dann neben dem Archiv. Auch `WEEWX_EVO_DRIVER_DIR` |
-| `installed(where)` | Was installiert ist, als `(Name, Herkunft)` |
-| `load(registry, where)` | Jeden registrieren |
-| `install(source, where, name, force)` | Aus Git-URL, Zip oder Verzeichnis |
+| `directory(configured, archive)` | Where they live. `--driver-dir`, then `driver_dir`, then next to the archive. Also `WEEWX_EVO_DRIVER_DIR` |
+| `installed(where)` | What is installed, as `(name, origin)` |
+| `load(registry, where)` | Register each of them |
+| `install(source, where, name, force)` | From a git URL, a zip or a directory |
 | `remove(name, where)` | |
-| `inspect_source(package)` | Wonach der Code greift, als `{Hinweis: [Dateien]}` |
+| `inspect_source(package)` | What the code reaches for, as `{hint: [files]}` |
 
-Beim Installieren wird **nichts ausgeführt und nichts importiert**. Ein Treiber
-ist Code, der später als Dienst läuft, und die Entscheidung, ihn zu
-installieren, kommt vor dem ersten Ausführen. Auch `_is_driver()` prüft durch
-Lesen, nicht durch Importieren.
+Installing **runs nothing and imports nothing**. A driver is code that will
+later run as a service, and the decision to install it comes before the first
+run. `_is_driver()` too checks by reading, not by importing.
 
-`_find_package()` sucht das Paket oben, eine Ebene tiefer (ein Zip wickelt meist
-alles in ein nach dem Release benanntes Verzeichnis), sowie unter `src/` und
-`bin/user/`.
+`_find_package()` looks for the package at the top, one level down (a zip
+usually wraps everything in a directory named after the release), and under
+`src/` and `bin/user/`.
 
-Die Herkunft steht in `.origin` neben dem Paket.
+The origin is recorded in `.origin` next to the package.
 
-### 3. Als Entry Point
+### 3. As an entry point
 
 ```toml
 [project.entry-points."weewx_evo.drivers"]
 mine = "my_package:MyDriver"
 ```
 
-## Kann ein Treiber Amok laufen?
+## Can a driver run amok?
 
-**Im Prozess: nein, nicht verhinderbar.** Ein Treiber ist Python im selben
-Interpreter, `import sqlite3` genügt, und keine Schnittstelle hindert Code
-daran, sie zu umgehen. WeeWX hat dieselbe Eigenschaft.
+**In-process: yes, and it cannot be prevented.** A driver is Python in the same
+interpreter, `import sqlite3` is enough, and no interface stops code from going
+round it. WeeWX has the same property.
 
-Die Zwischenschicht ist deshalb ein **Vertrag, kein Käfig**. Damit ist das
-Richtige einfach und das Falsche eine sichtbare, absichtliche Handlung.
+The layer in between is therefore a **contract, not a cage**. What it does is
+make the right thing easy and the wrong thing a visible, deliberate act.
 
-Durchgesetzt wird es außerhalb des Prozesses:
+Enforcement happens outside the process:
 
-| Mittel | Wirkung |
+| Means | Effect |
 |---|---|
-| `listen` und `archive` getrennt (`deploy/split.yml`) | Der Listener öffnet das Archiv nie. Ein Treiber darin **hat die Datei nicht** |
-| Eigener Benutzer ohne Schreibrecht aufs Archiv | Macht die Frage gegenstandslos |
-| `driver install` liest den Code | Meldet `sqlite3`, `subprocess`, `socket`. Ein Hinweis, keine Garantie |
+| `listen` and `archive` split (`deploy/split.yml`) | The listener never opens the archive. A driver inside it **does not have the file** |
+| A separate user without write permission on the archive | Makes the question moot |
+| `driver install` reads the code | Reports `sqlite3`, `subprocess`, `socket`. A hint, not a guarantee |
 
-`NOTABLE` in `userdrivers.py` ist diese Liste. Sie sieht nicht durch
-Verschleierung hindurch und kann keine Absicht beurteilen — sie fängt den
-ehrlichen Fehler und die faule Abkürzung.
+`NOTABLE` in `userdrivers.py` is that list. It does not see through obfuscation
+and cannot judge intent — it catches the honest mistake and the lazy shortcut.
 
 → [Security](Security), [Deployment](Deployment)
 
-## Treiber-Zustand
+## Driver state
 
-`ingest/state.py`. Ein Treiber muss sich manchmal etwas über Neustarts hinweg
-merken. Der Ecowitt-Treiber merkt sich, welche Konsole er adoptiert hat — sonst wird
-die nächste Konsole, die hochlädt, zur Station, und zwei Sensoren landen in
-einer Spalte.
+`ingest/state.py`. A driver sometimes has to remember something across
+restarts. The Ecowitt driver remembers which console it adopted — otherwise the
+next console to upload becomes the station, and two sensors end up in one
+column.
 
-Das Naheliegende wäre, ihm den `ArchiveStore` zu geben. Das ist **zu viel**: er
-könnte dann Sätze schreiben, Spalten anlegen und Historie löschen.
+The obvious thing would be to give it the `ArchiveStore`. That is **too much**:
+it could then write records, create columns and delete history.
 
 ```python
 class State(Protocol):
@@ -214,51 +208,50 @@ class State(Protocol):
     def delete(self, key: str) -> None: ...
 ```
 
-Drei Methoden auf Strings. Sonst nichts.
+Three methods on strings. Nothing else.
 
-| Implementierung | Wo es liegt |
+| Implementation | Where it lives |
 |---|---|
-| `ArchiveState` | Die `metadata`-Tabelle des Archivs. Der richtige Ort: sie sitzt bei den Messwerten, die der Zustand schützt, ist in jedem Backup davon und zieht mit ihnen um |
-| `FileState` | Eine JSON-Datei — für den Listener allein und für Tests. Schlechter (eine neu aufgesetzte Maschine verliert sie), aber besser als nichts |
-| `NoState` | Merkt sich nur innerhalb des Prozesses |
+| `ArchiveState` | The archive's `metadata` table. The right place: it sits with the readings the state protects, is in every backup of them, and moves with them |
+| `FileState` | A JSON file — for the listener on its own and for tests. Worse (a freshly set up machine loses it), but better than nothing |
+| `NoState` | Remembers only within the process |
 
-`for_driver(name, archive=None, path=None)` wählt die beste verfügbare
-Absicherung.
+`for_driver(name, archive=None, path=None)` picks the best safeguard available.
 
-Dieselbe Logik wie bei `Settings.view()`: **das Schmale geben, dann ist das
-Breite nicht erreichbar.**
+The same logic as with `Settings.view()`: **give the narrow thing, and the wide
+thing is out of reach.**
 
-## Der Umschlag — der einzige Treiber im Kern
+## The envelope — the only driver in the core
 
-`ingest/envelope.py`. Das ist der **Vertrag, kein Protokoll**: die Form, die ein
-Treiber übergibt, wenn er fertig ist, und das einzige Format, das der Kern
-selbst versteht.
+`ingest/envelope.py`. This is the **contract, not a protocol**: the shape a
+driver hands over when it is done, and the only format the core itself
+understands.
 
 ```json
 {"dateTime": 1787734265, "usUnits": 1, "source": "vantage-1",
  "kind": "loop", "interval": null, "data": {"outTemp": 21.4}}
 ```
 
-Ein Objekt oder eine Liste davon. `data` darf auch flach im Objekt selbst
-liegen, was das ist, was die meisten Absender tun. `RESERVED` nennt die
-Schlüssel, die dann nicht als Messwerte gelesen werden.
+One object or a list of them. `data` may also sit flat in the object itself,
+which is what most senders do. `RESERVED` names the keys that are then not read
+as readings.
 
-Erreichbar unter `/<token>/json/`, per UDP, und über `listener.push()`.
+Reachable at `/<token>/json/`, over UDP, and via `listener.push()`.
 
 ## `parsers.py`
 
-Die ältere, funktionsbasierte Registry: ein Parser bekommt Bytes und gibt Pakete
-zurück. Sie fasst keine Datenbank an, öffnet keinen Socket und weiß nicht, wie
-spät es ist, außer die Nutzlast sagt es.
+The older, function-based registry: a parser gets bytes and returns packets. It
+touches no database, opens no socket and does not know what time it is unless
+the payload says so.
 
-Genau das macht ein Protokoll gegen eine gespeicherte Aufzeichnung testbar — und
-Aufzeichnungen sind hier die einzige ehrliche Prüfung, weil Konsolen nicht das
-senden, was ihre Dokumentation sagt.
+That is exactly what makes a protocol testable against a stored recording — and
+recordings are the only honest check here, because consoles do not send what
+their documentation says.
 
-`parse_json` ist derselbe Umschlag wie oben. Neue Treiber sollten `Driver` /
-`BaseDriver` implementieren; `parsers` bleibt für den funktionsbasierten Weg.
+`parse_json` is the same envelope as above. New drivers should implement
+`Driver` / `BaseDriver`; `parsers` remains for the function-based route.
 
-## Einen Treiber schreiben
+## Writing a driver
 
 ```python
 """A driver for a station that posts one line of numbers."""
@@ -285,10 +278,9 @@ def load(registry):
     registry.register("line", LineDriver())
 ```
 
-`tools/driverinstall.py` baut genau so ein Paket auf der Platte auf,
-installiert es, lädt es und nimmt einen Upload damit entgegen — der Test dafür,
-dass ein fremder Treiber an derselben Schnittstelle hängt wie ein
-mitgelieferter.
+`tools/driverinstall.py` builds exactly such a package on disk, installs it,
+loads it and takes an upload with it — the test that a third-party driver hangs
+off the same interface as a bundled one.
 
 → [Driver-Ecowitt](Driver-Ecowitt), [Testing](Testing)
 

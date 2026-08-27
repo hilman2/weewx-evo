@@ -1,113 +1,111 @@
-# Mitarbeiten
+# Contributing
 
-## Die eine Regel
+## The one rule
 
-> Eine bestehende WeeWX-Datenbank bleibt lesbar und schreibbar — **für WeeWX
-> selbst**.
+> An existing WeeWX database stays readable and writable — **by WeeWX itself**.
 
-Bevor du an `aggregate.py`, `db/archive.py` oder `db/daily.py` etwas änderst:
+Before changing anything in `aggregate.py`, `db/archive.py` or `db/daily.py`:
 
 ```bash
 python tools/difftest.py reference/weewx.sdb
 ```
 
-Der Test rechnet die Tagesstatistiken einer echten Datenbank nach und vergleicht
-sie mit dem, was WeeWX hineingeschrieben hat. Vorher **und** nachher laufen
-lassen.
+The test recomputes the daily summaries of a real database and compares them
+with what WeeWX wrote into it. Run it before **and** after.
 
-## Schreibstil im Code
+## Writing style in the code
 
-**Englisch**, wie im weewx-Fork. Kommentare sagen **warum**, nicht was.
+**English**, as in the weewx fork. Comments say **why**, not what.
 
-Eine Zeile, die erklärt, welcher Fehler ohne sie passiert, ist mehr wert als
-drei, die den Code nacherzählen.
+A line explaining which bug happens without it is worth more than three that
+retell the code.
 
-Gut:
+Good:
 
 ```python
 # 429 here, not 404: this one is a real client being told to slow down
 ```
 
-Nicht gut:
+Not good:
 
 ```python
 # increment the counter
 ```
 
-Was hier gut ankommt, ist die **Begründung an der Entscheidung**. Nicht der
-Ablauf, sondern warum es dieser Ablauf ist und nicht der naheliegende andere.
+What goes down well here is the **reasoning next to the decision**. Not the
+sequence of steps, but why it is this sequence and not the obvious other one.
 
-Die Modul-Docstrings sind der Ort für die längere Fassung. Sie sind die Quelle,
-aus der dieses Wiki geschrieben ist.
+The module docstrings are the place for the longer version. They are the source
+this wiki is written from.
 
-## Wohin was gehört
+## Where things belong
 
-| Wenn du schreiben willst über… | dann gehört es nach… |
+| If you want to write about… | then it belongs in… |
 |---|---|
-| Ein Wetterprotokoll | den Treiber, nie in `listener.py` oder `archiver.py` |
-| Eine neue Einstellung | ins Schema (`options.py` oder `options()` am Bauteil), sonst nirgends |
-| Wie eine Größe aggregiert wird | `obstypes.py` |
-| Eine Umrechnung | `units.py` — als **Transkription**, nicht nachgerechnet |
-| Was erzeugt wird | einen Feed unter `feeds/<name>/` |
-| Wohin es geschickt wird | einen Export unter `exports/` |
-| Was gezeichnet wird | `plots.toml`, nie in einen Renderer |
+| A weather protocol | the driver, never in `listener.py` or `archiver.py` |
+| A new setting | the schema (`options.py`, or `options()` on the component), nowhere else |
+| How an observation aggregates | `obstypes.py` |
+| A conversion | `units.py` — as a **transcription**, not recomputed |
+| What gets produced | a feed under `feeds/<name>/` |
+| Where it gets sent | an export under `exports/` |
+| What gets drawn | `plots.toml`, never a renderer |
 
-## Die Fallen, die schon zugeschnappt sind
+## The pitfalls that have already sprung
 
-Diese Liste ist nicht theoretisch. Jeder Punkt war ein Fehler.
+This list is not theoretical. Every item was a bug.
 
-### argparse-Defaults schlagen die Konfigurationsdatei
+### argparse defaults beat the configuration file
 
 ```python
-parser.add_argument("--interval", default=None)   # immer None
+parser.add_argument("--interval", default=None)   # always None
 ```
 
-argparse kann „nicht angegeben" nicht von „auf den Default gesetzt"
-unterscheiden. Ein Default hier schlägt die Konfigurationsdatei, und dann tut die
-Admin-Seite scheinbar nichts, **ohne Fehlermeldung irgendwo**. Defaults leben im
-Schema. → `tools/settings_test.py`
+argparse cannot tell "not given" from "set to the default". A default here beats
+the configuration file, and then the admin page appears to do nothing, **with no
+error message anywhere**. Defaults live in the schema.
+→ `tools/settings_test.py`
 
-### Ein Teil-POST setzt alles andere zurück
+### A partial POST resets everything else
 
-Ein Formular, das nur eine Gruppe schickt, darf den Rest nicht auf Default
-setzen. `MARKER = "__present__"` ist, wie das erkannt wird. Im Browser fällt es
-nie auf. → `tools/adminpage.py`
+A form sending only one group must not set the rest to the default.
+`MARKER = "__present__"` is how that is recognised. In a browser it never shows
+up. → `tools/adminpage.py`
 
-### SQLite-Verbindungen sind thread-gebunden
+### SQLite connections are thread-bound
 
-`LiveStore.conn()` öffnet je Thread eine. Wer eine Verbindung durchreicht, baut
-einen Fehler, der erst unter Last auftritt.
+`LiveStore.conn()` opens one per thread. Passing a connection around builds a
+bug that only appears under load.
 
-### Prüfen muss kostenlos sein
+### Checking has to be free
 
-`has_attempts_left()` fragt, `failed()` zahlt. Wer beides vermengt, sperrt eine
-Konsole nach fünf **gültigen** Uploads aus. → `tools/ratelimit_test.py`
+`has_attempts_left()` asks, `failed()` pays. Mixing the two locks a console out
+after five **valid** uploads. → `tools/ratelimit_test.py`
 
-### Eine „sauberere" Konstante ist eine falsche Konstante
+### A "cleaner" constant is a wrong constant
 
-`units.py` ist eine Transkription. WeeWX' Tabelle ist nicht selbstinvers, und das
-ist **absichtlich geerbt**. Der Test prüft, dass unsere Drift ihre Drift ist.
+`units.py` is a transcription. WeeWX's table is not self-inverse, and that is
+**inherited deliberately**. The test checks that our drift is their drift.
 → `tools/unitcheck.py`
 
-### `"5m"` kommt als String zurück
+### `"5m"` comes back as a string
 
-Ein Roundtrip durch Formular und Datei muss eine `duration` als Sekunden
-zurückgeben, nicht als den String, der hineinging.
+A roundtrip through form and file has to return a `duration` as seconds, not as
+the string that went in.
 
-### WeeWX' Zeitsuffixe sind nicht unsere
+### WeeWX's time suffixes are not ours
 
-`M` ist dort eine Minute, `m` ein **Monat**. Beim Lesen einer WeeWX-Datei gelten
-WeeWX' Regeln (`_weewx_span`); zurückgeschrieben wird nie mit einem mehrdeutigen
-Suffix.
+There, `M` is a minute and `m` is a **month**. Reading a WeeWX file goes by
+WeeWX's rules (`_weewx_span`); nothing is ever written back with an ambiguous
+suffix.
 
-### pyephem rechnet Refraktion selbst
+### pyephem computes refraction itself
 
-`horizon = -0.833` zählt sie doppelt. Richtig ist `pressure = 0`,
-`horizon = "-0:34"`, Oberrand. → [Sun](Sun)
+`horizon = -0.833` counts it twice. Correct is `pressure = 0`,
+`horizon = "-0:34"`, upper limb. → [Sun](Sun)
 
-## Eine Einstellung hinzufügen
+## Adding a setting
 
-Ins Schema, sonst nirgends:
+Into the schema, nowhere else:
 
 ```python
 Option("infer_unknown", "Fields the catalog does not know",
@@ -116,63 +114,63 @@ Option("infer_unknown", "Fields the catalog does not know",
        help="A reading put in the wrong column cannot be separated out afterwards.")
 ```
 
-Daraus entstehen von selbst: das Formularfeld, die Validierung, der Kommentar in
-der geschriebenen Datei, die Zeile in `--explain` und der Eintrag in
-`schema.json`.
+Out of it come, on their own: the form field, the validation, the comment in the
+written file, the line in `--explain` and the entry in `schema.json`.
 
-Ein neues `kind` bedeutet: **parsen, prüfen und rendern beibringen** — alle
-drei, an je einer Stelle.
+A new `kind` means: **teaching it to parse, to check and to render** — all
+three, in one place each.
 
 → [Configuration](Configuration)
 
-## Einen Treiber hinzufügen
+## Adding a driver
 
-Ein Verzeichnis unter `ingest/plugins/<name>/` mit einem `load(registry)`.
-Nichts wird von Hand aufgezählt.
+A directory under `ingest/plugins/<name>/` with a `load(registry)`. Nothing is
+listed by hand.
 
-Wenn es kein Treiber ist, den wir pflegen: `weewx-evo driver install` und
-außerhalb des Pakets lassen.
+If it is not a driver we maintain: `weewx-evo driver install`, and leave it
+outside the package.
 
 → [Drivers](Drivers)
 
-## Einen Feed hinzufügen
+## Adding a feed
 
-Ein Verzeichnis unter `feeds/<name>/` mit einer `produce(archive, into)` und
-einer `options()`. Assets — Templates, Stylesheets, ein JS-Bundle — liegen
-**daneben**, nicht in einem gemeinsamen Haufen.
+A directory under `feeds/<name>/` with a `produce(archive, into)` and an
+`options()`. Assets — templates, stylesheets, a JS bundle — sit **next to it**,
+not in a shared heap.
 
 → [Feeds](Feeds)
 
-## Was ein Test hier wert ist
+## What a test is worth here
 
-Die Tests, die etwas gefunden haben, prüfen alle dasselbe Muster: **eine
-Annahme, die im Browser nie auffällt.**
+The tests that found something all check the same pattern: **an assumption that
+never shows up in a browser.**
 
-Wer etwas hinzufügt, sucht diese Sorte Fall — nicht den, der ohnehin auffiele.
+Anyone adding one should look for that sort of case — not the one that would be
+noticed anyway.
 
-Alle Tests laufen ohne Netz und ohne Zustand außerhalb eines
-Temp-Verzeichnisses. → [Testing](Testing)
+All tests run without a network and without state outside a temp directory.
+→ [Testing](Testing)
 
-## Dev-Tooling
+## Dev tooling
 
-**Immer WSL Ubuntu**, nie Windows-Python:
+**Always WSL Ubuntu**, never Windows Python:
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
   cd /mnt/d/Git/weewx-evo && python -m pytest tests/ecowitt -q'
 ```
 
-Die Default-WSL-Distro ist `docker-desktop` und hat kein Python — deshalb immer
-explizit `-d Ubuntu`. Venvs liegen unter `~/venvs/<project>` innerhalb WSL, nicht
-im Repo auf `/mnt/d` (NTFS-Long-Path-Bug).
+The default WSL distro is `docker-desktop` and has no Python — hence always an
+explicit `-d Ubuntu`. Venvs live under `~/venvs/<project>` inside WSL, not in the
+repo on `/mnt/d` (NTFS long-path bug).
 
 ```bash
 ruff check src tools tests    # line-length 100
 ```
 
-## Dieses Wiki pflegen
+## Maintaining this wiki
 
-Jede Seite deklariert am Ende, welche Dateien sie abdeckt:
+Every page declares at the end which files it covers:
 
 ```markdown
 <!-- covers
@@ -181,29 +179,28 @@ src/weewx_evo/obstypes.py
 -->
 ```
 
-Daraus baut `tools/docsindex.py` den [Index](Index) und den
-[API-Index](API-Index) — und markiert die Seiten, deren Code sich seit der
-letzten Überarbeitung geändert hat.
+From that, `tools/docsindex.py` builds the [Index](Index) and the
+[API-Index](API-Index) — and marks the pages whose code has changed since the
+last revision.
 
 ```bash
-python tools/docsindex.py            # Index und API-Index neu schreiben
-python tools/docsindex.py --check    # Exit 1, wenn eine Seite hinterherhinkt
+python tools/docsindex.py            # rewrite Index and API-Index
+python tools/docsindex.py --check    # exit 1 if a page is behind
 ```
 
-Wer Code ändert, sieht mit `--check`, welche Seite fällig ist. Wer eine Seite
-überarbeitet, lässt danach `docsindex.py` laufen, damit die Markierung
-verschwindet.
+Anyone changing code sees with `--check` which page is due. Anyone revising a
+page runs `docsindex.py` afterwards, so that the mark goes away.
 
-**Neue Datei angelegt?** `--check` meldet sie als nicht abgedeckt. Entweder in
-den `covers`-Block einer bestehenden Seite oder in eine neue Seite.
+**Created a new file?** `--check` reports it as uncovered. Either into the
+`covers` block of an existing page, or into a new page.
 
-## GitHub-Kommunikation
+## GitHub communication
 
-Für Issue-Bodies, PR-Beschreibungen, Review-Antworten und Commit-Messages gilt
-der Schreibstil aus dem Skill `github-writing`: kurze Sätze, keine Em-Dashes,
-nicht defensiv, keine erfundenen Fragen.
+For issue bodies, PR descriptions, review replies and commit messages, the
+writing style from the `github-writing` skill applies: short sentences, no em
+dashes, not defensive, no invented questions.
 
-Sag, was ist. Frag, was du wissen willst. Hör auf.
+Say what is. Ask what you want to know. Stop.
 
 <!-- covers
 CLAUDE.md

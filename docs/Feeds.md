@@ -2,39 +2,37 @@
 
 `feeds/`, `feedrunner.py`.
 
-Ein Treiber bringt Messwerte herein. Ein **Feed** macht etwas daraus — eine CSV,
-ein JSON-Dokument, ein Diagramm, eine ganze Webseite, einen Monatsbericht. Ein
-**[Export](Exports)** nimmt, was ein Feed erzeugt hat, und bringt es woandershin.
+A driver brings readings in. A **feed** makes something out of them — a CSV, a
+JSON document, a plot, a whole website, a monthly report. An
+**[export](Exports)** takes what a feed produced and brings it somewhere else.
 
 ```
-feed   → ein Verzeichnis voller Dateien
-export → dieses Verzeichnis, irgendwohin geschickt
+feed   → a directory full of files
+export → that directory, sent somewhere
 ```
 
-**Das Verzeichnis ist die ganze Schnittstelle.** Genauso wie die Live-Tabelle
-zwischen Listener und Archiver. Ein Feed, drei Exports. Oder drei Feeds in ein
-Verzeichnis und ein Export. Keiner weiß vom anderen.
+**The directory is the entire interface.** Exactly like the live table between
+listener and archiver. One feed, three exports. Or three feeds into one
+directory and one export. Neither knows about the other.
 
-Bei WeeWX rendert eine „Skin" Dateien *und* der FTP-Upload wird im selben
-Abschnitt konfiguriert. Eine Seite für zwei Ziele heißt dort: den Renderer
-zweimal laufen lassen.
+In WeeWX a "skin" renders files *and* the FTP upload is configured in the same
+section. One page for two destinations means running the renderer twice.
 
-## Ein Ordner je Feed
+## One folder per feed
 
-Wie Treiber unter `ingest/plugins/`:
+Like drivers under `ingest/plugins/`:
 
 ```
 feeds/
-  jsongenerator/     die Zeitreihen, auf denen alles andere steht
-  diagnostic/        zeichnet, was tatsächlich auf der Platte liegt
-    vendor/          eigenes uPlot, MIT, 51 KB
+  jsongenerator/     the series everything else stands on
+  diagnostic/        draws what is actually on disk
+    vendor/          its own uPlot, MIT, 51 KB
 ```
 
-Ein Feed, der Templates, Stylesheets oder ein JS-Bundle bekommt, hält die neben
-seinem Code statt in einem gemeinsamen Haufen; ein gelöschter Feed nimmt seine
-Assets mit.
+A feed that gains templates, stylesheets or a JS bundle keeps them next to its
+code rather than in a shared heap; a deleted feed takes its assets with it.
 
-## Die Schnittstelle
+## The interface
 
 ```python
 class Feed(Protocol):
@@ -44,7 +42,7 @@ class Feed(Protocol):
         ...
 
     @staticmethod
-    def options():   # die Admin-Seite baut daraus ein Formular
+    def options():   # the admin page builds a form out of this
         ...
 ```
 
@@ -56,108 +54,105 @@ class Produced:
     note: str
 ```
 
-**Die Dateiliste zählt für die Exports.** Ein Export, der weiß, welche Dateien
-sich geändert haben, schickt die; einer, der es nicht weiß, schickt jedes Mal
-alles. Über eine Mobilfunkverbindung ist das der Unterschied.
+**The file list is what counts for the exports.** An export that knows which
+files changed sends those; one that does not sends everything every time. Over a
+mobile connection that is the difference.
 
-`archive` ist eine **nur lesende** Sicht: ein Feed berichtet Geschichte, er
-schreibt sie nicht. Was er wirft, wird geloggt und hält nichts auf.
+`archive` is a **read-only** view: a feed reports history, it does not write it.
+Whatever it raises is logged and holds nothing up.
 
-## Die Registry
+## The registry
 
 | | |
 |---|---|
 | `TRIGGERS` | `("record", "packet", "schedule")` |
 | `ENTRY_POINT_GROUP` | `"weewx_evo.feeds"` |
-| `BUNDLED` | Was mitgeliefert wird, als `(name, modul, klasse, beschreibung)` |
-| `DESCRIPTIONS` | Was jeder in ein paar Worten ist |
-| `load()` | Die Feeds hereinholen |
-| `names()` | Die Feeds, die es gibt |
+| `BUNDLED` | What ships with it, as `(name, module, class, description)` |
+| `DESCRIPTIONS` | What each one is, in a few words |
+| `load()` | Bring the feeds in |
+| `names()` | The feeds there are |
 | `get(name)` | |
-| `describe(name)` | Eine Zeile über einen Feed, für ein Formular, das ihn anbietet |
+| `describe(name)` | One line about a feed, for a form that offers it |
 | `register(name, feed, description="")` | |
 
-`names()` ist eine **Funktion**, damit die Auswahlliste eines Exports sich von
-selbst füllt, sobald ein Feed erscheint. Der Export muss es nicht erfahren, und
-niemand muss etwas neu starten.
+`names()` is a **function**, so that an export's choice list fills itself as soon
+as a feed appears. The export does not have to be told, and nobody has to
+restart anything.
 
-`BUNDLED` ist **hier benannt**, statt durch Ablaufen des Verzeichnisses gefunden
-zu werden: ein halbfertiger Feed im Ordner soll nicht in einem Formular
-auftauchen. Das ist der Unterschied zu den Treibern, wo jedes Unterverzeichnis
-probiert wird.
+`BUNDLED` is **named here** rather than found by walking the directory: a
+half-finished feed in the folder should not turn up in a form. That is the
+difference from the drivers, where every subdirectory is tried.
 
-`load()` meldet einen kaputten Feed, wird aber **nie fatal** — dieselbe
-Anordnung wie bei den Treibern. Eine Station, deren Diagnoseseite kaputt ist,
-soll ihre Zeitreihen weiter schreiben.
+`load()` reports a broken feed but is **never fatal** — the same arrangement as
+with the drivers. A station whose diagnostic page is broken should carry on
+writing its series.
 
-`DESCRIPTIONS` existiert für die Auswahlliste: sie wäre sonst eine Liste von
-Namen, und `"json"` sagt nicht, was drin ist.
+`DESCRIPTIONS` exists for the choice list: it would otherwise be a list of
+names, and `"json"` does not say what is in it.
 
-## Der Feed-Runner
+## The feed runner
 
-`feedrunner.py`. Fährt die Feeds der Reihe nach auf einem **eigenen Thread**.
+`feedrunner.py`. Runs the feeds in order on a **thread of its own**.
 
-Hundert Diagramme sind eine knappe Sekunde Lesen und Schreiben. Dort erledigt,
-wo der Archiver läuft, ist das eine Sekunde, in der er nicht archiviert — jedes
-Intervall, für immer.
+A hundred plots are the best part of a second of reading and writing. Done where
+the archiver runs, that is a second in which it is not archiving — every
+interval, forever.
 
-Also dieselbe Anordnung wie bei den Exports: **der Archiver setzt ein Flag und
-kehrt zurück**, und die Arbeit passiert hier.
+So the same arrangement as with the exports: **the archiver sets a flag and
+returns**, and the work happens here.
 
-**Ein Thread für alle Feeds, nicht einer je Feed.** Sie sind geordnet: die
-Diagnoseseite zeichnet, was der JSON-Feed geschrieben hat.
+**One thread for all feeds, not one per feed.** They are ordered: the diagnostic
+page draws what the JSON feed wrote.
 
 ```python
 runner = Runner(feeds, archive_path)
 runner.start()
-runner.record_written()    # vom Archiver, kehrt sofort zurück
+runner.record_written()    # from the archiver, returns immediately
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `record_written()` | Setzt ein Flag und kehrt zurück |
-| `run_once()` | Jeden Feed, in Reihenfolge. Gibt zurück, was passierte |
-| `status()` | Für eine Statusseite |
+| `record_written()` | Sets a flag and returns |
+| `run_once()` | Every feed, in order. Returns what happened |
+| `status()` | For a status page |
 | `start()`, `stop()` | |
 
-`SETTLE = 2.0` — zwei Sekunden nach dem Flag, damit mehrere Sätze in schneller
-Folge einen Lauf ergeben und nicht drei.
+`SETTLE = 2.0` — two seconds after the flag, so that several records in quick
+succession make one run and not three.
 
-Nach dem Lauf ruft er `exports.runner.Runner.feed_produced(name, files)`. Das
-ist der Auslöser `feed`. → [Exports](Exports)
+After the run it calls `exports.runner.Runner.feed_produced(name, files)`. That
+is the `feed` trigger. → [Exports](Exports)
 
-Die Reihenfolge kommt aus `cli.build_feeds()`: JSON zuerst, weil die
-Diagnoseseite zeichnet, was er geschrieben hat. **Das ist die einzige
-Abhängigkeit zwischen zwei Feeds überhaupt**, und sie steht dort statt in einem
-der beiden.
+The order comes from `cli.build_feeds()`: JSON first, because the diagnostic
+page draws what it wrote. **That is the only dependency between two feeds at
+all**, and it sits there rather than in either of them.
 
-## Der JSON-Feed
+## The JSON feed
 
-`feeds/jsongenerator/`. Der Feed, der mitgeliefert wird und nicht entfernbar
-ist, weil alles andere darauf steht.
+`feeds/jsongenerator/`. The feed that ships with it and cannot be removed,
+because everything else stands on it.
 
-Ein Diagramm im Browser, eine aus einem Template gerenderte Seite, ein Export
-auf einen statischen Host, ein Bildgenerator, wenn je einer geschrieben wird —
-alle wollen dasselbe: einen Messwert über eine Spanne in einer Auflösung, mit
-seiner Einheit und seiner Beschriftung.
+A plot in a browser, a page rendered from a template, an export to a static
+host, an image generator if one is ever written — they all want the same thing:
+one reading over a span at a resolution, with its unit and its label.
 
-> Diese Neuerfindung ist nicht hypothetisch. Jede JavaScript-Skin für WeeWX —
-> Belchertown, wdc, jas und der Rest — trägt ihre eigene Kopie derselben Idee,
-> ihr eigenes Diagramm-Konfigurationsformat und ihre eigenen Fehler darin. Keine
-> teilt etwas. Das hier existiert, damit eine Skin eine Skin sein kann.
+> This reinvention is not hypothetical. Every JavaScript skin for WeeWX —
+> Belchertown, wdc, jas and the rest — carries its own copy of the same idea,
+> its own plot configuration format and its own bugs in it. None of them shares
+> anything. This exists so that a skin can be a skin.
 
-### Was es schreibt
+### What it writes
 
 ```
-<ziel>/daytempdew.json
-<ziel>/weekrain.json
-<ziel>/index.json          das Manifest
+<target>/daytempdew.json
+<target>/weekrain.json
+<target>/index.json          the manifest
 ```
 
-Das Manifest sagt, was es gibt, damit ein Client seine Seite anlegen kann, bevor
-er etwas holt — und nie nach einem Sensor fragt, den diese Station nicht hat.
+The manifest says what there is, so that a client can lay out its page before
+fetching anything — and never asks for a sensor this station does not have.
 
-### Die Form
+### The shape
 
 ```json
 {
@@ -170,65 +165,63 @@ er etwas holt — und nie nach einem Sensor fragt, den diese Station nicht hat.
   "yscale": [10, 25, 5],
   "daynight": {"first": "night", "transitions": [], "twilight": []},
   "series": [
-    {"obs_type": "outTemp", "label": "Außentemperatur",
+    {"obs_type": "outTemp", "label": "Outside temperature",
      "plot_type": "line", "color": "#4282b4",
      "time": [], "values": []}
   ]
 }
 ```
 
-`format` steht in jeder Datei, damit ein Client weiß, ob er sie versteht.
-Erhöht **nur**, wenn sich die Form so ändert, dass ein Leser bricht — nicht,
-wenn ein Schlüssel dazukommt.
+`format` is in every file so that a client knows whether it understands it.
+Raised **only** when the shape changes in a way that breaks a reader — not when
+a key is added.
 
-`start`/`stop` sind, was die Daten **abdecken**, `asked` ist, was angefragt
-wurde. Der Unterschied: ein Eimer wird gezeichnet als das, was er abdeckt, und
-der letzte eines Tagesdiagramms deckt den ganzen heutigen Tag ab — er endet also
-an morgigem Mitternacht, nach dem Moment, in dem die Datei geschrieben wurde.
-Ohne das fällt der letzte Balken vom Rand des Diagramms.
+`start`/`stop` are what the data **covers**, `asked` is what was requested. The
+difference: a bucket is drawn as what it covers, and the last one of a day plot
+covers the whole of today — so it ends at tomorrow's midnight, after the moment
+the file was written. Without that, the last bar falls off the edge of the plot.
 
-### Ein Diagramm, eine Einheit
+### One plot, one unit
 
-Die erste Linie, die eine hat, entscheidet. WeeWX weigert sich rundheraus, zwei
-Einheiten zusammen zu zeichnen. Hier wird die erste gemeldet und der Rest bleibt
-**an den Linien**, damit ein Client die Uneinigkeit wenigstens sehen kann,
-statt gesagt zu bekommen, das Diagramm sei unmöglich.
+The first line that has one decides. WeeWX flatly refuses to draw two units
+together. Here the first is reported and the rest stays **on the lines**, so
+that a client can at least see the disagreement rather than being told the plot
+is impossible.
 
-### Was weggelassen wird
+### What gets left out
 
 | | |
 |---|---|
-| Ein Plot, in dem jede Linie leer zurückkam | Wird gar nicht geschrieben. Der ausgelieferte Satz deckt Sensoren ab, die die meisten Stationen nicht haben, und hundert Dateien voller Nulls helfen niemandem |
-| Punkte, die nichts tragen | `_drop_empty()`. Ein Sensor, der alle zehn Minuten meldet, füllt einen Archivsatz von zehn, der Rest hält `null` für ihn. So gesendet zeichnet ein Client eine Linie, die zur Hälfte kaputt aussieht |
-| Echte Lücken | Bleiben sichtbar. `GAP_FACTOR = 3.0`: dreimal der übliche Abstand ist eine Lücke, nicht der Rhythmus. **Aus den Messwerten selbst beurteilt**, weil zehn Minuten für eine Station, die alle acht Sekunden meldet, ein Ausfall sind und für eine, die alle zehn Minuten meldet, der Normalfall |
+| A plot in which every line came back empty | Is not written at all. The shipped set covers sensors most stations do not have, and a hundred files full of nulls help nobody |
+| Points that carry nothing | `_drop_empty()`. A sensor reporting every ten minutes fills one archive record in ten, and the rest hold `null` for it. Sent like that, a client draws a line that looks half broken |
+| Real gaps | Stay visible. `GAP_FACTOR = 3.0`: three times the usual spacing is a gap, not the rhythm. **Judged from the readings themselves**, because ten minutes is an outage for a station reporting every eight seconds and the normal case for one reporting every ten minutes |
 
-`gap_fraction` aus der Plot-Definition — WeeWX' eigenes festes Maß — schlägt das
-weiterhin, aber **nur auf einer unaggregierten Reihe**. Auf einer aggregierten
-*ist* der Eimer der Abstand, und ein Bruchteil der Diagrammbreite sagt dort
-nichts.
-| Sensoren, die es nie gab | `_exists()`. Der Unterschied zwischen einem Messwert, der heute fehlt, und einem, den es nie gab. WeeWX' `skip_if_empty = year` sagt genau das |
+`gap_fraction` from the plot definition — WeeWX's own fixed measure — still beats
+that, but **only on an unaggregated series**. On an aggregated one the bucket
+*is* the spacing, and a fraction of the plot width says nothing there.
+| Sensors that never existed | `_exists()`. The difference between a reading that is missing today and one that never existed. WeeWX's `skip_if_empty = year` says exactly that |
 
-### `_same()` — nicht neu schreiben, was gleich ist
+### `_same()` — do not rewrite what is the same
 
-Ein Jahr Tagesmittel sagt um zehn nach dasselbe wie um zehn. Verglichen wird
-**alles außer dem Zeitstempel**. Das zählt, wenn ein Export alles Geänderte
-schickt.
+A year of daily means says the same thing at ten past as it did at ten.
+**Everything except the timestamp** is compared. That counts when an export
+sends everything that changed.
 
-Abschaltbar über `feeds.json.rewrite_unchanged`.
+Can be turned off with `feeds.json.rewrite_unchanged`.
 
-### `_write()` — daneben und hineinbewegt
+### `_write()` — alongside and moved into place
 
-Ein Client, der abfragt, während geschrieben wird, soll die alte Datei bekommen,
-nicht die halbe neue.
+A client fetching while a write is in progress should get the old file, not half
+the new one.
 
-### Vektoren
+### Vectors
 
-`_components(magnitudes, directions, places)` zerlegt eine Vektorreihe in „wie
-weit östlich" und „wie weit nördlich". Ein Diagramm, das Pfeile zeichnet,
-skaliert und verschiebt die Komponenten; sie mitzugeben spart, sie am anderen
-Ende aus Betrag und Richtung wieder aufzubauen — und spart, es falsch zu machen.
+`_components(magnitudes, directions, places)` breaks a vector series into "how
+far east" and "how far north". A plot drawing arrows scales and shifts the
+components; sending them along saves rebuilding them from magnitude and
+direction at the far end — and saves getting it wrong.
 
-### Einstellungen
+### Settings
 
 → [Settings-Reference](Settings-Reference#feed-json)
 
@@ -236,46 +229,43 @@ Ende aus Betrag und Richtung wieder aufzubauen — und spart, es falsch zu mache
 weewx-evo plots run --into data/public_html
 ```
 
-## Der Diagnose-Feed
+## The diagnostic feed
 
-`feeds/diagnostic/`. **Bewusst dumm.**
+`feeds/diagnostic/`. **Deliberately stupid.**
 
-Er liest die Plot-Definitionen nicht, weiß nicht, wie ein Diagramm aussehen
-soll, und hat nichts zu konfigurieren. Er läuft ein Verzeichnis ab, nimmt jede
-JSON-Datei, die eine Reihe enthält, zeichnet sie, und listet alles, was falsch
-aussieht.
+It does not read the plot definitions, does not know what a plot is supposed to
+look like, and has nothing to configure. It walks a directory, takes every JSON
+file containing a series, draws it, and lists everything that looks wrong.
 
-**Das ist der ganze Punkt.** Jeder andere Feed rendert, was er *meinte*. Dieser
-rendert, was **tatsächlich auf der Platte liegt** — und beantwortet damit die
-Frage, die sonst einen Nachmittag kostet: *liegt es an den Daten oder am
-Template?*
+**That is the whole point.** Every other feed renders what it *meant*. This one
+renders what is **actually on disk** — and thereby answers the question that
+otherwise costs an afternoon: *is it the data or the template?*
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `read()` | Jede JSON-Datei im Quellverzeichnis, untersucht |
-| `_examine(entry, payload)` | Herausziehen, was zeichenbar ist, und notieren, was nicht |
-| `render(found, now)` | Die Seite |
-| `_thinned(charts)` | Dieselben Diagramme, heruntergesampelt auf etwas, das ein Browser zeichnen kann |
+| `read()` | Every JSON file in the source directory, examined |
+| `_examine(entry, payload)` | Pull out what is drawable, and note what is not |
+| `render(found, now)` | The page |
+| `_thinned(charts)` | The same plots, downsampled to something a browser can draw |
 
-`draw_limit = 400` Punkte je Reihe. **Die Daten in der Seite bleiben ganz** —
-nur das Gezeichnete wird ausgedünnt. Hunderttausend Punkte sind so oder so ein
-schwarzes Rechteck.
+`draw_limit = 400` points per series. **The data in the page stays whole** —
+only what is drawn is thinned. A hundred thousand points are a black rectangle
+either way.
 
-`BIG = 2_000_000` — ab dieser Dateigröße wird gewarnt.
+`BIG = 2_000_000` — from that file size on, it warns.
 
-Das uPlot in `vendor/` (MIT, 51 KB) liegt beim Feed, nicht in einem gemeinsamen
-Haufen: eine Diagnoseseite, die ein CDN braucht, funktioniert genau dann nicht,
-wenn man sie braucht.
+The uPlot in `vendor/` (MIT, 51 KB) sits with the feed, not in a shared heap: a
+diagnostic page that needs a CDN fails exactly when you need it.
 
-### Einstellungen
+### Settings
 
 | Name | Default | |
 |---|---|---|
-| `feeds.diagnostic.enabled` | `true` | Eine einzelne, in sich geschlossene HTML-Datei |
-| `feeds.diagnostic.source` | `json` | Welches Verzeichnis gezeichnet wird |
-| `feeds.diagnostic.points` | `400` (50–20000) | Punkte je Reihe im Diagramm |
+| `feeds.diagnostic.enabled` | `true` | A single, self-contained HTML file |
+| `feeds.diagnostic.source` | `json` | Which directory gets drawn |
+| `feeds.diagnostic.points` | `400` (50–20000) | Points per series in the plot |
 
-## Einen Feed schreiben
+## Writing a feed
 
 ```python
 from pathlib import Path
@@ -295,9 +285,8 @@ class CsvFeed:
         return [...]
 ```
 
-Registrieren über `feeds.register(name, feed, description)` oder als Entry Point
-unter `weewx_evo.feeds`. Ein Feed, den wir pflegen, kommt zusätzlich in
-`BUNDLED`.
+Register with `feeds.register(name, feed, description)` or as an entry point
+under `weewx_evo.feeds`. A feed we maintain additionally goes into `BUNDLED`.
 
 <!-- covers
 src/weewx_evo/feeds/__init__.py

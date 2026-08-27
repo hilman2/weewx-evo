@@ -1,108 +1,105 @@
-# Die Einstellungsseite
+# The settings page
 
 `admin.py`, `adminplots.py`.
 
-Ein Formular, gebaut aus dem, was Einstellungen deklariert: der Kern, jeder
-Treiber, jeder Feed, jeder Export.
+A form, built out of whatever declares settings: the core, every driver, every
+feed, every export.
 
-**Nichts hier weiß, was ein Ecowitt ist oder was ein Archivintervall bedeutet.**
-Es rendert `Option`-Objekte und schreibt zurück, was herauskommt. Das ist der
-ganze Entwurf: ein Treiber, der eine Einstellung dazubekommt, bekommt ein Feld,
-und diese Datei ändert sich nicht. → [Configuration](Configuration)
+**Nothing here knows what an Ecowitt is or what an archive interval means.** It
+renders `Option` objects and writes back what comes out. That is the whole
+design: a driver that gains a setting gains a field, and this file does not
+change. → [Configuration](Configuration)
 
-## Starten
+## Starting it
 
 ```bash
-weewx-evo config set --config evo.toml admin.token <ein-anderes-token>
+weewx-evo config set --config evo.toml admin.token <a-different-token>
 weewx-evo admin --config evo.toml
 ```
 
-Dann `http://<host>:8080/<admin-token>/`.
+Then `http://<host>:8080/<admin-token>/`.
 
-Eigener Port, eigenes Token, absichtlich: ein Upload kann schlimmstenfalls einen
-falschen Messwert schreiben, diese Seite kann das Archiv auf eine andere Datei
-zeigen lassen. **Gleiches Token für beides wird verweigert.**
-→ [Security](Security)
+Its own port, its own token, deliberately: an upload can at worst write a wrong
+reading, this page can point the archive at a different file. **The same token
+for both is refused.** → [Security](Security)
 
-Von auswärts erreichen, ohne sie zu öffnen:
+Reaching it from elsewhere without opening it up:
 
 ```bash
-ssh -L 8080:localhost:8080 die-station
+ssh -L 8080:localhost:8080 the-station
 ```
 
-## Die Routen
+## The routes
 
 | | |
 |---|---|
-| `GET /<token>/` | Die erste Seite |
-| `GET /<token>/<schema>` | Ein Abschnitt: `core`, `drivers.ecowitt`, `feeds.json`, `export:<name>` |
-| `GET /<token>/plot:<name>` | Ein Diagramm |
-| `GET /<token>/new-plot` | Diagramm anlegen |
-| `GET /<token>/import-plots` | Aus einer WeeWX-Skin importieren |
-| `GET /<token>/new-export` | Export anlegen |
-| `GET /<token>/schema.json` | Die ganze Deklaration als JSON |
-| `POST /<token>/<schema>` | Speichern |
-| `POST /<token>/<name>/test` | Ein Export-Ziel probieren |
-| `POST /<token>/<name>/remove` | Löschen |
+| `GET /<token>/` | The first page |
+| `GET /<token>/<schema>` | A section: `core`, `drivers.ecowitt`, `feeds.json`, `export:<name>` |
+| `GET /<token>/plot:<name>` | One plot |
+| `GET /<token>/new-plot` | Create a plot |
+| `GET /<token>/import-plots` | Import from a WeeWX skin |
+| `GET /<token>/new-export` | Create an export |
+| `GET /<token>/schema.json` | The whole declaration as JSON |
+| `POST /<token>/<schema>` | Save |
+| `POST /<token>/<name>/test` | Try an export destination |
+| `POST /<token>/<name>/remove` | Delete |
 
-Nach jedem erfolgreichen Speichern wird **umgeleitet**, damit ein Neuladen nicht
-noch einmal speichert.
+After every successful save it **redirects**, so that a reload does not save
+again.
 
 ## `Admin`
 
-Was die Seiten tun, ohne das HTTP.
+What the pages do, minus the HTTP.
 
 ```python
 admin = Admin(path, schemas, token, read_only=False,
               access=PRIVATE_ONLY, limits=limits)
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `schemas()` | Alles Konfigurierbare, das es gibt |
-| `refresh()` | Die Liste neu bauen. Nach allem, was hinzugefügt oder entfernt wurde |
+| `schemas()` | Everything configurable that exists |
+| `refresh()` | Rebuild the list. After anything added or removed |
 | `config()`, `values(schema)` | |
-| `save(schema, form)` | Prüfen und schreiben. Gibt zurück, was falsch war |
+| `save(schema, form)` | Check and write. Returns what was wrong |
 | `add_export(name, kind)` | |
-| `remove_export(name)` | Aus der Konfiguration löschen. **Nichts am anderen Ende** |
-| `test_export(name)` | Ein Ziel probieren und sagen, was passierte |
-| `columns()` | Die Messwerte, für die das Archiv eine Spalte hat |
+| `remove_export(name)` | Delete from the configuration. **Nothing at the far end** |
+| `test_export(name)` | Try a destination and say what happened |
+| `columns()` | The readings the archive has a column for |
 
-### Alles wird geprüft, bevor irgendetwas geschrieben wird
+### Everything is checked before anything is written
 
-`save()` sammelt **alle** Fehler und schreibt erst danach. Ein Formular, das die
-Hälfte anwendet, die es verstanden hat, und den Rest meldet, hinterlässt eine
-Konfiguration, die niemand angefordert hat.
+`save()` collects **all** the errors and only writes afterwards. A form that
+applies the half it understood and reports the rest leaves behind a
+configuration nobody asked for.
 
-### `columns()` fragt die Datenbank
+### `columns()` asks the database
 
-Nicht ein Schema. Eine Station, deren Treiber eigene Spalten angelegt hat, soll
-sie zeichnen können, und nichts hier weiß etwas darüber.
+Not a schema. A station whose driver created columns of its own should be able
+to plot them, and nothing here knows anything about that.
 
 ### `MARKER = "__present__"`
 
-Ein verstecktes Feld, das mitgeschickt wird, damit ein **Teil-POST** erkennbar
-ist. Ohne das setzt ein Formular, das nur eine Gruppe schickt, alles andere auf
-den Default zurück — im Browser fällt das nie auf, und `tools/adminpage.py`
-prüft genau das.
+A hidden field sent along so that a **partial POST** can be recognised. Without
+it, a form sending only one group resets everything else to the default — in a
+browser that never shows up, and `tools/adminpage.py` checks exactly that.
 
-`MAX_FORM = 1 << 18`. `NAME` erzwingt kleine Namen ohne Überraschungen:
+`MAX_FORM = 1 << 18`. `NAME` enforces small names with no surprises:
 `^[a-z][a-z0-9_-]{0,31}$`.
 
-### `_form(content_type, body)` — auch mit Datei
+### `_form(content_type, body)` — with a file too
 
-Gewöhnliche Einstellungen kommen urlencodiert. Der [Plot-Importer](Plots)
-braucht zusätzlich eine **Datei**, also multipart — und `cgi.FieldStorage` wurde
-in Python 3.13 entfernt. Der E-Mail-Parser macht dieselbe Arbeit und ist nicht
-weggegangen.
+Ordinary settings arrive urlencoded. The [plot importer](Plots) additionally
+needs a **file**, so multipart — and `cgi.FieldStorage` was removed in Python
+3.13. The email parser does the same job and has not gone away.
 
-Eine Datei kommt als ihr Text unter ihrem eigenen Feldnamen zurück. Nichts hier
-behandelt etwas anderes als Text, und eine `skin.conf` ist Text.
+A file comes back as its text under its own field name. Nothing here handles
+anything other than text, and a `skin.conf` is text.
 
-**Ein leer gelassenes Datei-Feld postet trotzdem**, ohne Dateinamen und ohne
-Inhalt. Es darf das Feld nicht schlagen, das jemand tatsächlich ausgefüllt hat.
+**A file field left empty still posts**, with no filename and no content. It
+must not beat the field somebody actually filled in.
 
-## Wie ein Feld entsteht
+## How a field comes about
 
 ```python
 def field(option: Option, value: Any, error: str = "") -> str
@@ -110,50 +107,49 @@ def group_html(group: Group, values, errors) -> str
 def page(admin, active, errors=None, message="", form=None) -> bytes
 ```
 
-`kind` entscheidet:
+`kind` decides:
 
-| `kind` | Feld |
+| `kind` | Field |
 |---|---|
 | `text`, `path` | `<input type="text">` |
-| `secret` | `<input type="password">`, **nie zurückgerendert** |
-| `int`, `float` | `<input type="number">` mit `min`/`max` |
+| `secret` | `<input type="password">`, **never rendered back** |
+| `int`, `float` | `<input type="number">` with `min`/`max` |
 | `bool` | Checkbox |
-| `choice` | `<select>`, gefüllt aus `choices` + `choices_from()` |
-| `duration` | Zahl plus Einheit (`split_duration`) |
-| `list` | Kommagetrennt |
+| `choice` | `<select>`, filled from `choices` + `choices_from()` |
+| `duration` | A number plus a unit (`split_duration`) |
+| `list` | Comma-separated |
 
-`suggestions` wird ein `<datalist>`: die drei üblichen Antworten sind ein Klick
-weit weg, eine ungewöhnliche kann getippt werden.
+`suggestions` becomes a `<datalist>`: the three usual answers are one click
+away, an unusual one can be typed.
 
-`advanced` liegt hinter einem Schalter — **versteckt, nicht weggelassen**. Eine
-weggelassene Einstellung ist eine, die man durch Quelltextlesen findet, was
-schlimmer ist als eine lange Seite.
+`advanced` sits behind a toggle — **hidden, not left out**. A setting left out is
+one you find by reading source, which is worse than a long page.
 
-`restart` wird markiert, damit klar ist, was ein Speichern nicht sofort bewirkt.
+`restart` is marked, so that it is clear what saving does not take effect on
+straight away.
 
-## Ein Export anlegen
+## Creating an export
 
-`new_export_page()` fragt **zwei Felder**: Name und Art. Alles andere wird auf
-der Seite ausgefüllt, die danach erscheint.
+`new_export_page()` asks for **two fields**: name and kind. Everything else is
+filled in on the page that appears next.
 
-Nach einem Host und einem Passwort zu fragen, bevor klar ist, wovon geredet
-wird, ist ein Formular, das jemand ausfüllt, ohne zu wissen, was er ausfüllt.
+Asking for a host and a password before it is clear what is being talked about
+is a form somebody fills in without knowing what they are filling in.
 
-`export_kinds()` wird **gefragt, nicht aufgezählt**.
+`export_kinds()` is **asked, not enumerated**.
 
-## Die Diagramm-Seiten
+## The plot pages
 
-`adminplots.py`. Der einzige handgeschriebene Teil.
+`adminplots.py`. The only hand-written part.
 
-Ein Plot passt nicht in den Formulargenerator: eine Einstellung ist **ein**
-benannter Wert, ein Plot ist ein Satz mit einer Liste von Sätzen darin, und es
-gibt hundert davon.
+A plot does not fit the form generator: a setting is **one** named value, a plot
+is a set with a list of sets inside it, and there are a hundred of them.
 
-Was diese Seiten besser können müssen als ein Texteditor, sonst hat es keinen
-Sinn: sehen, welche Messwerte die Datenbank überhaupt hat, ohne nachzuschlagen —
-und einen Satz aus einer WeeWX-Skin herüberholen, ohne ihn abzutippen.
+What these pages have to do better than a text editor, or there is no point:
+seeing which readings the database actually has, without looking it up — and
+bringing a set over from a WeeWX skin without typing it out.
 
-→ [Plots](Plots#die-admin-seiten)
+→ [Plots](Plots#the-admin-pages)
 
 ## `schema.json`
 
@@ -161,31 +157,30 @@ und einen Satz aus einer WeeWX-Skin herüberholen, ohne ihn abzutippen.
 GET /<token>/schema.json
 ```
 
-Die ganze Deklaration als JSON. Eine **zweite Schnittstelle zu derselben
-Deklaration** — für einen Installer, einen Test oder eine Admin-Seite, die
-jemandem besser gefällt als diese.
+The whole declaration as JSON. A **second interface to the same declaration** —
+for an installer, a test, or an admin page somebody likes better than this one.
 
 ## `--read-only`
 
-Zeigt die Einstellungen und verweigert das Speichern. Für einen Blick auf eine
-Anlage, die man nicht anfassen will.
+Shows the settings and refuses to save. For a look at an installation you do not
+want to touch.
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/adminpage.py
 ```
 
-Rendert die Seite, speichert durch sie hindurch und bricht sie absichtlich. Was
-dabei wirklich geprüft wird, ist die Kette **Deklaration → Formular →
-Validierung → Datei**, für jede Art von Einstellung, die es gibt.
+Renders the page, saves through it and breaks it on purpose. What is really
+being checked is the chain **declaration → form → validation → file**, for every
+kind of setting there is.
 
-Nichts außerhalb eines Temp-Verzeichnisses wird angefasst.
+Nothing outside a temp directory is touched.
 
-Die Fälle, die etwas gefunden haben:
+The cases that found something:
 
-- Ein **Teil-POST**, der alles andere auf Default zurücksetzt.
-- Ein **Roundtrip**, bei dem `"5m"` als String zurückkommt statt als 300.
+- A **partial POST** resetting everything else to the default.
+- A **roundtrip** in which `"5m"` comes back as a string instead of 300.
 
 → [Testing](Testing)
 

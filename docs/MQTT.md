@@ -1,157 +1,149 @@
 # MQTT
 
-`mqtt.py` und `uploads/mqtt.py`. Ein MQTT-3.1.1-Client aus der
-Standardbibliothek, und der Upload, der ihn benutzt.
+`mqtt.py` and `uploads/mqtt.py`. An MQTT 3.1.1 client out of the standard
+library, and the upload that uses it.
 
-## Warum das existiert
+## Why this exists
 
-MQTT ist, wie eine moderne Skin lebendig wird. Belchertown, jas, weewx-wdc und
-Weather34 beziehen ihre Live-Updates alle von einem MQTT-Broker über
-Websockets. Ohne einen rendern diese Skins vollständig — und stehen dann still,
-bis jemand die Seite neu lädt.
+MQTT is how a modern skin comes alive. Belchertown, jas, weewx-wdc and Weather34
+all get their live updates from an MQTT broker over websockets. Without one
+those skins render completely — and then sit still until somebody reloads the
+page.
 
-Da der [Cheetah-Feed](Feeds) existiert, um genau diese Skins unverändert zu
-fahren, ist der Broker keine Zugabe.
+Since the [Cheetah feed](Feeds) exists in order to run exactly those skins
+unchanged, the broker is not an extra.
 
-## Warum selbst geschrieben
+## Why it is written here
 
-`paho-mqtt` ist die naheliegende Antwort und eine Abhängigkeit, und dieser Kern
-läuft auf der Standardbibliothek. Das ist keine Parole: es ist das, was
-`pip install weewx-evo` auf einem Raspberry Pi ohne Compiler und ohne Ausnahme
-in einer Netzwerk-Policy funktionieren lässt. Eine Bequemlichkeitsbibliothek
-ist nicht das, wofür man das ausgibt.
+`paho-mqtt` is the obvious answer and a dependency, and this core runs on the
+standard library. That is not a slogan: it is what makes `pip install weewx-evo`
+work on a Raspberry Pi with no compiler and with no exception in a network
+policy. A convenience library is not what you spend that on.
 
-Und der Handel ist kleiner, als er aussieht. MQTT 3.1.1 ist seit 2014
-eingefroren, das Drahtformat ist ein Byte-Layout statt einer Aushandlung, und
-was eine Wetterstation braucht, ist ein Bruchteil davon.
+And the trade is smaller than it looks. MQTT 3.1.1 has been frozen since 2014,
+the wire format is a byte layout rather than a negotiation, and what a weather
+station needs is a fraction of it.
 
-**Bewusst nicht drin:**
+**Deliberately not in it:**
 
-- **QoS 2.** Vier Pakete, um eine Temperatur genau einmal zuzustellen, die in
-  fünf Minuten überholt ist. QoS 1 ist, was jede Wetter-Skin benutzt, und
-  Dubletten sind harmlos, wenn die Nutzlast ihren eigenen Zeitstempel trägt.
-- **Session-Wiederaufnahme.** Jedes Mal eine saubere Sitzung. Was
-  wiederaufzunehmen wäre, steht im Archiv, und das ist der bessere Speicher.
-- **MQTT 5.** Nichts hier braucht seine Properties, und Broker sprechen 3.1.1
-  in jeder Installation, der eine Station begegnet.
+- **QoS 2.** Four packets to deliver a temperature exactly once that will be
+  superseded in five minutes. QoS 1 is what every weather skin uses, and
+  duplicates are harmless when the payload carries its own timestamp.
+- **Session resumption.** A clean session every time. What there would be to
+  resume is in the archive, and that is the better store.
+- **MQTT 5.** Nothing here needs its properties, and brokers speak 3.1.1 in
+  every installation a station will meet.
 
-Was ernst genommen wird, ist das **Wiederverbinden**. Eine
-Haushaltsverbindung bricht ab, ein Broker startet neu, ein Container wird
-umgeplant — und ein Client, der beim ersten davon aufgibt, ist schlimmer als
-gar kein MQTT: die Skin zeigt weiter, was zum Zeitpunkt des Abbruchs galt.
+What is taken seriously is **reconnecting**. A domestic connection drops, a
+broker restarts, a container gets rescheduled — and a client that gives up on
+the first of those is worse than no MQTT at all: the skin carries on showing
+whatever was true at the moment it dropped.
 
-## Zwei Fallen, beide vom Test gefunden
+## Two pitfalls, both found by the test
 
-**Ein QoS-1-Publish muss auf sein *eigenes* PUBACK warten.** Ein Client, der
-das nächste eintreffende Paket für die Bestätigung hält, besteht jeden
-einfachen Test — und bricht in dem Moment, in dem jemand zusätzlich
-abonniert, weil dann eingehende PUBLISH-Pakete dazwischenkommen. Der Testbroker
-schiebt deshalb absichtlich eines ein.
+**A QoS 1 publish has to wait for its *own* PUBACK.** A client that takes the
+next incoming packet for the acknowledgement passes every simple test — and
+breaks the moment somebody also subscribes, because incoming PUBLISH packets
+then get in between. The test broker therefore slips one in on purpose.
 
-**Bricht die Verbindung beim Lesen ab, merkt es nur das Lesen.** `_write` kann
-es nicht: in einen Socket zu senden, dessen Gegenstelle geschlossen hat,
-gelingt in den Kernel-Puffer und meldet nichts. Ohne das Aufräumen an der
-Lesestelle glaubt der Client, verbunden zu sein, jeder spätere Publish
-verschwindet, und das Log bleibt still.
+**If the connection drops during a read, only the read notices.** `_write`
+cannot: sending into a socket whose far end has closed succeeds into the kernel
+buffer and reports nothing. Without the cleanup at the reading end, the client
+believes it is connected, every later publish vanishes, and the log stays
+silent.
 
-## Die Topics gehören nicht uns
+## The topics are not ours
 
-Das Layout ist das von `matthewwall/weewx-mqtt`, denn dagegen sind diese Skins
-geschrieben, und das ist es, was acht Jahre Installationsanleitungen den Leuten
-zu konfigurieren sagen.
+The layout is that of `matthewwall/weewx-mqtt`, because that is what these skins
+are written against, and it is what eight years of installation instructions
+tell people to configure.
 
-Also übernommen statt verbessert:
+So it is adopted rather than improved:
 
-- Das Standard-Topic ist `weather`, und jede Messung geht nach
-  `weather/<name>`.
-- Namen tragen ein Einheiten-Suffix — `outTemp_C`, `windSpeed_mph` — aus einer
-  Reduktionstabelle, in der `degree_compass`, `percent` und `uv_index`
-  absichtlich nackt bleiben.
-- Derselbe Satz geht zusätzlich als ein JSON-Dokument nach `weather/loop`, weil
-  ein Browser mit einem Abonnement billiger ist als mit vierzig.
+- The default topic is `weather`, and every reading goes to `weather/<name>`.
+- Names carry a unit suffix — `outTemp_C`, `windSpeed_mph` — from a reduction
+  table in which `degree_compass`, `percent` and `uv_index` deliberately stay
+  bare.
+- The same record additionally goes as one JSON document to `weather/loop`,
+  because a browser with one subscription is cheaper than with forty.
 
-Beides gleichzeitig ist dort der Standard und hier auch. Eine Skin benutzt das
-eine oder das andere, und niemand muss herausfinden welches.
+Both at once is the default there and here too. A skin uses one or the other,
+and nobody has to work out which.
 
-**Retained, standardmäßig.** Eine retained Nachricht wird einem Browser in dem
-Moment übergeben, in dem er abonniert — die Seite zeigt also sofort die
-aktuellen Bedingungen statt eines leeren Dashboards bis zum nächsten
-Archivsatz. Ohne das sieht eine Skin nach jedem Laden bis zu fünf Minuten
-kaputt aus, und das ist die häufigste Beschwerde über MQTT-Wetter-Dashboards
-überhaupt.
+**Retained, by default.** A retained message is handed to a browser the moment
+it subscribes — so the page shows the current conditions immediately rather than
+an empty dashboard until the next archive record. Without it a skin looks broken
+for up to five minutes after every load, and that is the most common complaint
+about MQTT weather dashboards there is.
 
-## Live statt alle fünf Minuten
+## Live rather than every five minutes
 
-Ein Archivsatz ist ein Fünf-Minuten-Mittel, das fünf Minuten zu spät kommt. Ein
-Dashboard, das eines zeigt, ist vier Minuten und neunundfünfzig Sekunden lang
-veraltet.
+An archive record is a five-minute mean that arrives five minutes late. A
+dashboard showing one is out of date for four minutes and fifty-nine seconds.
 
-Deshalb hat der MQTT-Upload als einziger den Auslöser `live`: er liest die
-[Live-Tabelle](Database-Live) alle paar Sekunden und veröffentlicht, was neu
-ist.
+Which is why the MQTT upload is the only one with the `live` trigger: it reads
+the [live table](Database-Live) every few seconds and publishes what is new.
 
-Gelesen wird aus der Datenbank statt über einen Rückruf vom Listener — genau
-das lässt Listener und Archiver getrennte Prozesse bleiben. Ein Live-Kanal,
-der nur funktioniert, wenn beide ein Prozess sind, würde das still aufheben.
+It reads from the database rather than through a callback from the listener —
+which is exactly what lets listener and archiver stay separate processes. A live
+channel that only worked when both are one process would quietly undo that.
 
-In einer geteilten Installation, in der dieser Prozess das Archiv hat und ein
-anderer die Pakete, fällt der Upload auf den Archivsatz zurück: spät statt
-gar nicht.
+In a split installation where this process has the archive and another has the
+packets, the upload falls back to the archive record: late rather than not at
+all.
 
 ## Home Assistant
 
-`uploads/homeassistant.py`. Home Assistant nimmt MQTT-Topics von selbst auf —
-aber nur, wenn ihm gesagt wird, was sie sind: ein retained JSON-Dokument je
-Messung, auf einem Topic unter `homeassistant/`.
+`uploads/homeassistant.py`. Home Assistant picks up MQTT topics on its own — but
+only when it is told what they are: one retained JSON document per reading, on a
+topic under `homeassistant/`.
 
-Das einmal veröffentlicht, und die Station erscheint als Gerät mit benannten,
-grafisch dargestellten und einheitenbewussten Sensoren. Kein YAML, kein
-Neustart, nichts doppelt getippt.
+Publish that once, and the station appears as a device with named, graphed,
+unit-aware sensors. No YAML, no restart, nothing typed twice.
 
-Zwei Entscheidungen:
+Two decisions:
 
-- **Immer retained**, was auch immer `retain` für die Messwerte sagt. Eine
-  Discovery-Nachricht, die niemand behalten hat, sieht nur ein Home Assistant,
-  der in genau der Sekunde lief.
-- **Einmal pro Verbindung, nicht pro Messung.** Die Definitionen ändern sich
-  zwischen zwei Messungen nicht, und vierzig Dokumente alle zehn Sekunden
-  wären der größte Teil des Verkehrs. Nach einem Reconnect gehen sie wieder
-  raus, weil ein ohne Persistenz neu gestarteter Broker sie vergessen hat.
+- **Always retained**, whatever `retain` says for the readings. A discovery
+  message nobody retained is seen only by a Home Assistant that was running in
+  that exact second.
+- **Once per connection, not per reading.** The definitions do not change
+  between two readings, and forty documents every ten seconds would be most of
+  the traffic. After a reconnect they go out again, because a broker restarted
+  without persistence has forgotten them.
 
-Eine falsche `device_class` ist nicht kosmetisch: `pressure` auf einer
-Temperatur macht den Verlauf unlesbar, und eine Einheit, die Home Assistant
-nicht kennt, macht den Sensor zu einer Zeichenkette ohne Graph. Millibar und
-Hektopascal sind dasselbe, und `hPa` ist das, was Home Assistant führt.
+A wrong `device_class` is not cosmetic: `pressure` on a temperature makes the
+trace unreadable, and a unit Home Assistant does not know turns the sensor into
+a string with no graph. Millibars and hectopascals are the same thing, and `hPa`
+is what Home Assistant leads with.
 
-Ein Tagesniederschlag wird auf `total_increasing` gesetzt: er springt um
-Mitternacht auf null zurück, und als `measurement` läse sich das als negativer
-Regen.
+A daily rainfall total is set to `total_increasing`: it drops back to zero at
+midnight, and as `measurement` that would read as negative rain.
 
-## Konfiguration
+## Configuration
 
 ```toml
 [uploads.broker]
 kind = "mqtt"
 host = "localhost"
 topic = "weather"
-# Standard: live, alle 10 Sekunden
+# default: live, every 10 seconds
 home_assistant = true
 ```
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/mqtt_test.py
 ```
 
-Ein Broker auf loopback, genug von MQTT 3.1.1, um ehrlich zu antworten. Er ist
-absichtlich streng: er lehnt ein SUBSCRIBE ab, dessen feste Flags nicht `0b0010`
-sind — ein echter Broker schließt die Verbindung dann ohne Begründung, und das
-ist ein langer Nachmittag.
+A broker on loopback, enough of MQTT 3.1.1 to answer honestly. It is
+deliberately strict: it rejects a SUBSCRIBE whose fixed flags are not `0b0010` —
+a real broker then closes the connection with no explanation, and that is a long
+afternoon.
 
-Geprüft wird, was tatsächlich über den Socket geht: das Byte-Layout von
-CONNECT, dass ein QoS-1-Publish auf sein eigenes PUBACK wartet, dass ein
-abgelehntes Passwort dauerhaft abgelehnt wird, und dass eine abgerissene
-Verbindung mit ihren Abonnements zurückkommt.
+What is checked is what actually goes over the socket: the byte layout of
+CONNECT, that a QoS 1 publish waits for its own PUBACK, that a rejected password
+is rejected permanently, and that a dropped connection comes back with its
+subscriptions.
 
-→ [Uploads](Uploads) · [Live-Datenbank](Database-Live) · [Feeds](Feeds)
+→ [Uploads](Uploads) · [Live database](Database-Live) · [Feeds](Feeds)

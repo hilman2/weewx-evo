@@ -1,18 +1,18 @@
 # Exports
 
-`exports/`. Wie das, was ein Feed erzeugt hat, woandershin kommt.
+`exports/`. How what a feed produced gets somewhere else.
 
-Ein [Feed](Feeds) schreibt Dateien in ein Verzeichnis. Ein Export nimmt dieses
-Verzeichnis und bringt es dorthin, wo Leute es sehen — ein Webhost über FTP, ein
-Server über rsync, ein Verzeichnis auf dieser Maschine.
+A [feed](Feeds) writes files into a directory. An export takes that directory
+and brings it where people can see it — a web host over FTP, a server over
+rsync, a directory on this machine.
 
-**Das Verzeichnis ist die ganze Schnittstelle**: ein Export weiß nicht, was die
-Dateien erzeugt hat, und ein Feed weiß nicht, wohin sie gehen.
+**The directory is the entire interface**: an export does not know what produced
+the files, and a feed does not know where they go.
 
-Drei gibt es: [`local`](#ein-verzeichnis-auf-dieser-maschine), [`ftp`](#ftp-und-ftps)
-und [`rsync`](#rsync-über-ssh).
+There are three: [`local`](#a-directory-on-this-machine), [`ftp`](#ftp-and-ftps)
+and [`rsync`](#rsync-over-ssh).
 
-## Die Schnittstelle
+## The interface
 
 ```python
 class Export(Protocol):
@@ -20,26 +20,26 @@ class Export(Protocol):
         ...
 ```
 
-`files` ist, was sich geändert hat, wenn der Aufrufer es weiß. `None` heißt: aus
-dem Verzeichnis erarbeiten.
+`files` is what changed, when the caller knows. `None` means: work it out from
+the directory.
 
-**Zu werfen bedeutet: nichts wurde gesendet.**
+**Raising means nothing was sent.**
 
 ### `BaseExport`
 
-Nur `send` muss geschrieben werden.
+Only `send` has to be written.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
 | `send(source, files)` | |
-| `check()` | Das Ziel probieren und sagen, was passiert ist, ohne zu senden |
+| `check()` | Try the destination and say what happened, without sending |
 | `status()` | |
 | `close()` | Optional |
-| `options()` | Die Einstellungen |
+| `options()` | The settings |
 
-`check()` ist der Knopf auf der Admin-Seite. Ein falsches Passwort oder einen
-falschen Pfad sofort zurückzubekommen ist sehr viel wert — die Alternative ist,
-fünf Minuten auf das nächste Intervall zu warten und dann in ein Log zu sehen.
+`check()` is the button on the admin page. Getting a wrong password or a wrong
+path back straight away is worth a great deal — the alternative is waiting five
+minutes for the next interval and then looking at a log.
 
 ### `Sent`
 
@@ -55,109 +55,104 @@ class Sent:
     note: str
 ```
 
-`ok()` und `summary()` für die Statusseite und das Log.
+`ok()` and `summary()` for the status page and the log.
 
-`ExportError` ist etwas, das einen Export gestoppt hat, **bevor er etwas
-gesendet hat**.
+`ExportError` is something that stopped an export **before it sent anything**.
 
-## Die Registry
+## The registry
 
-Dieselbe Form wie die Treiber-Registry, aus demselben Grund: ein Export hält
-Konfiguration und ein wenig Zustand — was er schon geschickt hat — und das muss
-zwischen den Läufen überleben.
+The same shape as the driver registry, for the same reason: an export holds
+configuration and a little state — what it has already sent — and that has to
+survive between runs.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
 | `register(name, export, replace=False)` | |
 | `register_factory(name, factory)` | |
 | `configure(name, options)` | |
-| `factory_for(kind)` | Die Klasse hinter einer Art, lädt die Registry vorher |
+| `factory_for(kind)` | The class behind a kind, loading the registry first |
 | `get`, `known`, `names` | |
-| `kinds()` | Welche Arten es gibt, im Gegensatz zu welche konfiguriert sind |
-| `load()` | Holen, was installiert ist. Ein kaputter wird gemeldet, nie fatal |
+| `kinds()` | Which kinds there are, as opposed to which are configured |
+| `load()` | Fetch what is installed. A broken one is reported, never fatal |
 
-`factory_for()` ist eine Methode statt eines Zugriffs auf `_factories`, weil der
-Zugriff `load()` überspringt — und dann ist noch nichts registriert, was wie
-„diese Art gibt es nicht" aussieht.
+`factory_for()` is a method rather than a reach into `_factories`, because the
+reach skips `load()` — and then nothing is registered yet, which looks like
+"there is no such kind".
 
 `ENTRY_POINT_GROUP = "weewx_evo.exports"`.
 
 ### `walk(source, files=None)`
 
-Jede zu berücksichtigende Datei, als Pfade relativ zu `source`. Verzeichnisse,
-die **nie** hochgeladen werden dürfen, werden hier übersprungen statt in jedem
-Export: ein `.git` in einer veröffentlichten Seite ist ein Fehler, den jeder
-einmal macht, und einer, der genügt.
+Every file worth considering, as paths relative to `source`. Directories that
+must **never** be uploaded are skipped here rather than in every export: a
+`.git` inside a published site is a mistake everyone makes once, and one is
+enough.
 
 ### `source_for(settings, feed_directory=None)`
 
-Wo die Dateien eines Exports liegen — aus einem Feed-Namen oder einem schlichten
-Verzeichnis. Ein Feed wird gefragt, wo er geschrieben hat; ein Verzeichnis wird
-genommen, wie es ist.
+Where an export's files are — from a feed name or a plain directory. A feed is
+asked where it wrote; a directory is taken as it is.
 
-## Wann ein Export läuft
+## When an export runs
 
-`exports/runner.py`. Vier Auslöser:
+`exports/runner.py`. Four triggers:
 
 | | |
 |---|---|
-| `feed` | wenn **sein** Feed fertig geschrieben hat — der Default, und der richtige |
-| `record` | nach jedem Archivsatz, für ein Verzeichnis, das etwas anderes füllt |
-| `interval` | eigener Takt (`every`), für ein langsames Ziel |
-| `manual` | nur auf `weewx-evo export run` |
+| `feed` | when **its** feed has finished writing — the default, and the right one |
+| `record` | after every archive record, for a directory something else fills |
+| `interval` | its own rhythm (`every`), for a slow destination |
+| `manual` | only on `weewx-evo export run` |
 
-**`feed` ist nicht Bequemlichkeit, sondern Reihenfolge.** Hören Feed und Export
-beide auf `record`, kann der Export starten, während der Feed noch schreibt —
-halbe Seite hochgeladen, sieht aus wie ein kaputtes Template, nicht
-reproduzierbar.
+**`feed` is not convenience, it is order.** If feed and export both listen for
+`record`, the export can start while the feed is still writing — half a page
+uploaded, looks like a broken template, not reproducible.
 
-Ein Export mit `feed` wartet auf **genau diesen** Feed: zwei Feeds, die zwei
-Seiten schreiben, dürfen nicht jeder beide Uploads auslösen.
+An export with `feed` waits for **that particular** feed: two feeds writing two
+sites must not each trigger both uploads.
 
 ### `Scheduled`
 
-Ein Export und wann er dran ist.
+An export and when it is due.
 
 | | |
 |---|---|
-| `trigger`, `every` | Vom Export |
-| `feed` | Auf welchen er wartet |
-| `changed` | Was der Feed gesagt hat, dass er schrieb. Ein Export, der das bekommt, schickt diese Dateien statt das Verzeichnis abzulaufen — schneller, und die einzige Art sicher zu sein, dass eine gerade geschriebene Datei dabei ist |
-| `due(now, fired)` | `fired` ist, was gerade passierte: `"record"`, ein Feed-Name oder `""` |
-| `run()` | Senden und merken, was passierte. **Wirft nie** |
+| `trigger`, `every` | From the export |
+| `feed` | Which one it waits for |
+| `changed` | What the feed said it wrote. An export that gets this sends those files rather than walking the directory — faster, and the only way to be sure that a file just written is included |
+| `due(now, fired)` | `fired` is what just happened: `"record"`, a feed name, or `""` |
+| `run()` | Send and note what happened. **Never raises** |
 
 ### `Runner`
 
-**Jeder Export läuft in einem eigenen Thread.** Nicht wegen Geschwindigkeit — es
-sind zwei oder drei und sie sind fast immer untätig — sondern damit ein
-FTP-Host, der nicht mehr antwortet, nicht 30 Sekunden lang den Archiver
-aufhält.
+**Every export runs in a thread of its own.** Not for speed — there are two or
+three of them and they are idle almost all the time — but so that an FTP host
+that has stopped answering does not hold the archiver up for 30 seconds.
 
-Ein Export kann sich dadurch auch nicht selbst überlappen: der Thread steckt in
-`send()` und liest seinen eigenen Auslöser nicht. Was währenddessen feuert, wird
-gemerkt und danach **einmal** ausgeführt (`skipped` zählt mit).
+That also stops an export from overlapping itself: the thread is stuck in
+`send()` and is not reading its own trigger. Whatever fires meanwhile is
+remembered and run **once** afterwards (`skipped` counts along).
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `record_written()` | Vom Archiver-Thread, kehrt sofort zurück: setzt Flags |
-| `feed_produced(feed, files)` | Ein Feed ist fertig. Weckt, was ihn sendet |
+| `record_written()` | From the archiver's thread, returns immediately: sets flags |
+| `feed_produced(feed, files)` | A feed has finished. Wakes whatever sends it |
 | `start()`, `stop()`, `status()` | |
 
-`build(configured, make, source_of)` macht aus Konfiguration, was der Runner
-fahren kann. **Was sich nicht bauen lässt, wird gemeldet und ausgelassen.** Ein
-falsch konfigurierter Export darf die anderen nicht stoppen, und ganz sicher
-nicht die Station: die Messwerte sind der Punkt.
+`build(configured, make, source_of)` turns configuration into something the
+runner can drive. **What cannot be built is reported and left out.** A
+misconfigured export must not stop the others, and certainly not the station:
+the readings are the point.
 
-## Nur senden, was sich geändert hat
+## Only send what has changed
 
-Das ist der Punkt, an dem ein Export nützlich statt lästig wird.
+This is the point at which an export becomes useful rather than a nuisance.
 
-rsync kann das selbst. **FTP kann es nicht**: das Protokoll hat keinen
-verlässlichen Weg zu fragen, wie eine Datei am anderen Ende aussieht. `MDTM` ist
-optional, `SIZE` ist im ASCII-Modus optional, und Shared Hosting beantwortet
-beide regelmäßig mit etwas Erfundenem.
+rsync can do it itself. **FTP cannot**: the protocol has no reliable way to ask
+what a file looks like at the far end. `MDTM` is optional, `SIZE` is optional in
+ASCII mode, and shared hosting regularly answers both with something made up.
 
-Also `exports/tracker.py`.
+Hence `exports/tracker.py`.
 
 ### `Fingerprint`
 
@@ -169,137 +164,130 @@ class Fingerprint:
     digest: str
 ```
 
-`HASH_UNDER = 256 * 1024` — kleine Dateien werden über ihren **Inhalt**
-verglichen, nicht über den Zeitstempel.
+`HASH_UNDER = 256 * 1024` — small files are compared by their **content**, not
+by their timestamp.
 
-Der Fall: Ein Template schreibt `index.html` jeden Lauf mit identischen Bytes
-neu. Über den Zeitstempel verglichen ginge die ganze Seite alle fünf Minuten
-hoch.
+The case: a template rewrites `index.html` every run with identical bytes.
+Compared by timestamp, the whole site would go up every five minutes.
 
-`same_as(other)`: Mit einem Digest entscheidet der allein. Ohne einen — bei
-großen Dateien — entscheiden Größe und Zeitstempel.
+`same_as(other)`: with a digest, the digest alone decides. Without one — for
+large files — size and timestamp decide.
 
 ### `Tracker`
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `changed(source, files)` | Welche gesendet werden müssen, und wie viele nicht |
-| `record(source, relative)` | Notieren, dass diese Datei gesendet wurde, so wie sie jetzt ist |
+| `changed(source, files)` | Which have to be sent, and how many do not |
+| `record(source, relative)` | Note that this file was sent, as it is now |
 | `forget(relative)` | |
-| `gone(present)` | Was wir gesendet haben und nicht mehr da ist |
-| `reset()` | Alles vergessen, der nächste Lauf schickt alles |
-| `save()` | Die Aufzeichnung schreiben. Sie zu verlieren kostet **einen** vollen Upload |
+| `gone(present)` | What we sent and is no longer there |
+| `reset()` | Forget everything; the next run sends everything |
+| `save()` | Write the record. Losing it costs **one** full upload |
 
-**Eine Datei, die sich nicht lesen lässt, gilt als geändert**, nicht als
-übersprungen: lieber versuchen und laut scheitern, als still entscheiden, dass
-etwas nicht hochgeht.
+**A file that cannot be read counts as changed**, not as skipped: better to try
+and fail loudly than to decide silently that something is not going up.
 
-`gone()` benutzt ein Export, der Dateien am Zielort entfernt. Einer, der das
-nicht tut, ignoriert es — **von jemandes Webhost zu löschen ist nichts, womit
-man ungefragt anfängt.**
+`gone()` is used by an export that removes files at the destination. One that
+does not, ignores it — **deleting from somebody's web host is not something you
+start doing unasked.**
 
-## Ein Verzeichnis auf dieser Maschine
+## A directory on this machine
 
-`exports/local.py`. Das dritte Ziel neben FTP und rsync, und das, was die
-meisten Stationen tatsächlich wollen: legt hin, was ein Feed erzeugt hat, und
-der eingebaute [Web-Server](Web-Server) gibt es einem Browser.
+`exports/local.py`. The third destination alongside FTP and rsync, and the one
+most stations actually want: puts down what a feed produced, and the built-in
+[web server](Web-Server) hands it to a browser.
 
-### Warum das ein Export ist und keine Einstellung am Web-Server
+### Why this is an export and not a setting on the web server
 
-Es **war** eine: „liefere dieses Verzeichnis aus". Ein Export ist aus einem
-Grund besser: Dann gibt es **eine Stelle**, an der jemand fragt „wo landet
-das". Ein Feed schreibt in sein eigenes Arbeitsverzeichnis und weiß nichts vom
-Veröffentlichen. Ein Export schickt es zu einem Webhost, ein zweiter legt es
-unter die lokale Seite, ein dritter kopiert es auf eine eingehängte Freigabe.
-Drei Ziele, eine Idee, eine Seite in den Einstellungen.
+It **was** one: "serve this directory". An export is better for one reason: it
+means there is **one place** where somebody asks "where does this end up". A
+feed writes into its own working directory and knows nothing about publishing.
+One export sends it to a web host, a second puts it under the local site, a
+third copies it onto a mounted share. Three destinations, one idea, one page in
+the settings.
 
-### Warum es kopiert und nicht zeigt
+### Why it copies rather than points
 
-Der Web-Server könnte das Verzeichnis des Feeds selbst ausliefern und die Kopie
-sparen. Er tut es nicht, aus demselben Grund, aus dem es den FTP-Export gibt:
-**ein Feed schreibt sein Verzeichnis neu, während er läuft**, und ein Browser,
-der mittendrin lädt, bekommt eine halbe Seite. Was hier landet, ist ein ganzer
-Satz Dateien oder der vorherige.
+The web server could serve the feed's directory itself and save the copy. It
+does not, for the same reason the FTP export exists: **a feed rewrites its
+directory while it runs**, and a browser loading in the middle of that gets half
+a page. What lands here is a whole set of files, or the previous one.
 
-Die Kopie ist billig. Nur Geändertes bewegt sich, beurteilt genau wie bei FTP —
-und auf demselben Dateisystem wird ein **Hardlink** statt einer Kopie benutzt,
-also kosten hundert veröffentlichte JSON-Dateien hundert Verzeichniseinträge und
-keine zweite Kopie von irgendetwas. Wo das Dateisystem nicht linkt, wird von
-selbst auf Kopieren zurückgefallen.
+The copy is cheap. Only what changed moves, judged exactly as with FTP — and on
+the same filesystem a **hard link** is used rather than a copy, so a hundred
+published JSON files cost a hundred directory entries and no second copy of
+anything. Where the filesystem will not link, it falls back to copying on its
+own.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
 | `send(source, files)` | |
-| `_place(source, destination)` | **Eine Datei, atomar.** Daneben geschrieben und hineinbewegt, damit ein Browser, der sie gerade liest, die eine oder die andere Fassung bekommt und nie halb von jeder |
-| `_remove(target, tracker, present)` | Löschen, was dieser Export dorthin gebracht hat und der Feed nicht mehr schreibt |
-| `check()` | Ob dorthin geschrieben werden kann, und was jetzt dort liegt |
+| `_place(source, destination)` | **One file, atomically.** Written alongside and moved into place, so that a browser reading it right now gets one version or the other and never half of each |
+| `_remove(target, tracker, present)` | Delete what this export put there and the feed no longer writes |
+| `check()` | Whether it can be written to, and what is there now |
 
-Zwei Dinge, die `send()` verweigert:
+Two things `send()` refuses:
 
-- **Kein Verzeichnis gesetzt** → `ExportError`.
-- **Das Ziel ist das Quellverzeichnis.** Ein Verzeichnis in sich selbst zu
-  veröffentlichen verglich jede Datei mit sich selbst und würde sie dann über
-  sich selbst hardlinken. Danach passiert nichts Gutes.
+- **No directory set** → `ExportError`.
+- **The destination is the source directory.** Publishing a directory into
+  itself compared every file with itself and would then hard-link it over
+  itself. Nothing good happens after that.
 
-Eine Datei, die sich nicht schreiben lässt, kostet **den Lauf nicht**: sie wird
-als Fehlschlag vermerkt, und der Rest wird veröffentlicht. Eine Seite, die nicht
-geschrieben werden kann, darf nicht das Veröffentlichen von allem danach kosten.
+A file that cannot be written does **not cost the run**: it is noted as a
+failure and the rest is published. One page that cannot be written must not cost
+the publishing of everything after it.
 
-## FTP und FTPS
+## FTP and FTPS
 
-`exports/ftp.py`. Shared Hosting gibt einem noch immer FTP und oft nichts
-sonst, also existiert das hier und muss am unangenehmen Ende funktionieren:
-Server, die mitten im Transfer die Verbindung verlieren, die ein Verzeichnis
-nicht anlegen können, das schon existiert, ohne zu fehlern, die `MDTM` mit
-Unsinn beantworten, und die eine passive Verbindung von einer anderen Adresse
-als Angriff werten.
+`exports/ftp.py`. Shared hosting still gives you FTP and often nothing else, so
+this exists and has to work at the unpleasant end: servers that lose the
+connection mid-transfer, that cannot create a directory that already exists
+without erroring, that answer `MDTM` with nonsense, and that treat a passive
+connection from a different address as an attack.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
 | `send(source, files)` | |
-| `check()` | Verbinden, ins Zielverzeichnis sehen, berichten |
-| `_ensure(connection, remote)` | Ein Verzeichnis und seine Eltern anlegen |
-| `_remove(connection, tracker, present)` | Löschen, was wir gesendet haben und nicht mehr erzeugt wird |
+| `check()` | Connect, look into the target directory, report |
+| `_ensure(connection, remote)` | Create a directory and its parents |
+| `_remove(connection, tracker, present)` | Delete what we sent and is no longer produced |
 | `_put(connection, source, relative)` | |
 
-`_ensure()`: **`MKD` auf ein existierendes Verzeichnis ist auf den meisten
-Servern ein Fehler und auf manchen ein Erfolg** — also ist der Fehler das, was
-toleriert werden muss, nicht der Erfolg.
+`_ensure()`: **`MKD` on an existing directory is an error on most servers and a
+success on some** — so the error is what has to be tolerated, not the success.
 
-`_remove()` löscht **nur Dateien, die dieser Export dorthin gebracht hat**: die
-Aufzeichnung sagt, welche das sind, also ist nichts anderes auf dem Konto in
-Gefahr.
+`_remove()` deletes **only files this export put there**: the record says which
+those are, so nothing else on the account is at risk.
 
 `TIMEOUT = 30`.
 
-## rsync über SSH
+## rsync over SSH
 
-`exports/rsync.py`. Wo FTP gesagt werden muss, was sich geändert hat, arbeitet
-rsync es selbst heraus und sendet nur die abweichenden **Teile** der
-abweichenden Dateien. Für eine Wetterseite ist das der Unterschied zwischen
-einem Upload von Megabyte und einem von Kilobyte.
+`exports/rsync.py`. Where FTP has to be told what changed, rsync works it out
+itself and sends only the differing **parts** of the differing files. For a
+weather site that is the difference between an upload of megabytes and one of
+kilobytes.
 
-Es ruft `rsync` auf, statt das Protokoll nachzubauen — und das ist keine
-Faulheit: das Delta-Verfahren ist der ganze Wert, und es nachzubauen hieße, es
-schlechter nachzubauen.
+It calls `rsync` rather than reimplementing the protocol — and that is not
+laziness: the delta algorithm is the entire value, and reimplementing it would
+mean reimplementing it worse.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
 | `send(source, files)` | |
-| `check()` | Ein Trockenlauf, und was er täte |
-| `_command(source, files, dry_run)` | Die Argumentliste. **Nichts geht durch eine Shell** |
-| `_read(output)` | Zählen, was rsync sagt, dass es tat |
+| `check()` | A dry run, and what it would do |
+| `_command(source, files, dry_run)` | The argument list. **Nothing goes through a shell** |
+| `_read(output)` | Count what rsync says it did |
 
-`_read()` liest `--itemize-changes`: ein führendes `>` heißt übertragen,
-`*deleting` heißt entfernt, alles andere ist etwas anderes.
+`_read()` reads `--itemize-changes`: a leading `>` means transferred, `*deleting`
+means removed, everything else is something else.
 
-**Es gibt keine Passwortoption.** Ein Passwort müsste von einem Programm getippt
-werden, was es in eine Prozessliste oder eine Datei bringt. Public Key in
-`authorized_keys`.
+**There is no password option.** A password would have to be typed by a program,
+which puts it into a process list or a file. Public key in `authorized_keys`.
 
 `TIMEOUT = 600`.
 
-## Konfiguration
+## Configuration
 
 ```toml
 [exports.site]
@@ -324,13 +312,13 @@ delete = false
 
 → [Settings-Reference](Settings-Reference#exports)
 
-Auf der Admin-Seite: **einen Export anlegen fragt nur Name und Art.** Alles
-andere wird auf der Seite ausgefüllt, die danach erscheint. Nach einem Host und
-einem Passwort zu fragen, bevor klar ist, wovon geredet wird, ist ein Formular,
-das jemand ausfüllt, ohne zu wissen, was er ausfüllt.
+On the admin page: **creating an export asks only for a name and a kind.**
+Everything else is filled in on the page that appears next. Asking for a host
+and a password before it is clear what is being talked about is a form somebody
+fills in without knowing what they are filling in.
 → [Admin-Page](Admin-Page)
 
-## Kommandos
+## Commands
 
 ```bash
 weewx-evo export list
@@ -338,26 +326,25 @@ weewx-evo export check [name]
 weewx-evo export run [name] [--source DIR] [--all]
 ```
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/export_test.py
 ```
 
-Die FTP-Hälfte läuft gegen einen Server **in diesem Prozess**, der Transfer wird
-also wirklich geprüft statt gemockt: Dateien landen auf der Platte,
-Verzeichnisse entstehen, das Hineinbewegen passiert. `pyftpdlib` ist keine
-Abhängigkeit von weewx-evo, dieser Teil wird also ausgelassen, wenn es fehlt,
-und der Rest läuft trotzdem.
+The FTP half runs against a server **in this process**, so the transfer is
+really checked rather than mocked: files land on disk, directories come into
+existence, the move-into-place happens. `pyftpdlib` is not a dependency of
+weewx-evo, so that part is skipped when it is missing and the rest runs anyway.
 
-`local_export()` prüft die Ausfallarten, die FTP nicht hat: ein Hardlink, der
-still einen Inode teilt; ein Löschen, das mehr mitnimmt als das, was dieser
-Export hingelegt hat; ein Ziel, das das Quellverzeichnis ist. Und danach, dass
-der **Web-Server tatsächlich ausliefert, was der Export veröffentlicht hat** —
-beide Hälften der Kette in einem Test.
+`local_export()` checks the failure modes FTP does not have: a hard link
+silently sharing an inode; a delete taking more with it than what this export
+put there; a destination that is the source directory. And after that, that the
+**web server really serves what the export published** — both halves of the
+chain in one test.
 
-`runner_tests()` prüft, wann welcher Export läuft und **dass einer den anderen
-nicht aufhalten kann** — mit einem `FakeExport`, der sich absichtlich Zeit lässt.
+`runner_tests()` checks when each export runs and **that one cannot hold another
+up** — with a `FakeExport` that deliberately takes its time.
 
 → [Testing](Testing)
 

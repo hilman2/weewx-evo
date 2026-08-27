@@ -1,74 +1,73 @@
-# Diagramme
+# Plots
 
 `plots.py`, `adminplots.py`, `plots.toml`.
 
-## Plot-Definitionen gehören weewx-evo, nicht einem Renderer
+## Plot definitions belong to weewx-evo, not to a renderer
 
-Bei WeeWX stehen sie in `[ImageGenerator]` in einer **Skin**. Diagramme sind
-dort eine Eigenschaft des Zeichners. Zwei Zeichner bedeuten zwei Kopien
-derselben Liste — und der JSON-Generator existiert nur, weil er die
-Konfiguration des Bild-Generators hinter dessen Rücken mitliest.
+In WeeWX they sit in `[ImageGenerator]` inside a **skin**. Plots are a property
+of the drawer there. Two drawers mean two copies of the same list — and the JSON
+generator only exists because it reads the image generator's configuration
+behind its back.
 
-Hier kommt die Definition zuerst, die Renderer sind Abnehmer.
+Here the definition comes first and the renderers are consumers.
 
-| Datei | Was |
+| File | What |
 |---|---|
-| `plots.py` | Das Modell (`Plot`, `Line`, `PlotSet`), Lesen und Schreiben von `plots.toml`, und der Importer |
-| `plots.toml` | Eigene Datei neben der Konfiguration |
-| `adminplots.py` | Die Seiten dafür — der einzige handgeschriebene Teil der Admin-Oberfläche |
+| `plots.py` | The model (`Plot`, `Line`, `PlotSet`), reading and writing `plots.toml`, and the importer |
+| `plots.toml` | Its own file, next to the configuration |
+| `adminplots.py` | The pages for it — the only hand-written part of the admin interface |
 
-**Warum eine eigene Datei:** Einstellungen sind ein paar Dutzend benannte Werte;
-das hier ist eine Liste vieler gleichartiger Sätze mit Listen darin. Und ein aus
-einer alten Skin importierter Satz ist etwas, das man diffen und weitergeben
-können will.
+**Why a file of its own:** settings are a few dozen named values; this is a list
+of many alike sets with lists inside them. And a set imported from an old skin
+is something you want to be able to diff and pass on.
 
-## Das Modell
+## The model
 
-### `Line` — ein Messwert in einem Diagramm
+### `Line` — one reading in a plot
 
-| Feld | Bedeutung |
+| Field | What it means |
 |---|---|
-| `obs` | Der Messwert |
-| `label` | Wie er in der Legende heißt |
+| `obs` | The reading |
+| `label` | What it is called in the legend |
 | `kind` | `line` · `bar` · `vector` |
 | `color`, `fill_color` | |
 | `width` | |
-| `aggregate` | `avg` `min` `max` `sum` … oder leer für die Sätze selbst |
-| `interval` | Eimergröße: Sekunden oder `hour` `day` `week` `month` `year` |
+| `aggregate` | `avg` `min` `max` `sum` … or empty for the records themselves |
+| `interval` | Bucket size: seconds or `hour` `day` `week` `month` `year` |
 | `marker`, `marker_size` | |
-| `gap_fraction` | Ab welchem Abstand eine Lücke eine Lücke ist |
+| `gap_fraction` | The distance at which a gap is a gap |
 | `rotate` | |
 | `binding` | |
 
-`resolved(position)` gibt dieselbe Linie mit den Farben zurück, die WeeWX ihr
-gegeben hätte — `LINE_COLORS` und `FILL_COLORS`, in derselben Reihenfolge.
+`resolved(position)` returns the same line with the colours WeeWX would have
+given it — `LINE_COLORS` and `FILL_COLORS`, in the same order.
 
-### `Plot` — ein Diagramm
+### `Plot` — one plot
 
-| Feld | Bedeutung |
+| Field | What it means |
 |---|---|
-| `name` | Auch der Dateiname |
-| `span` | Die **Gruppe**: `day` `week` `month` `year`. Für das Manifest und die Admin-Seite |
-| `time_length` | Was tatsächlich entscheidet, wie weit zurück es reicht |
+| `name` | Also the file name |
+| `span` | The **group**: `day` `week` `month` `year`. For the manifest and the admin page |
+| `time_length` | What actually decides how far back it reaches |
 | `lines` | |
 | `title` | |
-| `show_daynight` | Nacht schattieren → [Sun](Sun) |
+| `show_daynight` | Shade the night → [Sun](Sun) |
 | `yscale` | `[ymin, ymax, ystep]` |
-| `skip_if_empty` | Eine **Zeitspanne**, kein Boolean. Siehe [unten](#zwei-fallen-im-importer) |
+| `skip_if_empty` | A **timespan**, not a boolean. See [below](#two-pitfalls-in-the-importer) |
 
-`drawn()` gibt die Linien mit aufgefüllten Farben. `uses()` sagt, welche
-Messwerte dieses Diagramm braucht.
+`drawn()` returns the lines with their colours filled in. `uses()` says which
+readings this plot needs.
 
-### `PlotSet` — die Diagramme, die es gibt
+### `PlotSet` — the plots there are
 
-Plus `labels`: wie die Messwerte darin heißen.
+Plus `labels`: what the readings in them are called.
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
 | `get`, `add`, `remove` | |
-| `by_span()` | Gruppiert, in der Reihenfolge, in der die Gruppen zuerst auftraten |
-| `spans()` | Wie lang jede Gruppe abdeckt, fürs Manifest. Genommen vom längsten Diagramm der Gruppe, weil das die Gruppe ist |
-| `uses()` | Alle benötigten Messwerte |
+| `by_span()` | Grouped, in the order the groups first appeared |
+| `spans()` | How long each group covers, for the manifest. Taken from the longest plot in the group, because that is the group |
+| `uses()` | Every reading needed |
 
 ## `plots.toml`
 
@@ -80,7 +79,7 @@ Plus `labels`: wie die Messwerte darin heißen.
 # 'time_length' is what actually decides how far back it reaches.
 
 [labels]
-extraTemp3 = "Gewächshaus"
+extraTemp3 = "Greenhouse"
 
 [[plot]]
 name = "daytempdew"
@@ -92,7 +91,7 @@ ymax = 25
 
   [[plot.line]]
   obs = "outTemp"
-  label = "Außentemperatur"
+  label = "Outside temperature"
 
   [[plot.line]]
   obs = "dewpoint"
@@ -109,25 +108,24 @@ time_length = "30d"
   interval = "day"
 ```
 
-| Funktion | Bedeutung |
+| Function | What it means |
 |---|---|
-| `load(path)` | Lesen. Eine Datei, die nicht da ist, heißt keine Diagramme, kein Fehler |
-| `from_dict(raw)` | Aus schon geparstem TOML |
-| `save(path, plots, note)` | Schreiben, mit `.bak` der Vorversion |
-| `render(plots, note)` | Als TOML-Text, den jemand editieren kann |
+| `load(path)` | Read. A file that is not there means no plots, not an error |
+| `from_dict(raw)` | From already-parsed TOML |
+| `save(path, plots, note)` | Write, with a `.bak` of the previous version |
+| `render(plots, note)` | As TOML text somebody can edit |
 
-`save()` schreibt **daneben und bewegt hinein**, wie die Konfiguration: diese
-Datei entscheidet, was eine Seite zeigt, und ein abgebrochener Schreibvorgang
-darf keine halbe hinterlassen.
+`save()` writes **alongside and moves into place**, like the configuration: this
+file decides what a page shows, and an interrupted write must not leave half of
+one.
 
-`labels` steht in derselben Datei, weil ein Name, den jemand vor acht Jahren
-vergeben hat („Gewächshaus" für `extraTemp3`), zusammen mit den Diagrammen
-umziehen soll.
+`labels` sits in the same file, because a name somebody gave eight years ago
+("Greenhouse" for `extraTemp3`) should move house together with the plots.
 
-## Der Importer
+## The importer
 
-**Kein Beiwerk.** Wenn die Definitionen eigenständig werden, ist er der ganze
-Rest der Brücke zu 15 Jahren gepflegter Konfigurationen.
+**Not a sideshow.** Once the definitions become independent, it is the whole
+rest of the bridge to 15 years of maintained configurations.
 
 ```bash
 weewx-evo plots import /etc/weewx/skins/Seasons/skin.conf
@@ -135,130 +133,126 @@ weewx-evo plots import /etc/weewx/skins/Seasons/skin.conf --write
 weewx-evo plots import … --write --replace
 ```
 
-Liest, berichtet, schreibt erst auf `--write`. Nennt, was es liegen ließ, statt
-so zu tun, als hätte es das verstanden.
+Reads, reports, and only writes on `--write`. Names what it left behind rather
+than pretending it understood it.
 
 ```python
 @dataclass
 class Imported:
     plots: PlotSet
-    drawing: set[str]   # Optionen, die ein *Bild* beschreiben
-    unknown: set[str]   # Optionen, die hier niemand versteht
-    empty: list[str]    # Abschnitte, die nach Plots aussahen und nichts hielten
+    drawing: set[str]   # options that describe an *image*
+    unknown: set[str]   # options nobody here understands
+    empty: list[str]    # sections that looked like plots and held nothing
 ```
 
-`_is_drawing(key)` entscheidet, was ein *Bild* beschreibt und hier keinen Sinn
-hat. Drei Wege:
+`_is_drawing(key)` decides what describes an *image* and makes no sense here.
+Three routes:
 
-- `IMAGE_ONLY` — die namentliche Liste: `image_width`, `image_height`,
-  `anti_alias`, `chart_background_color`, `chart_gridline_color` …
+- `IMAGE_ONLY` — the list by name: `image_width`, `image_height`, `anti_alias`,
+  `chart_background_color`, `chart_gridline_color` …
 - `DRAWING_PREFIXES` — `image_`, `chart_`, `rose_`, `daynight_`,
   `axis_label_`, `top_label_`, `bottom_label_`, `unit_label_`, `x_label_`,
   `y_label_`
-- alles mit `_font` darin oder auf `_color` endend
+- anything with `_font` in it or ending in `_color`
 
-**Eine Ausnahme:** `rose_label`. Wie die Windrose beschriftet ist, ist *Text*,
-und ein Diagramm im Browser braucht ihn genauso wie ein PNG.
+**One exception:** `rose_label`. How the wind rose is labelled is *text*, and a
+plot in a browser needs it just as much as a PNG does.
 
-Was so aussortiert wird, wird **benannt**, nicht still verworfen.
+What gets sorted out this way is **named**, not silently discarded.
 
-| Funktion | Bedeutung |
+| Function | What it means |
 |---|---|
-| `from_image_generator(section, labels)` | Plots aus einem `[ImageGenerator]` |
-| `labels_from(conf)` | `[Labels] [[Generic]]` — es lohnt sich, das für sich mitzunehmen |
-| `_line_from(name, options)` | Ein `[[[[outTemp]]]]`-Unterabschnitt |
-| `_color(value)` | Eine WeeWX-Farbe, wie CSS sie versteht |
+| `from_image_generator(section, labels)` | Plots out of an `[ImageGenerator]` |
+| `labels_from(conf)` | `[Labels] [[Generic]]` — worth taking along for its own sake |
+| `_line_from(name, options)` | An `[[[[outTemp]]]]` subsection |
+| `_color(value)` | A WeeWX colour as CSS understands it |
 
-Die Struktur bei WeeWX ist drei Ebenen tief: eine Gruppe (`[[day_images]]`), ein
-Plot (`[[[daytempdew]]]`), eine Linie (`[[[[outTemp]]]]`). Optionen erben nach
-unten.
+The structure in WeeWX is three levels deep: a group (`[[day_images]]`), a plot
+(`[[[daytempdew]]]`), a line (`[[[[outTemp]]]]`). Options inherit downwards.
 
-`_line_from` nimmt den Abschnittsnamen als Messwert, außer `data_type` sagt
-etwas anderes — so zeichnet WeeWX denselben Messwert zweimal in einem Diagramm
-mit zwei Aggregationen.
+`_line_from` takes the section name as the reading, unless `data_type` says
+otherwise — that is how WeeWX draws the same reading twice in one plot with two
+aggregations.
 
-`_color()` muss drei Schreibweisen können: `#RRGGBB`, `0xBBGGRR` und englische
-Namen. Die erste und die letzte sind schon CSS; **die mittlere ist
-byte-vertauscht** und muss umgedreht werden — genau die Art Detail, die ein
-Diagramm plausibel falsch färbt.
+`_color()` has to handle three spellings: `#RRGGBB`, `0xBBGGRR` and English
+names. The first and the last are already CSS; **the middle one is byte-swapped**
+and has to be reversed — exactly the sort of detail that colours a plot
+plausibly wrong.
 
-`_holds_plots()` unterscheidet einen Abschnitt, der Plots definiert, von einem,
-der bloß Einstellungen hält: eine Gruppe wie `[[day_images]]` hat
-Unterabschnitte, die selbst Unterabschnitte haben. Ein Einstellungsblock wie
-`[[Archive]]` trägt Skalare.
+`_holds_plots()` tells a section that defines plots from one that merely holds
+settings: a group like `[[day_images]]` has subsections that themselves have
+subsections. A settings block like `[[Archive]]` carries scalars.
 
-### Zwei Fallen im Importer
+### Two pitfalls in the importer
 
-Beide echt gewesen.
+Both of them real.
 
-#### WeeWX' Suffixe sind nicht unsere
+#### WeeWX's suffixes are not ours
 
-Dort ist `M` eine **Minute** und `m` ein **Monat**. Hier ist `m` wie überall
-sonst Minuten.
+There, `M` is a **minute** and `m` is a **month**. Here `m` is minutes, as
+everywhere else.
 
-Eine Datei, die für WeeWX geschrieben wurde, wird nach **WeeWX' Regeln** gelesen
-(`_weewx_span`) — und **nichts wird je mit einem mehrdeutigen Suffix
-zurückgeschrieben**: `_normalise()` macht aus `1w` das Wort `week`, nie aus
-einem Monat `1m`.
+A file written for WeeWX is read by **WeeWX's rules** (`_weewx_span`) — and
+**nothing is ever written back with an ambiguous suffix**: `_normalise()` turns
+`1w` into the word `week`, never a month into `1m`.
 
 ```python
 _WEEWX_SUFFIX = {"M": 60, "h": 3600, "d": 86400,
                  "w": 604800, "m": NOMINAL["month"], "y": NOMINAL["year"]}
 ```
 
-Unlesbares gibt den Default zurück statt einer Vermutung — ein falsch geratenes
-Intervall ist ein Diagramm, das plausibel und falsch aussieht.
+Anything unreadable returns the default rather than a guess — a wrongly guessed
+interval is a plot that looks plausible and is wrong.
 
-#### `skip_if_empty = year` ist eine Zeitspanne, kein Boolean
+#### `skip_if_empty = year` is a timespan, not a boolean
 
-Als Boolean gelesen schreibt der Seasons-Satz **100 Dateien statt 71** — 29 davon
-nur Nullen für Sensoren, die diese Station nie hatte.
+Read as a boolean, the Seasons set writes **100 files instead of 71** — 29 of
+them nothing but zeroes for sensors this station never had.
 
-`_span_name()` liest es richtig. `true` wird als „die eigene Spanne des Plots"
-gelesen, was die einzige Lesart ist, die etwas bewirkt.
+`_span_name()` reads it correctly. `true` is read as "the plot's own span",
+which is the only reading that does anything.
 
-## Die Admin-Seiten
+## The admin pages
 
-`adminplots.py`. **Der einzige handgeschriebene Teil der Admin-Oberfläche.**
+`adminplots.py`. **The only hand-written part of the admin interface.**
 
-Ein Plot passt nicht in den Formulargenerator, den der Rest der Einstellungen
-benutzt, und ihn hineinzuzwingen wäre schlimmer, als das hier zu schreiben: eine
-Einstellung ist **ein** benannter Wert, ein Plot ist ein Satz mit einer Liste
-von Sätzen darin, und es gibt hundert davon.
+A plot does not fit the form generator the rest of the settings use, and forcing
+it in would be worse than writing this: a setting is **one** named value, a plot
+is a set with a list of sets inside it, and there are a hundred of them.
 
-| Funktion | Bedeutung |
+| Function | What it means |
 |---|---|
-| `path_for(admin)` | Wo `plots.toml` liegt: neben der Konfiguration |
+| `path_for(admin)` | Where `plots.toml` lives: next to the configuration |
 | `load(admin)`, `store(admin, charts, note)` | |
-| `add(admin, name, span, obs)` | Ein neues Diagramm mit einem Messwert. Alles andere auf der nächsten Seite |
+| `add(admin, name, span, obs)` | A new plot with one reading. Everything else on the next page |
 | `remove(admin, name)` | |
-| `save(admin, name, form, columns)` | Alles über ein Diagramm, aus seinem Formular |
-| `bring_over(admin, source, replace, text="", origin=…)` | Import aus einer Skin — aus einer hochgeladenen Datei, aus eingefügtem Text oder aus einem Pfad |
-| `nav(admin, active)` | Die Diagramme in der Seitenleiste, so gruppiert wie sie gruppiert sind |
-| `edit`, `new`, `importer` | Die drei Seiten |
+| `save(admin, name, form, columns)` | Everything about a plot, out of its form |
+| `bring_over(admin, source, replace, text="", origin=…)` | Import from a skin — from an uploaded file, from pasted text, or from a path |
+| `nav(admin, active)` | The plots in the sidebar, grouped the way they are grouped |
+| `edit`, `new`, `importer` | The three pages |
 
-Die Auswahllisten stehen oben in der Datei: `KINDS`, `USEFUL` (Aggregate),
-`INTERVALS`, `LENGTHS`, `EMPTY`. Sie sind in Klartext beschriftet — `"27h", "a
-day and the night before it"` — weil eine Auswahl, die Sekunden anzeigt, eine
-ist, bei der jemand rechnen muss.
+The choice lists are at the top of the file: `KINDS`, `USEFUL` (aggregates),
+`INTERVALS`, `LENGTHS`, `EMPTY`. They are labelled in plain words — `"27h", "a
+day and the night before it"` — because a choice showing seconds is one where
+somebody has to do arithmetic.
 
-`columns` kommt aus der **Datenbank**, nicht aus einem Schema: eine Station,
-deren Treiber eigene Spalten angelegt hat, soll sie zeichnen können.
+`columns` comes from the **database**, not from a schema: a station whose driver
+created columns of its own should be able to plot them.
 
-### Drei Wege in den Importer, und die Reihenfolge zählt
+### Three ways into the importer, and the order matters
 
-1. **Eine Datei hochladen.** Der einzige, der von überall funktioniert: die
-   Skin liegt auf der Maschine, an der jemand sitzt, nicht unbedingt auf der,
-   auf der das hier läuft. In einem Container gibt es von hier aus **gar keinen
-   Pfad**, der die Skin erreicht.
-2. **Den Text einfügen.** Die ganze Datei oder nur der `[ImageGenerator]`-Teil.
-3. **Ein Pfad auf dieser Maschine.** Der am wenigsten nützliche der drei, und
-   deshalb zuletzt angeboten. Wer einen Pfad hat, hat meist auch eine Shell —
-   und dann ist `weewx-evo plots import` das Passendere.
+1. **Upload a file.** The only one that works from anywhere: the skin is on the
+   machine somebody is sitting at, not necessarily on the one this is running
+   on. In a container there is **no path at all** from here that reaches the
+   skin.
+2. **Paste the text.** The whole file or just the `[ImageGenerator]` part.
+3. **A path on this machine.** The least useful of the three, and therefore
+   offered last. Anyone who has a path usually has a shell too — and then
+   `weewx-evo plots import` is the better fit.
 
-Die hochgeladene Datei wird gelesen und **nicht behalten**.
+The uploaded file is read and **not kept**.
 
-## Kommandos
+## Commands
 
 ```bash
 weewx-evo plots list

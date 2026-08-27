@@ -86,7 +86,8 @@ class CheetahFeed:
                  stale_ok: bool = True,
                  language: str = "",
                  derived: Sequence[str] = (),
-                 extras: dict[str, Any] | None = None) -> None:
+                 extras: dict[str, Any] | None = None,
+                 broker: dict[str, Any] | None = None) -> None:
         self.reader = reader
         #: The skin's own directory, holding skin.conf and the templates.
         self.skin = Path(skin)
@@ -99,6 +100,10 @@ class CheetahFeed:
         #: the things an operator is meant to change, and editing the skin
         #: to change them means losing it at the next update.
         self.extras = dict(extras or {})
+        #: What a browser needs to reach the MQTT broker, from the upload
+        #: that already knows it. Empty when no MQTT upload is configured,
+        #: and then a skin's own settings stand as they are.
+        self.broker = dict(broker or {})
         #: What the operator set on the skin's own settings page, going into
         #: `[DisplayOptions]` over what the skin says. Empty for a skin that
         #: declares no options, which is every skin from outside.
@@ -260,6 +265,11 @@ class CheetahFeed:
             if isinstance(block, dict):
                 block.update(self.display)
             self.tags.display.update(self.display)
+        # The broker, from the upload that already knows it. Before the
+        # operator's own settings below, so anything they said by hand still
+        # wins -- see `_broker_extras`.
+        if self.broker:
+            self._broker_extras(conf)
         # The operator's own, last: they are the reason this setting exists.
         if self.extras:
             self.tags.extras.update(self.extras)
@@ -380,6 +390,62 @@ class CheetahFeed:
             log.warning("%s has no %s", module_name, attribute)
             return None
         return thing(generator)
+
+    def _broker_extras(self, conf: dict[str, Any]) -> None:
+        """Fill in a skin's MQTT settings from the configured upload.
+
+        This is the point of it: without it the broker is configured twice --
+        once as an upload, and once again in the skin's own `[Extras]`. Two
+        places holding the same host, the same credentials and, worst of all,
+        the same topic. A typo in the second one gives a page that renders
+        perfectly and never updates, with nothing in any log to say why.
+
+        Only where the skin has not been told already. A skin that names its
+        own broker means it, and an operator who typed one into the feed's
+        settings meant that too -- both come after this.
+
+        The names are the ones weewx-wdc used, because Deck inherited them
+        and any skin written against that convention gets this for free.
+        """
+        block = conf.setdefault("Extras", {})
+        if not isinstance(block, dict):
+            return
+        mqtt = block.get("mqtt")
+        mqtt = dict(mqtt) if isinstance(mqtt, dict) else {}
+
+        # A skin that already says it is enabled has been configured by hand.
+        # Leave all of it alone rather than filling in half from each place,
+        # which is the arrangement nobody can debug.
+        if _true(mqtt.get("mqtt_websockets_enabled")):
+            log.debug("%s names its own broker; leaving it alone",
+                      self.skin.name)
+            return
+
+        # Everything, not only what is empty. A skin that ships with the
+        # switch off writes placeholders beside it -- Deck says `localhost`
+        # and `9001` -- and those are not a configuration, they are what a
+        # setting looks like before anybody has set it. Filling in only the
+        # blanks would leave the placeholder host beside the real topic,
+        # which connects to nothing and says nothing.
+        mqtt.update({
+            "mqtt_websockets_enabled": 1,
+            "mqtt_websockets_host": self.broker.get("host", ""),
+            "mqtt_websockets_port": self.broker.get("port", 9001),
+            "mqtt_websockets_topic": self.broker.get("topic", "weather/loop"),
+            "mqtt_websockets_ssl": 1 if self.broker.get("tls") else 0,
+            "mqtt_websockets_path": self.broker.get("path", ""),
+            "mqtt_websockets_username": self.broker.get("username", ""),
+            "mqtt_websockets_password": self.broker.get("password", ""),
+        })
+
+        block["mqtt"] = mqtt
+        self.tags.extras.setdefault("mqtt", {})
+        if isinstance(self.tags.extras.get("mqtt"), dict):
+            self.tags.extras["mqtt"] = mqtt
+        log.info("%s: live updates from the %s broker at %s:%s, topic %s",
+                 self.skin.name, "encrypted" if self.broker.get("tls") else "plain",
+                 mqtt["mqtt_websockets_host"], mqtt["mqtt_websockets_port"],
+                 mqtt["mqtt_websockets_topic"])
 
     def _units(self, block: dict[str, Any]) -> None:
         """Take the skin's own units, decimals and words.
@@ -801,6 +867,24 @@ class CheetahFeed:
         from ...options import installed_skins
 
         return [
+            Group("Live updates",
+                  "A skin that can show live readings subscribes to an MQTT "
+                  "broker from the visitor's browser. Which broker, the "
+                  "topic and whether it is encrypted all come from the "
+                  "upload chosen here -- so the broker is set up once, on "
+                  "its own page, and not a second time in the skin.", (
+                      Option("live_from", "Take live updates from",
+                             kind="choice", default="",
+                             choices=(("", "the only MQTT upload there is"),
+                                      ("off", "-- nothing; leave the skin alone --")),
+                             choices_from=_mqtt_upload_choices,
+                             help="Only matters with more than one MQTT "
+                                  "upload -- a station publishing to one "
+                                  "broker for Home Assistant and another "
+                                  "for its website. A skin that names its "
+                                  "own broker in skin.conf keeps it either "
+                                  "way."),
+                  )),
             Group("The skin", "Which one, and where it comes from.", (
                 Option("enabled", "Render it", kind="bool", default=True),
                 Option("skin", "Skin", kind="choice", default="",
@@ -878,6 +962,84 @@ class CheetahFeed:
 
 
 # -- small things ----------------------------------------------------------
+
+def mqtt_uploads(settings: Any) -> list[tuple[str, dict]]:
+    """The configured MQTT uploads, by name."""
+    section = settings.config.get("uploads") or {}
+    return [(name, dict(found)) for name, found in sorted(section.items())
+            if isinstance(found, dict)
+            and str(found.get("kind", "")).strip() == "mqtt"]
+
+
+def _mqtt_upload_choices() -> list[tuple[str, str]]:
+    """The MQTT uploads there are, for the dropdown on this feed's page."""
+    from ...settings import running
+
+    settings = running()
+    if settings is None:
+        return []
+    return [(name, f"the {name} broker") for name, _ in mqtt_uploads(settings)]
+
+
+def _broker(settings: Any, chosen: str = "") -> dict[str, Any]:
+    """What a browser needs to reach the configured MQTT broker.
+
+    Read from the upload rather than from a second block of settings on this
+    feed's page. That is the whole point: a station that publishes to a
+    broker has already said where it is, what the topic is called and whether
+    it is encrypted. Asking again here is how the two drift apart -- and the
+    way they drift is a topic that does not match, which shows up as a page
+    that renders perfectly and never updates.
+
+    `chosen` names one, for a station with more than one broker -- Home
+    Assistant on the local one and the website on a public one is an ordinary
+    arrangement. Left empty with several configured, none is used and it says
+    so: guessing which of two brokers a page should subscribe to is the sort
+    of quiet choice that is wrong half the time and never looked at.
+    """
+    if str(chosen).strip().lower() == "off":
+        return {}
+    try:
+        from ...cli import build_upload
+    except Exception:  # pragma: no cover - only in a stripped install
+        return {}
+
+    found = mqtt_uploads(settings)
+    if not found:
+        return {}
+    if chosen:
+        found = [(name, conf) for name, conf in found if name == chosen]
+        if not found:
+            log.warning("this feed takes its live updates from the upload %r, "
+                        "and there is no such MQTT upload. The skin's own "
+                        "settings stand.", chosen)
+            return {}
+    elif len(found) > 1:
+        log.warning("there are %d MQTT uploads (%s) and this feed does not "
+                    "say which one its skin should subscribe to. Choose one "
+                    "under 'Live updates' on the feed's page; until then the "
+                    "skin's own settings stand.",
+                    len(found), ", ".join(name for name, _ in found))
+        return {}
+
+    name, configured = found[0]
+    try:
+        browser = build_upload(name, dict(configured)).browser()
+    except Exception:
+        # A broker that cannot be built is the upload's problem to report,
+        # not this feed's to fail on. The skin's own settings then stand.
+        log.debug("could not read the mqtt upload %r for the skin", name,
+                  exc_info=True)
+        return {}
+    if browser:
+        log.debug("live updates for the skin come from the %r upload", name)
+    return browser
+
+
+def _true(value: Any) -> bool:
+    """Whether a skin setting means yes. ConfigObj hands back strings."""
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
 
 def _settings_block(value: Any) -> dict[str, Any]:
     """A skin's `[Extras]` overrides, written either way.
@@ -1196,6 +1358,7 @@ def from_settings(settings: Any, reader: Reader,
         language=spoken.code,
         derived=_derived(settings),
         extras=_settings_block(option("extras")),
+        broker=_broker(settings, str(option("live_from") or "")),
     )
     # An explicit choice on the feed's page beats what the skin asked for.
     # Left empty, the skin decides, which is the point of running it at all.

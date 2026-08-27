@@ -2,7 +2,7 @@
 
 `deploy/`.
 
-## Der Container
+## The container
 
 `deploy/Dockerfile`:
 
@@ -10,27 +10,26 @@
 FROM python:3.13-slim
 ```
 
-> weewx-evo hat keine Abhängigkeiten außerhalb der Standardbibliothek, es gibt
-> also nichts zu installieren und nichts zu pinnen. Das ist es wert, so zu
-> bleiben: eine Wetterstation läuft jahrelang, ohne dass jemand hinschaut, und
-> jede Abhängigkeit ist etwas, das in dieser Zeit kaputtgehen kann.
+> weewx-evo has no dependencies outside the standard library, so there is
+> nothing to install and nothing to pin. That is worth keeping: a weather
+> station runs for years without anyone looking at it, and every dependency is
+> something that can break in that time.
 
-Zwei Dinge daran sind keine Formalitäten:
+Two things about it are not formalities:
 
-### Die Zeitzone ist Teil der Daten
+### The time zone is part of the data
 
 ```dockerfile
 ENV TZ=Europe/Berlin
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 ```
 
-**Die Tagesgrenze des Archivs ist lokale Zeit.** Die Zeitzone des Containers ist
-damit Teil der Daten, keine Anzeigeeinstellung. Ein Container in UTC schreibt
-`archive_day_*`-Zeilen, die auf anderen Mitternächten sitzen als die einer
-WeeWX-Instanz daneben — und die beiden lassen sich danach nicht mehr
-vergleichen.
+**The archive's day boundary is local time.** The container's time zone is
+therefore part of the data, not a display setting. A container in UTC writes
+`archive_day_*` rows sitting on different midnights than a WeeWX instance next
+to it — and the two cannot be compared afterwards.
 
-### Unprivilegiert
+### Unprivileged
 
 ```dockerfile
 RUN useradd --system --uid 1001 --create-home weewx && \
@@ -38,36 +37,36 @@ RUN useradd --system --uid 1001 --create-home weewx && \
 USER weewx
 ```
 
-Der Prozess ist durch einen Reverse Proxy vom Internet erreichbar und hat keinen
-Grund, die Dateien zu besitzen, die er schreibt, über das Schreiben hinaus.
+The process is reachable from the internet through a reverse proxy and has no
+reason to own the files it writes, beyond writing them.
 
 ```dockerfile
 ENTRYPOINT ["python", "-m", "weewx_evo.cli"]
 CMD ["serve"]
 ```
 
-## Ein Prozess — `deploy/compose.yml`
+## One process — `deploy/compose.yml`
 
 ```yaml
 services:
   weewx-evo:
     mem_limit: 256m
     ports:
-      - "127.0.0.1:3041:8000"   # Uploads und Live-Ansicht
-      - "127.0.0.1:3042:8080"   # die Einstellungsseite
+      - "127.0.0.1:3041:8000"   # uploads and live view
+      - "127.0.0.1:3042:8080"   # the settings page
     volumes:
       - /opt/weewx-evo/data:/data
     command: ["serve", "--spool", "/data/packets"]
 ```
 
-| Entscheidung | Grund |
+| Decision | Reason |
 |---|---|
-| `mem_limit: 256m` | Der Host hat keinen Swap und lässt anderes ernsthaft laufen. Ein unbegrenzter Container hier nähme eines davon in den OOM-Killer |
-| `127.0.0.1:…` | **Nur localhost.** Der Reverse Proxy ist der einzige Weg hinein |
-| Zwei Ports | Zwei Tokens, zwei Dienste → [Security](Security) |
-| `logging: journald` | Es gibt kein syslog in einem Container, und der Host liest seine Logs mit `journalctl`. `docker logs` funktioniert weiterhin |
+| `mem_limit: 256m` | The host has no swap and runs other things in earnest. An unlimited container here would take one of them into the OOM killer |
+| `127.0.0.1:…` | **Localhost only.** The reverse proxy is the only way in |
+| Two ports | Two tokens, two services → [Security](Security) |
+| `logging: journald` | There is no syslog in a container, and the host reads its logs with `journalctl`. `docker logs` carries on working |
 
-### Die Umgebung
+### The environment
 
 ```yaml
 environment:
@@ -87,55 +86,53 @@ environment:
   - WEEWX_EVO_ADMIN_TOKEN=${WEEWX_EVO_ADMIN_TOKEN:?set WEEWX_EVO_ADMIN_TOKEN in .env}
 ```
 
-Die `:?`-Form lässt Compose **abbrechen**, wenn ein Token fehlt, statt ohne
-eines zu starten.
+The `:?` form makes Compose **abort** when a token is missing, rather than start
+without one.
 
-**Die Tokens leben in `deploy/.env`, das nicht im Repo ist.**
+**The tokens live in `deploy/.env`, which is not in the repo.**
 
-`WEEWX_EVO_ADMIN_HOST=0.0.0.0` gilt **innerhalb** des Containers, damit der Proxy
-ihn erreicht. Was ihn privat hält, ist die Port-Bindung oben und das Token —
-nicht die Bindeadresse.
+`WEEWX_EVO_ADMIN_HOST=0.0.0.0` applies **inside** the container, so that the
+proxy can reach it. What keeps it private is the port binding above and the
+token — not the bind address.
 
-`ALLOW=private` bleibt der Default: Caddy verbindet aus dem Docker-Bridge-Netz,
-das privat ist. Der Reverse Proxy funktioniert also weiter, während nichts den
-Container direkt erreicht.
+`ALLOW=private` stays the default: Caddy connects from the Docker bridge
+network, which is private. So the reverse proxy carries on working while nothing
+reaches the container directly.
 
-### Healthcheck
+### Health check
 
 ```yaml
 test: ["CMD", "python", "-c",
        "import os,urllib.request as u; u.urlopen('http://127.0.0.1:8000/'+os.environ['WEEWX_EVO_TOKEN']+'/status', timeout=5).read()"]
 ```
 
-Der Status-Endpunkt sitzt hinter dem Token, der Check trägt es also mit.
+The status endpoint sits behind the token, so the check carries it.
 
-## Getrennt — `deploy/split.yml`
+## Split — `deploy/split.yml`
 
 ```bash
 docker compose -f compose.yml -f split.yml up -d
 ```
 
-Die Antwort auf „kann ein Treiber davon abgehalten werden, ins Archiv zu
-schreiben".
+The answer to "can a driver be stopped from writing to the archive".
 
-**Im Prozess kann er es nicht.** Ein Treiber ist Python im selben Interpreter,
-`import sqlite3` genügt. Was ihn abhält, ist, **die Datei nicht zu haben**.
+**In-process it cannot.** A driver is Python in the same interpreter, `import
+sqlite3` is enough. What stops it is **not having the file**.
 
-| Dienst | Was er hat |
+| Service | What it has |
 |---|---|
-| `weewx-evo` (Listener) | Die Treiber. Mountet die Live-Datenbank read-write und das Archiv **gar nicht**. Ein Treiber darin kann versuchen, was er will |
-| `weewx-evo-archiver` | Keine Treiber, hört auf nichts, mountet beides. Liest Pakete, schreibt Sätze |
+| `weewx-evo` (listener) | The drivers. Mounts the live database read-write and the archive **not at all**. A driver in it can try whatever it likes |
+| `weewx-evo-archiver` | No drivers, listens to nothing, mounts both. Reads packets, writes records |
 
-Sie reden **nie** miteinander. Die Live-Datenbank ist die ganze Schnittstelle —
-das ist, was das Aufteilen zu einer Änderung an dieser Datei und an keiner Zeile
-Code macht.
+They **never** talk to each other. The live database is the entire interface —
+which is what makes splitting them a change to this file and to no line of code.
 
 ```yaml
 weewx-evo:
   command: ["listen"]
   environment:
     - WEEWX_EVO_LIVE=/data/live.sdb
-    # Kein WEEWX_EVO_ARCHIVE.
+    # No WEEWX_EVO_ARCHIVE.
     - WEEWX_EVO_STATE_DIR=/data
   read_only: true
   tmpfs: [/tmp]
@@ -143,42 +140,42 @@ weewx-evo:
   cap_drop: [ALL]
 ```
 
-Ohne `WEEWX_EVO_ARCHIVE` bekommt ein Treiber, der sich etwas merken will, eine
-**Datei** in `/data` statt der Metadaten-Tabelle des Archivs.
-→ [Drivers](Drivers#treiber-zustand)
+Without `WEEWX_EVO_ARCHIVE`, a driver that wants to remember something gets a
+**file** in `/data` instead of the archive's metadata table.
+→ [Drivers](Drivers#driver-state)
 
-Der Archiver hat **keine Ports**. Nichts erreicht ihn von außen, und er erreicht
-nichts.
+The archiver has **no ports**. Nothing reaches it from outside, and it reaches
+nothing.
 
-### Zwei Fallen im Split
+### Two pitfalls in the split
 
-Beide stehen als Kommentar in der Datei:
+Both are recorded as comments in the file:
 
-- **Retention gehört zum Archiver, nicht zum Listener.** Pakete dürfen erst
-  fallen, wenn sie in einem Satz stehen, und nur diese Seite weiß das.
-- **SQLite im WAL-Modus schreibt `-shm` und `-wal` neben die Datei — auch zum
-  Lesen.** Das Verzeichnis read-only zu mounten ist deshalb **nicht** dasselbe
-  wie die Datei read-only zu mounten, und Ersteres schlägt fehl. Der wirksame
-  Weg ist ein Benutzer ohne Schreibrecht aufs Archiv.
+- **Retention belongs to the archiver, not to the listener.** Packets may only
+  be dropped once they are in a record, and only that side knows.
+- **SQLite in WAL mode writes `-shm` and `-wal` next to the file — for reading
+  too.** Mounting the directory read-only is therefore **not** the same as
+  mounting the file read-only, and the former fails. The route that works is a
+  user without write permission on the archive.
 
-## Der Reverse Proxy
+## The reverse proxy
 
-`deploy/weewx-evo.caddy` ist **in `.gitignore`** — die Datei enthält die echten
-Token-Pfade. Die Struktur:
+`deploy/weewx-evo.caddy` is **in `.gitignore`** — the file contains the real
+token paths. The structure:
 
 ```caddyfile
 station.example.org {
-	# Uploads und die Live-Ansicht.
+	# Uploads and the live view.
 	handle /<upload-token>/* {
 		reverse_proxy 127.0.0.1:3041
 	}
 
-	# Die Einstellungsseite.
+	# The settings page.
 	handle /<admin-token>/* {
 		reverse_proxy 127.0.0.1:3042
 	}
 
-	# Ein blankes GET sagt, dass der Dienst läuft, und sonst nichts.
+	# A bare GET says the service is running, and nothing else.
 	@root {
 		method GET
 		path /
@@ -193,23 +190,23 @@ station.example.org {
 }
 ```
 
-Zwei Token-Pfade, zwei Ports, und sie sind absichtlich **nicht dasselbe
-Geheimnis**. Ein Upload kann schlimmstenfalls einen falschen Messwert schreiben;
-die Einstellungsseite kann das Archiv auf eine andere Datei zeigen lassen.
+Two token paths, two ports, and they are deliberately **not the same secret**.
+An upload can at worst write a wrong reading; the settings page can point the
+archive at a different file.
 
-Der `handle`-Block ganz unten ist wichtig: **alles ohne Token ist ein 404.**
-Einem Upload, den wir verworfen haben, mit 200 zu antworten, würde einer
-falsch konfigurierten Konsole sagen, sie sei gehört worden.
+The `handle` block at the bottom matters: **anything without a token is a 404.**
+Answering an upload we discarded with a 200 would tell a misconfigured console
+it had been heard.
 
-## Ausrollen
+## Rolling it out
 
-**Auf dem Zielhost laufen produktive Dienste.**
+**The target host runs production services.**
 
-- Nur das eigene Compose-Projekt anfassen, Container immer beim Namen nennen.
-- **Kein `docker system prune`, kein globales `down`.**
-- Caddy: `caddy validate` **vor** jedem `reload`, danach die Produktivdienste
-  prüfen.
-- **`rsync --delete` nimmt `deploy/.env` mit** — immer `--exclude ".env"`.
+- Touch only your own Compose project, always name containers explicitly.
+- **No `docker system prune`, no global `down`.**
+- Caddy: `caddy validate` **before** every `reload`, then check the production
+  services.
+- **`rsync --delete` takes `deploy/.env` with it** — always `--exclude ".env"`.
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'rsync -az --delete --exclude ".env" \
@@ -219,12 +216,12 @@ ssh <host> 'cd /opt/weewx-evo/deploy && docker compose build -q && \
   docker compose up -d weewx-evo'
 ```
 
-Windows hat kein natives rsync — deshalb WSL Ubuntu, und weil WSL die
-Windows-SSH-Keys nicht kennt, `ssh.exe` als Transport.
+Windows has no native rsync — hence WSL Ubuntu, and because WSL does not know
+the Windows SSH keys, `ssh.exe` as the transport.
 
-## systemd statt Docker
+## systemd instead of Docker
 
-Drei Units, dieselbe Aufteilung:
+Three units, the same split:
 
 ```ini
 # weewx-evo-listen.service
@@ -245,27 +242,27 @@ ExecStart=/usr/local/bin/weewx-evo archive --spool /var/lib/weewx-evo/packets
 ExecStart=/usr/local/bin/weewx-evo admin
 ```
 
-Oder eine einzige mit `serve`. **Ohne Codeänderung** — das ist der Punkt der
-Trennung.
+Or a single one with `serve`. **With no code change** — that is the point of the
+split.
 
-Der Benutzer, unter dem der Listener läuft, sollte kein Schreibrecht auf das
-Archiv haben. Das ist die Durchsetzung, die tatsächlich zählt.
+The user the listener runs as should have no write permission on the archive.
+That is the enforcement that actually counts.
 
-## Sichern
+## Backing up
 
 ```bash
 sqlite3 /data/weewx.sdb "VACUUM INTO '/backup/weewx-$(date +%F).sdb'"
 ```
 
-Nicht `cp`. Die Datenbank wird nebenher beschrieben, und ein kopiertes WAL ist
-ein zerrissener Zustand.
+Not `cp`. The database is being written to alongside, and a copied WAL is a torn
+state.
 
-Die Live-Datenbank muss **nicht** gesichert werden: sie ist ein Cache mit ein
-paar Tagen darin. Was sie enthält und noch nicht in einem Satz steht, wäre
-verloren — Minuten, nicht Jahre.
+The live database does **not** have to be backed up: it is a cache with a few
+days in it. What it holds that is not yet in a record would be lost — minutes,
+not years.
 
-Was **mit** dem Archiv gesichert wird: der Treiberzustand, weil er in der
-Metadaten-Tabelle sitzt. Genau deshalb sitzt er dort.
+What is backed up **with** the archive: the driver state, because it sits in the
+metadata table. Which is exactly why it sits there.
 
 <!-- covers
 deploy/Dockerfile

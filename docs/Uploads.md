@@ -1,23 +1,22 @@
 # Uploads
 
-`uploads/`. Wie die Messwerte selbst zu einem Wetterdienst kommen.
+`uploads/`. How the readings themselves get to a weather service.
 
-Ein [Export](Exports) verschiebt **Dateien** — ein Feed hat ein Verzeichnis
-geschrieben, und irgendetwas muss es auf einen Webhost bringen. Ein Upload
-verschiebt **Messwerte**: ein Archivsatz, umgeformt in das, was Weather
-Underground oder Windy oder ein APRS-Gateway will, und abgeschickt. Kein
-Verzeichnis ist daran beteiligt, und deshalb ist es kein Export mit einer
-seltsamen Quelle.
+An [export](Exports) moves **files** — a feed wrote a directory, and something
+has to get it onto a web host. An upload moves **readings**: an archive record,
+reshaped into what Weather Underground or Windy or an APRS gateway wants, and
+sent. No directory is involved, which is why it is not an export with an odd
+source.
 
-Bei WeeWX steht das als `StdRESTful` im Kern, und hier gehört es auch dahin:
-Zu Weather Underground hochzuladen ist keine Erweiterung für eine Wetterstation,
-sondern der halbe Grund, eine zu betreiben. Eine Erweiterung ist der zehnte
-Dienst; die Form hier ist so gebaut, dass der zehnte vierzig Zeilen sind.
+In WeeWX that sits in the core as `StdRESTful`, and it belongs there here too:
+uploading to Weather Underground is not an extension for a weather station, it
+is half the reason to run one. An extension is the tenth service; the shape here
+is built so that the tenth is forty lines.
 
-Sieben gibt es: `wunderground`, `pwsweather`, `wow`, `windy`, `weathercloud`,
-`cwop` und `mqtt`.
+There are seven: `wunderground`, `pwsweather`, `wow`, `windy`, `weathercloud`,
+`cwop` and `mqtt`.
 
-## Die Schnittstelle
+## The interface
 
 ```python
 class Upload(Protocol):
@@ -25,163 +24,161 @@ class Upload(Protocol):
         ...
 ```
 
-`records` ist **älteste zuerst**. Meist ist es einer — das Intervall, das
-gerade geschlossen hat. Es ist eine Liste, weil eine Verbindung, die zehn
-Minuten weg war, beim Zurückkommen zwei Möglichkeiten hat: den neuesten Wert
-senden und so tun, als hätte es die anderen nie gegeben, oder alle senden.
+`records` is **oldest first**. Usually it is one — the interval that has just
+closed. It is a list because a connection that was away for ten minutes has two
+options on coming back: send the newest value and pretend the others never
+existed, or send them all.
 
-Weather Underground, PWSweather und WOW nehmen einen Zeitstempel mit der
-Messung entgegen und akzeptieren die verpassten Sätze. Das zur Sache des
-Aufrufers zu machen statt jedes Dienstes bedeutet: der Dienst, der nicht
-nachreichen kann, sagt es einmal mit `backfill = False` und bekommt nur den
-letzten.
+Weather Underground, PWSweather and WOW take a timestamp with the reading and
+accept the missed records. Making that the caller's business rather than every
+service's means the service that cannot backfill says so once with
+`backfill = False` and gets only the last one.
 
-## Woher die Sätze kommen
+## Where the records come from
 
-**Nicht durchgereicht — selbst gelesen.** Ein Upload bekommt nichts übergeben;
-er liest das Archiv, von dort, wo er zuletzt war. Das ist dieselbe Regel wie
-im Rest des Systems: die Komponenten reden über die Datenbank und nicht
-miteinander. Es bringt zwei Dinge, die anders schwer zu bekommen sind:
+**Not handed over — read directly.** An upload is given nothing; it reads the
+archive from wherever it last got to. That is the same rule as in the rest of
+the system: the components talk through the database and not to each other. It
+brings two things that are otherwise hard to get:
 
-- **Ein Neustart kostet nichts.** Der Upload weiß, wo er war, weil die Zahl
-  auf der Platte steht — nicht weil ein Prozess sich etwas gemerkt hat.
-- **Eine Verbindung, die zwanzig Minuten weg war**, kommt zurück und sendet
-  die zwanzig Minuten statt des aktuellen Werts und eines Lochs.
+- **A restart costs nothing.** The upload knows where it was because the number
+  is on disk — not because a process remembered something.
+- **A connection that was away for twenty minutes** comes back and sends the
+  twenty minutes, rather than the current value and a hole.
 
-Der Fortschritt steht in `uploads.json` neben dem Archiv. Es ist ein Cache: die
-Datei zu verlieren kostet einen doppelten Post, und jeder Dienst hier
-überschreibt einen Zeitstempel, den er schon hat.
+Progress is recorded in `uploads.json` next to the archive. It is a cache:
+losing the file costs one duplicate post, and every service here overwrites a
+timestamp it already has.
 
 ```python
-progress.through("wu")   # der neueste Satz, den WU angenommen hat
+progress.through("wu")   # the newest record WU accepted
 ```
 
-## Wann ein Upload läuft
+## When an upload runs
 
 | | |
 |---|---|
-| `record` | nach jedem Archivsatz — der Standard und fast immer richtig |
-| `live` | alle paar Sekunden, aus der Live-Tabelle. Nur MQTT bietet es an |
-| `interval` | eigener Takt, für einen Dienst der seltener will (CWOP) |
-| `manual` | nur auf `weewx-evo upload run` |
+| `record` | after every archive record — the default and almost always right |
+| `live` | every few seconds, from the live table. Only MQTT offers it |
+| `interval` | its own rhythm, for a service that wants less often (CWOP) |
+| `manual` | only on `weewx-evo upload run` |
 
-**Jeder Upload läuft in einem eigenen Thread**, aus demselben Grund wie die
-Exports: ein Dienst, der nicht mehr antwortet, sitzt in seinem eigenen Timeout
-statt im Tick des Archivers. Weather Underground ist ab und zu eine Stunde weg,
-und ein Archivintervall, das deshalb zu spät kommt, ist unser Fehler.
+**Every upload runs in a thread of its own**, for the same reason as the
+exports: a service that has stopped answering sits in its own timeout rather
+than in the archiver's tick. Weather Underground is away for an hour now and
+then, and an archive interval that arrives late because of it is our fault.
 
-## Ein falsches Passwort wird einmal gesagt
+## A wrong password is said once
 
-Diese Dienste beantworten ein falsches Passwort mit einem fröhlichen HTTP 200
-und dem Wort `INVALIDPASSWORDID` im Body. Der Statuscode entscheidet also
-nichts, und der Body muss gelesen werden.
+These services answer a wrong password with a cheerful HTTP 200 and the word
+`INVALIDPASSWORDID` in the body. So the status code decides nothing, and the
+body has to be read.
 
-Ein `Rejected(permanent=True)` schaltet den Upload ab und schreibt **eine**
-Zeile ins Log. Die Alternative ist dieselbe Zeile alle fünf Minuten, ein Jahr
-lang — und so hört ein Log auf, gelesen zu werden.
+A `Rejected(permanent=True)` turns the upload off and writes **one** line to the
+log. The alternative is the same line every five minutes for a year — and that
+is how a log stops being read.
 
-Deshalb hat jeder Upload ein `check()`, und die Admin-Seite einen Knopf dafür:
+Which is why every upload has a `check()`, and the admin page a button for it:
 
 ```bash
 weewx-evo upload check
 weewx-evo upload check wu
 ```
 
-## Einheiten
+## Units
 
-**`units.py`, an einer Stelle.** Jeder dieser Dienste schreibt seine Einheiten
-vor und keiner stimmt mit dem nächsten überein: Weather Underground will
-Fahrenheit und Zoll Quecksilbersäule, Windy Celsius und Meter pro Sekunde, APRS
-Fahrenheit und Hundertstel Zoll. Das Archiv hält, was die Station geschrieben
-hat.
+**`units.py`, in one place.** Every one of these services dictates its units and
+none agrees with the next: Weather Underground wants Fahrenheit and inches of
+mercury, Windy Celsius and metres per second, APRS Fahrenheit and hundredths of
+an inch. The archive holds what the station wrote.
 
-Die Umrechnung passiert in `Readings`, einmal, gegen dieselbe Tabelle wie alles
-andere. Das war WeeWX' Fehler bei den zwei Diagramm-Generatoren: beide für sich
-richtig, in der dritten Nachkommastelle uneins, und niemand findet es.
+The conversion happens in `Readings`, once, against the same table as everything
+else. That was WeeWX's mistake with the two plot generators: both right in
+themselves, disagreeing in the third decimal place, and nobody finds it.
 
-## Ein fehlender Wert ist fehlend, nie null
+## A missing value is missing, never zero
 
-Eine Station ohne Regenmesser, die alle fünf Minuten `rainin=0.00` sendet, ist
-von einer in einer Dürre nicht zu unterscheiden — und Weather Underground
-behält es für immer. `query()` lässt weg, was `None` ist, und deshalb kommt
-jede Messung als `None` zurück statt als Default.
+A station with no rain gauge sending `rainin=0.00` every five minutes is
+indistinguishable from one in a drought — and Weather Underground keeps it
+forever. `query()` leaves out whatever is `None`, which is why every reading
+comes back as `None` rather than as a default.
 
-CWOP kann das nicht: das Paket ist positionell, ein fehlender Wert sind Punkte
-derselben Breite. Beides wird befolgt, statt eines davon zu wählen.
+CWOP cannot do that: the packet is positional, and a missing value is dots of
+the same width. Both are followed rather than one of them being chosen.
 
-## Die Dienste
+## The services
 
 ### Ambient: Weather Underground, PWSweather, WOW
 
-Weather Underground hat das Protokoll definiert, die anderen haben es
-abgeschrieben — bis auf die Parameternamen. Deshalb ein Modul mit drei Hosts
-statt drei fast gleicher Dateien.
+Weather Underground defined the protocol and the others copied it — apart from
+the parameter names. Hence one module with three hosts rather than three nearly
+identical files.
 
-Die Formate sind aus `weewx.restx.AmbientThread` übernommen, Feld für Feld,
-**samt den Breiten**: `humidity=061` und `windspeedmph=003.1` sind das, was das
-Protokoll definiert, und die führenden Nullen sind keine Zierde. Das hat der
-Test gefunden (`tools/upload_test.py`), nicht das Lesen.
+The formats are taken from `weewx.restx.AmbientThread`, field by field,
+**widths included**: `humidity=061` and `windspeedmph=003.1` are what the
+protocol defines, and the leading zeroes are not decoration. The test found that
+(`tools/upload_test.py`), not the reading.
 
-WOW benennt beide Zugangsdaten um (`siteid`, `siteAuthenticationKey`) und
-antwortet auf ein falsches Passwort mit HTTP 403 statt mit einem Wort im Body.
-Sonst identisch.
+WOW renames both credentials (`siteid`, `siteAuthenticationKey`) and answers a
+wrong password with HTTP 403 rather than a word in the body. Otherwise
+identical.
 
 ### Windy
 
-Der einzige hier, der nicht Ambient spricht: JSON im Body eines POST, metrisch,
-und der Schlüssel steht im Pfad statt in einem Parameter.
+The only one here that does not speak Ambient: JSON in the body of a POST,
+metric, and the key is in the path rather than in a parameter.
 
-**Der Druck ist in Pascal.** Nicht Hektopascal, was jeder andere Dienst und
-jedes Barometer benutzt. `101325`, nicht `1013.25`. Den Hektopascal-Wert zu
-senden wird angenommen und als Vakuum gezeichnet.
+**The pressure is in pascals.** Not hectopascals, which every other service and
+every barometer uses. `101325`, not `1013.25`. Sending the hectopascal value is
+accepted and drawn as a vacuum.
 
-Windy nimmt mehrere Beobachtungen in einer Anfrage, also ist ein Nachreichen
-eine Anfrage statt zwölf.
+Windy takes several observations in one request, so a backfill is one request
+rather than twelve.
 
 ### Weathercloud
 
-Metrisch, und jeder Wert ist eine ganze Zahl in Zehnteln: 21,4 °C geht als
-`214`. Kein Zeitstempel im Protokoll, also kein Nachreichen — ein älterer Satz
-würde als aktuelle Bedingung veröffentlicht.
+Metric, and every value is a whole number in tenths: 21.4 °C goes as `214`. No
+timestamp in the protocol, so no backfilling — an older record would be
+published as the current conditions.
 
 ### CWOP
 
-Kein HTTP. Ein TCP-Socket, eine Login-Zeile und eine Zeile ASCII im
-TNC2-Paketformat, das der Amateurfunk seit den Neunzigern benutzt:
+No HTTP. A TCP socket, a login line and one line of ASCII in the TNC2 packet
+format amateur radio has used since the nineties:
 
 ```
 DW1234>APZEVO,TCPIP*:/271530z4823.15N/01142.30E_245/007g016t074r006p013P010b10128h61L512.weewx-evo
 ```
 
-Jedes Feld hat feste Breite, jedes fehlende Feld sind Punkte derselben Breite,
-und das Ganze ist positionell. Eine falsche Breite erzeugt keinen Fehler,
-sondern eine Messung an der falschen Stelle — still, für immer.
+Every field has a fixed width, every missing field is dots of the same width,
+and the whole thing is positional. A wrong width produces no error but a reading
+in the wrong place — silently, forever.
 
-Der Paketbauer ist deshalb aus `weewx.restx.CWOPThread` Zeichen für Zeichen
-übernommen, inklusive `h00` für 100 % Feuchte und der zwei verschiedenen
-Buchstaben für Sonnenstrahlung über und unter 1000 W/m². Das sind keine
-Marotten zum Aufräumen, das ist das Protokoll.
+The packet builder is therefore taken from `weewx.restx.CWOPThread` character by
+character, including `h00` for 100 % humidity and the two different letters for
+solar radiation above and below 1000 W/m². Those are not quirks to be tidied up,
+that is the protocol.
 
-Der Test vergleicht das Paket mit dem, das WeeWX aus demselben Satz baut —
-Zeichen für Zeichen.
+The test compares the packet with the one WeeWX builds from the same record —
+character by character.
 
-Zwei Entscheidungen:
+Two decisions:
 
-- **Zehn Minuten, nicht fünf.** CWOP bittet um einen Bericht alle fünf bis zehn
-  Minuten und meint es. Der Standard ist zehn, auf eigenem Takt statt auf dem
-  Archivsatz.
-- **`APZEVO` als Tocall.** `APWEE5` ist WeeWX zugewiesen und nicht unserer.
-  `APZ...` ist der Bereich, den die APRS-Spezifikation für Software ohne
-  registrierte Kennung vorsieht.
+- **Ten minutes, not five.** CWOP asks for a report every five to ten minutes
+  and means it. The default is ten, on its own rhythm rather than on the archive
+  record.
+- **`APZEVO` as the tocall.** `APWEE5` is assigned to WeeWX and is not ours.
+  `APZ...` is the range the APRS specification sets aside for software without a
+  registered identifier.
 
-CWOP braucht Breite und Länge — das Paket **ist** ein Positionsbericht. Sie
-werden aus den Stationseinstellungen ergänzt, damit niemand sie zweimal tippt.
+CWOP needs latitude and longitude — the packet **is** a position report. They
+are filled in from the station settings, so that nobody types them twice.
 
 ### MQTT
 
-Eigene Seite: [MQTT](MQTT).
+Its own page: [MQTT](MQTT).
 
-## Konfiguration
+## Configuration
 
 ```toml
 [uploads.wu]
@@ -196,29 +193,29 @@ api_key = "..."
 [uploads.cwop]
 kind = "cwop"
 station = "DW1234"
-# Breite und Länge kommen aus [station], wenn hier nichts steht
+# latitude and longitude come from [station] if nothing is set here
 ```
 
-Zwei Konten beim selben Dienst sind zwei Uploads mit verschiedenen Namen.
+Two accounts with the same service are two uploads with different names.
 
-## Kommandos
+## Commands
 
 ```bash
-weewx-evo upload list             # was es gibt und was konfiguriert ist
-weewx-evo upload check            # fragt die Dienste, sendet nichts
-weewx-evo upload run              # jetzt senden
-weewx-evo upload run wu --again   # vergessen, wie weit es kam
+weewx-evo upload list             # what there is and what is configured
+weewx-evo upload check            # asks the services, sends nothing
+weewx-evo upload run              # send now
+weewx-evo upload run wu --again   # forget how far it got
 ```
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/upload_test.py
 ```
 
-Ohne Netz. Jede Prüfung baut eine Anfrage und sieht sie an. Mit WeeWX auf dem
-Pfad vergleicht sie zusätzlich die Ambient-Query und das CWOP-Paket
-parameterweise mit dem, was WeeWX aus demselben Satz baut:
+No network. Every check builds a request and looks at it. With WeeWX on the
+path it additionally compares the Ambient query and the CWOP packet, parameter
+by parameter, with what WeeWX builds from the same record:
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \

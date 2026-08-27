@@ -96,7 +96,10 @@ class MqttUpload(BaseUpload):
                  append_units: bool = True, aggregate: bool = True,
                  individual: bool = True, retain: bool = True, qos: int = 0,
                  home_assistant: bool = False, discovery_prefix: str = "homeassistant",
-                 station: str = "", trigger: str = "live", every: int = 10,
+                 station: str = "", websockets_host: str = "",
+                 websockets_port: int | None = None, websockets_path: str = "",
+                 websockets_tls: bool | None = None,
+                 trigger: str = "live", every: int = 10,
                  catch_up: int = 0, timeout: int = 20,
                  keepalive: int = 60) -> None:
         if not host:
@@ -122,6 +125,15 @@ class MqttUpload(BaseUpload):
         #: the retained definitions, and a Home Assistant starting after that
         #: would find nothing.
         self._announced: set[str] = set()
+        # How a *browser* reaches this same broker. Not the same address:
+        # this client speaks MQTT over TCP, usually to localhost, while a
+        # page speaks MQTT over websockets to whatever is publicly
+        # reachable. Kept here rather than in the skin because everything
+        # else about the broker is already here -- see `browser()`.
+        self.websockets_host = str(websockets_host or "").strip()
+        self.websockets_port = websockets_port
+        self.websockets_path = str(websockets_path or "").strip()
+        self.websockets_tls = websockets_tls
         self.trigger = trigger
         self.every = int(every)
         self.catch_up_limit = 0
@@ -232,6 +244,49 @@ class MqttUpload(BaseUpload):
             log.debug("MQTT live publish failed: %s", exc)
             return 0
 
+    def browser(self) -> dict[str, object]:
+        """What a page needs to subscribe to this same broker.
+
+        The reason this exists: without it the broker is configured twice --
+        once here, and once again in every skin that shows live readings.
+        Two places holding the same host, the same credentials and, worst of
+        all, the same topic. A typo in the second one produces a page that
+        renders perfectly and never updates, with nothing in any log.
+
+        So the upload answers the question instead, and the skin is filled in
+        from it. What a browser needs that this client does not is only the
+        address: this one usually speaks TCP to localhost, a page speaks
+        websockets to whatever is publicly reachable.
+
+        Returns nothing when this upload does not publish the JSON document,
+        because that is what a page subscribes to. Individual topics are for
+        Home Assistant and Node-RED.
+        """
+        if not self.aggregate:
+            return {}
+        tls = self.client.tls if self.websockets_tls is None else self.websockets_tls
+        port = self.websockets_port
+        if not port:
+            # 9001 is what Mosquitto's own documentation uses for a
+            # websocket listener, and 443 is what a broker behind a reverse
+            # proxy ends up on. Neither is a standard, so both are only a
+            # starting point -- which is why the setting exists.
+            port = 443 if tls else 9001
+        return {
+            "enabled": True,
+            "host": self.websockets_host or self.client.host,
+            "port": int(port),
+            "path": self.websockets_path,
+            "tls": bool(tls),
+            "topic": f"{self.topic}/loop",
+            # Deliberately not the username and password. A page is served to
+            # anybody, and a credential in it is a credential published. A
+            # broker that needs one for reading needs an anonymous read-only
+            # user for this, which is a decision for whoever runs it.
+            "username": "",
+            "password": "",
+        }
+
     def check(self) -> str:
         try:
             self.client.connect()
@@ -334,6 +389,34 @@ class MqttUpload(BaseUpload):
                        help="At most once is right for a reading that is "
                             "superseded in five minutes."),
             )),
+            Group("How a browser reaches the same broker",
+                  "A skin showing live readings subscribes from the visitor's "
+                  "browser, which speaks websockets rather than plain MQTT "
+                  "and reaches the broker from outside. Filled in from the "
+                  "settings above where it can be; what it cannot guess is "
+                  "the address. Any skin that shows live readings is "
+                  "configured from this, so the broker is set up once.", (
+                      Option("websockets_host", "Host a browser should use",
+                             help="Empty means the same host as above. Set it "
+                                  "when this station reaches the broker at "
+                                  "localhost and a visitor cannot."),
+                      Option("websockets_port", "Port", kind="int",
+                             minimum=1, maximum=65535,
+                             help="Empty means 9001, or 443 when encrypted. "
+                                  "Neither is a standard -- 9001 is what "
+                                  "Mosquitto's own documentation uses."),
+                      Option("websockets_path", "Path", advanced=True,
+                             placeholder="/mqtt",
+                             help="Only for a broker behind a reverse proxy, "
+                                  "which is where a websocket usually needs "
+                                  "one."),
+                      Option("websockets_tls", "Encrypted", kind="bool",
+                             advanced=True,
+                             help="Empty follows the setting below. A page "
+                                  "served over https cannot open an "
+                                  "unencrypted websocket, so this has to be "
+                                  "on wherever the site is."),
+                  )),
             Group("Encryption", "", (
                 Option("tls", "Encrypt the connection", kind="bool",
                        default=False,

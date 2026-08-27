@@ -1,38 +1,36 @@
-# Web-Server
+# Web server
 
-`webserver.py`. Ausliefern, was die Feeds erzeugt haben.
+`webserver.py`. Serving what the feeds produced.
 
-Ein [Feed](Feeds) schreibt ein Verzeichnis voller Dateien. Irgendetwas muss sie
-einem Browser geben, und auf einer Station im Schuppen sollte dieses Etwas nicht
-nginx sein müssen.
+A [feed](Feeds) writes a directory full of files. Something has to hand them to
+a browser, and on a station in a shed that something should not have to be
+nginx.
 
-Das ist die kleine lokale Antwort. Wer einen richtigen Web-Server will, stellt
-einen davor — oder benutzt einen [Export](Exports) und lässt woanders
-ausliefern.
+This is the small local answer. Anyone wanting a real web server puts one in
+front — or uses an [export](Exports) and lets somewhere else do the serving.
 
-**Was ausgeliefert wird, kommt hier nicht direkt vom Feed.** Ein `local`-Export
-legt es hin; dieser Server gibt es aus. Der Umweg ist Absicht: ein Feed schreibt
-sein Verzeichnis neu, während er läuft, und ein Browser, der mittendrin lädt,
-bekäme eine halbe Seite. → [Exports](Exports#ein-verzeichnis-auf-dieser-maschine)
+**What gets served does not come straight from the feed.** A `local` export puts
+it down; this server hands it out. The detour is deliberate: a feed rewrites its
+directory while it runs, and a browser loading in the middle of that would get
+half a page. → [Exports](Exports#a-directory-on-this-machine)
 
-## Die Routen
+## The routes
 
 ```
-/                was es gibt — oder eines davon, wenn es der Default ist
-/<name>/         dieses Verzeichnis
-/<name>/…        alles darunter
+/                what there is — or one of them, if it is the default
+/<name>/         that directory
+/<name>/…        everything beneath it
 ```
 
-Mit `web.default` gesetzt ist `/` dieses eine, und die anderen bleiben unter
-`/<name>/`.
+With `web.default` set, `/` is that one, and the others stay under `/<name>/`.
 
-## Woher die Namen kommen
+## Where the names come from
 
-**Aus den `local`-Exports.** Ein Export namens `site`, der nach `data/site`
-veröffentlicht, erscheint unter `/site/`.
+**From the `local` exports.** An export called `site` publishing to `data/site`
+appears at `/site/`.
 
-Das ist die ganze Konfiguration: man sagt, wo ein Export etwas hinlegt, und von
-dort wird es ausgeliefert. **Niemand muss denselben Pfad zweimal aufschreiben.**
+That is the whole configuration: you say where an export puts something, and it
+is served from there. **Nobody has to write the same path down twice.**
 
 ```toml
 [exports.site]
@@ -43,17 +41,16 @@ source = "json"
 
 → `/site/`
 
-`[web.serve]` benennt zusätzlich Verzeichnisse direkt — für etwas, das dieses
-System nicht erzeugt hat: eine handgeschriebene Seite, ein Verzeichnis, das ein
-anderes Programm füllt.
+`[web.serve]` additionally names directories directly — for something this
+system did not produce: a hand-written page, a directory another program fills.
 
 ```toml
 [web.serve]
-alt = "/var/www/handgemacht"
+alt = "/var/www/handmade"
 ```
 
-Direkt Benanntes wird **zuletzt** eingetragen und schlägt damit einen Export
-gleichen Namens. Wer einen Pfad aufgeschrieben hat, meinte ihn.
+Directly named entries are registered **last** and therefore beat an export of
+the same name. Someone who wrote a path down meant it.
 
 ## `Site`
 
@@ -62,30 +59,29 @@ site = Site(feeds={"site": Path("data/site")},
             default="site", title="weewx-evo")
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `resolve(feed, rest)` | Die Datei für eine Anfrage, oder `None` |
+| `resolve(feed, rest)` | The file for a request, or `None` |
 
-`site_from(settings, feeds=None)` baut sie aus der Konfiguration.
-`index_page(site)` ist die Liste, wenn keines der Default ist.
+`site_from(settings, feeds=None)` builds it from the configuration.
+`index_page(site)` is the listing when none of them is the default.
 
-`options.published_names()` ist dieselbe Liste für das Formular der Admin-Seite:
-die `local`-Exports plus das direkt Benannte. **Die Exports zu lesen statt der
-Feeds ist der Unterschied zwischen anbieten, was es gibt, und anbieten, was es
-geben könnte.**
+`options.published_names()` is the same list for the admin page's form: the
+`local` exports plus the directly named entries. **Reading the exports rather
+than the feeds is the difference between offering what there is and offering
+what there could be.**
 
-### Die Prüfung, auf die es ankommt
+### The check that matters
 
-Die letzte in `resolve()`: **der aufgelöste Pfad muss innerhalb des
-Feed-Verzeichnisses liegen.**
+The last one in `resolve()`: **the resolved path has to lie inside the feed's
+directory.**
 
-`..` in einer URL, ein Symlink, der hinausführt, ein Template, das seinen
-Ausgabepfad aus etwas zusammensetzt, das jemand tippen kann — das Verzeichnis
-eines Feeds wird aus einem Template geschrieben, und ein Template, das man dazu
-bringen kann, `../../etc` zu schreiben, ist eines, das irgendwann jemand
-versehentlich schreibt.
+A `..` in a URL, a symlink leading out, a template assembling its output path
+from something a person can type — a feed's directory is written from a
+template, and a template that can be made to write `../../etc` is one that
+somebody eventually writes by accident.
 
-`tools/web_test.py` versucht genau das.
+`tools/web_test.py` tries exactly that.
 
 ## Caching
 
@@ -96,8 +92,8 @@ CACHE_SECONDS = {".css": 3600, ".js": 3600,
                  ".ico": 86400, ".svg": 3600}
 ```
 
-HTML und JSON bekommen **kein** Caching: das sind die Dateien, deren Zweck es
-ist, sich zu ändern.
+HTML and JSON get **no** caching: those are the files whose whole purpose is to
+change.
 
 ## `WebServer`
 
@@ -108,44 +104,44 @@ server.start()
 server.stop()
 ```
 
-Wie die anderen beiden Dienste: gebunden auf alles, geantwortet nur privaten
-Netzen, mit demselben Ratelimit. → [Security](Security)
+Like the other two services: bound to everything, answering private networks
+only, with the same rate limit. → [Security](Security)
 
-**Kein Token.** Eine Wetterseite ist kein Geheimnis. Was sie schützt, ist die
-Netzgrenze — und die Tatsache, dass diese Maschine sonst niemandem antwortet.
+**No token.** A weather page is not a secret. What protects it is the network
+boundary — and the fact that this machine answers nobody else.
 
-## Betrieb
+## Running it
 
 ```bash
 weewx-evo web --config evo.toml --port 8081
 ```
 
-Oder als Teil von `serve`, wenn `web.enabled` gesetzt ist. Getrennt aus
-demselben Grund wie `listen`: eine Maschine, die nur die Seiten zeigt, muss
-nicht die sein, die sie aufzeichnet.
+Or as part of `serve`, when `web.enabled` is set. Separate for the same reason
+as `listen`: a machine that only shows the pages need not be the one that
+records them.
 
-## Einstellungen
+## Settings
 
 → [Settings-Reference](Settings-Reference#website)
 
 | | |
 |---|---|
-| `web.enabled` | Ob er in `serve` mitläuft |
-| `web.port` | Default 8081, eigener Port |
-| `web.default` | Was unter `/` liegt. Die Auswahl kommt aus `published_names()` |
-| `web.allow` | Wer eine Antwort bekommt |
+| `web.enabled` | Whether it runs along with `serve` |
+| `web.port` | Default 8081, its own port |
+| `web.default` | What sits at `/`. The choices come from `published_names()` |
+| `web.allow` | Who gets an answer |
 | `web.host` | |
-| `[web.serve]` | Namen, die direkt auf Verzeichnisse zeigen |
+| `[web.serve]` | Names pointing straight at directories |
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/web_test.py
 ```
 
-Zwei Dinge werden geprüft: das Routing — Feeds unter `/<name>/`, einer optional
-unter `/` — und **die Grenze**, was der Teil ist, auf den es ankäme, wenn er
-falsch wäre.
+Two things are checked: the routing — feeds under `/<name>/`, one of them
+optionally at `/` — and **the boundary**, which is the part that would matter if
+it were wrong.
 
 <!-- covers
 src/weewx_evo/webserver.py

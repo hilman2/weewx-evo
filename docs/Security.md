@@ -1,22 +1,22 @@
-# Sicherheit
+# Security
 
-`netaccess.py`, `ratelimit.py`, und die Token-Politik.
+`netaccess.py`, `ratelimit.py`, and the token policy.
 
-> **So einfach wie möglich, so sicher wie nötig.**
+> **As simple as possible, as secure as necessary.**
 
-Die übliche Anlage steht im Heimnetz: eine kleine Maschine in einem Schuppen
-oder Schrank, eine Konsole im selben WLAN, und jemand, der von einem Laptop in
-der Küche in die Einstellungen sehen will. Daraus folgt alles.
+The usual installation is on a home network: a small machine in a shed or a
+cupboard, a console on the same Wi-Fi, and somebody who wants to look at the
+settings from a laptop in the kitchen. Everything follows from that.
 
-## Wer eine Antwort bekommt
+## Who gets an answer
 
 `netaccess.py`.
 
-**Gebunden auf `0.0.0.0`, geantwortet nur privaten Netzen.**
+**Bound to `0.0.0.0`, answering private networks only.**
 
-Auf localhost zu binden macht den Laptop in der Küche zu einem SSH-Tunnel — eine
-Sache zu viel zum Erklären. Auf alles zu binden und das Beste zu hoffen ist, wie
-eine Konfigurationsseite auf Shodan landet.
+Binding to localhost turns the laptop in the kitchen into an SSH tunnel — one
+thing too many to explain. Binding to everything and hoping for the best is how
+a configuration page ends up on Shodan.
 
 ```python
 PRIVATE = ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
@@ -24,9 +24,9 @@ PRIVATE = ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
 LOOPBACK = ("127.0.0.0/8", "::1/128")
 ```
 
-Ein **Reverse Proxy verbindet immer von loopback** oder aus dem Docker-Bridge-
-Netz, beides privat — er funktioniert also von selbst, ohne dass irgendetwas
-geöffnet werden muss. Das ist der Grund, warum dieser Default trägt.
+A **reverse proxy always connects from loopback** or from the Docker bridge
+network, both private — so it works on its own, without anything having to be
+opened up. That is why this default holds.
 
 ```python
 class Access:
@@ -35,144 +35,142 @@ class Access:
     def allows(self, address: str) -> bool: ...
 ```
 
-| Wert | Bedeutung |
+| Value | What it means |
 |---|---|
-| `private` | Der Default. Die Netze oben |
-| `any` | Alles, einschließlich des offenen Internets |
-| `10.0.0.0/8, 203.0.113.4` | Eine Liste aus Netzen und Einzeladressen |
+| `private` | The default. The networks above |
+| `any` | Everything, including the open internet |
+| `10.0.0.0/8, 203.0.113.4` | A list of networks and individual addresses |
 
-**Loopback wird immer hinzugefügt**, egal was dasteht: sich selbst von der
-eigenen Maschine auszusperren ist kein Sicherheitsgewinn.
+**Loopback is always added**, whatever is written there: locking yourself out
+from your own machine is no security gain.
 
-`PRIVATE_ONLY` und `EVERYONE` sind die zwei fertigen Instanzen.
+`PRIVATE_ONLY` and `EVERYONE` are the two ready-made instances.
 
-`warn_if_open(access, what)` sagt beim Start **einmal**, wenn ein Dienst dem
-ganzen Internet antwortet. Das offene Internet ist eine bewusste Entscheidung
-(`--allow any`), und eine bewusste Entscheidung verdient eine Zeile im Log.
+`warn_if_open(access, what)` says **once** at startup when a service is
+answering the whole internet. The open internet is a deliberate decision
+(`--allow any`), and a deliberate decision deserves a line in the log.
 
-### Warum 404 und nicht 403
+### Why 404 and not 403
 
-Ein Peer aus einem Netz, das nicht beantwortet wird, bekommt **404** — dasselbe
-wie ein falsches Token.
+A peer from a network that is not answered gets **404** — the same as a wrong
+token.
 
-„Falsches Netz" zu sagen würde bestätigen, dass es hier etwas gibt.
+Saying "wrong network" would confirm that there is something here.
 
-## Zwei Tokens, zwei Ports
+## Two tokens, two ports
 
-| | Kann | Port |
+| | Can | Port |
 |---|---|---|
-| Upload-Token | Schlimmstenfalls einen falschen Messwert schreiben | 8000 |
-| Admin-Token | Das Archiv auf eine andere Datei zeigen lassen | 8080 |
+| Upload token | At worst write a wrong reading | 8000 |
+| Admin token | Point the archive at a different file | 8080 |
 
-**Gleicher Token für beides wird verweigert.**
+**The same token for both is refused.**
 
-### Warum das Token im Pfad steht
+### Why the token is in the path
 
-Hardware kann keine Header senden. Eine Ecowitt-Konsole hat ein Feld für Host,
-Port und Pfad. Also ist ein Pfad, den niemand erraten kann, die praktische
-Antwort.
+Hardware cannot send headers. An Ecowitt console has a field for host, port and
+path. So a path nobody can guess is the practical answer.
 
-Das macht das Token **versuchbar** — es steht in Logs von Proxies, in
-Browser-Verläufen, in Referrern. Daher die zweite, enge Grenze.
+That makes the token **worth trying** — it shows up in proxy logs, in browser
+histories, in referrers. Hence the second, tight limit.
 
-## Die zwei Grenzen
+## The two limits
 
-`ratelimit.py`. Zwei Limits, weil es zwei verschiedene Dinge gibt, vor denen man
-Angst haben muss, und eine Zahl nicht beiden dient.
+`ratelimit.py`. Two limits, because there are two different things to be afraid
+of and one number does not serve both.
 
-| | Default | Warum |
+| | Default | Why |
 |---|---|---|
-| **Anfragen, die funktionieren** | 10/s je Adresse | Eine Konsole lädt alle acht Sekunden hoch; eine Vantage sendet alle zwei Sekunden ein LOOP-Paket. Selbst eine Station mit mehreren Konsolen und ein Treiber, der nach einem Ausfall aufholt, bleibt unter einer je Sekunde. Zehn ist Luft nach oben |
-| **Falsche Tokens** | 5/min je Adresse | Das ist die wirksame Grenze. Der Token steht im Pfad und ist damit erratbar |
+| **Requests that work** | 10/s per address | A console uploads every eight seconds; a Vantage sends a LOOP packet every two. Even a station with several consoles and a driver catching up after an outage stays under one per second. Ten is headroom |
+| **Wrong tokens** | 5/min per address | This is the effective limit. The token is in the path and is therefore guessable |
 
-Die zweite ist die, die etwas tut. Die erste fängt nur ab, was schiefgegangen
-ist.
+The second is the one that does something. The first only catches what has gone
+wrong.
 
-### Prüfen kostet nichts, nur ein echter Fehlversuch zahlt
+### Checking costs nothing, only a real failure pays
 
-Das ist die Regel, die den Unterschied macht.
+That is the rule that makes the difference.
 
 ```python
-limits.has_attempts_left(address)   # fragt, ohne zu zahlen
-limits.failed(address)              # das hier zahlt
-limits.succeeded(address)           # ein richtiger Token: Fehlversuche vergessen
+limits.has_attempts_left(address)   # asks without paying
+limits.failed(address)              # this one pays
+limits.succeeded(address)           # a correct token: forget the failures
 ```
 
-**Das war ein Fehler und ist jetzt ein Test** (`tools/ratelimit_test.py`): sonst
-hätte sich eine Konsole nach fünf **gültigen** Uploads selbst ausgesperrt.
+**That was a bug and is now a test** (`tools/ratelimit_test.py`): otherwise a
+console would have locked itself out after five **valid** uploads.
 
-Der Grund war, dass die Prüfung an zwei Stellen stand — `submit` zählte ein
-falsches Token, die Diagnoseseiten nicht. Jetzt macht `_has_token()` beides an
-einer Stelle.
+The reason was that the check sat in two places — `submit` counted a wrong
+token, the diagnostic pages did not. Now `_has_token()` does both in one place.
 
-### Die Antworten
+### The answers
 
-| Situation | Antwort | Warum |
+| Situation | Answer | Why |
 |---|---|---|
-| Falsches Token | **404**, immer | „Zu viele Versuche" zu sagen würde bestätigen, dass es etwas zu versuchen gibt |
-| Falsches Netz | **404** | Dasselbe |
-| Zu viele Anfragen | **429** mit `Retry-After` | Das ist ein **echter Client**, dem gesagt wird, langsamer zu machen |
+| Wrong token | **404**, always | Saying "too many attempts" would confirm that there is something to attempt |
+| Wrong network | **404** | The same |
+| Too many requests | **429** with `Retry-After` | This is a **real client** being told to slow down |
 
-Der Kommentar im Code sagt es kurz: `# 429 here, not 404: this one is a real
-client being told to slow down`.
+The comment in the code puts it briefly: `# 429 here, not 404: this one is a
+real client being told to slow down`.
 
-### Wie es gebaut ist
+### How it is built
 
 ```python
 class Bucket:
-    """Token-Bucket: Tokens wachsen mit `rate` bis `burst`, jede Anfrage kostet eines."""
+    """Token bucket: tokens grow at `rate` up to `burst`, every request costs one."""
 ```
 
-Diese Form ist hier richtig: eine Konsole, die offline war und ihren Rückstand
-postet, darf einen Stoß machen, ohne abgewiesen zu werden.
+That shape is the right one here: a console that was offline and is posting its
+backlog may burst without being turned away.
 
 ```python
 class Limiter:
     def __init__(self, rate, burst=None, capacity=4096, name="requests"): ...
 ```
 
-**`capacity` ist wichtig.** Ein Eintrag je Adresse ist in einem Heimnetz
-belanglos und in einem öffentlichen ein Weg, einer Maschine den Speicher
-auszugehen. Die ältesten Einträge fallen, wenn die Tabelle voll ist.
+**`capacity` matters.** One entry per address is irrelevant on a home network and
+on a public one is a way for a machine to run out of memory. The oldest entries
+drop when the table is full.
 
 ```python
 class Limits:
-    """Was ein Dienst benutzt: ein Limit für Anfragen, ein engeres für Fehlversuche."""
+    """What a service uses: one limit for requests, a tighter one for failures."""
 ```
 
-`announce(limits, what)` sagt beim Start, was begrenzt wird — und was nicht.
+`announce(limits, what)` says at startup what is limited — and what is not.
 
-### Hinter einem Reverse Proxy
+### Behind a reverse proxy
 
-`behind_proxy = true` schaltet das Ratelimit ab.
+`behind_proxy = true` turns the rate limit off.
 
-Dann kommt jede Anfrage von der Adresse des Proxys, und eine Grenze je Adresse
-würde **alle außer dem Verursacher** ausbremsen. Das Limitieren bleibt beim
-Proxy, der als Einziger die echte Adresse kennt.
+Every request then comes from the proxy's address, and a per-address limit would
+slow down **everyone except whoever caused it**. Limiting stays with the proxy,
+which is the only one that knows the real address.
 
-## Ein Treiber im Prozess
+## A driver in the process
 
-**Nicht einsperrbar.** Ein Treiber ist Python im selben Interpreter,
-`import sqlite3` genügt, und keine Schnittstelle hindert Code daran, sie zu
-umgehen. WeeWX hat dieselbe Eigenschaft.
+**Cannot be caged.** A driver is Python in the same interpreter, `import
+sqlite3` is enough, and no interface stops code from going round it. WeeWX has
+the same property.
 
-Die Zwischenschicht ist ein **Vertrag, kein Käfig**: ein Treiber bekommt einen
-`state` mit `get`/`set`/`delete` auf Strings, nicht den `ArchiveStore`. Damit ist
-das Richtige einfach und das Falsche eine sichtbare, absichtliche Handlung.
+The layer in between is a **contract, not a cage**: a driver gets a `state` with
+`get`/`set`/`delete` on strings, not the `ArchiveStore`. What that does is make
+the right thing easy and the wrong thing a visible, deliberate act.
 
-Durchgesetzt wird außerhalb des Prozesses:
+Enforcement happens outside the process:
 
-| Mittel | Wirkung |
+| Means | Effect |
 |---|---|
-| `listen` und `archive` getrennt (`deploy/split.yml`) | Der Listener öffnet das Archiv nie. Ein Treiber darin **hat die Datei nicht** |
-| Eigener Benutzer ohne Schreibrecht aufs Archiv | Macht die Frage gegenstandslos |
-| `driver install` liest den Code | Meldet `sqlite3`, `subprocess`, `socket`. Ein Hinweis, keine Garantie |
+| `listen` and `archive` split (`deploy/split.yml`) | The listener never opens the archive. A driver inside it **does not have the file** |
+| A separate user without write permission on the archive | Makes the question moot |
+| `driver install` reads the code | Reports `sqlite3`, `subprocess`, `socket`. A hint, not a guarantee |
 
 → [Drivers](Drivers), [Deployment](Deployment)
 
-## Der Container
+## The container
 
-`deploy/split.yml` setzt zusätzlich:
+`deploy/split.yml` additionally sets:
 
 ```yaml
 read_only: true
@@ -181,46 +179,44 @@ security_opt: [no-new-privileges:true]
 cap_drop: [ALL]
 ```
 
-Und der Prozess läuft als unprivilegierter Benutzer (`Dockerfile`, uid 1001).
-Er ist durch Caddy vom Internet erreichbar und hat keinen Grund, die Dateien zu
-besitzen, die er schreibt, über das Schreiben hinaus.
+And the process runs as an unprivileged user (`Dockerfile`, uid 1001). It is
+reachable from the internet through Caddy and has no reason to own the files it
+writes, beyond writing them.
 
 ## Traversal
 
-Der Web-Server prüft, dass ein aufgelöster Pfad **innerhalb** des
-Feed-Verzeichnisses liegt. Das Verzeichnis eines Feeds wird aus einem Template
-geschrieben, und ein Template, das man dazu bringen kann, `../../etc` zu
-schreiben, ist eines, das irgendwann jemand versehentlich schreibt.
+The web server checks that a resolved path lies **inside** the feed's directory.
+A feed's directory is written from a template, and a template that can be made
+to write `../../etc` is one that somebody eventually writes by accident.
 → [Web-Server](Web-Server)
 
-## Was redigiert wird
+## What gets redacted
 
-Ein Rohupload wird eine Weile aufbewahrt, damit man ihn an ein Issue hängen
-kann. **Redaktion ist Protokollwissen** — nur der Treiber weiß, was in seinem
-Protokoll ein Geheimnis ist:
+A raw upload is kept for a while so that it can be attached to an issue.
+**Redaction is protocol knowledge** — only the driver knows what is a secret in
+its protocol:
 
 ```python
 SECRETS = ("PASSKEY", "ID", "PASSWORD", "key", "stationkey")   # ecowitt
 ```
 
-Der PASSKEY identifiziert eine Ecowitt-Station und ist, was jemand bräuchte, um
-ihre Messwerte zu fälschen. Alles andere in einem Ecowitt-Upload sind Messwerte.
+The PASSKEY identifies an Ecowitt station and is what somebody would need in
+order to forge its readings. Everything else in an Ecowitt upload is readings.
 
-Auch die Admin-Seite gibt ein `secret` **nie** zurück: sie zeigt, *ob* eines
-gesetzt ist. Ein Token, das einmal angezeigt wurde, ist ein Token in einem
-Screenshot.
+The admin page too **never** hands a `secret` back: it shows *whether* one is
+set. A token that has been displayed once is a token in a screenshot.
 
-## Prüfen
+## Checking it
 
 ```bash
-python tools/netaccess_test.py    # wer geantwortet wird
-python tools/ratelimit_test.py    # die zwei Grenzen
-python tools/web_test.py          # die Verzeichnisgrenze
+python tools/netaccess_test.py    # who gets an answer
+python tools/ratelimit_test.py    # the two limits
+python tools/web_test.py          # the directory boundary
 ```
 
-`netaccess_test.py` treibt die Server mit einem Socket, dessen Quelladresse
-tatsächlich anders ist — **eine Peer-Adresse lässt sich über TCP nicht fälschen**,
-also ist das echt prüfbar und nicht gemockt.
+`netaccess_test.py` drives the servers with a socket whose source address really
+is different — **a peer address cannot be forged over TCP**, so this is really
+checkable and not mocked.
 
 <!-- covers
 src/weewx_evo/netaccess.py

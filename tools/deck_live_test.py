@@ -66,8 +66,14 @@ def archive(path: Path) -> None:
     conn.close()
 
 
-def render(tmp: Path, broker: bool) -> str:
-    """Render Deck's front page, with or without a broker configured."""
+def render(tmp: Path, broker: bool, upload: dict | None = None) -> str:
+    """Render Deck's front page.
+
+    `broker` sets the skin's *own* mqtt block, the way somebody editing
+    skin.conf would. `upload` configures an MQTT upload, the way somebody
+    using the settings page would -- and the point of the arrangement is that
+    the second is enough on its own.
+    """
     from weewx_evo import units
     from weewx_evo.feeds.cheetah import CheetahFeed
     from weewx_evo.series import Reader
@@ -75,6 +81,8 @@ def render(tmp: Path, broker: bool) -> str:
     from weewx_evo.tags import Tags
 
     where = tmp / ("with" if broker else "without")
+    if upload is not None:
+        where = tmp / ("both" if broker else "upload")
     where.mkdir(parents=True, exist_ok=True)
     db = where / "weewx.sdb"
     archive(db)
@@ -103,7 +111,12 @@ def render(tmp: Path, broker: bool) -> str:
                          "longitude": 11.7050, "altitude": 440.0,
                          "station_url": "https://example.org",
                          "hardware": "ecowitt", "version": "0.0.1"})
-    feed = CheetahFeed(reader=reader, skin=skin, tags=tags)
+    found = {}
+    if upload is not None:
+        from weewx_evo.cli import build_upload
+
+        found = build_upload("broker", dict(upload)).browser()
+    feed = CheetahFeed(reader=reader, skin=skin, tags=tags, broker=found)
     produced = feed.produce(where / "out")
     conn.close()
 
@@ -157,6 +170,84 @@ def test_with_a_broker(tmp: Path) -> None:
     ok("with an observation name on them", "data-observation=" in page)
     ok("and the value element the badge sits in",
        "stat-title-obs-value" in page)
+
+
+def test_the_broker_is_configured_once(tmp: Path) -> None:
+    """The skin is filled in from the upload, not typed a second time.
+
+    This is the point of the whole arrangement. Without it the broker is
+    configured twice -- once as an upload and once in the skin's `[Extras]` --
+    and a typo in the second gives a page that renders perfectly and never
+    updates, with nothing in any log to say why.
+    """
+    from weewx_evo.uploads.mqtt import MqttUpload
+
+    upload = MqttUpload(host="localhost", topic="wetter",
+                        websockets_host="mqtt.example.org",
+                        websockets_port=9883, websockets_tls=True)
+    browser = upload.browser()
+
+    # The address a browser needs is not the one this client uses: it speaks
+    # TCP to localhost, a page speaks websockets to what is publicly there.
+    check("the browser gets the public host", browser["host"],
+          "mqtt.example.org")
+    check("and the websocket port", browser["port"], 9883)
+    # The topic is the one thing that must match, and the one thing nobody
+    # notices when it does not.
+    check("the topic follows the upload", browser["topic"], "wetter/loop")
+    check("and so does the encryption", browser["tls"], True)
+
+    # Never the credentials. A page is served to anybody, and a credential in
+    # it is a credential published.
+    check("no username reaches the page", browser["username"], "")
+    check("and no password", browser["password"], "")
+
+    # Defaults, when the operator said nothing about the browser side.
+    plain = MqttUpload(host="broker.example.org", topic="weather").browser()
+    check("the host falls back to the upload's", plain["host"],
+          "broker.example.org")
+    check("and the port to Mosquitto's websocket default", plain["port"], 9001)
+    check("unencrypted by default", plain["tls"], False)
+    # An encrypted upload implies an encrypted websocket: a page served over
+    # https cannot open a plain one.
+    secure = MqttUpload(host="b.example.org", tls=True).browser()
+    check("an encrypted broker implies an encrypted websocket",
+          secure["tls"], True)
+    check("on 443, which is where a proxied one ends up", secure["port"], 443)
+
+    # An upload that publishes only individual topics has nothing a page
+    # subscribes to: `topic/loop` is the document a skin reads.
+    single = MqttUpload(host="b.example.org", aggregate=False,
+                        individual=True).browser()
+    check("no JSON document means nothing for a page", single, {})
+
+
+def test_the_skin_takes_it(tmp: Path) -> None:
+    """And the filled-in settings actually reach the rendered page."""
+    page = render(tmp, broker=False, upload={
+        "kind": "mqtt", "host": "localhost", "topic": "wetter",
+        "websockets_host": "mqtt.example.org", "websockets_port": 9883})
+
+    # The skin ships with mqtt off. An upload being configured is what turns
+    # it on -- nobody has to find the setting.
+    ok("the skin went live without being told", 'id="live-indicator"' in page)
+    ok("with the browser's host", "mqtt.example.org" in page)
+    ok("and its port", "9883" in page)
+    ok("and the topic from the upload", "wetter/loop" in page)
+    ok("the script is loaded", "live-status.js" in page)
+
+
+def test_a_skin_that_says_its_own_wins(tmp: Path) -> None:
+    """Somebody who configured it by hand meant it."""
+    page = render(tmp, broker=True, upload={
+        "kind": "mqtt", "host": "localhost", "topic": "wetter",
+        "websockets_host": "mqtt.example.org"})
+    # `broker=True` sets the skin's own mqtt_websockets_enabled and leaves
+    # its host at localhost. That is a deliberate configuration and it
+    # stands, rather than half of each being used.
+    ok("the skin's own host stands", "localhost" in page)
+    ok("and the upload's does not overwrite it",
+       "mqtt.example.org" not in page)
 
 
 def test_the_styles_are_there() -> None:
@@ -215,6 +306,9 @@ def main() -> int:
         test_the_german_words_exist()
         test_without_a_broker(tmp)
         test_with_a_broker(tmp)
+        test_the_broker_is_configured_once(tmp)
+        test_the_skin_takes_it(tmp)
+        test_a_skin_that_says_its_own_wins(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

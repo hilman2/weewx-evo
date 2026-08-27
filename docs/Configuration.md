@@ -1,29 +1,28 @@
-# Konfiguration
+# Configuration
 
-Das Wichtigste zuerst: **nichts liest die Konfigurationsdatei für sich.** Es
-gibt eine `Settings`-Instanz je Prozess, und alles fragt sie.
+First things first: **nothing reads the configuration file for itself.** There
+is one `Settings` instance per process, and everything asks it.
 
-Der Grund ist konkret: Löst jede Komponente selbst auf, kann eine Datei, die
-zwischen zwei Auflösungen neu geschrieben wird, einem laufenden System zwei
-verschiedene Konfigurationen geben. `cli.settings_for()` löst deshalb **einmal**
-auf und merkt sich das Ergebnis.
+The reason is concrete: if every component resolves for itself, a file rewritten
+between two resolutions can give a running system two different configurations.
+`cli.settings_for()` therefore resolves **once** and remembers the result.
 
-## Die Reihenfolge
+## The precedence
 
-Fünf Orte, eine feste Rangfolge, stärkster zuerst:
+Five places, one fixed order, strongest first:
 
-| | Wo | Wofür |
+| | Where | What for |
 |---|---|---|
-| 1 | Kommandozeilenargument | Jemand hat es gerade getippt, für diesen Lauf |
-| 2 | Umgebungsvariable | Wie ein Container konfiguriert wird |
-| 3 | Konfigurationsdatei (TOML) | Was die Admin-Seite schreibt, was ein Mensch editiert |
-| 4 | `weewx.conf` | Was beide Systeme teilen — Standort, Höhe, Archivintervall |
-| 5 | Default aus dem Schema | |
+| 1 | Command-line argument | Somebody just typed it, for this run |
+| 2 | Environment variable | How a container is configured |
+| 3 | Configuration file (TOML) | What the admin page writes, what a person edits |
+| 4 | `weewx.conf` | What both systems share — location, altitude, archive interval |
+| 5 | Default from the schema | |
 
-Implementiert in `settings.Settings.get()` — `settings.py:108`. Jede Auflösung
-merkt sich, woher der Wert kam; das ist, was `--explain` ausgibt.
+Implemented in `settings.Settings.get()` — `settings.py:108`. Every resolution
+remembers where the value came from; that is what `--explain` prints.
 
-Sichtbar machen:
+Making it visible:
 
 ```bash
 weewx-evo serve --config evo.toml --explain
@@ -36,55 +35,55 @@ weewx-evo serve --config evo.toml --explain
   grace           15                         default
 ```
 
-## Umgebungsvariablen
+## Environment variables
 
-Der Name entsteht aus dem Einstellungsnamen: Punkte zu Unterstrichen,
-Großbuchstaben, Präfix `WEEWX_EVO_`.
+The name comes from the setting's name: dots to underscores, upper case, prefix
+`WEEWX_EVO_`.
 
-| Einstellung | Variable |
+| Setting | Variable |
 |---|---|
 | `token` | `WEEWX_EVO_TOKEN` |
 | `station.altitude` | `WEEWX_EVO_STATION_ALTITUDE` |
 | `admin.port` | `WEEWX_EVO_ADMIN_PORT` |
 | `feeds.json.units` | `WEEWX_EVO_FEEDS_JSON_UNITS` |
 
-### Aliase
+### Aliases
 
-Ein paar Namen gab es für Umgebungsvariablen, bevor es sie für Einstellungen
-gab. Sie funktionieren weiter, mit dem Faktor, der ihre Einheit in die der
-Einstellung überführt (`settings.ENV_ALIASES`):
+A few names existed for environment variables before they existed for settings.
+They carry on working, with the factor that converts their unit into the
+setting's (`settings.ENV_ALIASES`):
 
-| Alias | Einstellung | Faktor |
+| Alias | Setting | Factor |
 |---|---|---|
 | `WEEWX_EVO_LIVE` | `live_db` | 1 |
 | `WEEWX_EVO_ARCHIVE` | `archive_db` | 1 |
 | `WEEWX_EVO_RETENTION_DAYS` | `retention` | 86400 |
 | `WEEWX_EVO_RAW_MINUTES` | `raw_retention` | 60 |
 
-Eine laufende Installation soll nicht kaputtgehen, weil ein Name ordentlicher
-wurde. Der Tag, an dem jemand eine Variable umbenennt, ist der Tag, an dem er
-herausfindet, an wie vielen Stellen sie benutzt wurde.
+A running installation should not break because a name got tidier. The day
+somebody renames a variable is the day they find out in how many places it was
+used.
 
-## Die Konfigurationsdatei
+## The configuration file
 
-TOML, weil Python es ohne Abhängigkeit lesen kann und ein Mensch es editieren
-kann, ohne etwas zu lernen. **Eine** Datei, und die Admin-Seite schreibt dieselbe
-Datei, die ein Mensch schreiben würde.
+TOML, because Python can read it with no dependency and a person can edit it
+without learning anything. **One** file, and the admin page writes the same file
+a person would write.
 
-Zwei Dinge, auf die `config.py` achtet — beide aus Konfigurationsdateien
-gelernt, die im Feld schiefgegangen sind:
+Two things `config.py` watches for — both learned from configuration files that
+went wrong in the field:
 
-- **Die Datei wird neu geschrieben, nicht gepatcht.** Werte kommen aus dem
-  Schema, Kommentare aus den `help`-Texten. Damit erklärt die Datei sich selbst,
-  auch Jahre später, wenn niemand mehr weiß, warum etwas so eingestellt ist.
-- **Geschrieben wird daneben und dann hineinbewegt** (`config.write()`), plus
-  eine `.bak` der Vorversion. Ein abgebrochener Schreibvorgang kann keine Datei
-  hinterlassen, die eine halbe Konfiguration ist.
+- **The file is rewritten, not patched.** Values come from the schema, comments
+  from the `help` texts. That way the file explains itself, even years later
+  when nobody remembers why something is set the way it is.
+- **It is written alongside and then moved into place** (`config.write()`), plus
+  a `.bak` of the previous version. An interrupted write cannot leave behind a
+  file that is half a configuration.
 
-Was in der Datei steht und kein Schema für sich hat, bleibt beim Neuschreiben
-erhalten und wird als „unknown" ausgewiesen (`config._unknown`).
+Anything in the file that has no schema of its own is preserved across a rewrite
+and reported as "unknown" (`config._unknown`).
 
-### Beispiel
+### Example
 
 ```toml
 # weewx-evo. Written by the settings page; safe to edit by hand.
@@ -106,9 +105,9 @@ port = 8080
 infer_unknown = "series"
 
 [sources]
-outTemp = "garten, dach"
-"soil*" = "garten"
-"*" = "dach, garten"
+outTemp = "garden, roof"
+"soil*" = "garden"
+"*" = "roof, garden"
 
 [exports.webhost]
 kind = "ftp"
@@ -116,10 +115,10 @@ host = "ftp.example.org"
 trigger = "feed"
 ```
 
-## Eine Einstellung hinzufügen
+## Adding a setting
 
-Ins Schema, sonst nirgends. `options.py` für den Kern, `options()` am Treiber
-für einen Treiber, `options()` am Feed für einen Feed:
+Into the schema, nowhere else. `options.py` for the core, `options()` on the
+driver for a driver, `options()` on the feed for a feed:
 
 ```python
 Option("infer_unknown", "Fields the catalog does not know",
@@ -128,118 +127,117 @@ Option("infer_unknown", "Fields the catalog does not know",
        help="A reading put in the wrong column cannot be separated out afterwards.")
 ```
 
-Daraus entstehen **von selbst**:
+Out of it come, **on their own**:
 
-- das Formularfeld auf der Admin-Seite
-- die Validierung (`Option.parse`)
-- der Kommentar in der geschriebenen Datei
-- die Zeile in `--explain`
-- der Eintrag in `schema.json`
+- the form field on the admin page
+- the validation (`Option.parse`)
+- the comment in the written file
+- the line in `--explain`
+- the entry in `schema.json`
 
-Es gibt keine zweite Stelle, an der eine Einstellung eingetragen werden muss.
+There is no second place a setting has to be entered.
 
-## Das Deklarationsmodell
+## The declaration model
 
-`options.py` hält drei Dinge:
+`options.py` holds three things:
 
 | | |
 |---|---|
-| `Option` | Eine Einstellung: Name, Label, `kind`, Default, Hilfe, Grenzen, Auswahl |
-| `Group` | Einstellungen, die zusammengehören — wird ein Abschnitt des Formulars |
-| `Schema` | Alles, womit eine Komponente konfigurierbar ist |
+| `Option` | One setting: name, label, `kind`, default, help, limits, choices |
+| `Group` | Settings that belong together — becomes a section of the form |
+| `Schema` | Everything a component can be configured with |
 
 ### `kind`
 
-Eines von `text secret int float bool choice path duration list`. Jedes ist ein
-Parser, eine Prüfung und ein Formularfeld. Ein neues `kind` bedeutet: parsen,
-prüfen und rendern beibringen — alle drei, an je einer Stelle.
+One of `text secret int float bool choice path duration list`. Each is a parser,
+a check and a form field. A new `kind` means teaching it to parse, to check and
+to render — all three, in one place each.
 
-`secret` ist `text`, das nie zurückgerendert wird: die Admin-Seite zeigt, *ob*
-eines gesetzt ist, nicht *welches*. Ein Token, das einmal angezeigt wurde, ist
-ein Token in einem Screenshot.
+`secret` is `text` that is never rendered back: the admin page shows *whether*
+one is set, not *which*. A token that has been displayed once is a token in a
+screenshot.
 
-`duration` wird geschrieben, wie Menschen es sagen — `90`, `5m`, `2h`, `7d` —
-und in Sekunden gehalten. `format_duration()` wählt beim Zurückschreiben die
-größte Einheit, die ganz aufgeht: eine Retention als `604800` ist eine Zahl, die
-niemand auf einen Blick prüfen kann.
+`duration` is written the way people say it — `90`, `5m`, `2h`, `7d` — and held
+in seconds. `format_duration()` picks the largest unit that divides evenly when
+writing back: a retention of `604800` is a number nobody can check at a glance.
 
-### Weitere Felder an `Option`
+### Further fields on `Option`
 
-| Feld | Wofür |
+| Field | What for |
 |---|---|
-| `choices_from` | Auswahl, die von der Installation abhängt statt vom Code — `installed_drivers()`, `defined_feeds()`, `published_names()`. Eine **Funktion**, weil sich die Antwort zur Laufzeit ändert: einen Feed hinzuzufügen muss ihn in die Liste des Exports bringen, ohne Neustart |
-| `suggestions` | Werte, die es wert sind, angeboten zu werden, ohne andere zu verbieten. Der Fall dafür ist `allow`: „private", „any" oder eine Liste von Netzen, die niemand aufzählen kann |
-| `advanced` | Versteckt hinter einem Schalter statt weggelassen — eine versteckte Einstellung ist eine, die man durch Quelltextlesen findet |
-| `restart` | Änderung wirkt erst nach Neustart |
-| `required` | Leer ist ein Fehler, nicht `None` |
-| `minimum` / `maximum` | Bereich, geprüft in `_check_range` |
-| `unit`, `placeholder` | Nur Darstellung |
+| `choices_from` | Choices that depend on the installation rather than on the code — `installed_drivers()`, `defined_feeds()`, `published_names()`. A **function**, because the answer changes at runtime: adding a feed has to put it into the export's list, without a restart |
+| `suggestions` | Values worth offering without forbidding others. The case for it is `allow`: "private", "any", or a list of networks nobody could enumerate |
+| `advanced` | Hidden behind a toggle rather than left out — a hidden setting is one you find by reading source |
+| `restart` | The change only takes effect after a restart |
+| `required` | Empty is an error, not `None` |
+| `minimum` / `maximum` | Range, checked in `_check_range` |
+| `unit`, `placeholder` | Presentation only |
 
-### Zwei Fallen
+### Two pitfalls
 
-**Argumente haben keinen Default in argparse.** `default=None`, immer. argparse
-kann „nicht angegeben" nicht von „auf den Default gesetzt" unterscheiden, und
-ein Default hier schlägt die Konfigurationsdatei — dann tut die Admin-Seite
-scheinbar nichts, ohne Fehlermeldung irgendwo. Der Kommentar dazu steht in
-`cli.add_common()`, und `tools/settings_test.py` prüft genau das.
+**Arguments have no default in argparse.** `default=None`, always. argparse
+cannot tell "not given" from "set to the default", and a default here beats the
+configuration file — and then the admin page appears to do nothing, with no
+error message anywhere. The comment for it is in `cli.add_common()`, and
+`tools/settings_test.py` checks exactly that.
 
-**Ein Treiber bekommt `view()`, nicht das Ganze.** Seine Ecke der Einstellungen
-und sonst nichts:
+**A driver gets `view()`, not the whole thing.** Its corner of the settings and
+nothing else:
 
 ```python
 settings.view("drivers.ecowitt", schema)
 ```
 
-Ein Treiber hat im Upload-Token nichts zu suchen, und der Weg das
-sicherzustellen ist, es nicht herzugeben. Dieselbe Logik wie bei
-[`ingest/state.py`](Drivers#treiber-zustand): das Schmale geben, dann ist das
-Breite nicht erreichbar.
+A driver has no business with the upload token, and the way to make sure of that
+is not to hand it over. The same logic as with
+[`ingest/state.py`](Drivers#driver-state): give the narrow thing, and the wide
+thing is out of reach.
 
-## Neu laden
+## Reloading
 
 ```python
-settings.reload()   # gibt zurück, ob sich etwas geändert hat
+settings.reload()   # returns whether anything changed
 ```
 
-Das ist, was ein Settings-Dienst brächte, ohne den Dienst. Alles, was das Objekt
-hält, sieht die neuen Werte; was ein `restart` verlangt, verlangt ihn weiter.
+That is what a settings service would buy, without the service. Everything the
+object holds sees the new values; what demands a `restart` still demands one.
 
 ## weewx.conf
 
-**Gelesen, nie geschrieben.** Zwei Programme, die eine Datei schreiben,
-zerstören sich gegenseitig die Kommentare.
+**Read, never written.** Two programs writing one file destroy each other's
+comments.
 
-Die Datenbank ist geteilt — dieselbe Datei, dieselbe Bedeutung. Die
-Konfiguration ist es nicht und soll es nicht sein. Was beide Systeme teilen
-(Standort, Höhe, Archivintervall), darf trotzdem dort wohnen bleiben:
+The database is shared — the same file, the same meaning. The configuration is
+not, and should not be. What both systems share (location, altitude, archive
+interval) may nevertheless stay where it is:
 
 ```bash
 weewx-evo serve --weewx-conf /etc/weewx/weewx.conf
 ```
 
-Oder dauerhaft als `weewx_conf` in der eigenen Datei. Alles, was hier gesetzt
-ist, schlägt es. → [WeeWX-Compatibility](WeeWX-Compatibility)
+Or permanently, as `weewx_conf` in our own file. Anything set here beats it.
+→ [WeeWX-Compatibility](WeeWX-Compatibility)
 
-## Kommandos
+## Commands
 
 ```bash
-weewx-evo config show --config evo.toml            # kommentiert ausgeben
-weewx-evo config show --config evo.toml --defaults # mit allen Defaults
-weewx-evo config set  --config evo.toml <name> <wert>
-weewx-evo config check --config evo.toml           # jeden Wert gegen sein Schema
+weewx-evo config show --config evo.toml            # print with comments
+weewx-evo config show --config evo.toml --defaults # with every default
+weewx-evo config set  --config evo.toml <name> <value>
+weewx-evo config check --config evo.toml           # every value against its schema
 weewx-evo config import /etc/weewx/weewx.conf [--write] [--overwrite]
 ```
 
 → [CLI-Reference](CLI-Reference), [Settings-Reference](Settings-Reference)
 
-## Das Schema als JSON
+## The schema as JSON
 
 ```
 GET http://<host>:8080/<admin-token>/schema.json
 ```
 
-Dieselbe Deklaration als Daten — für einen Installer, einen Test oder eine
-Admin-Seite, die jemandem besser gefällt als diese.
+The same declaration as data — for an installer, a test, or an admin page
+somebody likes better than this one.
 
 <!-- covers
 src/weewx_evo/settings.py

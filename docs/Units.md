@@ -1,66 +1,64 @@
-# Einheiten
+# Units
 
-`units.py`. Welche Einheit ein Messwert hat und wie man ihn nennt.
+`units.py`. What unit a reading is in, and what to call it.
 
-> **`units.py` ist eine Transkription von `weewx.units`, Ausdruck für Ausdruck.**
-> Nicht nachgerechnet: ein „sauberer" umgeschriebener Faktor ist ein Diagramm,
-> das in der dritten Nachkommastelle von WeeWX abweicht, und herauszufinden
-> warum kostet einen Nachmittag.
+> **`units.py` is a transcription of `weewx.units`, expression by expression.**
+> Not recomputed: a "cleaner" rewritten factor is a plot that differs from WeeWX
+> in the third decimal place, and finding out why costs an afternoon.
 
-Die Datenbank hält **ein** Einheitensystem je Satz und sagt in `usUnits`,
-welches. Alles andere — welcher Gruppe ein Messwert angehört, welche Einheit
-diese Gruppe in jedem System benutzt, wie man umrechnet, was man hinter die Zahl
-schreibt — ist Wissen, keine Daten, und lebt hier.
+The database holds **one** unit system per record and says which in `usUnits`.
+Everything else — which group a reading belongs to, which unit that group uses
+in each system, how to convert, what to write after the number — is knowledge,
+not data, and lives here.
 
-## Die drei Systeme
+## The three systems
 
-| Konstante | Wert | Was |
+| Constant | Value | What |
 |---|---|---|
-| `US` | 1 | Fahrenheit, Zoll, Meilen pro Stunde |
-| `METRIC` | 16 | Celsius, Zentimeter, Kilometer pro Stunde |
-| `METRICWX` | 17 | Celsius, Millimeter, Meter pro Sekunde |
+| `US` | 1 | Fahrenheit, inches, miles per hour |
+| `METRIC` | 16 | Celsius, centimetres, kilometres per hour |
+| `METRICWX` | 17 | Celsius, millimetres, metres per second |
 
-`name(unit_system)` und `system_from(value, default=US)`. Letzteres nimmt Zahl
-**oder** Name, weil beides in freier Wildbahn vorkommt: `usUnits = 1` in einem
-Satz, `US` in einer Konfigurationsdatei.
+`name(unit_system)` and `system_from(value, default=US)`. The latter takes a
+number **or** a name, because both occur in the wild: `usUnits = 1` in a record,
+`US` in a configuration file.
 
-## Der Fall, für den das existiert
+## The case this exists for
 
-Eine Konsole in Deutschland, die Fahrenheit meldet, und eine Seite in Celsius.
+A console in Germany reporting Fahrenheit, and a page in Celsius.
 
-**Das Archiv behält, was die Station geschrieben hat.** Umgerechnet wird auf dem
-Weg nach draußen. Das ist die Trennung, die `Target` verkörpert.
+**The archive keeps what the station wrote.** Conversion happens on the way out.
+That is the separation `Target` embodies.
 
-## Gruppen und Einheiten
+## Groups and units
 
 ```python
 group_of(obs_type, aggregate=None, extra=None)   # -> "group_temperature"
 unit_of(obs_type, unit_system, aggregate=None, extra=None)  # -> ("degree_C", "group_temperature")
 ```
 
-`extra` ist, was ein **Treiber** beigetragen hat. Es gewinnt über die eingebaute
-Tabelle: ein Treiber kennt seine eigenen Felder, und die Liste des Kerns ist nur
-das Standardschema. → [Drivers](Drivers)
+`extra` is what a **driver** contributed. It wins over the built-in table: a
+driver knows its own fields, and the core's list is only the default schema.
+→ [Drivers](Drivers)
 
-Manche Aggregate wechseln die Gruppe: `count` ist eine Anzahl, egal woraus,
-`mintime` ist ein Zeitpunkt.
+Some aggregates change group: `count` is a count, whatever it came from, and
+`mintime` is a point in time.
 
-## Umrechnen
+## Converting
 
 ```python
 convert(value, from_unit, to_unit)
-convert_all(values, from_unit, to_unit)   # eine ganze Reihe
-can_convert(from_unit, to_unit)           # ohne es zu tun
+convert_all(values, from_unit, to_unit)   # a whole series
+can_convert(from_unit, to_unit)           # without doing it
 ```
 
-**`None` bleibt `None`.** Eine Lücke in den Messwerten sind nicht null Grad.
+**`None` stays `None`.** A gap in the readings is not zero degrees.
 
-**Eine unbekannte Umrechnung wirft**, statt die Zahl unverändert
-zurückzugeben — eine Temperatur, die still als Celsius etikettiert wird, während
-sie Fahrenheit hält, ist genau der Fehler, den ein stiller Durchreicher
-produziert.
+**An unknown conversion raises** instead of handing the number back
+unchanged — a temperature quietly labelled Celsius while holding Fahrenheit is
+exactly the bug a silent pass-through produces.
 
-Die Konstanten, wie WeeWX sie hat:
+The constants, as WeeWX has them:
 
 ```python
 INHG_PER_MBAR  = 0.0295299875
@@ -69,27 +67,25 @@ METER_PER_MILE = 1609.34
 MILE_PER_KM    = 1000.0 / METER_PER_MILE
 ```
 
-Die Umrechnungsfunktionen heißen wie im Original: `CtoF`, `FtoC`, `CtoK`,
+The conversion functions are named as in the original: `CtoF`, `FtoC`, `CtoK`,
 `KtoC`, `KtoF`, `FtoK`, `FtoE`, `EtoF`, `CtoE`, `EtoC`, `mps_to_mph`,
 `kph_to_mph`, `mps_to_knot`, `kph_to_knot`, `mph_to_knot`, `dublin_to_epoch`,
 `epoch_to_dublin`.
 
-## Beschriften und formatieren
+## Labelling and formatting
 
 ```python
-label(unit, plural=True)        # " °C" — mit führendem Leerzeichen
+label(unit, plural=True)        # " °C" — with a leading space
 formatted(value, unit, with_label=False)
 ```
 
-Ein paar Einheiten haben Singular und Plural (`1 day`, `2 days`), die meisten
-nicht.
+A few units have a singular and a plural (`1 day`, `2 days`), most do not.
 
-`formatted()` benutzt der JSON-Feed **nicht** — eine Maschine, die ihn liest,
-will die Zahl. Aber ein Feed, der eine Seite schreibt, braucht es, und die
-Nachkommastellen gehören neben die Beschriftungen statt verstreut durch
-Templates.
+The JSON feed does **not** use `formatted()` — a machine reading it wants the
+number. But a feed that writes a page needs it, and the decimal places belong
+next to the labels rather than scattered through templates.
 
-## `Target` — was gezeigt wird
+## `Target` — what gets shown
 
 ```python
 target = units.Target(system="METRICWX",
@@ -97,16 +93,16 @@ target = units.Target(system="METRICWX",
 values, unit, group = target.convert(values, "outTemp", source_system=US)
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `unit(group)` | Worin diese Gruppe gezeigt wird |
-| `for_obs(obs_type, aggregate, extra)` | Einheit und Gruppe für einen Messwert |
-| `convert(values, obs_type, source_system, …)` | Eine Reihe aus der Datenbank in das, worin sie gezeigt werden soll |
+| `unit(group)` | What this group is shown in |
+| `for_obs(obs_type, aggregate, extra)` | Unit and group for a reading |
+| `convert(values, obs_type, source_system, …)` | A series from the database into what it should be shown in |
 
-`overrides` je Gruppe ist, wie jemand zu Grad Celsius und Zoll Quecksilber auf
-einer Seite kommt — weil das ist, was seine Leser erwarten.
+`overrides` per group is how someone ends up with degrees Celsius and inches of
+mercury on one page — because that is what their readers expect.
 
-Der JSON-Feed konfiguriert genau das:
+The JSON feed configures exactly that:
 
 ```toml
 [feeds.json]
@@ -118,28 +114,28 @@ group_pressure = "inHg"
 
 → [Settings-Reference](Settings-Reference#feed-json), [Feeds](Feeds)
 
-## Prüfen
+## Checking it
 
 ```bash
 python tools/unitcheck.py
 ```
 
-Prüft **alle 147 Umrechnungen** gegen WeeWX bei neun Werten
-(`0, 1, -1, 7.5, 100, -40, 1013.25, 0.001, 98765.4321`), dazu Gruppen, Systeme,
-Beschriftungen und Formate.
+Checks **all 147 conversions** against WeeWX at nine values
+(`0, 1, -1, 7.5, 100, -40, 1013.25, 0.001, 98765.4321`), plus groups, systems,
+labels and formats.
 
-Der Test hat **drei echte Transkriptionsfehler** gefunden — die Knoten-Faktoren,
-die geraten statt gelesen waren.
+The test found **three real transcription errors** — the knot factors, which had
+been guessed rather than read.
 
-### Was der Test nebenbei dokumentiert
+### What the test documents along the way
 
-**WeeWX' Tabelle ist nicht selbstinvers.** `mph → kph` nimmt 1.609344,
-`kph → mph` nimmt 1000/1609.34. **52 Paare kommen nicht exakt zurück.**
+**WeeWX's table is not self-inverse.** `mph → kph` uses 1.609344, `kph → mph`
+uses 1000/1609.34. **52 pairs do not come back exactly.**
 
-Das ist **absichtlich geerbt**. Der Test prüft, dass unsere Drift *ihre* Drift
-ist, nicht dass es keine gibt. Eine „korrigierte" Konstante hier wäre ein
-Diagramm, das von WeeWX' Diagramm desselben Tages abweicht — und das ist die
-eine Sache, die dieses Projekt nicht tun darf.
+That is **inherited deliberately**. The test checks that our drift is *their*
+drift, not that there is none. A "corrected" constant here would be a plot that
+differs from WeeWX's plot of the same day — and that is the one thing this
+project must not do.
 
 <!-- covers
 src/weewx_evo/units.py
