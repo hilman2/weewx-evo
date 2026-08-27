@@ -52,6 +52,7 @@
     <!--prettier-ignore-->
     #if $context == "day" and $daily_archive == False
     #include "includes/forecast.inc"
+#include "includes/externals.inc"
     #end if
 
     <!--prettier-ignore-->

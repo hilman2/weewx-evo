@@ -113,6 +113,40 @@ short = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 long = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag",
         "Samstag", "Sonntag"]
 
+# Was der Himmel macht, nach WMO-Code. Der Schluessel ist die Zahl,
+# weil die Zahl das ist, was die Quelle schickt -- eine Uebersetzung,
+# die am englischen Wortlaut haengt, bricht sobald jemand
+# "Light rain showers" umformuliert.
+[weather]
+0 = "Klarer Himmel"
+1 = "Überwiegend klar"
+2 = "Teilweise bewölkt"
+3 = "Bedeckt"
+45 = "Nebel"
+48 = "Gefrierender Nebel"
+51 = "Leichter Nieselregen"
+53 = "Nieselregen"
+55 = "Starker Nieselregen"
+56 = "Leichter gefrierender Nieselregen"
+57 = "Gefrierender Nieselregen"
+61 = "Leichter Regen"
+63 = "Regen"
+65 = "Starker Regen"
+66 = "Leichter gefrierender Regen"
+67 = "Gefrierender Regen"
+71 = "Leichter Schneefall"
+73 = "Schneefall"
+75 = "Starker Schneefall"
+77 = "Schneegriesel"
+80 = "Leichte Regenschauer"
+81 = "Regenschauer"
+82 = "Heftige Regenschauer"
+85 = "Leichte Schneeschauer"
+86 = "Schneeschauer"
+95 = "Gewitter"
+96 = "Gewitter mit leichtem Hagel"
+99 = "Gewitter mit Hagel"
+
 # Die Woerter, die in einer Einheit stecken. Nur die, die anders
 # heissen -- "°C" ist ueberall "°C".
 [units]

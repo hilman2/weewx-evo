@@ -1,166 +1,154 @@
 <!--prettier-ignore-->
 #errorCatcher Echo
 #encoding UTF-8
-#set $forecast_source = $Extras.forecast_table_settings.get('source', None)
-#set $forecast_zambretti_active = True if $varExists('forecast.zambretti') and $to_bool($Extras['forecast_zambretti']['enable']) else False
-#set $forecat_table_active = True if $forecast_source and $varExists('forecast') and len($forecast.weather_periods($forecast_source)) > 0 else False
-#set $dwd_forecast = True if 'weewx-DWD' in $Extras and $to_bool($Extras['weewx-DWD']['show_forecast']) and os.path.exists("dwd/forecast-" + $Extras['weewx-DWD']['mosmix_id'] + ".json") else False
-#set $warn_region_front = $Extras['weewx-DWD']['show_warnings_on_front'] if 'weewx-DWD' in $Extras and 'show_warnings_on_front' in $Extras['weewx-DWD'] else False
-#set $show_warn = True if $warn_region_front and $dwd_warning_has_warning($warn_region_front) else False
+##
+## The forecast, from weewx-evo's own `$forecast`.
+##
+## What was here before spoke to three things that are not in this program:
+## weewx-forecast (Zambretti, `$forecast.weather_periods`), weewx-DWD (a JSON
+## file on disk and a `$dwd_warning_has_warning` tag), and wdc's own iframe
+## embedding. The first two are WeeWX extensions; a station running weewx-evo
+## has neither, so every branch here was unreachable and the section never
+## appeared at all -- on a station with a forecast configured and fetching.
+##
+## `$forecast` is the core's, and one source answers everything: hours, days,
+## warnings, and when the model last ran. See `forecast/tags.py`.
+##
+## `forecast_settings`, not `forecast`. Every key under [Extras] becomes a
+## top-level tag, and the extras are searched before the tag layer -- so a
+## section called `forecast` shadows `$forecast` itself with a plain dict, and
+## every `$forecast.days` on the page becomes "cannot find 'days'".
+#set $conf = $Extras.get('forecast_settings', {})
+#if not $to_bool($conf.get('enable', True)) or not $varExists('forecast')
+#stop
+#end if
+##
+## A named source, or all of them. Naming one is how a station that takes its
+## numbers from one place and its warnings from another says which it means.
+#set $named = $conf.get('source', '')
+#if $named
+#set $outlook = $getattr($forecast, $named)
+#else
+#set $outlook = $forecast
+#end if
+#if not $outlook
+#stop
+#end if
+##
+#set $day_count = $int($conf.get('days', 7))
+#set $hour_count = $int($conf.get('hours', 24))
+#set $show_hours = $to_bool($conf.get('show_hours', True))
+#set $show_warnings = $to_bool($conf.get('show_warnings', True))
+##
+#set global $forecast_days = $outlook.days[:$day_count]
+#set global $forecast_hours = $outlook.hours[:$hour_count]
+#if $show_warnings
+#set global $forecast_warnings = $outlook.active_warnings
+#else
+#set global $forecast_warnings = []
+#end if
 
-#set $externals_list = []
-#if 'externals' in $Extras and $len($Extras['externals']) > 0
-  #for $external in $Extras['externals']
-    #if $external == 'description'
-      #continue
+<!--prettier-ignore-->
+#if $len($forecast_warnings) > 0
+<div class="forecast-warnings">
+  #for $warning in $forecast_warnings
+  <div class="card warning warning--$warning.severity.lower()">
+    <p class="warning__event">
+      #include "includes/icons/lightning.svg"
+      <span>$warning.event</span>
+      <span class="warning__when">
+        $warning.starts.format("%a %H:%M")#if $warning.ends# &ndash; $warning.ends.format("%a %H:%M")#end if#
+      </span>
+    </p>
+    #if $warning.headline
+    <p class="warning__headline">$warning.headline</p>
     #end if
-    #if $to_bool($Extras['externals'][$external].show_on_front)
-      #silent $externals_list.append($external)
+    #if $warning.area
+    <p class="warning__area">$warning.area</p>
     #end if
+    #if $warning.description
+    <details class="warning__more">
+      <summary>$gettext("More")</summary>
+      <p>$warning.description</p>
+      #if $warning.instruction
+      <p class="warning__instruction">$warning.instruction</p>
+      #end if
+    </details>
+    #end if
+  </div>
   #end for
-#end if
-
-#set $radar_externals = 'radar_html' in $Extras or $len($externals_list) > 0
-
-#set $radar_externals_list = $externals_list
-#if 'radar_html' in $Extras
-  #set $radar_externals_list = ['radar'] + $externals_list
+</div>
 #end if
 
 <!--prettier-ignore-->
-#if ($varExists('forecast') and ($forecast_zambretti_active or $forecat_table_active)) or $radar_externals or $dwd_forecast
-<!--prettier-ignore-->
+#if $len($forecast_days) > 0 or $len($forecast_hours) > 0
 <div>
   <header class="section-header">
-    <h2>
-      $gettext($Extras.get("forecast_radar_heading", "Forecast & Recent radar"))
-    </h2>
+    <h2>$gettext($conf.get('heading', 'Forecast'))</h2>
   </header>
 </div>
-<div>
-  <div>
-    <div>
-      <!--prettier-ignore-->
-      #if $varExists('forecast') or $dwd_forecast
-      #set forecast_tile_classes = "    "
-      #if 'forecast_radar_equal_width' in $Extras and $to_bool($Extras.forecast_radar_equal_width) and $DisplayOptions.get('layout', 'alternative') == 'alternative'
-        #set forecast_tile_classes = "    "
-      #end if
-      #if $DisplayOptions.get('layout', 'alternative') == 'classic'
-        #set forecast_tile_classes = "    "
-      #end if
-      <div class="$forecast_tile_classes">
-        <div class="card forecast-tile">
-          <!--prettier-ignore-->
-          #if $varExists('forecast.zambretti') and $to_bool($Extras['forecast_zambretti']['enable'])
-          <div class="forecast" data-test="forecast-zambretti">
-            <h3>Zambretti</h3>
-            <p>
-              <!--prettier-ignore-->
-              The forecast is $forecast.label('Zambretti', $forecast.zambretti.code)<br />
-              <span class="issued"
-                >Issued at $forecast.zambretti.issued_ts</span
-              >
-            </p>
-          </div>
-          #end if
-          <!--prettier-ignore-->
-          #if $varExists('forecast') and not $dwd_forecast
-          <div class="forecast" data-test="forecast-table">
-            <!--prettier-ignore-->
-            #include "includes/forecast-table.inc"
-          </div>
-          #end if
-          <!--prettier-ignore-->
-          #if $dwd_forecast
-          <div class="dwd-forecast forecast">
-            <script>
-              var dwdForecastData = #include raw "dwd/forecast-" + $Extras['weewx-DWD']['mosmix_id'] + ".json"
-            </script>
-          </div>
-          #end if
-        </div>
-      </div>
-      #end if
-      <!--prettier-ignore-->
-      #if $radar_externals or $show_warn
-      #set radar_classes = "    "
-      #if 'forecast_radar_equal_width' in $Extras and $to_bool($Extras.forecast_radar_equal_width) and $DisplayOptions.get('layout', 'alternative') == 'alternative'
-        #set radar_classes = "    "
-      #end if
-      #if $DisplayOptions.get('layout', 'alternative') == 'classic'
-        #set radar_classes = "    "
-      #end if
 
-      <!--prettier-ignore-->
-      <div class="$radar_classes radar-container">
-        #if $show_warn
-          #set global $region = $get_dwd_warning_region_name($warn_region_front)
-          #set global $region_key = $warn_region_front
-          #include "includes/dwd-warning.inc"
+<div class="card forecast-tile">
+  <!--prettier-ignore-->
+  #if $len($forecast_days) > 0
+  <ol class="forecast-list daily" data-test="forecast-days">
+    #for $i, $day in $enumerate($forecast_days)
+    <li class="forecast-day">
+      <p class="forecast-day__name">
+        #if $i == 0
+        $gettext("Today")
+        #else
+        $day.dateTime.format("%a")
         #end if
-
-        #if $radar_externals
-<style>
-          .radar-container .bx-ce-demo-devenv--tab-panels > div {
-            padding-bottom: 1rem;
-          }
-          .radar-container .bx-ce-demo-devenv--tab-panels > div > .card {
-            padding: 0;
-          }
-        </style>
-
-        #if len($radar_externals_list) == 1
-          <style>
-            .radar-container .bx-ce-demo-devenv--tab-panels .card {
-              padding: 0;
-            }
-          </style>
-        #end if
-
-        #if len($radar_externals_list) > 1
-        <div class="tabs" role="tablist" value="$radar_externals_list[0]">
-          #if 'radar_html' in $Extras
-          <button type="button" role="tab" id="tab-radar" aria-controls="panel-radar" value="radar">
-            $gettext("Recent radar")
-          </button>
-          #end if
-
-          #if len($externals_list) > 0
-            #for $external in $externals_list
-              <button type="button" role="tab" id="tab-$external" aria-controls="panel-$external" value="$external">
-                $Extras['externals'][$external].title
-              </button>
-            #end for
-          #end if
-        </div>
-        #end if
-        <div class="bx-ce-demo-devenv--tab-panels">
-          #if 'radar_html' in $Extras
-          <div id="panel-radar" role="tabpanel" aria-labelledby="tab-radar">
-            <div class="card tile-radar-forecast">
-              $Extras.radar_html
-            </div>
-          </div>
-          #end if
-
-          #if len($externals_list) > 0
-            #for $external in $externals_list
-              <div id="panel-$external" role="tabpanel" aria-labelledby="tab-$external">
-                <div class="card tile-radar-forecast">
-                  $Extras['externals'][$external].source
-                  <p style="margin-top: 0.25rem;">$Extras['externals'][$external].title_long</p>
-                </div>
-              </div>
-            #end for
-          #end if
-        </div>
-
-
-        #end if
-      </div>
+      </p>
+      #set global $forecast_symbol = $day.symbol
+      #include "includes/forecast-icon.inc"
+      <p class="forecast-day__text">$day.text</p>
+      <p class="forecast-day__temps">
+        <span class="forecast-day__max">$day.tempMax</span>
+        <span class="forecast-day__min">$day.tempMin</span>
+      </p>
+      #if $day.rainProbability.raw is not None
+      <p class="forecast-day__wet">
+        #include "includes/icons/rain.svg"
+        $day.rainProbability
+      </p>
       #end if
-    </div>
-  </div>
+      #if $day.windMax.raw is not None
+      <p class="forecast-day__wind">
+        #include "includes/icons/wind-gust.svg"
+        $day.windMax
+      </p>
+      #end if
+    </li>
+    #end for
+  </ol>
+  #end if
+
+  <!--prettier-ignore-->
+  #if $show_hours and $len($forecast_hours) > 0
+  <ol class="forecast-list hourly" data-test="forecast-hours">
+    #for $hour in $forecast_hours
+    <li class="forecast-hour">
+      <p class="forecast-hour__time">$hour.dateTime.format("%H")</p>
+      #set global $forecast_symbol = $hour.symbol
+      #include "includes/forecast-icon.inc"
+      <p class="forecast-hour__temp">$hour.outTemp</p>
+      #if $hour.rainProbability.raw is not None
+      <p class="forecast-hour__wet">$hour.rainProbability</p>
+      #end if
+    </li>
+    #end for
+  </ol>
+  #end if
+
+  <!--prettier-ignore-->
+  <p class="forecast-issued">
+    #if $outlook.issued
+    $gettext("Model run") $outlook.issued.format("%a %H:%M")
+    #else if $outlook.updated
+    $gettext("Fetched") $outlook.updated.format("%a %H:%M")
+    #end if
+  </p>
 </div>
 #end if

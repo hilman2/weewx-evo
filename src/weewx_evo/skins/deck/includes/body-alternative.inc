@@ -129,6 +129,7 @@
 
 #if $context == "day" and $daily_archive == False
 #include "includes/forecast.inc"
+#include "includes/externals.inc"
 #end if
 
 #include "includes/section-heading.inc"

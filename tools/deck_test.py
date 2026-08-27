@@ -110,6 +110,132 @@ def render(database: Path, into: Path, language: str = "de") -> object:
     return feed
 
 
+
+def with_forecast(database: Path, into: Path, language: str = "de") -> tuple:
+    """Render the front page with a forecast stored beside the archive.
+
+    The section is Deck's whole answer to a configured forecast, and until
+    now it answered nothing: what was there spoke to weewx-forecast and
+    weewx-DWD, neither of which can be installed here, so every branch was
+    unreachable and the section never appeared at all.
+
+    Returns (the page, what the feed failed to render).
+    """
+    import shutil
+    import time
+
+    from weewx_evo.forecast import Day, Moment, Reading, Warning
+    from weewx_evo.forecast.store import ForecastStore
+
+    beside = into / "data"
+    beside.mkdir(parents=True, exist_ok=True)
+    # Copied rather than pointed at: the forecast has to sit beside the
+    # archive, and the reference database is read-only and shared.
+    archive = beside / "weewx.sdb"
+    shutil.copy(database, archive)
+
+    now = int(time.time())
+    midnight = now - (now % 86400)
+    store = ForecastStore(beside / "forecast.sdb")
+    store.store(Reading(
+        source="open-meteo", issued=now - 3600,
+        hours=[Moment(dateTime=midnight + h * 3600, usUnits=17,
+                      outTemp=12.0 + h % 9, windSpeed=3.0,
+                      rainProbability=float((h * 7) % 100),
+                      code=[0, 2, 61, 95][h % 4])
+               for h in range(48)],
+        days=[Day(dateTime=midnight + d * 86400, usUnits=17,
+                  tempMax=21.0 + d, tempMin=9.0 + d, windMax=4.0 + d,
+                  rainProbability=float(d * 11 % 100),
+                  code=[0, 3, 61, 71, 95, 45, 80][d % 7],
+                  sunrise=midnight + d * 86400 + 21600,
+                  sunset=midnight + d * 86400 + 72000)
+              for d in range(7)],
+        warnings=[Warning(identifier="w1", event="Sturmboeen",
+                          severity="Severe", starts=now - 1800,
+                          ends=now + 7200, issued=now - 3600,
+                          headline="Amtliche Warnung vor Sturmboeen",
+                          description="Sturmboeen um 70 km/h.",
+                          instruction="Achten Sie auf herabfallende Aeste.",
+                          area="Landkreis Freising", source="open-meteo",
+                          kind="wind")]), fetched=now)
+
+    pages = into / "pages"
+    conn = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)
+    try:
+        feed = cheetah.from_settings(Settings({
+            "language": language,
+            "archive_db": str(archive),
+            "station.latitude": 48.4596,
+            "station.longitude": 11.6539,
+            "station.altitude": 440.0,
+            "station.name": "Kirchdorf an der Amper",
+            "feeds.deck.skin": "deck",
+            "feeds.deck.extras": {"base_path": "/"},
+        }), Reader(conn), (), prefix="feeds.deck")
+        feed.produce(pages)
+    finally:
+        conn.close()
+    page = pages / "index.html"
+    if not page.is_file():
+        # The front page not being written at all is what a broken tag in the
+        # forecast section looks like: `feed.failed` names it, and reading a
+        # file that was never written would hide that behind a traceback.
+        return "", feed.failed or [("index.html.tmpl", "it was not written")]
+    return page.read_text(encoding="utf-8", errors="replace"), feed.failed
+
+
+def check_forecast(database: Path, out: Path) -> list[str]:
+    """What a configured forecast puts on the page."""
+    import re as _re
+
+    problems: list[str] = []
+    page, failed = with_forecast(database, out / "forecast")
+    for name, why in failed:
+        problems.append(f"with a forecast, {name} did not render: {why}")
+    if problems:
+        return problems
+
+    for needle, what in (
+        ('data-test="forecast-days"', "the daily strip"),
+        ('data-test="forecast-hours"', "the hourly strip"),
+        ('class="forecast-warnings"', "the warnings"),
+        ("forecast-issued", "when the model ran"),
+    ):
+        if needle not in page:
+            problems.append(f"the forecast section has no {what}")
+
+    days = _re.findall(r'<li class="forecast-day">', page)
+    if len(days) != 7:
+        problems.append(f"{len(days)} day card(s), wanted 7")
+
+    # The symbol reaches an icon. A card with `data-symbol` and no `<svg>`
+    # after it is the mapping in `forecast-icon.inc` having fallen behind the
+    # names `forecast/codes.py` produces.
+    for match in _re.finditer(r'data-symbol="([^"]*)"(.{0,400})', page, _re.DOTALL):
+        if not match.group(1):
+            problems.append("a forecast card has no symbol at all")
+        elif "<svg" not in match.group(2):
+            problems.append(f"no icon for the symbol {match.group(1)!r}")
+
+    # Written in the language the page is in, both the skin's words and the
+    # weather itself. `codes.text` asks the language module and takes the
+    # English when it has no answer, so an untranslated table shows up as an
+    # English sky on a German page.
+    for said in ("Heute", "Klarer Himmel", "Mehr"):
+        if said not in page:
+            problems.append(f"the forecast does not say {said!r} in German")
+    for said in ("Clear sky", "Overcast", "Thunderstorm"):
+        if said in page:
+            problems.append(f"the forecast still says {said!r} in English")
+
+    # And the units the page is written in, not the ones the source sent.
+    if _re.search(r'class="forecast-day__max">[\d.]+&#176;F', page):
+        problems.append("the forecast is in Fahrenheit on a metric page")
+
+    return problems
+
+
 def main(argv: list[str]) -> int:
     database = Path(argv[1] if len(argv) > 1 else "reference/weewx.sdb")
     if not database.is_file():
@@ -124,6 +250,8 @@ def main(argv: list[str]) -> int:
 
         for name, why in feed.failed:
             failures.append(f"{name} did not render: {why}")
+
+        failures += check_forecast(database, out)
 
         pages = sorted(out.glob("*.html"))
         if len(pages) < 5:

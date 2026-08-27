@@ -46,7 +46,6 @@ from weewx_evo.skinkit import (
     rounder,
     search_up,
     startOfArchiveDay,
-    startOfDay,
     to_bool,
     to_int,
 )
@@ -3111,78 +3110,3 @@ class TableUtil(SearchList):
         carbon_values.sort(key=lambda item: datetime.datetime.fromisoformat(item["time"]))
 
         return carbon_values
-
-
-class ForecastUtil(SearchList):
-    def __init__(self, generator):
-        try:
-            from user.forecast import ForecastVariables
-
-            SearchList.__init__(self, generator)
-            self.forecast = ForecastVariables(generator)
-            try:
-                self.forecast_source = generator.skin_dict["Extras"]["forecast_table_settings"][
-                    "source"
-                ]
-            except KeyError:
-                logdbg("forecast_table_settings.source not found in skin.conf")
-
-        except ImportError:
-            logdbg("weewx-forecast extension is not installed. Not providing any forecast data.")
-
-    def get_day_icon(self, summary, hourly=False):
-        """
-        Returns the icon for the day (summary) or a single period.
-
-        Args:
-            summary (dict): The summary/period dict.
-            hourly (bool, optional): If the summary is for a single period.
-        """
-        day_icon = summary["clouds"]
-        thunderstorm = False
-
-        if hourly:
-            if summary["tstms"] is not None and (summary["tstms"] != "S"):
-                thunderstorm = True
-        else:
-            periods = self.forecast.weather_periods(
-                self.forecast_source,
-                startOfDay(summary["dateTime"].raw),
-                summary["dateTime"].raw + 86400,
-            )
-
-            for period in periods:
-                if period["tstms"] is not None and (period["tstms"] != "S"):
-                    thunderstorm = True
-
-        rain = summary["qpf"].raw is not None and summary["qpf"].raw > 0
-        snow = summary["qsf"].raw is not None and summary["qsf"].raw > 0
-
-        if summary["clouds"] == "BK" or summary["clouds"] == "B1" or summary["clouds"] == "SC":
-            if rain:
-                day_icon = "rain--scattered"
-            if snow:
-                day_icon = "snow--scattered"
-
-        if summary["clouds"] == "B2" or summary["clouds"] == "OV":
-            if summary["obvis"] is not None and (
-                "F" in summary["obvis"]
-                or "PF" in summary["obvis"]
-                or "F+" in summary["obvis"]
-                or "PF+" in summary["obvis"]
-            ):
-                day_icon = "fog"
-            if summary["obvis"] is not None and "H" in summary["obvis"]:
-                day_icon = "haze"
-            if rain:
-                day_icon = "rain"
-            if snow:
-                day_icon = "snow"
-
-        if rain and snow:
-            day_icon = "sleet"
-
-        if thunderstorm:
-            day_icon = "thunderstorm"
-
-        return day_icon + ".svg"

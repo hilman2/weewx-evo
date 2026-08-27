@@ -123,6 +123,22 @@ class Language:
             return f"{families[stem]} {number}"
         return ""
 
+    def weather(self, code: int, fallback: str = "") -> str:
+        """What the sky is doing, for a WMO code.
+
+        `forecast/codes.py` asks this and takes the English it already has
+        when the answer is empty -- so a language that translates fifteen of
+        the twenty-eight codes shows fifteen translated and thirteen in
+        English, rather than nothing.
+
+        The key is the number, because the number is what the source sends.
+        Keying on the English would mean a translation breaking the moment
+        somebody rewords "Light rain showers".
+        """
+        found = (self.values.get("weather") or {})
+        said = found.get(str(int(code)))
+        return said if isinstance(said, str) and said else fallback
+
     def moon_phases(self) -> tuple[str, ...]:
         return self._sequence("moon", "phases", 8)
 

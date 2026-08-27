@@ -1193,9 +1193,102 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
   gap: var(--s-3);
   overflow-x: auto;
   padding-bottom: var(--s-2);
+  margin: 0;
+  list-style: none;
 }
 
 .forecast-list > * { flex: 0 0 auto; min-width: 6rem; text-align: center; }
+
+/* The day and hour cards scroll sideways rather than wrapping: a week is
+   seven of them and a phone fits three, and a wrapped row reads as two
+   unrelated groups. */
+.forecast-list.hourly { margin-top: var(--s-4); }
+.forecast-list.hourly > * { min-width: 3.75rem; }
+
+.forecast-list p { margin: 0; }
+
+.forecast-day, .forecast-hour {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-1);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+}
+
+.forecast-day:first-child, .forecast-hour:first-child {
+  background: var(--bg-sunk);
+}
+
+.forecast-day__name, .forecast-hour__time {
+  font-weight: 600;
+  font-size: var(--step--1);
+}
+
+.forecast-day__text {
+  font-size: var(--step--2);
+  color: var(--ink-3);
+  /* Two lines at most. "Thunderstorm with slight hail" is a real answer and
+     it must not make one card twice the height of its neighbours. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.forecast-day__temps { display: flex; gap: var(--s-2); }
+.forecast-day__max { font-weight: 600; }
+.forecast-day__min { color: var(--ink-3); }
+
+.forecast-day__wet, .forecast-day__wind, .forecast-hour__wet {
+  display: inline-flex;
+  align-items: center;
+  gap: .25em;
+  font-size: var(--step--2);
+  color: var(--ink-3);
+}
+
+.forecast-icon svg { width: 2rem; height: 2rem; }
+.forecast-day__wet svg, .forecast-day__wind svg { width: 1em; height: 1em; }
+
+.forecast-issued {
+  margin: var(--s-3) 0 0;
+  font-size: var(--step--2);
+  color: var(--ink-3);
+}
+
+/* ------------------------------------------------------------- warnings */
+
+/* Above the numbers, not beside them. A warning is the one thing on the page
+   somebody needs to read before anything else, and a station that has none
+   shows nothing at all rather than an empty box saying so. */
+.forecast-warnings { display: grid; gap: var(--s-3); margin-block: var(--s-5); }
+
+.warning {
+  border-left: 4px solid var(--ink-3);
+  padding-left: var(--s-4);
+}
+
+.warning__event {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-weight: 600;
+}
+
+.warning__event svg { width: 1.25em; height: 1.25em; flex: none; }
+.warning__when { margin-left: auto; font-weight: 400; color: var(--ink-3); }
+.warning__headline { margin-top: var(--s-2); }
+.warning__area, .warning__more { color: var(--ink-3); font-size: var(--step--1); }
+.warning__more summary { cursor: pointer; }
+.warning__instruction { font-weight: 600; }
+
+/* Severity as the issuer graded it, not as we judged it. The words are
+   CAP's: Minor, Moderate, Severe, Extreme. */
+.warning--moderate { border-left-color: var(--warn, #d9a441); }
+.warning--severe, .warning--extreme { border-left-color: var(--bad); }
+.warning--extreme { border-left-width: 6px; }
 
 .custom-content { margin-block: var(--s-5); }
 .section-header { margin: var(--s-7) 0 var(--s-4); }

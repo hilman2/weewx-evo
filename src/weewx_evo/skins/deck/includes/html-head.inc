@@ -42,7 +42,6 @@
 
 <!--prettier-ignore-->
 #set $diagramWindDirOrdinals = $to_int($to_bool($DisplayOptions.get('diagram_tile_winddir_ordinal', True)))
-#set $dwdForecastTable = $Extras.get("weewx-DWD", {}).get("forecast_table_settings", {})
 <script>
   /*prettier-ignore*/
   window.deckConfig = {
@@ -50,7 +49,6 @@
     ordinalCompass: $get_ordinates,
     windRoseColors: $jsonize($DisplayOptions.get('windRose_colors', ["#f3cec9", "#e7a4b6", "#cd7eaf", "#a262a9", "#6f4d96", "#3d3b72"])),
     units: $unit.unit_type_dict,
-    dwdForecastTable: $dwdForecastTable,
     basePath: "$get_base_path()",
     translations: {
       "Daily": "$gettext('Daily')",
