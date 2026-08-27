@@ -354,6 +354,51 @@ def test_the_directory_fills_in_by_itself() -> None:
     check("nothing when it is off", (url, directories), ("", []))
 
 
+def test_a_local_site_is_live_with_nothing_configured() -> None:
+    """A local export saying "live readings" is the whole configuration.
+
+    There is no address to choose, no token to derive and nothing leaves the
+    machine. An upload with no settings in it would be a step that answers no
+    question, so the schedule grows one by itself.
+
+    And only for directories: an upload that posts somewhere goes out over
+    somebody else's network, and a checkbox defaulting to on is not a reason
+    to start doing that.
+    """
+    from weewx_evo.cli import live_readings_locally
+
+    class FakeSettings:
+        def __init__(self, exports: dict) -> None:
+            self.config = {"exports": exports}
+
+        def get(self, name: str) -> object:
+            return "upload-token" if name == "token" else None
+
+    local = FakeSettings({"site": {"kind": "local", "directory": "data/site",
+                                   "live_push": True}})
+    made = live_readings_locally(local, {})
+    check("one upload appears", sorted(made), ["live"])
+    check("of the right kind", made["live"]["kind"], "webpush")
+    check("pointed at the served directory",
+          made["live"]["directories"], ["data/site"])
+    ok("and marked as not typed by anyone", made["live"]["_inferred"])
+
+    # Switched off is switched off.
+    off = FakeSettings({"site": {"kind": "local", "directory": "data/site",
+                                 "live_push": False}})
+    check("nothing when the export says no", live_readings_locally(off, {}), {})
+
+    # A web host is not started on its own.
+    away = FakeSettings({"host": {"kind": "ftp", "live_push": True,
+                                  "live_push_url": "https://example.org/w"}})
+    check("and nothing is posted anywhere unasked",
+          live_readings_locally(away, {}), {})
+
+    # One that was configured on purpose is left alone, whatever it says.
+    check("an upload that exists is not doubled",
+          live_readings_locally(local, {"mine": {"kind": "webpush"}}), {})
+
+
 # ---------------------------------------------------------------------------
 # live.php itself.
 # ---------------------------------------------------------------------------
@@ -714,6 +759,7 @@ def main() -> int:
         test_the_local_way(tmp)
         test_a_local_export_carries_no_php(tmp)
         test_the_directory_fills_in_by_itself()
+        test_a_local_site_is_live_with_nothing_configured()
         test_php_syntax()
         test_live_php(tmp)
         test_the_styles_are_there()

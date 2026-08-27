@@ -1567,7 +1567,8 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     components here talk through the database, and it is what makes a restart
     cost nothing and a catch-up possible at all.
     """
-    configured = configured_uploads(args)
+    configured = dict(configured_uploads(args))
+    configured.update(live_readings_locally(cfg, configured))
     if not configured:
         return []
     base = Path(getattr(args, "config", None) or ".").parent
@@ -1634,6 +1635,31 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
 
     return upload_runner.build(configured, with_station, progress, records,
                                packets)
+
+
+def live_readings_locally(cfg: Settings,
+                          configured: dict[str, dict]) -> dict[str, dict]:
+    """Write `live.json` where this machine serves, with nothing configured.
+
+    A local export saying "live readings" has already said everything there is
+    to say: there is no address to choose, no token to derive and nothing
+    leaves the machine. Making somebody add an upload with no settings in it
+    would be a step that answers no question.
+
+    Only for directories. An upload that *posts* somewhere goes out over
+    somebody else's network, and starting that because a checkbox defaulted on
+    is not this program's decision -- so a web host still wants an upload
+    added on purpose, and this leaves one alone as soon as there is one.
+    """
+    from .uploads.webpush import WebPushUpload
+
+    if any(str(one.get("kind", "")) == "webpush" for one in configured.values()):
+        return {}
+    _url, _token, directories = WebPushUpload.from_exports(cfg)
+    if not directories:
+        return {}
+    return {"live": {"kind": "webpush", "directories": list(directories),
+                     "_inferred": True}}
 
 
 def configured_forecasts(args: argparse.Namespace) -> dict[str, dict]:
