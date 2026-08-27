@@ -1225,7 +1225,13 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
    and the columns land near the day above them, which is what makes the two
    rows read as one thing. */
 .forecast-list.hourly {
-  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  /* Capped, not stretched. `1fr` shares whatever is left between however
+     many tiles there are, so late in the evening the two hours still to come
+     each took half the row and stood twice the height of a full day's. A
+     maximum keeps a tile a tile, and what is left over goes to the right of
+     them rather than into them. */
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 9rem));
+  justify-content: start;
   margin-top: var(--s-4);
   padding-top: var(--s-4);
   border-top: 1px solid var(--line-soft);
