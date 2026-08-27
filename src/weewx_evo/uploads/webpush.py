@@ -37,9 +37,11 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from .. import units
+from ..exports.livepush import DATA_FILE, STALE_AFTER
 from . import BaseUpload, Posted, Rejected, request, when_options
 from .mqtt import NEVER, topic_name
 
@@ -60,12 +62,17 @@ class WebPushUpload(BaseUpload):
     #: was not given its own. See `from_exports`.
     inferred = False
 
-    def __init__(self, url: str = "", token: str = "",
+    def __init__(self, url: str = "", token: str = "", directory: str = "",
                  unit_system: str = "", append_units: bool = True,
                  trigger: str = "live", every: int = 10,
                  catch_up: int = 0, timeout: int = 20,
                  _inferred: bool = False) -> None:
         self.inferred = bool(_inferred)
+        # A directory to write the same document into, for a site this
+        # machine serves itself. No PHP and no request: the web server hands
+        # out `live.json` like any other file, and the page reads it exactly
+        # as it would on a web host. The skin cannot tell the two apart.
+        self.directory = str(directory or "").strip()
         self.url = str(url or "").strip()
         self.token = str(token or "")
         # The same names the MQTT path uses -- `outTemp_C`, `windSpeed_mph`.
@@ -77,25 +84,31 @@ class WebPushUpload(BaseUpload):
         self.every = int(every)
         self.catch_up_limit = 0
         self.timeout = int(timeout)
-        if not self.url:
+        if not self.url and not self.directory:
             raise ValueError(
-                "the address of the live.php on the web host is needed. An "
-                "export that carries live.php can supply it: put the site's "
-                "address in 'Address the pages are served at' there and this "
-                "fills in by itself.")
-        if not self.token:
-            raise ValueError(
-                "a token is needed. Without one anybody who finds the address "
-                "can write what the page shows as the weather. An export that "
-                "carries live.php derives one and sends it up with the files.")
-        parts = urlsplit(self.url)
-        if parts.scheme not in ("http", "https") or not parts.netloc:
-            raise ValueError(f"{self.url!r} is not an http or https address")
-        self.host = parts.netloc
-        self.path = parts.path or "/live.php"
-        self.tls = parts.scheme == "https"
-        if parts.query:
-            self.path += "?" + parts.query
+                "either a directory to write into, or the address of a "
+                "live.php on a web host. An export can supply the second: "
+                "put the site's address in 'Address the pages are served at' "
+                "there and this fills in by itself.")
+
+        self.host = self.path = ""
+        self.tls = True
+        if self.url:
+            if not self.token:
+                raise ValueError(
+                    "a token is needed to post to a web host. Without one "
+                    "anybody who finds the address can write what the page "
+                    "shows as the weather. An export that carries live.php "
+                    "derives one and sends it up with the files.")
+            parts = urlsplit(self.url)
+            if parts.scheme not in ("http", "https") or not parts.netloc:
+                raise ValueError(f"{self.url!r} is not an http or https "
+                                 f"address")
+            self.host = parts.netloc
+            self.path = parts.path or "/live.php"
+            self.tls = parts.scheme == "https"
+            if parts.query:
+                self.path += "?" + parts.query
 
     # -- shaping ---------------------------------------------------------
 
@@ -159,66 +172,126 @@ class WebPushUpload(BaseUpload):
             raise Rejected(f"{self.host} answered {status}: {text[:120]}")
         return len(body)
 
+    def _write(self, record: dict) -> int:
+        """The same document, straight into a directory this machine serves.
+
+        Written beside and renamed: half a JSON document is a parse error in
+        every browser, and a page that blanks once in a while is the sort of
+        fault nobody can reproduce.
+        """
+        import time
+
+        document = self.document(record)
+        # The same two fields `live.php` adds, so a page cannot tell the two
+        # routes apart and needs no second way of reading this one.
+        document["_received"] = int(time.time())
+        document["_stale_after"] = STALE_AFTER
+
+        where = Path(self.directory)
+        where.mkdir(parents=True, exist_ok=True)
+        body = json.dumps(document, separators=(",", ":"))
+        target = where / DATA_FILE
+        partial = target.with_suffix(".json.part")
+        partial.write_text(body, encoding="utf-8", newline="\n")
+        partial.replace(target)
+        return len(body)
+
     def post(self, records: list[dict]) -> Posted:
         result = Posted()
         record = records[-1]
         result.skipped = len(records) - 1
-        try:
-            result.bytes = self._send(record)
-        except Rejected as exc:
-            if exc.permanent:
-                raise
-            result.failures.append((str(record.get("dateTime")), str(exc)))
-            return result
-        result.sent = 1
-        result.through = int(record.get("dateTime") or 0)
+
+        if self.directory:
+            try:
+                self._write(record)
+                result.sent = 1
+            except OSError as exc:
+                result.failures.append(
+                    (str(record.get("dateTime")),
+                     f"could not write into {self.directory}: {exc}"))
+
+        if self.url:
+            try:
+                self._send(record)
+                result.sent = 1
+            except Rejected as exc:
+                if exc.permanent:
+                    raise
+                result.failures.append((str(record.get("dateTime")), str(exc)))
+                return result
+
+        if result.sent:
+            result.through = int(record.get("dateTime") or 0)
         return result
 
     def check(self) -> str:
         import time
 
-        try:
-            self._send({"dateTime": int(time.time()), "usUnits": units.METRICWX,
-                        "outTemp": 0.0})
-        except Rejected as exc:
-            return f"refused: {exc}"
-        except Exception as exc:
-            return f"could not reach {self.host}: {exc}"
-        where = self.path.rsplit("/", 1)[0] or ""
-        return (f"{self.host}{self.path} accepted a reading. The page reads "
-                f"it back from {where}/live.json.")
+        sample = {"dateTime": int(time.time()), "usUnits": units.METRICWX,
+                  "outTemp": 0.0}
+        said = []
+
+        if self.directory:
+            try:
+                self._write(sample)
+                said.append(f"wrote {Path(self.directory) / DATA_FILE}")
+            except OSError as exc:
+                said.append(f"could not write into {self.directory}: {exc}")
+
+        if self.url:
+            try:
+                self._send(sample)
+                where = self.path.rsplit("/", 1)[0] or ""
+                said.append(f"{self.host}{self.path} accepted a reading; the "
+                            f"page reads it back from {where}/{DATA_FILE}")
+            except Rejected as exc:
+                said.append(f"refused: {exc}")
+            except Exception as exc:
+                said.append(f"could not reach {self.host}: {exc}")
+
+        return ". ".join(said) if said else "nothing is configured to send to."
 
     def status(self) -> dict:
-        return {"host": self.host, "path": self.path}
+        return {"host": self.host, "path": self.path,
+                "directory": self.directory}
 
     @staticmethod
-    def from_exports(settings: object) -> tuple[str, str]:
-        """The address and token to use, from an export that carries live.php.
+    def from_exports(settings: object) -> tuple[str, str, str]:
+        """Where to send, from the exports that asked for live readings.
 
-        The point of it: an export that publishes the pages already knows
-        where they end up and already derives the token it writes beside the
-        script. Asking for both again here is how the two drift apart -- and
-        the way they drift is a token that does not match, which shows up as
-        a page that renders perfectly and never updates.
+        Three things come back: the address of a `live.php` on a web host, the
+        token for it, and a directory on this machine to write into. An export
+        that publishes the pages already knows all of it -- where they end up,
+        what token it writes beside the script, which directory the built-in
+        server hands out. Asking again here is how the two drift apart, and
+        the way they drift is a token that does not match: a page that renders
+        perfectly and never updates.
 
-        The first export with an address set wins. Two of them publishing the
-        same pages to two hosts is legitimate, and posting to one of them is
-        the answer; posting to both would need two of these uploads, which is
-        exactly what naming a `url` here is for.
+        The first export of each kind with the switch on wins. Two hosts
+        publishing the same pages is legitimate, and posting to one of them is
+        the answer; posting to both needs a second upload, which is exactly
+        what naming a `url` here is for.
         """
         from ..exports.livepush import token_for, url_for
 
         section = getattr(settings, "config", {}).get("exports") or {}
         token = token_for(str(settings.get("token") or ""))
+        url = directory = ""
         for _name, configured in sorted(section.items()):
             if not isinstance(configured, dict):
                 continue
-            if configured.get("live_push") is False:
+            if not configured.get("live_push", True):
+                continue
+            if configured.get("kind") == "local":
+                # No script and no address: the file goes straight into the
+                # directory the web server is already handing out.
+                if not directory:
+                    directory = str(configured.get("directory") or "").strip()
                 continue
             where = str(configured.get("live_push_url") or "").strip()
-            if where:
-                return url_for(where), token
-        return "", token
+            if where and not url:
+                url = url_for(where)
+        return url, token, directory
 
     @staticmethod
     def options() -> list:
@@ -226,14 +299,27 @@ class WebPushUpload(BaseUpload):
 
         return [
             Group("Where the pages are",
-                  "Both of these fill in by themselves from an export that "
-                  "carries `live.php` -- so in the ordinary case there is "
-                  "nothing to type here at all. Set them only to post "
-                  "somewhere no export of this station publishes to.", (
+                  "The address and the token fill in by themselves from an "
+                  "export that carries `live.php` -- so in the ordinary case "
+                  "there is nothing to type here at all. Set them only to "
+                  "post somewhere no export of this station publishes to. "
+                  "The directory is for a site this machine serves itself, "
+                  "where there is no PHP to post to.", (
                       Option("url", "Address of live.php",
                              placeholder="https://example.org/wetter/live.php",
                              help="Empty means: from the export. The address "
                                   "there plus /live.php."),
+                      Option("directory", "Or a directory on this machine",
+                             kind="path",
+                             placeholder="data/feeds/wdc",
+                             help="For a site this machine serves itself. "
+                                  "No PHP and no request -- the file is "
+                                  "written straight into the feed's own "
+                                  "directory and the web server hands it out "
+                                  "like any other. A page cannot tell the "
+                                  "two apart, so a skin needs no change. "
+                                  "Both may be set: the same readings go to "
+                                  "the local site and the published one."),
                       Option("token", "Token", kind="secret",
                              help="Empty means: derived from the station's "
                                   "upload token, the same way the export "

@@ -60,6 +60,12 @@ SCRIPT = "live.php"
 #: Not a password: the name of the file one is written into.
 TOKEN_FILE = "live.token"  # noqa: S105
 DATA_FILE = "live.json"
+#: How old a reading may be before a page should say so rather than show it
+#: as now. Written into the document, so the page does not have to be
+#: configured too. Kept the same as the `STALE_AFTER` in `live.php`: the two
+#: routes into that file must not disagree about when a reading goes stale,
+#: or the same station reads live on one host and stale on another.
+STALE_AFTER = 300
 
 #: Mixed into the hash so the derived token cannot be confused with the
 #: upload token itself, nor with anything else derived from it later.

@@ -17,6 +17,11 @@ What is checked:
     updates, with nothing in any log.
   * `live.php` itself, under a real PHP where there is one: the token, the
     method, the size limit, and that it writes atomically.
+  * The same file without a web host: for a directory the built-in server
+    hands out, the station writes `live.json` into it directly. No script, no
+    token, no posting to ourselves over the network -- and the page cannot
+    tell the two routes apart, which is what makes a local station live with
+    no change to the skin.
   * The rendered page: the poller and the badges, and no MQTT.
 
     python tools/deck_live_test.py
@@ -196,6 +201,127 @@ def test_it_needs_a_token() -> None:
         ok("and that it wants http", "http" in str(exc))
     else:
         FAILURES.append("the upload accepted an ftp address")
+
+
+# ---------------------------------------------------------------------------
+# The same file, without a web host.
+# ---------------------------------------------------------------------------
+
+def test_the_local_way(tmp: Path) -> None:
+    """A directory this machine serves needs no PHP and no posting.
+
+    The point of it: `live.php` exists to get a reading onto a host we can
+    only reach by uploading files. When the destination is a directory the
+    built-in server already hands out, that is a round trip over the network
+    to ourselves for a file we could just write. The page cannot tell -- it
+    reads `live.json` either way -- so the skin needs no change at all.
+    """
+    from weewx_evo.exports.livepush import DATA_FILE, STALE_AFTER
+    from weewx_evo.uploads.webpush import WebPushUpload
+
+    where = tmp / "site"
+    upload = WebPushUpload(directory=str(where))
+
+    # No token: there is nobody to prove anything to. Requiring one here
+    # would be theatre, and theatre in a settings page is a field somebody
+    # has to fill in before the thing works.
+    check("nothing is posted", upload.url, "")
+    check("and no host", upload.host, "")
+
+    result = upload.post([dict(RECORD)])
+    check("one reading went out", result.sent, 1)
+    check("and nothing failed", result.failures, [])
+
+    written = where / DATA_FILE
+    ok("the file is there", written.is_file())
+    document = json.loads(written.read_text(encoding="utf-8"))
+
+    # The same document, to the field: a page reading one route reads the
+    # other. That is the whole reason for writing it here rather than
+    # inventing a second shape.
+    check("the same names", document["outTemp_C"], 23.4)
+    check("the same timestamp", document["dateTime"], 1756308600)
+    ok("stamped as received", isinstance(document.get("_received"), int))
+    check("and told when it goes stale", document["_stale_after"], STALE_AFTER)
+
+    # Nothing half-written is ever visible: a browser that reads the file
+    # mid-write gets a parse error, and a page that blanks now and then is
+    # the sort of fault nobody can reproduce.
+    upload.post([dict(RECORD, dateTime=RECORD["dateTime"] + 10)])
+    ok("no leftovers beside it",
+       sorted(q.name for q in where.iterdir()) == [DATA_FILE])
+    again = json.loads(written.read_text(encoding="utf-8"))
+    check("and it was replaced", again["dateTime"], RECORD["dateTime"] + 10)
+
+    # One or the other is enough, but neither is not.
+    try:
+        WebPushUpload()
+    except ValueError as exc:
+        ok("it says what is missing",
+           "directory" in str(exc) and "live.php" in str(exc))
+    else:
+        FAILURES.append("the upload accepted neither a directory nor a url")
+
+
+def test_a_local_export_carries_no_php(tmp: Path) -> None:
+    """The switch is the same one; what it does is not.
+
+    A local export with live readings on must not copy `live.php` anywhere.
+    The built-in server hands out files; it does not run PHP, so the script
+    would sit in the published directory doing nothing but showing its own
+    source to anybody who asked for it.
+    """
+    from weewx_evo.exports.livepush import SCRIPT, TOKEN_FILE
+    from weewx_evo.exports.local import LocalExport
+
+    feed = tmp / "feed"
+    feed.mkdir()
+    (feed / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    export = LocalExport(directory=str(tmp / "published"),
+                         live_push=True, upload_token="secret")
+    check("nothing was put in", export.prepare(feed), [])
+    ok("no script", not (feed / SCRIPT).exists())
+    ok("no token file", not (feed / TOKEN_FILE).exists())
+
+    # And it is on by default, because it costs one small file and the
+    # alternative is a local page showing readings five minutes old.
+    check("on by default", LocalExport(directory=str(tmp / "p2")).live_push,
+          True)
+
+
+def test_the_directory_fills_in_by_itself() -> None:
+    """From the local export, the way the address comes from a remote one.
+
+    Typing the same path twice is how the two drift apart, and the way they
+    drift is a file written where nothing serves it.
+    """
+    from weewx_evo.uploads.webpush import WebPushUpload
+
+    exports = {
+        "site": {"kind": "local", "directory": "data/site",
+                 "live_push": True},
+        "host": {"kind": "ftp", "live_push": True,
+                 "live_push_url": "https://example.org/wetter"},
+    }
+
+    class FakeSettings:
+        def __init__(self) -> None:
+            self.config = {"exports": exports}
+
+        def get(self, name: str) -> object:
+            return "upload-token" if name == "token" else None
+
+    url, token, directory = WebPushUpload.from_exports(FakeSettings())
+    check("the web host", url, "https://example.org/wetter/live.php")
+    check("the local directory", directory, "data/site")
+    ok("and a token for the first", len(token) == 32)
+
+    # Switched off means switched off, for both.
+    exports["site"]["live_push"] = False
+    exports["host"]["live_push"] = False
+    url, _token, directory = WebPushUpload.from_exports(FakeSettings())
+    check("nothing when it is off", (url, directory), ("", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +567,9 @@ def main() -> int:
         test_no_mqtt_left()
         test_the_document()
         test_it_needs_a_token()
+        test_the_local_way(tmp)
+        test_a_local_export_carries_no_php(tmp)
+        test_the_directory_fills_in_by_itself()
         test_php_syntax()
         test_live_php(tmp)
         test_the_styles_are_there()

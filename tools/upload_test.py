@@ -106,7 +106,10 @@ def test_cwop_widths() -> None:
     upload = cwop.CwopUpload(station="DW1234", latitude=48.3858,
                              longitude=11.7050)
     body = upload.packet(METRIC).split(":", 1)[1].strip()
-    check("CWOP timestamp", body[:8], "/271530z")
+    # `@`, not `/`: a position report with a timestamp, which is the byte
+    # WeeWX has sent from thousands of stations for fifteen years. See the
+    # comment at the line in cwop.py for why the stricter `/` is not used.
+    check("CWOP timestamp", body[:8], "@271530z")
     # 48.3858 deg is 48 deg 23.148 min; 11.7050 deg is 11 deg 42.30 min.
     check("CWOP position", body[8:26], "4823.15N/01142.30E")
     # The `_` opens the weather report and belongs to the wind field, not to

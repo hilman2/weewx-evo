@@ -386,6 +386,9 @@ def main() -> int:
         print("\nan upload can be added the same way")
         code, html_ = get(f"{base}/{TOKEN}/new-upload")
         failures += not check("the form is there", code, 200)
+        failures += not check("and the heading says what it is",
+                              "<title>Add an upload" in html_
+                              or ">Add an upload<" in html_, True)
         failures += not check("with the services",
                               "Weather Underground" in html_ and "CWOP" in html_,
                               True)
@@ -452,6 +455,11 @@ def main() -> int:
         print("\na forecast source is added the same way")
         code, html_ = get(f"{base}/{TOKEN}/new-forecast")
         failures += not check("the form is there", code, 200)
+        # The heading used to say "Add an export" on every add-page that was
+        # not the feed one -- over a form that was nothing of the sort.
+        failures += not check("and the heading says what it is",
+                              "<title>Add a forecast" in html_
+                              or ">Add a forecast<" in html_, True)
         failures += not check("with the sources",
                               "Open-Meteo" in html_ and "MeteoAlarm" in html_,
                               True)

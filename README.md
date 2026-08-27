@@ -241,6 +241,38 @@ Datenbank unverändert bleibt und dieselben Zahlen herauskommen. Diese Dateien
 sind der Beleg dafür, und sie laufen gegen eine echte Datenbank statt gegen
 ausgedachte Werte.
 
+### Ein Befehl
+
+```bash
+docker/run.sh          # oder dockerun.ps1 unter Windows
+```
+
+Baut das Testbild, mountet das Repository hinein und fährt **alles** der Reihe
+nach — 29 Werkzeuge, rund eine Minute, ein Exit-Code. Ohne Netz
+(`--network none`): jeder Test hier kommt ohne aus, und einer der still ins
+Internet greift, ist einer der im Zug fehlschlägt.
+
+Das Bild ist das Gegenteil von `deploy/Dockerfile`. Dort ist bewusst nichts
+drin; hier ist alles drin, was ein Test verlangen kann — WeeWX 5.1, pyephem,
+Cheetah, Pillow, ein FTP-Server, ein PHP. Der Grund ist einfach: **ein Test,
+der nicht gegen das vergleichen kann, wovon er abgeschrieben wurde, ist kein
+Test, sondern eine Meinung.** Als das Bild zum ersten Mal lief, fand es sofort
+vier Dinge, die niemand sah: 22 Ecowitt-Tests, die still übersprungen wurden,
+weil WeeWX fehlte; einen CWOP-Pakettyp, der von WeeWX' abwich; ein `ruff`, das
+neuer sein musste als das im pyproject genannte Regelwerk; und einen Tippfehler
+in WeeWX' eigener Einheitentabelle.
+
+Ohne Docker geht dasselbe direkt — dann wird übersprungen, was fehlt, und
+gesagt was:
+
+```bash
+python tools/runtests.py          # alles, was hier laufen kann
+python tools/runtests.py --list   # was liefe, und warum nicht
+python tools/runtests.py units sun
+```
+
+### Einzeln
+
 Alle ohne Netz, ohne Zustand außerhalb eines Temp-Verzeichnisses:
 
 ```bash
@@ -259,8 +291,12 @@ python tools/derive_test.py                       # die Ableitungen
 python tools/feeds_test.py                        # mehrere Feeds nebeneinander
 python tools/cheetah_test.py                      # eine WeeWX-Skin, unverändert
 python tools/image_test.py                        # die Diagramme als PNG
+python tools/deck_live_test.py                    # die Live-Werte, beide Wege
+python tools/upload_test.py                       # WU, PWS, CWOP, Windy
+python tools/mqtt_test.py                         # der MQTT-Client
+python tools/forecast_test.py                     # die Vorhersagequellen
 python -m pytest tests/                           # der Ecowitt-Treiber
-python -m ruff check --select F src/ tools/       # undefinierte Namen
+python -m ruff check src/ tools/ tests/           # undefinierte Namen
 ```
 
 `ruff` ist der einzige Punkt, an dem ein Werkzeug von außen gebraucht wird,

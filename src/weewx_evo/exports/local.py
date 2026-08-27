@@ -56,14 +56,15 @@ class LocalExport(BaseExport):
     def __init__(self, directory: str = "", source: str = "",
                  directory_source: str = "", trigger: str = "feed",
                  every: int = 900, link: bool = True, delete: bool = True,
-                 live_push: bool = False, live_push_url: str = "",
+                 live_push: bool = True, live_push_url: str = "",
                  upload_token: str = "",
                  tracker: str = "") -> None:
         #: Where it ends up. Under what the web server serves, this is the
         #: address it appears at.
         self.directory = str(directory or "").strip()
-        # `live.php` and its token, sent with the pages. See
-        # `exports.livepush` for what it is and why it is derived.
+        #: Live readings under this directory. Unlike the exports that
+        #: publish to somebody else's host, nothing is carried there for it:
+        #: see `prepare`.
         self.live_push = bool(live_push)
         self.live_push_url = str(live_push_url or "").rstrip("/")
         self.upload_token = str(upload_token or "")
@@ -104,11 +105,6 @@ class LocalExport(BaseExport):
             raise ExportError("no directory is set")
         if not source.is_dir():
             raise ExportError(f"{source} is not a directory")
-
-        # `live.php` and its token first, so they are picked up like
-        # any other file -- which means the record of what was
-        # already sent stops them going again every five minutes.
-        self.prepare(source)
 
         started = time.monotonic()
         result = Sent()
@@ -166,6 +162,20 @@ class LocalExport(BaseExport):
         self.sent_files += result.sent
         self.last_note = result.note
         return result
+
+    def prepare(self, source: Path) -> list[Path]:
+        """Nothing. A directory this machine serves needs no `live.php`.
+
+        The script exists to get a reading onto a host we can only reach by
+        uploading files to it. Here the destination is a directory on this
+        machine, so the station writes `live.json` into it directly and the
+        built-in server hands that out -- no PHP, no token, no posting to
+        ourselves over the network.
+
+        The switch still means what it says: `from_exports` in the live-push
+        upload reads it and takes the directory to write into from here.
+        """
+        return []
 
     def _place(self, source: Path, destination: Path) -> int:
         """One file, atomically. Returns its size.
@@ -287,7 +297,7 @@ class LocalExport(BaseExport):
                        placeholder="data/public_html",
                        help="Used when no feed is chosen. Everything under it "
                             "is published, keeping the structure."),
-                *live_push_options(),
+                *live_push_options(local=True),
                 Option("delete", "Remove files that are no longer produced",
                        kind="bool", default=True,
                        help="On, because otherwise nothing ever clears up. A "

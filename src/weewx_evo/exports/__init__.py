@@ -268,13 +268,34 @@ def _feed_choices() -> list[tuple[str, str]]:
     return [(name, f"the {label}") for name, label in defined_feeds()]
 
 
-def live_push_options() -> list:
-    """The two "live readings" settings, which every export has the same.
+def live_push_options(local: bool = False) -> list:
+    """The "live readings" settings, which every export has the same.
 
     One copy, because three exports with three subtly different wordings for
     the same switch is how a settings page stops being readable.
+
+    A directory on this machine is the one real exception, and `local` is it.
+    The switch means the same thing to whoever reads the page -- readings
+    that are seconds old -- but there is no PHP to get there through, and no
+    address to work out either. The built-in server hands out `live.json`
+    itself, so the station writes that file straight into the directory and
+    the whole script is beside the point. Same switch, same result, one less
+    moving part.
     """
     from ..options import Option
+
+    if local:
+        return [
+            Option("live_push", "Live readings", kind="bool", default=True,
+                   help="On. The station writes `live.json` into this "
+                        "directory as the readings come in, and the built-in "
+                        "web server hands it out like any other file -- so a "
+                        "skin here shows readings that are seconds old "
+                        "instead of as old as the last run of its feed. "
+                        "There is no `live.php` involved: that exists to get "
+                        "the file onto somebody else's web host, and this "
+                        "directory is on this machine."),
+        ]
 
     return [
         Option("live_push", "Carry the live-readings script", kind="bool",

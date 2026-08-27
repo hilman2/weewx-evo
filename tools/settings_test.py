@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src"
@@ -288,6 +289,60 @@ def main() -> int:
                               "must be one of" not in said, True)
         failures += not check("and it named its own directory",
                               str(tmp / "out") in said, True)
+
+        print("\na setting that holds a whole block survives a rewrite")
+        # A skin's [Extras] is a table of whatever its author invented. The
+        # schema calls it a list, because that is how the form offers it --
+        # one `name = value` per line -- and in the file it may be a table.
+        # Both have to come back unchanged.
+        #
+        # Two things went wrong here at once, and the second hid the first:
+        # the value went through Option.parse and came out as
+        # ["{'base_path': '/wdc/'}"] -- a Python dict repr inside a string
+        # inside a list -- and the leftovers pass wrote every key under it a
+        # second time. Two copies of one dotted path is a file tomllib
+        # refuses, so the admin page could not save at all.
+        nested = tmp / "nested.toml"
+        nested.write_text(
+            'archive_db = "x.sdb"\n'
+            'token = "t"\n'
+            'feeds.wdc.kind = "cheetah"\n'
+            'feeds.wdc.extras.base_path = "/wdc/"\n'
+            'feeds.wdc.extras.deeper.still = 3\n',
+            encoding="utf-8")
+
+        from weewx_evo.cli import all_schemas
+
+        before = config_file.read(nested)
+        schemas = all_schemas(nested)
+        rendered = config_file.render(before, schemas)
+
+        # The check that would have caught it: valid TOML at all.
+        try:
+            tomllib.loads(rendered)
+            failures += not check("what is written parses", True, True)
+        except Exception as exc:
+            failures += not check(f"what is written parses ({exc})",
+                                  False, True)
+
+        # Once, not twice.
+        failures += not check(
+            "the block is written once",
+            rendered.count("feeds.wdc.extras.base_path"), 1)
+        failures += not check(
+            "and not as a mangled list",
+            "[\"{'" in rendered, False)
+
+        # And it comes back the same.
+        config_file.write(nested, before, schemas, backup=False)
+        after = config_file.read(nested)
+        failures += not check("the block came back",
+                              config_file.get(after, "feeds.wdc.extras"),
+                              {"base_path": "/wdc/", "deeper": {"still": 3}})
+        failures += not check("with the rest of the feed",
+                              config_file.get(after, "feeds.wdc.kind"),
+                              "cheetah")
+
     finally:
         os.environ.clear()
         os.environ.update(saved_env)

@@ -1198,9 +1198,13 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                    else "Import charts" if active == "import-plots"
                    else f"Chart: {active.split(':', 1)[1]}")
     else:
-        heading = (schema.label if schema
-                   else "Add a feed" if active == "new-feed"
-                   else "Add an export")
+        # Named per page rather than "everything else is an export". Two more
+        # add-pages arrived after this was written and both said "Add an
+        # export" over a form that was nothing of the sort.
+        headings = {"new-feed": "Add a feed", "new-export": "Add an export",
+                    "new-upload": "Add an upload",
+                    "new-forecast": "Add a forecast"}
+        heading = schema.label if schema else headings.get(active, "Settings")
 
     return _PAGE.format(
         title=html.escape(heading),

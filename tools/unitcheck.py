@@ -40,6 +40,21 @@ OURS = {
     "gram_per_meter_cubed": "absolute humidity, which weewx-GTS adds",
     "milligram_per_meter_cubed": "the same, at a scale a sensor reports in",
     "gram_per_kilogram": "the mixing ratio, which weewx-GTS adds",
+    "astronomical_unit": "how far away a planet is; planets.py needs it",
+}
+
+#: Pairs where WeeWX and this differ, with why. Named one by one, because a
+#: category would let the next one in without anybody looking at it.
+KNOWN = {
+    # Both spellings, because the pair is missing under one name and extra
+    # under the other, and both are the same one difference.
+    ("degree_K", "degreeF"):
+        "WeeWX writes the target as 'degreeF' here and 'degree_F' everywhere "
+        "else, so its own convert() raises on Kelvin to Fahrenheit. Ours "
+        "spells it the way the rest of the table does and works. Their typo, "
+        "not our deviation.",
+    ("degree_K", "degree_F"): "the same entry, spelled as the rest of the "
+                              "table spells it.",
 }
 
 #: Readings the same applies to.
@@ -67,6 +82,8 @@ def main() -> int:
         for to_unit in targets:
             pairs += 1
             if to_unit not in ours.CONVERT.get(from_unit, {}):
+                if (from_unit, to_unit) in KNOWN:
+                    continue
                 print(f"  MISSING {from_unit} -> {to_unit}")
                 missing += 1
                 failures += 1
@@ -87,6 +104,9 @@ def main() -> int:
                 # Ours on purpose. Named rather than counted as a failure.
                 extra += 1
                 continue
+            if (from_unit, to_unit) in KNOWN:
+                extra += 1
+                continue
             print(f"  EXTRA {from_unit} -> {to_unit} (WeeWX has no such)")
             extra += 1
             failures += 1
@@ -104,8 +124,12 @@ def main() -> int:
         for to_unit in targets:
             if from_unit not in ours.CONVERT.get(to_unit, {}):
                 continue
-            if from_unit in OURS or to_unit in OURS:
-                # WeeWX has no such pair to drift the same way as.
+            # Asked of WeeWX's own table rather than of a list of names.
+            # A pair we have and WeeWX does not has nothing to drift the same
+            # way as -- and looking it up there anyway is a KeyError, which is
+            # how this read as a broken unit table rather than a missing one.
+            if (to_unit not in theirs.conversionDict.get(from_unit, {})
+                    or from_unit not in theirs.conversionDict.get(to_unit, {})):
                 continue
             for x in (1.0, 100.0, -40.0):
                 mine = ours.CONVERT[to_unit][from_unit](
@@ -123,6 +147,12 @@ def main() -> int:
                     break
     print(f"  {drifting} pair(s) do not come back exactly, every one of them"
           f" the same way WeeWX does; {mismatched} differ")
+
+    if KNOWN:
+        print()
+        print("known differences, one line each")
+        for (from_unit, to_unit), why in sorted(KNOWN.items()):
+            print(f"  {from_unit} -> {to_unit}: {why}")
 
     print("\nwhich group each reading is in")
     wrong = 0

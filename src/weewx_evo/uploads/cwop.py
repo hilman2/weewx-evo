@@ -130,10 +130,18 @@ class CwopUpload(BaseUpload):
         """
         readings = Readings(record)
         prefix = f"{self.station}>{DESTINATION},TCPIP*:"
-        # `/` is a position report with a timestamp and *without* APRS
-        # messaging. An unattended station cannot answer a message, so it must
-        # not advertise that it can by using `@`.
-        when = time.strftime("/%d%H%Mz", time.gmtime(readings.ts))
+        # `@` is a position report with a timestamp. `/` is the same thing
+        # without APRS messaging, and by the letter of the spec it is the
+        # honest one: an unattended station cannot answer a message, so it
+        # should not advertise that it can.
+        #
+        # `@` anyway, because this goes to somebody else's ingest. WeeWX has
+        # sent `@` from thousands of stations for fifteen years, so that is
+        # the byte every CWOP and APRS-IS parser has certainly been fed. The
+        # failure mode for guessing wrong is a packet quietly not becoming an
+        # observation, which nobody finds -- and being right about the spec
+        # would not make the readings arrive.
+        when = time.strftime("@%d%H%Mz", time.gmtime(readings.ts))
         position = (latlon(float(self.latitude), ("N", "S"), "lat") + "/"
                     + latlon(float(self.longitude), ("E", "W"), "lon"))
 

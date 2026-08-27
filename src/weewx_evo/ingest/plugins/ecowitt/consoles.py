@@ -41,11 +41,11 @@ FILENAME = 'ecowitt-consoles.txt'
 # The key under which the list lives in the daily summary metadata table.
 METADATA_KEY = 'ecowitt_consoles'
 
-HEADER = """# Consoles this WeeWX driver answers to, one PASSKEY per line.
+HEADER = """# Consoles this driver answers to, one PASSKEY per line.
 #
-# This file is the fallback. Normally the list lives in the database, in the same
-# metadata table WeeWX keeps lastUpdate in, so that it travels with the readings it
-# protects.
+# This file is the fallback. Normally the list lives in the archive's metadata
+# table, beside lastUpdate, so that it travels with the readings it protects --
+# a backup of the database is a backup of this.
 #
 # To add a console, do not edit this. Give it a name and a field map under
 # [stations] in the configuration, so that its channels go somewhere of their own.

@@ -34,6 +34,13 @@ where = ["src"]
 line-length = 100
 src = ["src", "tools", "tests"]
 
+# The version, for the same reason as the rule list below. ISC004 does not
+# exist before 0.16, so a repository that names it and a ruff that has never
+# heard of it produce "Unknown rule selector" -- which reads like the config
+# is broken rather than the tool being old, and which the test image found by
+# pinning a different one. Named here, a mismatch says which version is wanted.
+required-version = ">=0.16"
+
 # Named rather than left to the default. ruff's default set grows between
 # releases, and a check that changes underneath the repository is one that
 # either blocks a commit for a rule nobody chose or stops finding what it

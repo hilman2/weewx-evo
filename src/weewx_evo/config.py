@@ -183,6 +183,22 @@ def _option_lines(option: Option, dotted: str, value: Any) -> list[str]:
     if notes:
         out.append(f"#   ({'; '.join(notes)})")
 
+    # A block, written as a table. Some settings take one: a skin's `[Extras]`
+    # is whatever its author invented, and the schema calls it a list because
+    # that is how the form offers it -- one `name = value` per line. In the
+    # file it may equally be a table, and it has to survive being read and
+    # written again.
+    #
+    # Putting it through `Option.parse` instead turns
+    # `{"base_path": "/wdc/"}` into `["{'base_path': '/wdc/'}"]`: a Python
+    # dict repr, inside a string, inside a list. Unrecoverable, and nothing
+    # notices.
+    if isinstance(value, dict):
+        for key, held in sorted(value.items()):
+            out.extend(_nested_lines(f"{dotted}.{key}", held))
+        out.append("")
+        return out
+
     # Through the option first. A value read back from the file is in whatever
     # shape it was written -- a duration comes back as "5m", not 300 -- and
     # rendering has to start from the canonical form or the second write is
@@ -204,6 +220,16 @@ def _option_lines(option: Option, dotted: str, value: Any) -> list[str]:
     out.append(f"{dotted} = {rendered}")
     out.append("")
     return out
+
+
+def _nested_lines(dotted: str, value: Any) -> list[str]:
+    """A value that may itself be a table, as dotted keys all the way down."""
+    if isinstance(value, dict):
+        out: list[str] = []
+        for key, held in sorted(value.items()):
+            out.extend(_nested_lines(f"{dotted}.{key}", held))
+        return out
+    return [f"{dotted} = {_toml(value)}"]
 
 
 def _assignment(dotted: str, value: Any) -> str:
@@ -232,12 +258,22 @@ def _wrap(text: str, width: int) -> list[str]:
 
 
 def _unknown(config: dict, written: set[str], prefix: str = "") -> dict[str, Any]:
-    """Everything in the file that no schema claimed."""
+    """Everything in the file that no schema claimed.
+
+    A setting the schema already wrote is not descended into. Some of them
+    hold a whole block -- a skin's `[Extras]` is a table of whatever its
+    author invented -- and walking into one produces a second copy of every
+    key underneath it. Two copies of `feeds.wdc.extras` is not merely untidy:
+    it is a file `tomllib` refuses, so the admin page cannot save at all
+    until somebody edits it by hand.
+    """
     out: dict[str, Any] = {}
     for key, value in config.items():
         dotted = f"{prefix}.{key}" if prefix else key
+        if dotted in written:
+            continue
         if isinstance(value, dict):
             out.update(_unknown(value, written, dotted))
-        elif dotted not in written:
+        else:
             out[dotted] = value
     return out
