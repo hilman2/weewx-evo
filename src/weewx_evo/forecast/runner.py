@@ -1,0 +1,218 @@
+"""Asking the forecast sources, on their own schedule and their own thread.
+
+The same arrangement as the exports and the uploads, for the third time and
+the same reason: a weather service that has stopped answering must sit in its
+own timeout rather than in the archiver's tick. A MOSMIX file is 350 kB over
+somebody else's connection, and thirty seconds of that on the archive loop is
+thirty seconds of packets piling up.
+
+What is different here is what a failure means.
+
+**A failed fetch keeps the old forecast.** Not an empty one. A source that
+could not be reached has told us nothing about the weather, and replacing
+yesterday's good forecast with nothing would turn a network hiccup into a
+blank page. The store is only written when a fetch actually returned.
+
+**An empty warning feed is an answer.** MeteoAlarm returns no entries when
+the weather is calm, and that means the warnings have ended -- so warnings
+*are* replaced with nothing, deliberately. Leaving an expired storm warning on
+a page is the one failure in this file that matters.
+
+The two are distinguished by where they happen: an exception never reaches the
+store, and a successful fetch always does.
+
+**A first fetch happens at startup.** A station restarted at eight in the
+morning must not show an empty forecast until nine. Every source is asked once
+as soon as its thread starts, then on its own interval.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from collections.abc import Callable
+from typing import Any
+
+from . import ForecastError, Place
+
+log = logging.getLogger(__name__)
+
+#: How far back to keep hours that have already happened. Enough for a page
+#: that draws the forecast against what actually occurred, little enough that
+#: the file stays small.
+KEEP_BEHIND = 24 * 3600
+
+
+class Scheduled:
+    """One source, and when it is next due."""
+
+    __slots__ = (
+        "blocked",
+        "failures",
+        "issued",
+        "last",
+        "last_summary",
+        "name",
+        "place",
+        "running",
+        "runs",
+        "source",
+        "store",
+    )
+
+    def __init__(self, name: str, source: Any, place: Place, store: Any) -> None:
+        self.name = name
+        self.source = source
+        self.place = place
+        self.store = store
+        self.last: float = 0.0
+        self.running = False
+        self.runs = 0
+        self.failures = 0
+        self.last_summary = ""
+        self.issued = 0
+        #: Set when the source said something permanent -- a station id that
+        #: does not exist, a point outside the country it covers. Asking
+        #: again every hour for a year would not fix it and the log line is
+        #: the useful output.
+        self.blocked = ""
+
+    @property
+    def every(self) -> int:
+        return max(300, int(getattr(self.source, "every", 3600)))
+
+    def due(self, now: float) -> bool:
+        return not self.blocked and (now - self.last) >= self.every
+
+    def run(self) -> None:
+        """Fetch and store. Never raises."""
+        self.running = True
+        self.last = time.monotonic()
+        try:
+            reading = self.source.fetch(self.place)
+            reading.source = reading.source or self.name
+            self.store.store(reading, int(time.time()))
+            self.runs += 1
+            self.issued = reading.issued
+            self.last_summary = reading.summary()
+            log.info("forecast %s: %s", self.name, self.last_summary)
+        except ForecastError as exc:
+            self.failures += 1
+            self.last_summary = str(exc)
+            if exc.permanent:
+                self.blocked = str(exc)
+                log.error("forecast %s is switched off: %s. Fix the settings "
+                          "and restart, or run `weewx-evo forecast check`.",
+                          self.name, exc)
+            else:
+                # The previous forecast stays. A source that could not be
+                # reached has said nothing about the weather.
+                log.warning("forecast %s failed: %s", self.name, exc)
+        except Exception as exc:
+            self.failures += 1
+            self.last_summary = f"{type(exc).__name__}: {exc}"
+            log.warning("forecast %s failed: %s", self.name, exc)
+        finally:
+            self.running = False
+
+
+class Runner:
+    """Keeps the forecast sources going, one thread each."""
+
+    def __init__(self, sources: list[Scheduled], store: Any = None) -> None:
+        self.sources = sources
+        self.store = store
+        self._stopping = threading.Event()
+        self._threads: list[threading.Thread] = []
+        self._pruned = 0.0
+
+    def start(self) -> None:
+        for scheduled in self.sources:
+            thread = threading.Thread(target=self._loop, args=(scheduled,),
+                                      name=f"forecast-{scheduled.name}",
+                                      daemon=True)
+            thread.start()
+            self._threads.append(thread)
+            log.info("forecast %s every %ds", scheduled.name, scheduled.every)
+
+    def stop(self) -> None:
+        self._stopping.set()
+        for thread in self._threads:
+            thread.join(timeout=2)
+        for scheduled in self.sources:
+            close = getattr(scheduled.source, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:
+                    log.debug("forecast %s did not close cleanly", scheduled.name)
+
+    def replace(self, sources: list[Scheduled]) -> None:
+        """Swap in a new set, after the configuration changed."""
+        self.stop()
+        self.sources = sources
+        self._stopping = threading.Event()
+        self._threads = []
+        self.start()
+
+    def _loop(self, scheduled: Scheduled) -> None:
+        # Once at startup. A station restarted in the morning must not show
+        # an empty forecast until the interval comes round.
+        scheduled.run()
+        self._prune()
+        while not self._stopping.is_set():
+            # Waking every thirty seconds rather than sleeping the whole
+            # interval, so a stop is answered in seconds rather than in an
+            # hour. The `due` check is what actually decides.
+            self._stopping.wait(timeout=30)
+            if self._stopping.is_set():
+                return
+            if scheduled.due(time.monotonic()):
+                scheduled.run()
+                self._prune()
+
+    def _prune(self) -> None:
+        """Drop what is in the past. Once an hour is plenty."""
+        if self.store is None or time.monotonic() - self._pruned < 3600:
+            return
+        self._pruned = time.monotonic()
+        try:
+            dropped = self.store.prune(int(time.time()) - KEEP_BEHIND)
+            if dropped:
+                log.debug("dropped %d forecast row(s) that are now the past",
+                          dropped)
+        except Exception:
+            log.debug("could not prune the forecast store", exc_info=True)
+
+    def status(self) -> list[dict]:
+        return [{
+            "name": s.name,
+            "every": s.every,
+            "runs": s.runs,
+            "failures": s.failures,
+            "issued": s.issued or None,
+            "running": s.running,
+            "blocked": s.blocked or None,
+            "last": s.last_summary,
+        } for s in self.sources]
+
+
+def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
+          place: Place, store: Any) -> list[Scheduled]:
+    """Turn configuration into things the runner can run.
+
+    Anything that cannot be built is reported and left out. A misconfigured
+    source must not stop the others, and it certainly must not stop the
+    station: the readings are what matters, and a forecast is somebody
+    else's opinion about tomorrow.
+    """
+    ready = []
+    for name, settings in sorted(configured.items()):
+        try:
+            source = make(name, dict(settings))
+        except Exception as exc:
+            log.warning("forecast source %s is not usable: %s", name, exc)
+            continue
+        ready.append(Scheduled(name, source, place, store))
+    return ready

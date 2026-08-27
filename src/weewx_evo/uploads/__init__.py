@@ -241,8 +241,14 @@ class Readings:
 def request(host: str, path: str, method: str = "GET",
             body: bytes | None = None, headers: dict[str, str] | None = None,
             tls: bool = True, port: int | None = None,
-            timeout: int = TIMEOUT) -> tuple[int, str]:
-    """One HTTP request. Returns the status and the body as text.
+            timeout: int = TIMEOUT, binary: bool = False) -> tuple[int, Any]:
+    """One HTTP request. Returns the status and the body.
+
+    Text by default, because everything in this package speaks text.
+    `binary=True` returns the bytes instead, for a caller that is about to
+    hand them to `zipfile` -- decoding a ZIP as UTF-8 and encoding it back
+    does not round-trip, and the failure is a corrupt archive rather than an
+    error anybody can read.
 
     `http.client` rather than anything installed, because the whole core runs
     on the standard library and one upload service is not the thing to break
@@ -260,8 +266,10 @@ def request(host: str, path: str, method: str = "GET",
     try:
         conn.request(method, path, body=body, headers=headers or {})
         response = conn.getresponse()
-        text = response.read().decode("utf-8", "replace").strip()
-        return response.status, text
+        raw = response.read()
+        if binary:
+            return response.status, raw
+        return response.status, raw.decode("utf-8", "replace").strip()
     except (OSError, http.client.HTTPException, ssl.SSLError) as exc:
         # A name that does not resolve is permanent enough to say so: it is
         # almost always a typo in the host, and retrying a typo forever is
