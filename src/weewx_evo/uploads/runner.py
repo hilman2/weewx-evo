@@ -20,8 +20,16 @@ Three triggers, one fewer than the exports have: there is no `feed` here,
 because an upload is not waiting for anybody to finish writing files.
 
     record     after every archive record. The default and almost always right.
+    live       every few seconds, from the live table -- for a broker feeding
+               a dashboard somebody is looking at
     interval   on its own clock, for a service that asks for less often
     manual     only on `weewx-evo upload run`
+
+`live` is the one that makes a modern skin worth running. An archive record
+is a five-minute average that arrives five minutes late; a page showing one
+is out of date for almost all of that. The packets are already in the live
+table, so this reads them there rather than being handed them -- which is
+what keeps the listener and the archiver separable.
 """
 
 from __future__ import annotations
@@ -51,7 +59,9 @@ class Scheduled:
         "failures",
         "last",
         "last_summary",
+        "live_through",
         "name",
+        "packets",
         "progress",
         "records",
         "running",
@@ -61,10 +71,19 @@ class Scheduled:
     )
 
     def __init__(self, name: str, upload: Any, progress: Progress,
-                 records: Callable[[int, int], list[dict]]) -> None:
+                 records: Callable[[int, int], list[dict]],
+                 packets: Callable[[int, int], list[dict]] | None = None) -> None:
         self.name = name
         self.upload = upload
         self.progress = progress
+        #: The live table, for `trigger = "live"`. None when this
+        #: installation has no live database to read.
+        self.packets = packets
+        #: How far the live path has got. In memory rather than in
+        #: `progress.json`: it moves every few seconds, and writing a file
+        #: that often to record something nobody needs after a restart is how
+        #: an SD card wears out.
+        self.live_through = 0
         #: Given (after_ts, limit), the archive records to send, oldest first.
         #: A callable rather than the store itself: this module has no
         #: business holding a database handle, and a test has no business
@@ -90,6 +109,10 @@ class Scheduled:
     def every(self) -> int:
         return int(getattr(self.upload, "every", 900))
 
+    @property
+    def is_live(self) -> bool:
+        return self.trigger == "live" and self.packets is not None
+
     def due(self, now: float, fired: str) -> bool:
         if self.blocked or self.trigger == "manual":
             return False
@@ -103,6 +126,14 @@ class Scheduled:
         Empty when it is up to date, which is the ordinary answer between
         archive intervals and costs one indexed query.
         """
+        if self.is_live:
+            # Only what is current. A dashboard wants now, and a packet from
+            # forty seconds ago published as now is a wrong reading rather
+            # than a late one.
+            found = self.packets(self.live_through, 1)
+            if found:
+                self.live_through = int(found[-1].get("dateTime") or 0)
+            return found[-1:] if found else []
         through = self.progress.through(self.name)
         limit = int(getattr(self.upload, "catch_up_limit", 12))
         if not getattr(self.upload, "backfill", True):
@@ -132,7 +163,7 @@ class Scheduled:
             self.runs += 1
             result.seconds = result.seconds or (time.monotonic() - started)
             self.last_summary = result.summary()
-            if result.through:
+            if result.through and not self.is_live:
                 self.progress.sent(self.name, result.through)
                 self.progress.save()
             if result.failures:
@@ -185,6 +216,9 @@ class Runner:
             self._threads.append(thread)
             if scheduled.trigger == "record":
                 log.info("upload %s runs after every archive record", scheduled.name)
+            elif scheduled.trigger == "live":
+                log.info("upload %s publishes live, every %ds",
+                         scheduled.name, scheduled.every)
             else:
                 log.info("upload %s runs every %ds", scheduled.name, scheduled.every)
 
@@ -212,6 +246,12 @@ class Runner:
         for scheduled in self.uploads:
             if scheduled.trigger == "record":
                 self._wake[scheduled.name].set()
+            elif scheduled.trigger == "live" and scheduled.packets is None:
+                # Asked for live but there is no live database in this
+                # process -- a split deployment where the archiver has the
+                # archive and the listener has the packets. Fall back to the
+                # record rather than publishing nothing at all.
+                self._wake[scheduled.name].set()
 
     def stop(self) -> None:
         self._stopping.set()
@@ -220,15 +260,20 @@ class Runner:
         for thread in self._threads:
             thread.join(timeout=2)
         for scheduled in self.uploads:
-            close = getattr(scheduled.upload, "close", None)
-            if close is not None:
+            for what in (scheduled.upload, scheduled.records, scheduled.packets):
+                close = getattr(what, "close", None)
+                if close is None:
+                    continue
                 try:
                     close()
                 except Exception:
                     log.debug("upload %s did not close cleanly", scheduled.name)
 
     def _loop(self, scheduled: Scheduled) -> None:
-        waiting = scheduled.trigger == "record"
+        # A live upload with no live table behind it waits on the record
+        # instead, so a split deployment publishes late rather than never.
+        waiting = (scheduled.trigger == "record"
+                   or (scheduled.trigger == "live" and scheduled.packets is None))
         event = self._wake[scheduled.name]
         while not self._stopping.is_set():
             if waiting:
@@ -246,6 +291,13 @@ class Runner:
                 if self._stopping.is_set():
                     return
                 fired = ""
+
+            if scheduled.trigger == "live":
+                # No `due` check: the clock already decided, and the query
+                # returns nothing when no packet has arrived. Asking the
+                # database is cheaper than the bookkeeping to avoid it.
+                scheduled.run()
+                continue
 
             if not scheduled.due(time.monotonic(), fired):
                 continue
@@ -271,7 +323,8 @@ class Runner:
 
 def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
           progress: Progress,
-          records: Callable[[int, int], list[dict]]) -> list[Scheduled]:
+          records: Callable[[int, int], list[dict]],
+          packets: Callable[[int, int], list[dict]] | None = None) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
     Anything that cannot be built is reported and left out. A misconfigured
@@ -285,5 +338,5 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         except Exception as exc:
             log.warning("upload %s is not usable: %s", name, exc)
             continue
-        ready.append(Scheduled(name, upload, progress, records))
+        ready.append(Scheduled(name, upload, progress, records, packets))
     return ready

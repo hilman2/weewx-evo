@@ -429,7 +429,74 @@ def test_the_upload_converts() -> None:
     check("converted", round(float(topics["weather/outTemp_C"]), 1), 23.4)
 
 
+def test_the_live_path(tmp: Path) -> None:
+    """A packet reaches the broker without waiting for the archive record.
+
+    This is the whole point of the live trigger. An archive record is a
+    five-minute average that arrives five minutes late; a dashboard showing
+    one is out of date for almost all of that. The packets are already in the
+    live table, so the upload reads them there.
+    """
+    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.uploads import records as upload_records
+    from weewx_evo.uploads.progress import Progress
+    from weewx_evo.uploads.runner import Scheduled
+
+    db = tmp / "live.sdb"
+    store = LiveStore(db)
+    store.add(Packet(dateTime=1756308600, usUnits=17,
+                     data={"outTemp": 21.0}, source="test"))
+    store.close()
+
+    broker = Broker()
+    broker.start()
+    packets = upload_records.live_source(db)
+    try:
+        upload = MqttUpload(host="127.0.0.1", port=broker.port,
+                            trigger="live", every=1, aggregate=True,
+                            individual=False)
+        entry = Scheduled("live", upload, Progress(tmp / "progress.json"),
+                          records=lambda _after, _limit: [],
+                          packets=packets)
+        ok("it knows it is live", entry.is_live)
+        entry.run()
+        ok("the first packet went", broker.until(
+            lambda b: any(t == "weather/loop" for t, _p, _q, _r in b.published)))
+        first = len(broker.published)
+
+        # Nothing new: it must not republish the same packet every second.
+        entry.run()
+        check("an unchanged live table publishes nothing",
+              len(broker.published), first)
+
+        # A new packet, and it goes.
+        store = LiveStore(db)
+        store.add(Packet(dateTime=1756308660, usUnits=17,
+                         data={"outTemp": 21.4}, source="test"))
+        store.close()
+        entry.run()
+        ok("the next packet went too",
+           broker.until(lambda b: len(b.published) > first))
+        upload.close()
+    finally:
+        packets.close()
+        broker.stop()
+
+    latest = json.loads([p for t, p, _q, _r in broker.published
+                         if t == "weather/loop"][-1])
+    check("with the newer reading", latest["outTemp_C"], 21.4)
+    check("and its own timestamp", latest["dateTime"], 1756308660)
+
+    # The live path must not move the archive mark: the two are different
+    # questions, and letting a packet answer the record one would make an
+    # upload skip archive records it never sent.
+    check("the archive progress is untouched",
+          Progress(tmp / "progress.json").through("live"), 0)
+
+
 def main() -> int:
+    import tempfile
+
     test_length_encoding()
     test_topic_names()
     test_connect_bytes()
@@ -439,6 +506,8 @@ def main() -> int:
     test_reconnect_keeps_subscriptions()
     test_the_upload_shapes_a_record()
     test_the_upload_converts()
+    with tempfile.TemporaryDirectory() as tmp:
+        test_the_live_path(Path(tmp))
 
     print()
     for failure in FAILURES:

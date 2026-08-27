@@ -1383,6 +1383,15 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     progress = Progress(archive.parent / "uploads.json")
     records = upload_records.source(archive)
 
+    # The live table, for an upload set to publish every packet. Absent in a
+    # split deployment where this process has the archive and another has the
+    # packets -- those uploads then publish on the archive record instead,
+    # which is late rather than nothing.
+    live_db = Path(cfg.get("live_db") or "data/live.sdb")
+    if not live_db.is_absolute():
+        live_db = base / live_db
+    packets = upload_records.live_source(live_db) if live_db.exists() else None
+
     def with_station(name: str, settings: dict) -> object:
         # CWOP needs a position and almost nobody wants to type it twice.
         # Filled in from the station rather than required, and only when the
@@ -1392,7 +1401,8 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
             settings.setdefault("longitude", cfg.get("station.longitude"))
         return build_upload(name, settings)
 
-    return upload_runner.build(configured, with_station, progress, records)
+    return upload_runner.build(configured, with_station, progress, records,
+                               packets)
 
 
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,

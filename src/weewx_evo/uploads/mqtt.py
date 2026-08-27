@@ -94,7 +94,7 @@ class MqttUpload(BaseUpload):
                  client_id: str = "", unit_system: str = "",
                  append_units: bool = True, aggregate: bool = True,
                  individual: bool = True, retain: bool = True, qos: int = 0,
-                 trigger: str = "record", every: int = 900,
+                 trigger: str = "live", every: int = 10,
                  catch_up: int = 0, timeout: int = 20,
                  keepalive: int = 60) -> None:
         if not host:
@@ -294,7 +294,10 @@ class MqttUpload(BaseUpload):
                        help="Turn off only for a broker on your own network "
                             "with a self-signed certificate."),
             )),
-            *when_options(),
+            # `live` is offered here and nowhere else: a broker is the one
+            # destination that wants every packet, and it is the whole reason
+            # a skin redraws while somebody is looking at it.
+            *when_options(trigger="live", every=10, live=True),
             Group("How", "", (
                 Option("keepalive", "Keep the connection alive every",
                        kind="duration", default=60, minimum=10, maximum=3600,

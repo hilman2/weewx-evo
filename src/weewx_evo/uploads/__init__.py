@@ -386,7 +386,7 @@ def describe(kind: str) -> str:
 
 
 def when_options(trigger: str = "record", every: int = 900,
-                 catch_up: int = 12) -> list:
+                 catch_up: int = 12, live: bool = False) -> list:
     """The "when it runs" group, which every upload has the same.
 
     One copy, because four services with four subtly different wordings for
@@ -396,12 +396,21 @@ def when_options(trigger: str = "record", every: int = 900,
     """
     from ..options import Group, Option
 
+    choices: tuple[tuple[str, str], ...] = (
+        ("record", "after every archive record"),
+        ("interval", "on its own schedule"),
+        ("manual", "only when asked"),
+    )
+    if live:
+        # Only offered where it means something. A weather service that takes
+        # one reading every five minutes has no use for it, and offering it
+        # there would be an invitation to get an account rate-limited.
+        choices = (("live", "every few seconds, as readings arrive"),) + choices
+
     return [
         Group("When it runs", "", (
             Option("trigger", "Post", kind="choice", default=trigger,
-                   choices=(("record", "after every archive record"),
-                            ("interval", "on its own schedule"),
-                            ("manual", "only when asked")),
+                   choices=choices,
                    help="After every record is right for almost everything: "
                         "the service gets a reading as soon as one exists. "
                         "Its own schedule is for a service that asks for less "

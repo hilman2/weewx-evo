@@ -25,6 +25,7 @@ transcription error, not an improvement.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -135,12 +136,94 @@ class Archive:
             self._local.columns = columns
         return columns
 
+    #: The object itself is the callable the runner wants. A bare bound
+    #: method would work too and was the first version -- but then nothing
+    #: can reach the instance again, so nothing can close the connection.
+    #: On Windows that is a file that cannot be deleted while the process
+    #: lives, which is how the tests found it.
+    __call__ = after
 
-def source(path: str | Path, table_name: str = "archive"):
+
+def source(path: str | Path, table_name: str = "archive") -> Archive:
     """A `records(after, limit)` callable over an archive file.
 
     What the runner wants, without the runner knowing there is a database
     behind it -- which is what lets a test hand it a list.
     """
-    archive = Archive(path, table_name)
-    return archive.after
+    return Archive(path, table_name)
+
+
+class Live:
+    """Read-only access to the live packets, one connection per thread.
+
+    Why this exists beside `Archive`: an archive record is a five-minute
+    average that appears five minutes late, and a dashboard showing one is a
+    dashboard that is wrong for four minutes and fifty-nine seconds. The
+    skins this is for -- Belchertown, jas, weewx-wdc -- redraw on every
+    packet, and the packets are in this table the moment the listener writes
+    them.
+
+    It stays a read of the database rather than a callback from the listener,
+    because that is what lets the listener and the archiver run as separate
+    processes. A live feed that only works when they are one process would
+    quietly take that apart.
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._local = threading.local()
+
+    def _conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            uri = f"file:{self.path.as_posix()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=10)
+            # The listener writes this file continuously. WAL is what lets a
+            # reader in without blocking it, and it is already set by the
+            # writer -- this only avoids fighting over it.
+            conn.execute("PRAGMA query_only=ON")
+            self._local.conn = conn
+        return conn
+
+    def after(self, ts: int, limit: int = 1) -> list[dict]:
+        """The newest packets after `ts`, oldest first.
+
+        `limit` is honoured but a live publisher wants one: what is current.
+        Publishing a backlog to a broker leaves the last of it showing as
+        now, which is worse than having published nothing.
+        """
+        conn = self._conn()
+        if not ts:
+            rows = conn.execute(
+                "SELECT dateTime, usUnits, interval, data FROM packet "
+                "ORDER BY dateTime DESC, seq DESC LIMIT 1").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT dateTime, usUnits, interval, data FROM packet "
+                "WHERE dateTime > ? ORDER BY dateTime ASC, seq ASC LIMIT ?",
+                (ts, limit)).fetchall()
+        found = []
+        for when, units, interval, data in rows:
+            try:
+                record = dict(json.loads(data))
+            except (TypeError, ValueError):
+                continue
+            record["dateTime"] = int(when)
+            record["usUnits"] = units
+            if interval is not None:
+                record["interval"] = interval
+            found.append({k: v for k, v in record.items() if v is not None})
+        return found
+
+    def close(self) -> None:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None
+
+    __call__ = after
+
+
+def live_source(path: str | Path) -> Live:
+    """A `records(after, limit)` callable over the live table."""
+    return Live(path)
