@@ -171,6 +171,23 @@ class EcowittDriver(BaseDriver):
 
     # -- the driver interface --------------------------------------------
 
+    def claims(self, body: bytes, meta: dict) -> float:
+        """Whether this is an Ecowitt upload.
+
+        `PASSKEY` is the certain one: it is how an Ecowitt console identifies
+        itself, no other protocol here sends it, and it is present on every
+        upload including the empty probes.
+
+        `stationtype` is the fallback for the handful of firmwares that leave
+        the passkey out. Below certain, because a rebadged console running
+        somebody else's firmware could say it too.
+        """
+        if b"PASSKEY=" in body:
+            return 1.0
+        if b"stationtype=" in body and b"action=updateraw" not in body:
+            return 0.8
+        return 0.0
+
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
         text = body.decode("utf-8", "replace")
         name, mapper = self._mapper_for(text, meta.get("source", "?"))
@@ -365,11 +382,18 @@ class EcowittDriver(BaseDriver):
                      "needed to report them is in %s", path)
 
 
-#: The Weather Underground protocol is the same shape and the same driver reads
-#: it -- a urlencoded body and a query string differ only in where they sit. It
-#: is the *same instance* under both names, not a second one: two instances
-#: would each adopt a console and each keep their own list.
-ALIASES = ("wunderground",)
+#: No aliases. This driver used to answer to `wunderground` as well, on the
+#: reasoning that the two protocols are the same shape -- a urlencoded body and
+#: a query string differ only in where they sit.
+#:
+#: The shape is the same and the *names are not*, which is the part that
+#: matters. Measured against what a WU station actually sends, this driver
+#: placed 30 of 63 fields and lost the other 33 -- `baromin` among them, so the
+#: pressure was simply absent, which reads as a dead sensor rather than as a
+#: wrong driver. Ecowitt says `baromrelin`; Weather Underground says `baromin`.
+#:
+#: `plugins/wunderground/` reads that protocol properly now.
+ALIASES: tuple[str, ...] = ()
 
 
 def load(registry) -> bool:

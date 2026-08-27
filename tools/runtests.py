@@ -137,6 +137,8 @@ def tests() -> list[Test]:
         Test("shim", ["shim_test.py"],
              "a WeeWX driver, run in its own process, delivering to us",
              needs=("weewx",)),
+        Test("wunderground", ["wunderground_test.py"],
+             "the WU protocol, against our own upload of the same protocol"),
 
         # -- what a page comes out as ------------------------------------
         Test("feeds", ["feeds_test.py"],

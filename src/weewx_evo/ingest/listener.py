@@ -72,35 +72,81 @@ class Ingest:
         self.last_packet: float | None = None
         self._lock = threading.Lock()
 
-    def authorised(self, path: str) -> bool:
-        """Whether a request path carries the token.
+    def authorised(self, path: str, query: str = "") -> bool:
+        """Whether a request carries the token.
 
         The token is a path segment rather than a header because consoles
         cannot send headers. It is the only thing between the open internet and
         the measurement series, so a listener configured without one says so
         loudly at startup.
+
+        `query` is the second place it may sit, and only for one reason:
+        Weather Underground protocol consoles have no path field. Host and
+        port are all most of them offer, and the path is fixed in firmware --
+        so for those the token goes in `PASSWORD`, which every one of them
+        has, was always meant to hold a shared secret, and is where an
+        operator looks for one. `ID` is accepted too, because a few validate
+        the shape of the password field.
+
+        Nothing is weakened by it: the token is a path segment on every other
+        upload and lands in the same access logs either way. What would weaken
+        it is the alternative people reach for otherwise, which is running the
+        listener with no token at all because their console cannot send one.
         """
         if self.token is None:
             return True
-        return self.token in path.strip("/").split("/")
+        if self.token in path.strip("/").split("/"):
+            return True
+        if not query:
+            return False
+        from urllib.parse import parse_qsl
+        for name, value in parse_qsl(query, keep_blank_values=True):
+            if name in ("PASSWORD", "ID") and value == self.token:
+                return True
+        return False
 
-    def driver_for(self, path: str) -> str:
-        """Pick a driver from the path, e.g. /<token>/json/ or /<token>/ecowitt/."""
+    def driver_for(self, path: str, body: bytes = b"") -> str:
+        """Which driver reads this upload.
+
+        The path first, because a console that can be told one has said what
+        it is: `/<token>/ecowitt/`. Nothing to guess at, and it costs a string
+        comparison.
+
+        Where the path says nothing, the drivers are asked. That happens more
+        often than it sounds: an Ambient WS-2902 has no server-path field at
+        all and is reached by pointing DNS at us, so the path is whatever its
+        firmware burned in; several firmwares refuse to upload with an empty
+        path, so people type `index.php?` to get past it. And a path typed
+        wrongly is the same situation with worse symptoms -- without this the
+        upload goes to the default driver, gets about half its fields placed,
+        and looks like a station with dead sensors.
+
+        The core still knows no weather protocol: it asks and compares
+        numbers. Which byte in a body means Ecowitt is the Ecowitt driver's
+        business, and a driver added later brings its own answer with it.
+        """
         for segment in path.strip("/").split("/"):
             if self.registry.known(segment):
                 return segment
+        if body:
+            claimed = self.registry.claimant(body, {"path": path})
+            if claimed:
+                return claimed
         return self.default_driver
 
-    def submit(self, body: bytes, path: str = "/",
-               peer: str = "?") -> tuple[int, str, drivers.Response]:
+    def submit(self, body: bytes, path: str = "/", peer: str = "?",
+               query: str = "") -> tuple[int, str, drivers.Response]:
         """Take one upload. Returns (packets stored, reason, what to answer with).
 
         The response comes from the driver. What a device needs to hear is part
         of its protocol -- an Ecowitt gateway wants a particular JSON object and
         backs off for an hour if it does not get it -- so the core repeats what
         the driver says rather than deciding for itself.
+
+        `query` is only for consoles that cannot put the token in the path;
+        see `authorised`.
         """
-        if not self.authorised(path):
+        if not self.authorised(path, query):
             with self._lock:
                 self.rejected += 1
             # Count the guess before reporting it. An address that keeps
@@ -110,7 +156,7 @@ class Ingest:
             return 0, "unauthorised", drivers.DEFAULT_RESPONSE
         self.limits.succeeded(peer)
 
-        name = self.driver_for(path)
+        name = self.driver_for(path, body)
         driver = self.registry.get(name)
         if driver is None:
             log.warning("no driver named %r; known: %s",
@@ -303,7 +349,8 @@ class _Handler(BaseHTTPRequestHandler):
         # readings in the query string.
         if parsed.query:
             _stored, reason, response = self.ingest.submit(
-                parsed.query.encode(), parsed.path, self.client_address[0])
+                parsed.query.encode(), parsed.path, self.client_address[0],
+                query=parsed.query)
             if reason == "unauthorised":
                 self._reply(404, b"not found")
                 return
