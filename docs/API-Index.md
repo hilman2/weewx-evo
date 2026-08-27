@@ -1,18 +1,18 @@
 # API-Index
 
-Jede öffentliche Klasse, Funktion und Methode, ihre Datei und die
-Wiki-Seite, die sie beschreibt.
+Every public class, function and method, its file, and the wiki page
+that describes it.
 
-**Erzeugt:** 2026-08-27 10:56 · `python tools/docsindex.py`
+**Generated:** 2026-08-27 11:31 · `python tools/docsindex.py`
 
-Private Namen (`_foo`) fehlen, `__init__` ist dabei. Wer einen Namen
-sucht, benutzt die Suche des Browsers.
+Private names (`_foo`) are left out, `__init__` is included. To find a
+name, use the browser's search.
 
 ## `src/weewx_evo/admin.py`
 
-[Die Einstellungsseite](Admin-Page) · zuletzt geändert 2026-08-27 10:33
+[The settings page](Admin-Page) · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `export_kinds` | 45 | The kinds of export that can be added. Asked, not listed. |
 | f | `feed_kinds` | 52 | The kinds of feed that can be added. Asked, not listed. |
@@ -57,9 +57,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/adminplots.py`
 
-[Diagramme](Plots) · zuletzt geändert 2026-08-26 23:54
+[Plots](Plots) · last changed 2026-08-26 23:54
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `path_for` | 79 | Where plots.toml lives: beside the configuration. |
 | f | `load` | 84 |  |
@@ -76,9 +76,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/aggregate.py`
 
-[Aggregation](Aggregation) · zuletzt geändert 2026-08-26 23:43
+[Aggregation](Aggregation) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `to_float` | 26 | WeeWX's weeutil.to_float: the string 'none' is a null, not an error. |
 | f | `start_of_archive_day` | 45 | The start of the day an archive record belongs to. A record stamped exactly at midnight closes the *previous*… |
@@ -124,9 +124,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/archiver.py`
 
-[Archiver](Archiver) · zuletzt geändert 2026-08-26 23:15
+[Archiver](Archiver) · last changed 2026-08-26 23:15
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Built` | 42 | One archive interval, worked out. |
 | **C** | `Archiver` | 57 | Turns live packets into archive records and daily summaries. |
@@ -138,11 +138,36 @@ sucht, benutzt die Suche des Browsers.
 | · | &nbsp;&nbsp;`Archiver.rebuild` | 227 | Work out every interval in (start, stop] again, replacing what is there. The daily summar… |
 | · | &nbsp;&nbsp;`Archiver.run` | 266 | Poll for closed intervals until told to stop. A plain sleep loop rather than a scheduler.… |
 
+## `src/weewx_evo/broker.py`
+
+**no page** · last changed 2026-08-27 11:27
+
+| | Name | Line | |
+|---|---|---|---|
+| **C** | `Retained` | 118 | The last message on a topic, kept for whoever subscribes next. The reason the broker is worth having rather t… |
+| **C** | `Session` | 132 | One connected client. |
+| · | &nbsp;&nbsp;`Session.wants` | 143 | The highest QoS this session subscribed to `topic` at, or None. Highest, because two filt… |
+| **C** | `Broker` | 157 | The state: who is connected, who wants what, and what was last said. |
+| · | &nbsp;&nbsp;`Broker.__init__` | 160 |  |
+| · | &nbsp;&nbsp;`Broker.authorise` | 176 | (allowed, may_publish) for a set of credentials. A publisher password that is set and wro… |
+| · | &nbsp;&nbsp;`Broker.join` | 201 |  |
+| · | &nbsp;&nbsp;`Broker.leave` | 214 |  |
+| · | &nbsp;&nbsp;`Broker.publish` | 221 | Deliver to whoever wants it. Returns how many got it. |
+| · | &nbsp;&nbsp;`Broker.subscribe` | 252 | Add subscriptions. Returns the QoS granted for each -- 0x80 where one was refused -- and… |
+| · | &nbsp;&nbsp;`Broker.send_retained` | 284 | What `subscribe` found, once the SUBACK has gone. Outside the broker's lock: writing to a… |
+| · | &nbsp;&nbsp;`Broker.unsubscribe` | 299 |  |
+| · | &nbsp;&nbsp;`Broker.status` | 304 |  |
+| **C** | `BrokerServer` | 652 | The broker and its two listeners, started and stopped together. |
+| · | &nbsp;&nbsp;`BrokerServer.__init__` | 655 |  |
+| · | &nbsp;&nbsp;`BrokerServer.start` | 667 |  |
+| · | &nbsp;&nbsp;`BrokerServer.stop` | 684 |  |
+| · | &nbsp;&nbsp;`BrokerServer.status` | 692 |  |
+
 ## `src/weewx_evo/chartdata.py`
 
-**keine Seite** · zuletzt geändert 2026-08-26 23:45
+**no page** · last changed 2026-08-26 23:45
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Line` | 57 | One reading, fetched and converted. What a renderer draws. |
 | · | &nbsp;&nbsp;`Line.empty` | 89 |  |
@@ -156,83 +181,83 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/cli.py`
 
-[CLI-Referenz](CLI-Reference) · zuletzt geändert 2026-08-27 10:33
+[CLI reference](CLI-Reference) · last changed 2026-08-27 11:29
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
-| f | `env` | 73 |  |
-| f | `add_common` | 77 |  |
-| f | `add_listen_args` | 113 |  |
-| f | `add_archive_args` | 136 |  |
-| f | `settings_for` | 149 | The process's settings, resolved once. Once, not once per caller. With each component resolving for itself, a… |
-| f | `read_config` | 192 | The whole configuration file, or an empty one. A file that is not there yet is not an error: a first start ha… |
-| f | `configure_drivers` | 203 | Hand each driver its options, and somewhere to keep its own state. Until this runs the drivers are unconfigur… |
-| f | `read_sources` | 258 | Which station wins for which field. Normally a [sources] section in the configuration file, beside everything… |
-| f | `open_stores` | 287 |  |
-| f | `make_archiver` | 295 |  |
-| f | `cmd_listen` | 305 |  |
-| f | `cmd_archive` | 349 |  |
-| f | `cmd_upload_list` | 447 |  |
-| f | `cmd_upload_check` | 478 | Ask each service whether it accepts the account. Worth more than the equivalent for an export: these services… |
-| f | `cmd_upload_run` | 520 | Send now, whatever the trigger says. |
-| f | `cmd_forecast_list` | 554 |  |
-| f | `cmd_forecast_check` | 580 | Fetch once and say what came back. This is also how somebody finds a DWD station id or a MeteoAlarm region: a… |
-| f | `cmd_forecast_run` | 619 | Fetch now and store, whatever the schedule says. |
-| f | `cmd_forecast_show` | 642 | Print what is stored, which is what a page would draw. |
-| f | `cmd_serve` | 696 | Listener and archiver in one process, for a small machine. They still speak only through the database. Splitt… |
-| f | `cmd_catchup` | 934 |  |
-| f | `cmd_rebuild` | 945 |  |
-| f | `cmd_columns` | 956 | Readings that the archive has no column for. A reading only survives the archive interval if the table has a… |
-| f | `cmd_driver_list` | 1031 |  |
-| f | `cmd_driver_install` | 1053 |  |
-| f | `cmd_driver_remove` | 1087 |  |
-| f | `local_addresses` | 1096 | Addresses this machine can be reached on, as (address, what it is). Only what can be worked out without askin… |
-| f | `cmd_url` | 1128 | Print the addresses of the live view and the upload endpoint. The token is a path segment, so an address with… |
-| f | `driver_directory` | 1196 | Where third-party drivers live, resolved like everything else. The command line first, then the setting, then… |
-| f | `all_schemas` | 1215 | Every configurable thing there is: the core, then each driver. Drivers are asked, not enumerated. One that ga… |
-| f | `replace_group` | 1352 |  |
-| f | `cmd_config_show` | 1358 | Print the configuration as it stands, commented. |
-| f | `cmd_config_set` | 1371 | Set one value, checked against the schema that owns it. |
-| f | `cmd_config_check` | 1402 | Check every value against its schema and say what is wrong. |
-| f | `cmd_config_import` | 1420 | Read a weewx.conf and write what it says into our own file. |
-| f | `cmd_admin` | 1451 | Serve the settings page. Its own port and its own token, deliberately. An upload endpoint can at worst put a… |
-| f | `configured_exports` | 1526 | What the configuration file says about exports, by name. |
-| f | `configured_uploads` | 1534 | What the configuration file says about uploads, by name. |
-| f | `build_upload` | 1542 | Make one upload from its settings. Raises with a usable message. |
-| f | `build_upload_schedule` | 1563 | What the uploads are, right now. They read the archive themselves rather than being handed a record: the comp… |
-| f | `configured_forecasts` | 1610 | What the configuration file says about forecast sources, by name. |
-| f | `forecast_db` | 1618 | Where the forecast is kept. Beside the archive, never in it. |
-| f | `forecast_place` | 1627 | Where the station is, which is what a forecast is for. |
-| f | `build_forecast_source` | 1636 | Make one forecast source. Raises with a usable message. |
-| f | `build_forecast_schedule` | 1658 | What the forecast sources are, right now. |
-| f | `apply_live` | 1668 | Apply a changed configuration to a running process. Everything that can be rebuilt in place, in one function.… |
-| f | `build_schedule` | 1744 | What the exports are, right now. An export pointed at a feed has to be told where that feed writes, or it is… |
-| f | `resolve_paths` | 1759 | Make an export's own paths absolute, against the configuration file. The same rule as plots.toml: a relative… |
-| f | `build_export` | 1779 | Make one export from its settings. Raises with a usable message. |
-| f | `cmd_export_list` | 1799 |  |
-| f | `cmd_export_check` | 1831 | Try each destination without sending anything. |
-| f | `cmd_export_run` | 1859 | Send. This is what a feed would call when it has produced something. |
-| f | `cmd_web` | 1911 | Serve the feeds, and nothing else. Separate from `serve` for the same reason `listen` is: a machine that only… |
-| f | `plots_path` | 1954 | Where plots.toml lives: beside the configuration unless told otherwise. |
-| f | `load_plots` | 1968 |  |
-| f | `configured_feeds` | 1981 | What the configuration says about feeds, by name. A name is one configured feed; `kind` says what it is. Two… |
-| f | `feed_dirs` | 1999 | Where each feed writes, by name. One place, because two things need the answer and they must agree: the feed… |
-| f | `build_feeds` | 2020 | The feeds this configuration asks for, in the order they run. Ordered by dependence: anything reading what an… |
-| f | `served_directories` | 2114 | What the built-in server hands out, by name. The local exports, plus anything named directly. The same answer… |
-| f | `cmd_plots_list` | 2136 | What charts exist. |
-| f | `cmd_plots_show` | 2162 | One chart, in full. |
-| f | `cmd_plots_import` | 2197 | Take the plots out of a WeeWX skin.conf or weewx.conf. Read, reported, and only written when asked. An import… |
-| f | `cmd_plots_remove` | 2256 | Delete a chart. |
-| f | `cmd_plots_run` | 2268 | Produce the JSON now, and say what came out. |
-| f | `start_feeds` | 2316 | Start the feed runner, or say why there is nothing to run. One function for both loops. They had their own co… |
-| f | `cmd_status` | 2343 |  |
-| f | `main` | 2377 |  |
+| f | `env` | 74 |  |
+| f | `add_common` | 78 |  |
+| f | `add_listen_args` | 114 |  |
+| f | `add_archive_args` | 137 |  |
+| f | `settings_for` | 150 | The process's settings, resolved once. Once, not once per caller. With each component resolving for itself, a… |
+| f | `read_config` | 193 | The whole configuration file, or an empty one. A file that is not there yet is not an error: a first start ha… |
+| f | `configure_drivers` | 204 | Hand each driver its options, and somewhere to keep its own state. Until this runs the drivers are unconfigur… |
+| f | `read_sources` | 259 | Which station wins for which field. Normally a [sources] section in the configuration file, beside everything… |
+| f | `open_stores` | 288 |  |
+| f | `make_archiver` | 296 |  |
+| f | `cmd_listen` | 306 |  |
+| f | `cmd_archive` | 350 |  |
+| f | `cmd_upload_list` | 448 |  |
+| f | `cmd_upload_check` | 479 | Ask each service whether it accepts the account. Worth more than the equivalent for an export: these services… |
+| f | `cmd_upload_run` | 521 | Send now, whatever the trigger says. |
+| f | `cmd_forecast_list` | 555 |  |
+| f | `cmd_forecast_check` | 581 | Fetch once and say what came back. This is also how somebody finds a DWD station id or a MeteoAlarm region: a… |
+| f | `cmd_forecast_run` | 620 | Fetch now and store, whatever the schedule says. |
+| f | `cmd_forecast_show` | 643 | Print what is stored, which is what a page would draw. |
+| f | `cmd_serve` | 697 | Listener and archiver in one process, for a small machine. They still speak only through the database. Splitt… |
+| f | `cmd_catchup` | 961 |  |
+| f | `cmd_rebuild` | 972 |  |
+| f | `cmd_columns` | 983 | Readings that the archive has no column for. A reading only survives the archive interval if the table has a… |
+| f | `cmd_driver_list` | 1058 |  |
+| f | `cmd_driver_install` | 1080 |  |
+| f | `cmd_driver_remove` | 1114 |  |
+| f | `local_addresses` | 1123 | Addresses this machine can be reached on, as (address, what it is). Only what can be worked out without askin… |
+| f | `cmd_url` | 1155 | Print the addresses of the live view and the upload endpoint. The token is a path segment, so an address with… |
+| f | `driver_directory` | 1223 | Where third-party drivers live, resolved like everything else. The command line first, then the setting, then… |
+| f | `all_schemas` | 1242 | Every configurable thing there is: the core, then each driver. Drivers are asked, not enumerated. One that ga… |
+| f | `replace_group` | 1379 |  |
+| f | `cmd_config_show` | 1385 | Print the configuration as it stands, commented. |
+| f | `cmd_config_set` | 1398 | Set one value, checked against the schema that owns it. |
+| f | `cmd_config_check` | 1429 | Check every value against its schema and say what is wrong. |
+| f | `cmd_config_import` | 1447 | Read a weewx.conf and write what it says into our own file. |
+| f | `cmd_admin` | 1478 | Serve the settings page. Its own port and its own token, deliberately. An upload endpoint can at worst put a… |
+| f | `configured_exports` | 1553 | What the configuration file says about exports, by name. |
+| f | `configured_uploads` | 1561 | What the configuration file says about uploads, by name. |
+| f | `build_upload` | 1569 | Make one upload from its settings. Raises with a usable message. |
+| f | `build_upload_schedule` | 1590 | What the uploads are, right now. They read the archive themselves rather than being handed a record: the comp… |
+| f | `configured_forecasts` | 1637 | What the configuration file says about forecast sources, by name. |
+| f | `forecast_db` | 1645 | Where the forecast is kept. Beside the archive, never in it. |
+| f | `forecast_place` | 1654 | Where the station is, which is what a forecast is for. |
+| f | `build_forecast_source` | 1663 | Make one forecast source. Raises with a usable message. |
+| f | `build_forecast_schedule` | 1685 | What the forecast sources are, right now. |
+| f | `apply_live` | 1695 | Apply a changed configuration to a running process. Everything that can be rebuilt in place, in one function.… |
+| f | `build_schedule` | 1771 | What the exports are, right now. An export pointed at a feed has to be told where that feed writes, or it is… |
+| f | `resolve_paths` | 1786 | Make an export's own paths absolute, against the configuration file. The same rule as plots.toml: a relative… |
+| f | `build_export` | 1806 | Make one export from its settings. Raises with a usable message. |
+| f | `cmd_export_list` | 1826 |  |
+| f | `cmd_export_check` | 1858 | Try each destination without sending anything. |
+| f | `cmd_export_run` | 1886 | Send. This is what a feed would call when it has produced something. |
+| f | `cmd_web` | 1938 | Serve the feeds, and nothing else. Separate from `serve` for the same reason `listen` is: a machine that only… |
+| f | `plots_path` | 1981 | Where plots.toml lives: beside the configuration unless told otherwise. |
+| f | `load_plots` | 1995 |  |
+| f | `configured_feeds` | 2008 | What the configuration says about feeds, by name. A name is one configured feed; `kind` says what it is. Two… |
+| f | `feed_dirs` | 2026 | Where each feed writes, by name. One place, because two things need the answer and they must agree: the feed… |
+| f | `build_feeds` | 2047 | The feeds this configuration asks for, in the order they run. Ordered by dependence: anything reading what an… |
+| f | `served_directories` | 2141 | What the built-in server hands out, by name. The local exports, plus anything named directly. The same answer… |
+| f | `cmd_plots_list` | 2163 | What charts exist. |
+| f | `cmd_plots_show` | 2189 | One chart, in full. |
+| f | `cmd_plots_import` | 2224 | Take the plots out of a WeeWX skin.conf or weewx.conf. Read, reported, and only written when asked. An import… |
+| f | `cmd_plots_remove` | 2283 | Delete a chart. |
+| f | `cmd_plots_run` | 2295 | Produce the JSON now, and say what came out. |
+| f | `start_feeds` | 2343 | Start the feed runner, or say why there is nothing to run. One function for both loops. They had their own co… |
+| f | `cmd_status` | 2370 |  |
+| f | `main` | 2404 |  |
 
 ## `src/weewx_evo/config.py`
 
-[Konfiguration](Configuration) · zuletzt geändert 2026-08-26 23:47
+[Configuration](Configuration) · last changed 2026-08-26 23:47
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `read` | 33 | The configuration file, or an empty one if it is not there yet. |
 | f | `get` | 42 | A value by its dotted name: get(cfg, 'station.latitude'). |
@@ -244,9 +269,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/db/archive.py`
 
-[Die Archiv-Datenbank](Database-Archive) · zuletzt geändert 2026-08-26 23:45
+[The archive database](Database-Archive) · last changed 2026-08-26 23:45
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `ArchiveStore` | 32 | A WeeWX archive database, open for reading and writing. |
 | · | &nbsp;&nbsp;`ArchiveStore.__init__` | 35 |  |
@@ -267,9 +292,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/db/daily.py`
 
-[Tagesstatistiken](Daily-Summaries) · zuletzt geändert 2026-08-26 23:56
+[Daily summaries](Daily-Summaries) · last changed 2026-08-26 23:56
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `IntervalError` | 23 | A record whose `interval` cannot be turned into a weight. |
 | f | `weight_of` | 27 | The weight one archive record carries in a daily summary. WeeWX uses this for daily-summary version 2.0 and u… |
@@ -280,9 +305,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/db/live.py`
 
-[Die Live-Datenbank](Database-Live) · zuletzt geändert 2026-08-26 12:25
+[The live database](Database-Live) · last changed 2026-08-26 12:25
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `interval_stop` | 67 | The end of the archive interval a timestamp belongs to. Intervals are half-open at the start, so a packet sta… |
 | **C** | `Packet` | 77 | One reading as it arrived, before anything was done to it. |
@@ -308,9 +333,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/db/schema.py`
 
-[Die Archiv-Datenbank](Database-Archive) · zuletzt geändert 2026-08-26 10:57
+[The archive database](Database-Archive) · last changed 2026-08-26 10:57
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Schema` | 32 | The shape of one WeeWX archive database. |
 | · | &nbsp;&nbsp;`Schema.version` | 41 | The daily-summary version. 4.0 is current; anything below needs a patch. See weewx.manage… |
@@ -319,9 +344,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/derive.py`
 
-[Abgeleitete Messwerte](Derived-Readings) · zuletzt geändert 2026-08-27 10:33
+[Derived readings](Derived-Readings) · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `dewpoint_c` | 125 | Dew point in Celsius, by the Magnus formula WeeWX uses. |
 | f | `windchill_c` | 142 | Wind chill, Celsius, from the Environment Canada formula. Only defined below 10 degrees and above 4.8 km/h. O… |
@@ -349,9 +374,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/exports/__init__.py`
 
-[Exports](Exports) · zuletzt geändert 2026-08-26 18:55
+[Exports](Exports) · last changed 2026-08-26 18:55
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Sent` | 49 | What one run of an export did. |
 | · | &nbsp;&nbsp;`Sent.ok` | 63 |  |
@@ -383,9 +408,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/exports/ftp.py`
 
-[Exports](Exports) · zuletzt geändert 2026-08-26 19:39
+[Exports](Exports) · last changed 2026-08-26 19:39
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `FtpExport` | 46 | Sends a directory to an FTP server. |
 | · | &nbsp;&nbsp;`FtpExport.__init__` | 57 |  |
@@ -396,9 +421,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/exports/local.py`
 
-[Exports](Exports) · zuletzt geändert 2026-08-26 23:53
+[Exports](Exports) · last changed 2026-08-26 23:53
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `LocalExport` | 44 | Copies what a feed produced into a directory on this machine. |
 | · | &nbsp;&nbsp;`LocalExport.__init__` | 56 |  |
@@ -409,9 +434,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/exports/rsync.py`
 
-[Exports](Exports) · zuletzt geändert 2026-08-26 16:14
+[Exports](Exports) · last changed 2026-08-26 16:14
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `RsyncExport` | 44 | Sends a directory to a server with rsync over SSH. |
 | · | &nbsp;&nbsp;`RsyncExport.__init__` | 56 |  |
@@ -422,9 +447,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/exports/runner.py`
 
-[Exports](Exports) · zuletzt geändert 2026-08-26 23:43
+[Exports](Exports) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Scheduled` | 46 | One export, and when it is next due. |
 | · | &nbsp;&nbsp;`Scheduled.__init__` | 64 |  |
@@ -443,9 +468,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/exports/tracker.py`
 
-[Exports](Exports) · zuletzt geändert 2026-08-26 13:31
+[Exports](Exports) · last changed 2026-08-26 13:31
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Fingerprint` | 41 | Enough to tell whether a file is the one already sent. |
 | · | &nbsp;&nbsp;`Fingerprint.as_list` | 48 |  |
@@ -462,9 +487,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feedrunner.py`
 
-[Feeds](Feeds) · zuletzt geändert 2026-08-26 23:43
+[Feeds](Feeds) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Runner` | 37 | Produces every feed, in order, whenever a record lands. |
 | · | &nbsp;&nbsp;`Runner.__init__` | 40 |  |
@@ -476,9 +501,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feeds/__init__.py`
 
-[Feeds](Feeds) · zuletzt geändert 2026-08-27 10:35
+[Feeds](Feeds) · last changed 2026-08-27 10:35
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Produced` | 72 | What one run of a feed made. The list of files matters to the exports: an export that knows which files chang… |
 | · | &nbsp;&nbsp;`Produced.count` | 87 |  |
@@ -494,23 +519,24 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feeds/cheetah/__init__.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 11:13
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `CheetahFeed` | 78 | Renders one skin. |
 | · | &nbsp;&nbsp;`CheetahFeed.__init__` | 83 |  |
-| · | &nbsp;&nbsp;`CheetahFeed.produce` | 137 |  |
-| · | &nbsp;&nbsp;`CheetahFeed.skin_options` | 786 | What the chosen skin lets an operator set, for the feed's page. A skin of ours ships an `… |
-| · | &nbsp;&nbsp;`CheetahFeed.options` | 800 |  |
-| f | `from_settings` | 1127 | Build the feed, and the tag layer it renders through. The tags are built here rather than handed in because t… |
-| f | `skin_options` | 1207 | What the named skin lets an operator set, or nothing. A skin of ours ships an `options.py` next to its templa… |
+| · | &nbsp;&nbsp;`CheetahFeed.produce` | 142 |  |
+| · | &nbsp;&nbsp;`CheetahFeed.skin_options` | 852 | What the chosen skin lets an operator set, for the feed's page. A skin of ours ships an `… |
+| · | &nbsp;&nbsp;`CheetahFeed.options` | 866 |  |
+| f | `mqtt_uploads` | 966 | The configured MQTT uploads, by name. |
+| f | `from_settings` | 1289 | Build the feed, and the tag layer it renders through. The tags are built here rather than handed in because t… |
+| f | `skin_options` | 1370 | What the named skin lets an operator set, or nothing. A skin of ours ships an `options.py` next to its templa… |
 
 ## `src/weewx_evo/feeds/diagnostic/__init__.py`
 
-[Feeds](Feeds) · zuletzt geändert 2026-08-26 23:53
+[Feeds](Feeds) · last changed 2026-08-26 23:53
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Diagnostic` | 51 | Renders every series file it finds, with its faults listed. |
 | · | &nbsp;&nbsp;`Diagnostic.__init__` | 56 |  |
@@ -522,9 +548,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feeds/imagegenerator/__init__.py`
 
-**keine Seite** · zuletzt geändert 2026-08-26 23:47
+**no page** · last changed 2026-08-26 23:47
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `ImageGenerator` | 60 | Turns plot definitions into PNG files. |
 | · | &nbsp;&nbsp;`ImageGenerator.__init__` | 67 |  |
@@ -536,9 +562,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feeds/imagegenerator/canvas.py`
 
-**keine Seite** · zuletzt geändert 2026-08-26 23:47
+**no page** · last changed 2026-08-26 23:47
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Box` | 44 | The rectangle the data is drawn in, in final pixels. |
 | · | &nbsp;&nbsp;`Box.width` | 53 |  |
@@ -561,9 +587,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feeds/imagegenerator/theme.py`
 
-**keine Seite** · zuletzt geändert 2026-08-26 23:56
+**no page** · last changed 2026-08-26 23:56
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Theme` | 62 | Every colour and measurement one chart is drawn with. Sizes are in logical pixels. The renderer multiplies th… |
 | · | &nbsp;&nbsp;`Theme.color` | 124 |  |
@@ -573,9 +599,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feeds/jsongenerator/__init__.py`
 
-[Feeds](Feeds) · zuletzt geändert 2026-08-26 23:54
+[Feeds](Feeds) · last changed 2026-08-26 23:54
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `JSONGenerator` | 79 | Turns plot definitions into JSON files. |
 | · | &nbsp;&nbsp;`JSONGenerator.__init__` | 86 |  |
@@ -586,9 +612,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/feeds/realtime/__init__.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:35
+**no page** · last changed 2026-08-27 10:35
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `RealtimeFeed` | 66 | Writes `realtime.txt`, and `wxnow.txt` beside it. |
 | · | &nbsp;&nbsp;`RealtimeFeed.__init__` | 77 |  |
@@ -599,9 +625,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/__init__.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Place` | 62 | Where the forecast is for. |
 | **C** | `Moment` | 76 | The forecast for one hour. Field names are the archive's, deliberately: `outTemp` here means the same thing i… |
@@ -634,9 +660,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/codes.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `text` | 66 | What to call this code, in the language the station is set to. |
 | f | `symbol` | 78 | A name for the picture, not the picture itself. |
@@ -645,9 +671,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/dwd.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Mosmix` | 83 | A point forecast for one DWD station. |
 | · | &nbsp;&nbsp;`Mosmix.__init__` | 93 |  |
@@ -665,9 +691,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/meteoalarm.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `parse_time` | 68 | A CAP timestamp as unix time. Zero when absent or unparseable. CAP writes `2026-08-27T06:00:00+00:00`, and so… |
 | **C** | `MeteoAlarm` | 91 | Warnings from meteoalarm.org. |
@@ -679,9 +705,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/nws.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `code_for` | 87 | A WMO code for an NWS phrase, or None if it says nothing about weather. Longest match wins, so "Chance Rain S… |
 | f | `speed` | 102 | `"10 mph"` or `"5 to 10 mph"` as metres per second. A range becomes its upper end, which is what a forecast o… |
@@ -696,9 +722,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/openmeteo.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `OpenMeteo` | 94 | A forecast from open-meteo.com. |
 | · | &nbsp;&nbsp;`OpenMeteo.__init__` | 105 |  |
@@ -710,9 +736,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/runner.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Scheduled` | 47 | One source, and when it is next due. |
 | · | &nbsp;&nbsp;`Scheduled.__init__` | 64 |  |
@@ -729,9 +755,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/store.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `ForecastStore` | 53 | The forecast database, open for reading and writing. |
 | · | &nbsp;&nbsp;`ForecastStore.__init__` | 56 |  |
@@ -748,9 +774,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/forecast/tags.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Entry` | 46 | One hour or one day, as a template sees it. Attribute lookup does the binding, the same way the rest of the t… |
 | · | &nbsp;&nbsp;`Entry.__init__` | 57 |  |
@@ -783,9 +809,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/drivers.py`
 
-[Treiber](Drivers) · zuletzt geändert 2026-08-26 23:43
+[Drivers](Drivers) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Driver` | 57 | Bytes in, finished packets out. |
 | · | &nbsp;&nbsp;`Driver.packets` | 60 | Turn one upload into packets. `meta` carries `received` (arrival time, unix) and `source`… |
@@ -814,18 +840,18 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/envelope.py`
 
-[Treiber](Drivers) · zuletzt geändert 2026-08-26 11:39
+[Drivers](Drivers) · last changed 2026-08-26 11:39
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `EnvelopeDriver` | 29 | Reads the envelope. The only driver that ships in the core. |
 | · | &nbsp;&nbsp;`EnvelopeDriver.packets` | 32 |  |
 
 ## `src/weewx_evo/ingest/listener.py`
 
-[Listener](Ingest-Listener) · zuletzt geändert 2026-08-26 23:51
+[Listener](Ingest-Listener) · last changed 2026-08-26 23:51
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Ingest` | 44 | What the listener does with an upload once it has one. Kept separate from the transports so the same object s… |
 | · | &nbsp;&nbsp;`Ingest.__init__` | 51 |  |
@@ -848,9 +874,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/parsers.py`
 
-[Treiber](Drivers) · zuletzt geändert 2026-08-26 11:23
+[Drivers](Drivers) · last changed 2026-08-26 11:23
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `register` | 50 | Make a parser available under `name`. |
 | f | `parse_json` | 57 | weewx-evo's own envelope. This is the contract every driver can rely on. One object or a list of them: {"date… |
@@ -860,26 +886,26 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/plugins/__init__.py`
 
-[Treiber](Drivers) · zuletzt geändert 2026-08-26 11:50
+[Drivers](Drivers) · last changed 2026-08-26 11:50
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `bundled` | 28 | The driver packages in this directory. |
 | f | `load` | 37 | Register every bundled driver. Returns the names that loaded. A driver that will not import is reported and s… |
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/__main__.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 11:48
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 11:48
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `main` | 34 |  |
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/columns.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 11:52
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 11:52
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `schema_fields` | 27 | The fields the standard schema already has. weewx-evo carries the same wview_extended table WeeWX seeds a dat… |
 | f | `missing` | 37 | Return the columns a packet needs and the database does not have. Args: packet (dict): A loop packet, i.e. wh… |
@@ -889,9 +915,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/consoles.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 11:57
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 11:57
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `path_for` | 58 | Where to keep the fallback file. Beside the database, because that is a directory the service writes to as it… |
 | **C** | `Store` | 73 | Reads and writes the list, from the database if there is one. The database is asked first and written first.… |
@@ -901,9 +927,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/driver.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 12:43
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 12:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `EcowittDriver` | 58 | Receives uploads from Ecowitt hardware and turns them into packets. |
 | · | &nbsp;&nbsp;`EcowittDriver.__init__` | 63 |  |
@@ -918,9 +944,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/infer.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 23:43
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Guess` | 70 | One proposal for a field the catalog does not cover. Attributes: raw (str): The name the hardware used. field… |
 | · | &nbsp;&nbsp;`Guess.__init__` | 86 |  |
@@ -931,9 +957,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/mapping.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 11:48
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 11:48
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Mapper` | 35 | Turns raw readings into a WeeWX packet. Args: extensions (dict): Raw field -> WeeWX field, overriding the cat… |
 | · | &nbsp;&nbsp;`Mapper.__init__` | 51 |  |
@@ -943,9 +969,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/protocol.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 23:43
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `parse` | 35 | Split a payload into raw name/value pairs. Works for both protocols, because a urlencoded body and a query st… |
 | f | `device_time` | 60 | Return the timestamp the device sent, or None if it is not usable. Consoles are frequently wrong about the ti… |
@@ -955,17 +981,17 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/plugins/ecowitt/report.py`
 
-[Treiber: Ecowitt](Driver-Ecowitt) · zuletzt geändert 2026-08-26 11:48
+[Driver: Ecowitt](Driver-Ecowitt) · last changed 2026-08-26 11:48
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `write` | 45 | Write a report, and return the path. Returns None if it could not be written. |
 
 ## `src/weewx_evo/ingest/state.py`
 
-[Treiber](Drivers) · zuletzt geändert 2026-08-26 12:00
+[Drivers](Drivers) · last changed 2026-08-26 12:00
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `State` | 60 | Small persistent storage for one driver. |
 | · | &nbsp;&nbsp;`State.get` | 63 |  |
@@ -990,9 +1016,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/statuspage.py`
 
-[Listener](Ingest-Listener) · zuletzt geändert 2026-08-26 23:53
+[Listener](Ingest-Listener) · last changed 2026-08-26 23:53
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `short_source` | 45 |  |
 | f | `recent` | 51 | What the page needs: the last few packets, and how things are going. |
@@ -1000,9 +1026,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ingest/userdrivers.py`
 
-[Treiber](Drivers) · zuletzt geändert 2026-08-26 23:56
+[Drivers](Drivers) · last changed 2026-08-26 23:56
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `directory` | 46 | Where user drivers live. |
 | f | `installed` | 59 | The drivers installed, as (name, where it came from). |
@@ -1014,9 +1040,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/language.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 01:31
+**no page** · last changed 2026-08-27 01:31
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Language` | 79 | One language, and what to say in it. Every lookup falls back to English rather than to the key: a translation… |
 | · | &nbsp;&nbsp;`Language.__init__` | 89 |  |
@@ -1036,9 +1062,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/moon.py`
 
-**keine Seite** · zuletzt geändert 2026-08-26 20:42
+**no page** · last changed 2026-08-26 20:42
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `julian_centuries` | 179 | Julian centuries since J2000.0, which every series below is in. |
 | f | `position` | 184 | The moon's apparent longitude, latitude and distance. Degrees, degrees, and kilometres. Meeus 47, with the fu… |
@@ -1051,32 +1077,34 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/mqtt.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 11:27
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `MqttError` | 75 | Anything that stopped a client from doing what was asked. |
 | · | &nbsp;&nbsp;`MqttError.__init__` | 78 |  |
 | f | `encode_length` | 87 | MQTT's variable-length integer: seven bits a byte, top bit continues. Four bytes at most, so 268 435 455 is t… |
 | f | `encode_string` | 105 | A UTF-8 string with a two-byte length in front. Every string in MQTT is this shape -- topic, client id, user… |
-| **C** | `Reader` | 117 | Reads whole MQTT packets off a socket. |
-| · | &nbsp;&nbsp;`Reader.__init__` | 120 |  |
-| · | &nbsp;&nbsp;`Reader.packet` | 140 | The next packet as (type, flags, body). |
-| **C** | `Client` | 159 | One connection to a broker. Not thread-safe for two publishers at once by accident: `publish` takes a lock, b… |
-| · | &nbsp;&nbsp;`Client.__init__` | 168 |  |
-| · | &nbsp;&nbsp;`Client.connected` | 197 |  |
-| · | &nbsp;&nbsp;`Client.connect` | 200 | Open the connection and log in. Raises `MqttError`. |
-| · | &nbsp;&nbsp;`Client.close` | 262 | Say goodbye if possible, then drop the socket either way. |
-| · | &nbsp;&nbsp;`Client.publish` | 315 | Send one message. `retain` is what makes a broker hand the last known value to a browser… |
-| · | &nbsp;&nbsp;`Client.subscribe` | 364 | Ask for a topic, and remember it across reconnects. |
-| · | &nbsp;&nbsp;`Client.pump` | 398 | Read for a while, delivering what arrives and answering pings. For a subscriber. A publis… |
-| · | &nbsp;&nbsp;`Client.ping_if_due` | 421 | Keep the connection alive when nothing has been published. A broker drops a client that h… |
+| f | `decode_string` | 117 | A length-prefixed UTF-8 string out of a packet body. The other half of `encode_string`, and the one a broker… |
+| f | `topic_matches` | 138 | Whether an MQTT topic filter matches a topic name. Two wildcards, and the rules are not symmetric: `+` exactl… |
+| **C** | `Reader` | 170 | Reads whole MQTT packets off a socket. |
+| · | &nbsp;&nbsp;`Reader.__init__` | 173 |  |
+| · | &nbsp;&nbsp;`Reader.packet` | 193 | The next packet as (type, flags, body). |
+| **C** | `Client` | 212 | One connection to a broker. Not thread-safe for two publishers at once by accident: `publish` takes a lock, b… |
+| · | &nbsp;&nbsp;`Client.__init__` | 221 |  |
+| · | &nbsp;&nbsp;`Client.connected` | 250 |  |
+| · | &nbsp;&nbsp;`Client.connect` | 253 | Open the connection and log in. Raises `MqttError`. |
+| · | &nbsp;&nbsp;`Client.close` | 315 | Say goodbye if possible, then drop the socket either way. |
+| · | &nbsp;&nbsp;`Client.publish` | 368 | Send one message. `retain` is what makes a broker hand the last known value to a browser… |
+| · | &nbsp;&nbsp;`Client.subscribe` | 417 | Ask for a topic, and remember it across reconnects. |
+| · | &nbsp;&nbsp;`Client.pump` | 451 | Read for a while, delivering what arrives and answering pings. For a subscriber. A publis… |
+| · | &nbsp;&nbsp;`Client.ping_if_due` | 480 | Keep the connection alive when nothing has been published. A broker drops a client that h… |
 
 ## `src/weewx_evo/netaccess.py`
 
-[Sicherheit](Security) · zuletzt geändert 2026-08-26 23:43
+[Security](Security) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Access` | 53 | Which addresses are answered. |
 | · | &nbsp;&nbsp;`Access.__init__` | 58 |  |
@@ -1086,9 +1114,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/obstypes.py`
 
-[Aggregation](Aggregation) · zuletzt geändert 2026-08-26 10:54
+[Aggregation](Aggregation) · last changed 2026-08-26 10:54
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `ObsPolicy` | 18 | What to do with one observation type. |
 | **C** | `Policy` | 61 | The aggregation policy for a whole installation. `overrides` mirrors the `[Accumulator]` section of weewx.con… |
@@ -1096,9 +1124,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/options.py`
 
-[Konfiguration](Configuration) · zuletzt geändert 2026-08-26 23:56
+[Configuration](Configuration) · last changed 2026-08-27 11:29
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Invalid` | 51 | A value that a setting cannot take, with a reason a person can act on. |
 | **C** | `Option` | 56 | One setting. |
@@ -1126,9 +1154,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/planets.py`
 
-**keine Seite** · zuletzt geändert 2026-08-26 23:56
+**no page** · last changed 2026-08-26 23:56
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `heliocentric` | 131 | Where a planet is as seen from the sun. Longitude and latitude in degrees, distance in astronomical units, in… |
 | f | `position` | 142 | A planet's apparent longitude, latitude and distance. Degrees, degrees, and astronomical units, seen from the… |
@@ -1141,9 +1169,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/plots.py`
 
-[Diagramme](Plots) · zuletzt geändert 2026-08-26 23:56
+[Plots](Plots) · last changed 2026-08-26 23:56
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Line` | 94 | One reading drawn in one plot. |
 | · | &nbsp;&nbsp;`Line.resolved` | 122 | The same line with the colors WeeWX would have given it. |
@@ -1169,9 +1197,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/ratelimit.py`
 
-[Sicherheit](Security) · zuletzt geändert 2026-08-26 23:43
+[Security](Security) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Bucket` | 44 | One address's allowance. A token bucket, which is the simple one. Tokens accrue at `rate` a second up to `bur… |
 | · | &nbsp;&nbsp;`Bucket.__init__` | 55 |  |
@@ -1194,9 +1222,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/series.py`
 
-[Zeitreihen](Series) · zuletzt geändert 2026-08-27 10:29
+[Series](Series) · last changed 2026-08-27 10:29
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Series` | 97 | One reading over one span. Two parallel arrays rather than a list of pairs: about 30% smaller once it is JSON… |
 | · | &nbsp;&nbsp;`Series.empty` | 124 | Whether there is anything to draw. An all-null series is not. |
@@ -1216,9 +1244,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/settings.py`
 
-[Konfiguration](Configuration) · zuletzt geändert 2026-08-26 23:55
+[Configuration](Configuration) · last changed 2026-08-26 23:55
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Settings` | 93 | One resolved view of the configuration. |
 | · | &nbsp;&nbsp;`Settings.__init__` | 96 |  |
@@ -1237,9 +1265,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/skinkit.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 01:11
+**no page** · last changed 2026-08-27 01:11
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `ValueTuple` | 41 | A number, the unit it is in, and the group it belongs to. WeeWX's own, and a tuple on purpose: extensions unp… |
 | · | &nbsp;&nbsp;`ValueTuple.value` | 58 |  |
@@ -1306,25 +1334,25 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/skins/__init__.py`
 
-**keine Seite** · zuletzt geändert 2026-08-26 22:35
+**no page** · last changed 2026-08-26 22:35
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `bundled` | 21 | The skins that ship, by name. |
 
 ## `src/weewx_evo/skins/deck/options.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 01:54
+**no page** · last changed 2026-08-27 01:54
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `groups` | 39 | The skin's own settings, as the admin page and `--explain` see them. |
 
 ## `src/weewx_evo/skins/deck/tags.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:11
+**no page** · last changed 2026-08-27 10:11
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `logdbg` | 60 |  |
 | f | `loginf` | 64 |  |
@@ -1411,9 +1439,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/sources.py`
 
-[Mehrere Quellen](Multiple-Sources) · zuletzt geändert 2026-08-26 23:47
+[Multiple sources](Multiple-Sources) · last changed 2026-08-26 23:47
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Rule` | 41 | Which sources may supply a field, best first. |
 | · | &nbsp;&nbsp;`Rule.matches` | 47 |  |
@@ -1428,9 +1456,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/sun.py`
 
-[Sonne](Sun) · zuletzt geändert 2026-08-26 23:47
+[Sun](Sun) · last changed 2026-08-26 23:47
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `solar` | 54 | The sun's declination, the equation of time, and Earth's distance. Declination in degrees, the equation of ti… |
 | f | `solar_longitude` | 108 | Where the sun is along the ecliptic, in degrees. Zero at the vernal equinox, ninety at the June solstice, and… |
@@ -1452,9 +1480,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/tags.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 01:07
+**no page** · last changed 2026-08-27 01:07
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Missing` | 145 | A tag nothing here can answer. An AttributeError, because that is what tells Cheetah to leave the text alone.… |
 | **C** | `Value` | 156 | One number, and everything needed to print it. WeeWX calls this a ValueHelper. `str()` of it is the formatted… |
@@ -1572,9 +1600,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/units.py`
 
-[Einheiten](Units) · zuletzt geändert 2026-08-27 10:33
+[Units](Units) · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `name` | 52 |  |
 | f | `system_from` | 56 | A unit system from whatever a configuration file offered. Accepts the number or the name, because both appear… |
@@ -1613,9 +1641,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/__init__.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Posted` | 60 | What one run of an upload did. |
 | · | &nbsp;&nbsp;`Posted.ok` | 77 |  |
@@ -1656,9 +1684,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/ambient.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `AmbientUpload` | 103 | Posts records using the Ambient protocol. |
 | · | &nbsp;&nbsp;`AmbientUpload.__init__` | 118 |  |
@@ -1674,9 +1702,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/cwop.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `latlon` | 57 | Decimal degrees as APRS writes them: `4823.15N`, `01142.30E`. Degrees and decimal minutes, zero-padded to two… |
 | **C** | `CwopUpload` | 71 | Posts records to APRS-IS for CWOP. |
@@ -1690,9 +1718,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/homeassistant.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `readable` | 115 | `outTemp` as `Out temp`, which is what a person sees in a list. |
 | f | `device_class` | 123 |  |
@@ -1700,26 +1728,27 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/mqtt.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 11:09
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | f | `topic_name` | 73 | What a reading is called on the broker. |
 | **C** | `MqttUpload` | 81 | Publishes records to an MQTT broker. |
 | · | &nbsp;&nbsp;`MqttUpload.__init__` | 92 |  |
-| · | &nbsp;&nbsp;`MqttUpload.message` | 138 | A record as the names and values that go on the broker. Conversion happens here rather th… |
-| · | &nbsp;&nbsp;`MqttUpload.post` | 209 |  |
-| · | &nbsp;&nbsp;`MqttUpload.publish_packet` | 223 | One live packet, for the live path rather than the archive one. Separate from `post` beca… |
-| · | &nbsp;&nbsp;`MqttUpload.check` | 235 |  |
-| · | &nbsp;&nbsp;`MqttUpload.status` | 253 |  |
-| · | &nbsp;&nbsp;`MqttUpload.close` | 257 |  |
-| · | &nbsp;&nbsp;`MqttUpload.options` | 263 |  |
+| · | &nbsp;&nbsp;`MqttUpload.message` | 150 | A record as the names and values that go on the broker. Conversion happens here rather th… |
+| · | &nbsp;&nbsp;`MqttUpload.post` | 221 |  |
+| · | &nbsp;&nbsp;`MqttUpload.publish_packet` | 235 | One live packet, for the live path rather than the archive one. Separate from `post` beca… |
+| · | &nbsp;&nbsp;`MqttUpload.browser` | 247 | What a page needs to subscribe to this same broker. The reason this exists: without it th… |
+| · | &nbsp;&nbsp;`MqttUpload.check` | 290 |  |
+| · | &nbsp;&nbsp;`MqttUpload.status` | 308 |  |
+| · | &nbsp;&nbsp;`MqttUpload.close` | 312 |  |
+| · | &nbsp;&nbsp;`MqttUpload.options` | 318 |  |
 
 ## `src/weewx_evo/uploads/progress.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Progress` | 30 | The last record each upload got accepted, by upload name. |
 | · | &nbsp;&nbsp;`Progress.__init__` | 33 |  |
@@ -1730,9 +1759,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/records.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Archive` | 39 | Read-only access to the archive, one connection per thread. |
 | · | &nbsp;&nbsp;`Archive.__init__` | 42 |  |
@@ -1748,9 +1777,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/runner.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Scheduled` | 54 | One upload, and when it is next due. |
 | · | &nbsp;&nbsp;`Scheduled.__init__` | 73 |  |
@@ -1771,9 +1800,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/weathercloud.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `WeathercloudUpload` | 55 | Posts records to Weathercloud. |
 | · | &nbsp;&nbsp;`WeathercloudUpload.__init__` | 66 |  |
@@ -1784,9 +1813,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/uploads/windy.py`
 
-**keine Seite** · zuletzt geändert 2026-08-27 10:33
+**no page** · last changed 2026-08-27 10:33
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `WindyUpload` | 48 | Posts records to Windy. |
 | · | &nbsp;&nbsp;`WindyUpload.__init__` | 55 |  |
@@ -1797,9 +1826,9 @@ sucht, benutzt die Suche des Browsers.
 
 ## `src/weewx_evo/webserver.py`
 
-[Web-Server](Web-Server) · zuletzt geändert 2026-08-26 23:43
+[Web server](Web-Server) · last changed 2026-08-26 23:43
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Site` | 66 | Which feeds are served, and from where. |
 | · | &nbsp;&nbsp;`Site.__init__` | 69 |  |
@@ -1814,11 +1843,27 @@ sucht, benutzt die Suche des Browsers.
 | · | &nbsp;&nbsp;`WebServer.stop` | 408 |  |
 | f | `site_from` | 428 | What this server hands out, and under which names. Mostly the local exports: an export named `site` publishin… |
 
+## `src/weewx_evo/websocket.py`
+
+**no page** · last changed 2026-08-27 11:27
+
+| | Name | Line | |
+|---|---|---|---|
+| **C** | `WebSocketError` | 64 | The connection cannot continue. |
+| f | `accept_key` | 68 | The `Sec-WebSocket-Accept` value for a client's key. |
+| f | `handshake_response` | 74 | The 101 response for an upgrade request, or None if it is not one. `protocol` is echoed back in `Sec-WebSocke… |
+| f | `encode_frame` | 104 | One frame. `mask` only for a client -- a server must never mask. |
+| **C** | `FrameReader` | 128 | Reads WebSocket messages off a socket, reassembling fragments. `expect_masked` says which side of the connect… |
+| · | &nbsp;&nbsp;`FrameReader.__init__` | 137 |  |
+| · | &nbsp;&nbsp;`FrameReader.frame` | 159 | One frame as (opcode, final, payload). |
+| · | &nbsp;&nbsp;`FrameReader.message` | 189 | One whole message, following fragments. Answers pings itself. Returns (opcode, payload).… |
+| f | `close_frame` | 235 | A close frame, with the status code first as the RFC requires. |
+
 ## `src/weewx_evo/weewxconf.py`
 
-[WeeWX-Kompatibilität](WeeWX-Compatibility) · zuletzt geändert 2026-08-26 23:47
+[WeeWX compatibility](WeeWX-Compatibility) · last changed 2026-08-26 23:47
 
-| | Name | Zeile | |
+| | Name | Line | |
 |---|---|---|---|
 | **C** | `Section` | 38 | A dictionary that knows the section above it. ConfigObj sections do, and a WeeWX skin leans on it harder than… |
 | · | &nbsp;&nbsp;`Section.__init__` | 55 |  |
@@ -1835,4 +1880,4 @@ sucht, benutzt die Suche des Browsers.
 
 ---
 
-Erzeugt von `tools/docsindex.py`. Siehe [Datei-Index](Index).
+Generated by `tools/docsindex.py`. See [File index](Index).

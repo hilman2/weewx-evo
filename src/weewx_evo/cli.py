@@ -46,6 +46,7 @@ from . import units, weewxconf
 from . import uploads as upload_registry
 from .admin import Admin, AdminServer
 from .archiver import Archiver
+from .broker import Broker, BrokerServer
 from .db.archive import ArchiveStore
 from .db.live import LiveStore
 from .derive import from_settings as deriver_from
@@ -821,6 +822,30 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # both, and neither has to know about the other.
             feeds.on_produced = runner.feed_produced
 
+    # The broker, before the uploads: the station's own MQTT upload connects
+    # to it, and a client that starts first spends its first interval
+    # retrying. Its own threads and its own ports -- it is a server, not part
+    # of this loop.
+    broker_server = None
+    if cfg.get("broker.enabled"):
+        broker_server = BrokerServer(
+            Broker(publish_password=str(cfg.get("broker.password") or ""),
+                   subscribe_password=str(cfg.get("broker.read_password") or "")),
+            host=str(cfg.get("broker.host") or "0.0.0.0"),
+            port=int(cfg.get("broker.port") or 0),
+            websocket_port=int(cfg.get("broker.websocket_port") or 0),
+            access=Access.parse(str(cfg.get("broker.allow") or "private")))
+        broker_server.start()
+        if broker_server.access.everyone and not cfg.get("broker.password"):
+            # Its own warning rather than the shared one: what is missing
+            # here is a password, not a token, and the consequence is worse.
+            # Anybody who reaches the port can publish, and what they publish
+            # is what the page shows as the current weather.
+            log.warning("the MQTT broker answers any address and has no "
+                        "password. Anybody who reaches it can publish, and "
+                        "what they publish is what the page shows. Set "
+                        "broker.password, or narrow broker.allow.")
+
     # The uploads, each in its own thread as well. An export moves the files
     # a feed produced; an upload sends the readings to a weather service.
     # Neither knows about the other, and both stay off this loop.
@@ -915,6 +940,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             forecaster.stop()
         if forecast_store is not None:
             forecast_store.close()
+        if broker_server is not None:
+            broker_server.stop()
         if web is not None:
             web.stop()
         http.stop()

@@ -9,6 +9,7 @@
 - [Listener](Ingest-Listener)
 - [Drivers](Drivers)
 - [Ecowitt](Driver-Ecowitt)
+- [Plugins](Plugins)
 - [Multiple Sources](Multiple-Sources)
 
 **Processing**

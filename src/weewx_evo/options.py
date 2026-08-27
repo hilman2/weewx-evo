@@ -662,6 +662,52 @@ def core_options() -> list[Group]:
                         "means they are simply dropped."),
         )),
 
+        Group("MQTT broker",
+              "A skin showing live readings subscribes to an MQTT broker from "
+              "the visitor's browser. Switch this on and weewx-evo is that "
+              "broker -- nothing else to install, and the MQTT upload points "
+              "at localhost. A station that already runs Mosquitto, or "
+              "publishes to a broker somewhere else, leaves this off.", (
+                  Option("broker.enabled", "Be the broker", kind="bool",
+                         default=False, restart=True),
+                  Option("broker.host", "Listen on", default="0.0.0.0",
+                         restart=True, advanced=True,
+                         help="0.0.0.0 is every interface. What keeps it "
+                              "private is the rule below, not this."),
+                  Option("broker.port", "MQTT port", kind="int", default=1883,
+                         minimum=0, maximum=65535, restart=True,
+                         help="What the station's own upload connects to. 0 "
+                              "switches it off and leaves only websockets."),
+                  Option("broker.websocket_port", "Websocket port", kind="int",
+                         default=9001, minimum=0, maximum=65535, restart=True,
+                         help="What a browser connects to. A page cannot open "
+                              "a plain socket, so this is the one a skin "
+                              "needs. 0 switches it off."),
+                  Option("broker.allow", "Answer", default="private",
+                         restart=True,
+                         suggestions=(("private", "private networks only"),
+                                      ("any", "anywhere -- see the help"),
+                                      ("127.0.0.1", "this machine only")),
+                         help="Private networks by default, the same as "
+                              "everything else here. A broker open to the "
+                              "internet with no password is a machine anybody "
+                              "can publish rubbish into, and the readings on "
+                              "the page come straight out of it. Set a "
+                              "password below before widening this."),
+                  Option("broker.password", "Password for publishing",
+                         kind="secret",
+                         help="What the station's own upload uses. Empty "
+                              "means no password at all, which is only sane "
+                              "while the broker answers private networks "
+                              "only."),
+                  Option("broker.read_password", "Password for reading",
+                         kind="secret", advanced=True,
+                         help="Empty means anybody who can reach the broker "
+                              "may read -- which is what a public web page "
+                              "needs, because a credential in a page is a "
+                              "credential published. Reading is all they can "
+                              "do either way: a subscriber can never publish."),
+              )),
         Group("Listener", "The port the hardware uploads to.", (
             Option("host", "Listen on", default="0.0.0.0", restart=True,
                    advanced=True,

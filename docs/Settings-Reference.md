@@ -1,203 +1,203 @@
-# Einstellungen A–Z
+# Settings A–Z
 
-Alle Einstellungen des Kerns, wie `options.core_options()` sie deklariert. Die
-Umgebungsvariable ist immer `WEEWX_EVO_` + Name in Großbuchstaben, Punkte zu
-Unterstrichen. → [Configuration](Configuration)
+Every core setting, as `options.core_options()` declares them. The environment
+variable is always `WEEWX_EVO_` + the name in upper case, dots to underscores.
+→ [Configuration](Configuration)
 
-Erzeugte Fassungen derselben Liste:
+Generated versions of the same list:
 
 ```bash
-weewx-evo config show --defaults    # kommentiertes TOML
-weewx-evo serve --explain           # Werte samt Herkunft
+weewx-evo config show --defaults    # commented TOML
+weewx-evo serve --explain           # values with their origin
 ```
 
-Legende: **A** = advanced (auf der Admin-Seite hinter einem Schalter),
-**R** = restart nötig, **!** = required.
+Key: **A** = advanced (behind a toggle on the admin page),
+**R** = needs a restart, **!** = required.
 
 ## Station
 
-*Wo die Messwerte herkommen, und wo das ist.*
+*Where the readings come from, and where that is.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `station.name` | text | `weewx-evo` | | Auf der Live-Seite und in Berichten |
-| `station.latitude` | float | — | | Dezimalgrad, negativ südlich des Äquators. Für Sonnenauf- und -untergang und für die Klarhimmel-Strahlung, gegen die ein Solarsensor gemessen wird |
-| `station.longitude` | float | — | | Dezimalgrad, negativ westlich von Greenwich |
-| `station.altitude` | float | — | | Meter über NN. Das ist, was Stationsdruck in den Barometerwert verwandelt, den alle vergleichen. Von einer Karte nehmen, nicht von der Konsole: Konsolen stehen meist auf dem, was die Anzeige richtig aussehen ließ |
+| `station.name` | text | `weewx-evo` | | On the live page and in reports |
+| `station.latitude` | float | — | | Decimal degrees, negative south of the equator. For sunrise and sunset and for the clear-sky radiation a solar sensor is measured against |
+| `station.longitude` | float | — | | Decimal degrees, negative west of Greenwich |
+| `station.altitude` | float | — | | Metres above sea level. This is what turns station pressure into the barometer value everybody compares. Take it from a map, not from the console: consoles are usually set to whatever made the display look right |
 
 ## Archive
 
-*Wie Messwerte zu dem Bestand werden, der bleibt.*
+*How readings become the record that stays.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `interval` | duration | `300` (60–3600) | R | Wie viel Zeit ein Archivsatz abdeckt. Fünf Minuten ist üblich. Eine Änderung stört den vorhandenen Bestand nicht — jeder Satz trägt die Spanne, für die er steht, also mitteln alt und neu korrekt zusammen |
-| `grace` | duration | `15` (0–300) | A | Wie lange nach Intervallende gewartet wird, damit ein bloß langsames Paket den Satz nicht zweimal berechnen lässt |
-| `loop_hilo` | bool | `true` | A | Einzelne Pakete dürfen die Tagesextreme setzen, nicht nur Archivsätze. An by default, wie WeeWX. Aus gemacht sind Tageshöchst- und -tiefstwerte exakt aus dem Archiv allein reproduzierbar |
+| `interval` | duration | `300` (60–3600) | R | How much time an archive record covers. Five minutes is usual. Changing it does not disturb the existing record — every record carries the span it stands for, so old and new average together correctly |
+| `grace` | duration | `15` (0–300) | A | How long to wait after the end of an interval, so that a merely slow packet does not have the record computed twice |
+| `loop_hilo` | bool | `true` | A | Individual packets may set the day's extremes, not only archive records. On by default, like WeeWX. Turned off, the daily highs and lows are exactly reproducible from the archive alone |
 
 ## Databases
 
-*Zwei Dateien: der Bestand und die Pakete dahinter.*
+*Two files: the record, and the packets behind it.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `plots_file` | path | `plots.toml` | R | Welche Diagramme es gibt. Eigene Datei statt Abschnitt: es ist eine Liste vieler gleichartiger Sätze, und ein aus einer alten Skin importierter Satz ist etwas, das man diffen können will |
-| `archive_db` | path | `data/weewx.sdb` | R | Die WeeWX-Datenbank. Bestehende werden benutzt, wie sie sind — das Schema kommt aus der Datei |
-| `live_db` | path | `data/live.sdb` | R | Wo Pakete liegen, bis sie in Sätzen stehen. Eigene Datei, damit Größe und Retention nichts mit dem Archiv zu tun haben |
-| `retention` | duration | `604800` (min 3600) | | Wie lange Rohpakete bleiben. Sie sind, was einen Satz reproduzierbar macht: solange sie da sind, lässt sich eine falsche Kalibrierung oder ein verspätetes Paket korrigieren. Sieben Tage sind rund 80 MB bei einem Paket alle acht Sekunden |
-| `raw_retention` | duration | `3600` (0–86400) | A | Wie lange der Upload, wie er vom Draht kam, neben dem geparsten Paket liegt. Ein Debugging-Hilfsmittel — das, was man an ein Issue über einen nicht platzierbaren Sensor hängt. `0` behält nichts |
-| `spool` | path | — | A | Ein Verzeichnis. Jeder Tag Pakete, der die Live-Tabelle verlässt, wird dort vorher als gzip-NDJSON abgelegt. Leer heißt: einfach fallen lassen |
+| `plots_file` | path | `plots.toml` | R | Which plots there are. Its own file rather than a section: it is a list of many alike sets, and a set imported from an old skin is something you want to be able to diff |
+| `archive_db` | path | `data/weewx.sdb` | R | The WeeWX database. Existing ones are used as they are — the schema comes from the file |
+| `live_db` | path | `data/live.sdb` | R | Where packets sit until they are in records. Its own file, so that size and retention have nothing to do with the archive |
+| `retention` | duration | `604800` (min 3600) | | How long raw packets stay. They are what makes a record reproducible: as long as they are there, a wrong calibration or a late packet can be corrected. Seven days is around 80 MB at one packet every eight seconds |
+| `raw_retention` | duration | `3600` (0–86400) | A | How long the upload as it came off the wire sits next to the parsed packet. A debugging aid — the thing you attach to an issue about a sensor that cannot be placed. `0` keeps none |
+| `spool` | path | — | A | A directory. Every day of packets leaving the live table is put there as gzip NDJSON first. Empty means: just drop them |
 
 ## Listener
 
-*Der Port, auf den die Hardware hochlädt.*
+*The port the hardware uploads to.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `host` | text | `0.0.0.0` | A R | Jede Schnittstelle. Einengen, wenn die Maschine in mehr als einem Netz hängt |
-| `port` | int | `8000` | R | Unter 1024 braucht root, das dieser Dienst nicht haben sollte |
-| `token` | secret | — | ! | Ein Pfadsegment, das jeder Upload tragen muss. Das Einzige zwischen dem offenen Internet und der Messreihe: Hardware kann keinen Header senden, also ist ein nicht erratbarer Pfad die praktische Antwort. Wer es erfährt, kann Messwerte fälschen |
-| `driver` | choice | `ecowitt` | | Welcher Treiber einen Upload liest, dessen Pfad keinen nennt. Die Auswahl ist, was installiert ist |
-| `udp_port` | int | `0` | A R | Für Hardware, die broadcastet statt zu posten. `0` schaltet ab. Ein Datagramm trägt keinen Pfad, also ist der Port selbst die Zugangskontrolle |
+| `host` | text | `0.0.0.0` | A R | Every interface. Narrow it when the machine is on more than one network |
+| `port` | int | `8000` | R | Below 1024 needs root, which this service should not have |
+| `token` | secret | — | ! | A path segment every upload has to carry. The only thing between the open internet and your record: hardware cannot send a header, so an unguessable path is the practical answer. Anyone who learns it can forge readings |
+| `driver` | choice | `ecowitt` | | Which driver reads an upload whose path names none. The choices are what is installed |
+| `udp_port` | int | `0` | A R | For hardware that broadcasts instead of posting. `0` turns it off. A datagram carries no path, so the port itself is the access control |
 
 ## Who is answered
 
-*Gebunden auf jede Schnittstelle; hier wird entschieden, wer eine Antwort bekommt.*
+*Bound to every interface; this is where it is decided who gets an answer.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `allow` | text | `private` | R | `private` = das lokale Netz (Schuppen, Konsole, Laptop in der Küche) und deckt einen Reverse Proxy ab, der immer von einer privaten Adresse verbindet. `any` schließt das offene Internet ein. Oder Netze aufzählen: `10.0.0.0/8, 192.168.1.50`. Loopback wird immer beantwortet |
-| `rate` | float | `10.0` | A | Anfragen je Sekunde und Adresse. Eine Konsole sendet im schnellsten Fall eine halbe, das fängt also nur etwas ab, das schiefgegangen ist. Was Token-Raten verhindert, ist die getrennte Grenze für falsche. `0` schaltet ab |
-| `behind_proxy` | bool | `false` | A | Dann kommt jede Anfrage von der Proxy-Adresse, und eine Grenze je Adresse würde alle außer dem Verursacher ausbremsen. Das Limitieren bleibt beim Proxy, der als Einziger dazu in der Lage ist |
+| `allow` | text | `private` | R | `private` = the local network (shed, console, laptop in the kitchen) and covers a reverse proxy, which always connects from a private address. `any` includes the open internet. Or list networks: `10.0.0.0/8, 192.168.1.50`. Loopback is always answered |
+| `rate` | float | `10.0` | A | Requests per second per address. A console sends half of one at the fastest, so this only catches something that has gone wrong. What prevents token guessing is the separate limit on wrong ones. `0` turns it off |
+| `behind_proxy` | bool | `false` | A | Then every request comes from the proxy's address, and a per-address limit would slow everyone down except whoever caused it. Limiting stays with the proxy, which is the only one able to do it |
 
 → [Security](Security)
 
 ## Settings page
 
-*Eigener Port, eigenes Token: sie kann weit mehr als ein Upload.*
+*Its own port, its own token: it can do far more than an upload.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `admin.token` | secret | — | | **Nie dasselbe wie das Upload-Token.** Sonst könnte alles, was einen Messwert senden kann, auch ändern, was die Station aufzeichnet. Leer schaltet die Seite ab |
+| `admin.token` | secret | — | | **Never the same as the upload token.** Otherwise anything that can send a reading could also change what the station records. Empty turns the page off |
 | `admin.port` | int | `8080` | R | |
 | `admin.host` | text | `0.0.0.0` | A R | |
-| `admin.allow` | text | `private` | | Wie oben, und es lohnt sich, enger zu bleiben. Diese Seite zeigt das Archiv auf Dateien. Von auswärts erreichen, ohne zu öffnen: `ssh -L 8080:localhost:8080 die-station` |
-| `admin.rate` | float | `5.0` | A | Speichern sind zwei Anfragen, und durch die Reiter klicken macht mehrere je Sekunde. Eine Grenze, die stört, ist eine, die abgeschaltet wird |
+| `admin.allow` | text | `private` | | As above, and it is worth staying tighter. This page points the archive at files. To reach it from elsewhere without opening it up: `ssh -L 8080:localhost:8080 the-station` |
+| `admin.rate` | float | `5.0` | A | Saving is two requests, and clicking through the tabs makes several a second. A limit that gets in the way is one that gets turned off |
 
 ## Website
 
-*Ausliefern, was die Feeds erzeugt haben, auf dieser Maschine.*
+*Serving what the feeds produced, on this machine.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `web.enabled` | bool | `false` | R | Ein kleiner Web-Server für das, was die Feeds schreiben. Genug, um die eigenen Seiten im lokalen Netz anzusehen, ohne nginx zu installieren |
-| `web.port` | int | `8081` | R | Eigener Port, getrennt von Upload und Einstellungsseite. Die beiden antworten Hardware und einem Betreiber; dieser antwortet Browsern |
-| `web.default` | choice | — | | Was unter `/` liegt; die anderen bleiben unter `/<name>/`. Ohne listet `/` auf, was es gibt. Die Auswahl sind die `local`-Exports und was `[web.serve]` direkt benennt |
-| `web.allow` | text | `private` | | Wie sonst. Eine Wetterseite ist kein Geheimnis, aber diese Maschine antwortet trotzdem Fremden |
+| `web.enabled` | bool | `false` | R | A small web server for what the feeds write. Enough to look at your own pages on the local network without installing nginx |
+| `web.port` | int | `8081` | R | Its own port, separate from upload and settings page. Those two answer hardware and an operator; this one answers browsers |
+| `web.default` | choice | — | | What sits at `/`; the others stay under `/<name>/`. Without it, `/` lists what there is. The choices are the `local` exports and whatever `[web.serve]` names directly |
+| `web.allow` | text | `private` | | As elsewhere. A weather page is not a secret, but this machine still answers strangers |
 | `web.host` | text | `0.0.0.0` | A R | |
 
 → [Web-Server](Web-Server)
 
 ## Running
 
-*Wo Dinge hinkommen und wie oft sie passieren.*
+*Where things go and how often they happen.*
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `table` | text | `archive` | A R | Die Tabelle in der Datenbank. Nur für eine Anlage interessant, die sie umbenannt hat |
-| `poll` | duration | `5` (1–300) | A | Wie oft der Archiver nach geschlossenen Intervallen sieht. Die Arbeit ist idempotent und die Grenzen kommen aus den Paketen, also ändert ein verspäteter oder ausgefallener Tick nichts |
-| `driver_dir` | path | — | A R | Wo mit `weewx-evo driver install` installierte Treiber liegen. Leer heißt: neben dem Archiv |
-| `weewx_conf` | path | — | A | Eine `weewx.conf`, auf die zurückgefallen wird. Gelesen, nie geschrieben. Was hier gesetzt ist, schlägt sie |
+| `table` | text | `archive` | A R | The table in the database. Only of interest to an installation that renamed it |
+| `poll` | duration | `5` (1–300) | A | How often the archiver looks for closed intervals. The work is idempotent and the boundaries come from the packets, so a late or missed tick changes nothing |
+| `driver_dir` | path | — | A R | Where drivers installed with `weewx-evo driver install` live. Empty means: next to the archive |
+| `weewx_conf` | path | — | A | A `weewx.conf` to fall back to. Read, never written. Anything set here beats it |
 
-## Treiber: ecowitt
+## Driver: ecowitt
 
-Präfix `drivers.ecowitt`. Deklariert in
+Prefix `drivers.ecowitt`. Declared in
 `ingest/plugins/ecowitt/driver.py::EcowittDriver.options()`.
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `passkey` | secret | — | | Der Wert, den die Konsole in jedem Upload zuerst sendet. Hier gesetzt ist die Frage endgültig geklärt. Leer gelassen wird die erste gehörte Konsole adoptiert und in der Datenbank vermerkt — was funktioniert, aber mit der Datenbank verloren geht und die Station danach der Konsole überlässt, die zuerst spricht |
-| `model` | text | `Ecowitt` | A | Steht in Logs. Kosmetisch |
-| `infer_unknown` | choice | `series` | | `off` = fallen lassen · `series` = übernehmen, wenn sie eine bekannte Serie fortsetzen, den Rest melden · `all` = alles nehmen, was benennbar ist. Ein Messwert in der falschen Spalte lässt sich danach nicht wieder heraustrennen |
-| `report_file` | path | `/var/tmp/weewx-evo-ecowitt-report.txt` | | Wohin der erste Upload geschrieben wird, der etwas Unplatzierbares enthält. Die Datei hat den PASSKEY schon entfernt und ist zum Einfügen in ein Issue gedacht. Leer schaltet ab |
-| `max_behind` | duration | `3600` | A | Wie alt ein Zeitstempel der Konsole sein darf. Darüber hinaus wird die Ankunftszeit benutzt |
-| `max_ahead` | duration | `60` | A | Und wie weit in der Zukunft. Es gibt keine Messwerte aus der Zukunft, das deckt also nur Drift zwischen zwei ungefähr richtigen Uhren ab |
+| `passkey` | secret | — | | The value the console sends first in every upload. Set here, the question is settled for good. Left empty, the first console heard is adopted and noted in the database — which works, but is lost with the database and afterwards leaves the station to whichever console speaks first |
+| `model` | text | `Ecowitt` | A | Appears in logs. Cosmetic |
+| `infer_unknown` | choice | `series` | | `off` = drop them · `series` = take them if they continue a known series, report the rest · `all` = take everything that can be named. A reading in the wrong column cannot be separated out afterwards |
+| `report_file` | path | `/var/tmp/weewx-evo-ecowitt-report.txt` | | Where the first upload containing something unplaceable is written. The file already has the PASSKEY removed and is meant for pasting into an issue. Empty turns it off |
+| `max_behind` | duration | `3600` | A | How old a console's timestamp may be. Beyond that, the arrival time is used |
+| `max_ahead` | duration | `60` | A | And how far into the future. There are no readings from the future, so this only covers drift between two roughly correct clocks |
 
 → [Driver-Ecowitt](Driver-Ecowitt)
 
 ## Feed: json
 
-Präfix `feeds.json`. Deklariert in
+Prefix `feeds.json`. Declared in
 `feeds/jsongenerator/__init__.py::JSONGenerator.options()`.
 
-| Name | Kind | Default | | Bedeutung |
+| Name | Kind | Default | | What it means |
 |---|---|---|---|---|
-| `feeds.json.enabled` | bool | `true` | | Aus nur, wenn nichts es liest. Jeder andere Feed, der ein Diagramm zeichnet, tut es |
-| `feeds.json.destination` | text | `json` | | Unterhalb des Feed-Ausgabeverzeichnisses. Ein Unterverzeichnis, damit die Daten nicht zwischen den Seiten liegen |
-| `feeds.json.manifest` | bool | `true` | | `index.json` schreiben: eine Liste dessen, was es gibt, damit ein Client seine Seite anlegen kann, bevor er etwas holt — und nie nach einem Sensor fragt, den die Station nicht hat |
-| `feeds.json.rewrite_unchanged` | bool | `false` | | Ein Jahr Tagesmittel sagt um zehn nach dasselbe wie um zehn. Bleibt das aus, wird eine inhaltsgleiche Datei nicht angefasst — was zählt, wenn ein Export alles Geänderte sendet, über eine Leitung, die jemand nach Megabyte bezahlt |
-| `feeds.json.rounding` | int | `3` (0–9) | | Drei ist bereits feiner als jeder Wettersensor und nimmt rund ein Drittel der Dateigröße |
-| `feeds.json.indent` | int | `0` (0–8) | A | `0` schreibt so klein wie möglich. `2` macht sie lesbar, während man herausfindet, warum ein Diagramm falsch aussieht |
-| `feeds.json.spans` | list | — | A | Kommagetrennt, passend zur Gruppe eines Diagramms. Leer erzeugt alle. Ein Jahresdiagramm über ein Jahrzehnt ist das teure; es wegzulassen ist, wie eine kleine Maschine mitkommt |
-| `feeds.json.units` | choice | `METRICWX` | | Worin die Dateien geschrieben werden, egal was das Archiv hält |
-| `feeds.json.unit.group_temperature` | choice | — | | Überschreibt das System für diese eine Gruppe — so kommt jemand zu Celsius und Zoll Quecksilber auf einer Seite, weil seine Leser das erwarten |
+| `feeds.json.enabled` | bool | `true` | | Off only when nothing reads it. Every other feed that draws a plot does |
+| `feeds.json.destination` | text | `json` | | Below the feed's output directory. A subdirectory, so that the data does not sit among the pages |
+| `feeds.json.manifest` | bool | `true` | | Write `index.json`: a list of what there is, so that a client can lay out its page before fetching anything — and never asks for a sensor the station does not have |
+| `feeds.json.rewrite_unchanged` | bool | `false` | | A year of daily means says the same thing at ten past as it did at ten. With this off, a file with identical content is not touched — which counts when an export sends everything that changed, over a line somebody pays for by the megabyte |
+| `feeds.json.rounding` | int | `3` (0–9) | | Three is already finer than any weather sensor and takes about a third off the file size |
+| `feeds.json.indent` | int | `0` (0–8) | A | `0` writes as small as possible. `2` makes them readable while you work out why a plot looks wrong |
+| `feeds.json.spans` | list | — | A | Comma-separated, matching a plot's group. Empty produces all of them. A yearly plot over a decade is the expensive one; leaving it out is how a small machine keeps up |
+| `feeds.json.units` | choice | `METRICWX` | | What the files are written in, whatever the archive holds |
+| `feeds.json.unit.group_temperature` | choice | — | | Overrides the system for this one group — that is how somebody ends up with Celsius and inches of mercury on one page, because that is what their readers expect |
 | `feeds.json.unit.group_pressure` | choice | — | | `mbar` `hPa` `inHg` `mmHg` `kPa` |
 | `feeds.json.unit.group_rain` | choice | — | | `mm` `cm` `inch` |
 | `feeds.json.unit.group_speed` | choice | — | | `meter_per_second` `km_per_hour` `mile_per_hour` `knot` |
 | `feeds.json.unit.group_altitude` | choice | — | A | `meter` `foot` |
 | `feeds.json.unit.group_distance` | choice | — | A | `km` `mile` |
-| `feeds.json.twilight` | bool | `true` | | Dämmerung ist keine Kante: das Licht geht über die halbe Stunde der bürgerlichen Dämmerung, in hohen Breiten im Sommer über weit länger. Damit kann ein Diagramm das Echte zeichnen statt einer Stufe. Kostet ein paar hundert Byte je Datei |
+| `feeds.json.twilight` | bool | `true` | | Twilight is not an edge: the light goes over the half hour of civil twilight, and at high latitudes in summer over far longer. With this, a plot can draw the real thing rather than a step. Costs a few hundred bytes per file |
 
 → [Feeds](Feeds), [Units](Units)
 
 ## Exports
 
-Präfix `exports.<name>`. Deklariert in `exports/local.py`, `exports/ftp.py` und
-`exports/rsync.py`. Gemeinsam für alle drei:
+Prefix `exports.<name>`. Declared in `exports/local.py`, `exports/ftp.py` and
+`exports/rsync.py`. Common to all three:
 
-| Name | Kind | Default | Bedeutung |
+| Name | Kind | Default | What it means |
 |---|---|---|---|
-| `kind` | choice | — | `local`, `ftp` oder `rsync` |
-| `directory` | text/path | siehe unten | Wohin. Bei Shared Hosting meist `/httpdocs` oder `/public_html`, selten das Login-Verzeichnis |
-| `source` | choice | — | Welchen Feed dieser Export sendet |
-| `directory_source` | path | — | Oder ein Verzeichnis, wenn kein Feed gewählt ist |
-| `delete` | bool | `false` | Entfernt Dateien, die nicht mehr erzeugt werden. Nur, was dieser Export selbst dorthin gebracht hat — er führt Buch |
+| `kind` | choice | — | `local`, `ftp` or `rsync` |
+| `directory` | text/path | see below | Where to. With shared hosting usually `/httpdocs` or `/public_html`, rarely the login directory |
+| `source` | choice | — | Which feed this export sends |
+| `directory_source` | path | — | Or a directory, when no feed is chosen |
+| `delete` | bool | `false` | Removes files that are no longer produced. Only what this export put there itself — it keeps a record |
 | `trigger` | choice | `feed` | `feed` · `record` · `interval` · `manual` |
-| `every` | duration | `900` (60–86400) | Nur mit `interval`. Unter dem Archivintervall liefe er ohne Neues |
-| `tracker` | path | — | Wo vermerkt wird, was schon gesendet wurde. Leer heißt: neben dem Quellverzeichnis. Das verhindert, dass jedes Mal alles hochgeht; es zu verlieren kostet einen vollen Lauf |
+| `every` | duration | `900` (60–86400) | Only with `interval`. Below the archive interval it would run with nothing new |
+| `tracker` | path | — | Where it is noted what has already been sent. Empty means: next to the source directory. This is what stops everything going up every time; losing it costs one full run |
 
-Nur `local`:
+`local` only:
 
-| Name | Kind | Default | Bedeutung |
+| Name | Kind | Default | What it means |
 |---|---|---|---|
-| `directory` | path | `data/site` **!** | Ein Verzeichnis auf dieser Maschine. Unter das gelegt, was der eingebaute Web-Server ausliefert, ist der Feed sofort im lokalen Netz. Ein Verzeichnis, das nginx schon ausliefert, oder eine eingehängte Freigabe funktioniert genauso |
-| `link` | bool | `true` | **A** — Hardlink statt Kopie. Auf einem Dateisystem kostet ein Link einen Verzeichniseintrag statt einer zweiten Kopie jeder Datei. Fällt von selbst aufs Kopieren zurück, wo das Dateisystem nicht linkt |
+| `directory` | path | `data/site` **!** | A directory on this machine. Put under what the built-in web server serves, the feed is on the local network immediately. A directory nginx already serves, or a mounted share, works just as well |
+| `link` | bool | `true` | **A** — Hard link rather than a copy. On one filesystem a link costs a directory entry instead of a second copy of every file. Falls back to copying on its own where the filesystem will not link |
 
-Für `ftp` und `rsync` zusätzlich:
+For `ftp` and `rsync` additionally:
 
-| Name | Kind | Default | Bedeutung |
+| Name | Kind | Default | What it means |
 |---|---|---|---|
-| `host` | text | — | Der Server. Kein URL, nur der Name |
+| `host` | text | — | The server. Not a URL, just the name |
 | `user` | text | — | |
-| `timeout` | duration | `30` (ftp) / `600` (rsync) | Ein toter Host darf das nächste Intervall nicht aufhalten |
+| `timeout` | duration | `30` (ftp) / `600` (rsync) | A dead host must not hold the next interval up |
 
-Nur FTP:
+FTP only:
 
-| Name | Kind | Default | Bedeutung |
+| Name | Kind | Default | What it means |
 |---|---|---|---|
 | `password` | secret | — | |
 | `port` | int | `21` | |
-| `tls` | bool | `true` | FTPS. Aus nur, wenn der Host kein TLS hat — dann geht das Passwort als lesbarer Text übers Netz |
-| `passive` | bool | `true` | Fast immer richtig. Aktiv verlangt, dass der Server zurück verbindet, was kein Heimrouter erlaubt |
+| `tls` | bool | `true` | FTPS. Off only when the host has no TLS — and then the password goes over the network as readable text |
+| `passive` | bool | `true` | Almost always right. Active requires the server to connect back, which no home router allows |
 
-Nur rsync:
+rsync only:
 
-| Name | Kind | Default | Bedeutung |
+| Name | Kind | Default | What it means |
 |---|---|---|---|
-| `port` | int | `22` | SSH-Port |
-| `compress` | bool | `true` | Lohnt für Text, und eine Wetterseite ist meist Text |
-| `key` | path | — | Leer benutzt, was SSH von selbst nähme. **Es gibt keine Passwortoption**: ein Passwort müsste von einem Programm getippt werden, was es in eine Prozessliste oder eine Datei bringt. Public Key in `authorized_keys` |
-| `extra` | text | — | Weitere rsync-Argumente, durchgereicht wie sie sind. An Leerzeichen getrennt, also nichts mit Leerzeichen darin |
+| `port` | int | `22` | SSH port |
+| `compress` | bool | `true` | Worth it for text, and a weather site is mostly text |
+| `key` | path | — | Empty uses whatever SSH would take on its own. **There is no password option**: a password would have to be typed by a program, which puts it into a process list or a file. Public key in `authorized_keys` |
+| `extra` | text | — | Further rsync arguments, passed through as they are. Split on spaces, so nothing with a space in it |
 
 → [Exports](Exports)
 

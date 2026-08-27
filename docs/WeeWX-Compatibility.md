@@ -1,123 +1,119 @@
-# WeeWX-Kompatibilität
+# WeeWX compatibility
 
-## Die eine Regel
+## The one rule
 
-> Eine bestehende WeeWX-Datenbank bleibt lesbar und schreibbar — **für WeeWX
-> selbst**. Nicht „importierbar": dieselbe Datei, dieselbe Bedeutung, und WeeWX 5
-> kann sie danach weiterbenutzen.
+> An existing WeeWX database stays readable and writable — **by WeeWX itself**.
+> Not "importable": the same file, the same meaning, and WeeWX 5 can carry on
+> using it afterwards.
 
-Alles andere ist verhandelbar. Das hier nicht.
+Everything else is negotiable. This is not.
 
-## Was geteilt wird und was nicht
+## What is shared and what is not
 
 | | |
 |---|---|
-| **Die Datenbank** | Geteilt. Dieselbe Datei, dieselbe Bedeutung |
-| **Die Konfiguration** | Nicht geteilt. `weewx.conf` wird **gelesen, nie geschrieben** |
+| **The database** | Shared. The same file, the same meaning |
+| **The configuration** | Not shared. `weewx.conf` is **read, never written** |
 
-Zwei Programme, die eine Konfigurationsdatei schreiben, zerstören sich
-gegenseitig die Kommentare. Was beide Systeme teilen — Standort, Höhe,
-Archivintervall — darf trotzdem dort wohnen bleiben und wird von dort gelesen.
+Two programs writing one configuration file destroy each other's comments. What
+both systems share — location, altitude, archive interval — may nevertheless
+stay where it is, and is read from there.
 
-## Wie die Kompatibilität hergestellt wird
+## How the compatibility is achieved
 
-### 1. Das Schema kommt aus der Datei
+### 1. The schema comes from the file
 
-`db/schema.py` liest es aus der geöffneten Datenbank, nicht aus einer Liste im
-Code. Eine Anlage mit Sensoren, von denen wir nie gehört haben, behält sie.
+`db/schema.py` reads it from the open database, not from a list in the code. An
+installation with sensors we have never heard of keeps them.
 
-`db/wview.py` — das ausgelieferte Startschema — wird **nur** benutzt, um eine
-Datenbank anzulegen, die noch nicht existiert.
+`db/wview.py` — the shipped starting schema — is used **only** to create a
+database that does not exist yet.
 
 → [Database-Archive](Database-Archive)
 
-### 2. Die Arithmetik ist abgeschrieben
+### 2. The arithmetic is transcribed
 
-`aggregate.py` ist eine Transkription von `weewx.accum`, Schritt für Schritt in
-derselben Reihenfolge. `units.py` ist eine Transkription von `weewx.units`,
-Ausdruck für Ausdruck.
+`aggregate.py` is a transcription of `weewx.accum`, step by step in the same
+order. `units.py` is a transcription of `weewx.units`, expression by expression.
 
-Eine „sauberere" Formel, die anders rundet, ist hier eine falsche Formel.
+A "cleaner" formula that rounds differently is a wrong formula here.
 
 → [Aggregation](Aggregation), [Units](Units)
 
-### 3. Die Gewichtung ist WeeWX'
+### 3. The weighting is WeeWX's
 
-Jeder Satz trägt `60 * interval` Sekunden Gewicht in den Tagesstatistiken. Das
-ist Version 2.0 und aufwärts; Version 1.0 gewichtete gleich, und das ist der
-Fehler, für dessen Reparatur `patch_sums` existiert.
+Every record contributes `60 * interval` seconds of weight to the daily
+summaries. That is version 2.0 and up; version 1.0 weighted equally, and that is
+the bug `patch_sums` exists to repair.
 
 → [Daily-Summaries](Daily-Summaries)
 
-### 4. Die Randfälle sind WeeWX'
+### 4. The edge cases are WeeWX's
 
-- Ein Satz genau um Mitternacht schließt den **vorherigen** Tag.
-- Ein Satz genau auf einer Intervallgrenze schließt das Intervall, das dort
-  endet.
-- Windchill unter 10 °C und über 4,8 km/h, sonst die Temperatur selbst.
-- Hitzeindex unter 40 °F ist die Temperatur.
-- Eine Geschwindigkeit ohne Richtung ist kein Vektor und wird verworfen.
+- A record exactly at midnight closes the **previous** day.
+- A record exactly on an interval boundary closes the interval that ends there.
+- Wind chill below 10 °C and above 4.8 km/h, otherwise the temperature itself.
+- Heat index below 40 °F is the temperature.
+- A speed without a direction is not a vector and is discarded.
 
-### 5. Sogar die Fehler sind geerbt
+### 5. Even the bugs are inherited
 
-WeeWX' Umrechnungstabelle ist **nicht selbstinvers**: `mph → kph` nimmt
-1.609344, `kph → mph` nimmt 1000/1609.34. 52 Paare kommen nicht exakt zurück.
+WeeWX's conversion table is **not self-inverse**: `mph → kph` uses 1.609344,
+`kph → mph` uses 1000/1609.34. 52 pairs do not come back exactly.
 
-`tools/unitcheck.py` prüft, dass **unsere Drift ihre Drift ist**, nicht dass es
-keine gibt.
+`tools/unitcheck.py` checks that **our drift is their drift**, not that there is
+none.
 
-## Was geprüft wird
+## What is checked
 
-| Werkzeug | Was |
+| Tool | What |
 |---|---|
-| `tools/difftest.py` | Die Tagesstatistiken einer echten Datenbank nachrechnen |
-| `tools/roundtrip.py` | Einen Teil neu schreiben und prüfen, dass sich nichts bewegt |
-| `tools/unitcheck.py` | Alle 147 Umrechnungen gegen WeeWX |
-| `tools/seriestest.py` | Dieselbe Zeitreihe von beiden holen und vergleichen |
-| `tools/derive_test.py` | Die abgeleiteten Werte gegen das, was WeeWX geschrieben hat |
-| `tools/suncheck.py` | Sonnenzeiten gegen pyephem und gegen `weeutil.Sun` |
+| `tools/difftest.py` | Recompute the daily summaries of a real database |
+| `tools/roundtrip.py` | Rewrite part of one and check that nothing moves |
+| `tools/unitcheck.py` | All 147 conversions against WeeWX |
+| `tools/seriestest.py` | Fetch the same series from both and compare |
+| `tools/derive_test.py` | The derived readings against what WeeWX wrote |
+| `tools/suncheck.py` | Solar times against pyephem and against `weeutil.Sun` |
 
 → [Testing](Testing)
 
-## Was verweigert wird
+## What is refused
 
-`ArchiveStore._check_version()` **öffnet eine Datenbank nicht**, deren
-Tagesstatistiken bekannt fehlerhafte Gewichte tragen:
+`ArchiveStore._check_version()` **will not open a database** whose daily
+summaries carry known-bad weights:
 
-- WeeWX 4.2.0 las Version-2-Summen als Version 1.
-- Die Reparatur in 4.3.0 ließ `dirsumtime` ungewichtet.
+- WeeWX 4.2.0 read version-2 sums as version 1.
+- The repair in 4.3.0 left `dirsumtime` unweighted.
 
-Beides ist behebbar, aber **von WeeWX**: `weectl database rebuild-daily`. Eine
-solche Datei stillschweigend weiterzuschreiben hieße, falsche Gewichte mit
-richtigen zu mischen.
+Both are fixable, but **by WeeWX**: `weectl database rebuild-daily`. Carrying on
+writing to such a file silently would mean mixing wrong weights with right ones.
 
-## `weewx.conf` lesen
+## Reading `weewx.conf`
 
-`weewxconf.py`. Ein eigener Parser, weil `configobj` eine Abhängigkeit wäre und
-weewx-evo keine hat.
+`weewxconf.py`. A parser of our own, because `configobj` would be a dependency
+and weewx-evo has none.
 
-| Funktion | Bedeutung |
+| Function | What it means |
 |---|---|
-| `parse(text)` | Als verschachtelte Dictionaries. Werte bleiben Strings |
+| `parse(text)` | As nested dictionaries. Values stay strings |
 | `read(path)` | |
-| `convert(conf, driver_names)` | In weewx-evo-Einstellungen, mit einem Bericht |
-| `report(result, source)` | Was der Import tat, zum Lesen **bevor** man ihm traut |
+| `convert(conf, driver_names)` | Into weewx-evo settings, with a report |
+| `report(result, source)` | What the import did, to be read **before** trusting it |
 
-**Typen sind Sache des Aufrufers**: `altitude = 440, meter` ist eine Länge und
-eine Einheit, und nur etwas, das weiß, was `altitude` bedeutet, kann daraus
-Meter machen.
+**Types are the caller's business**: `altitude = 440, meter` is a length and a
+unit, and only something that knows what `altitude` means can turn that into
+metres.
 
-`_splits()` entscheidet, ob ein Wert eine Liste ist. Der Fall, der es schwer
-macht:
+`_splits()` decides whether a value is a list. The case that makes it hard:
 
 ```ini
 chart_line_colors = "#4282b4", "#b44242"
 ```
 
-Das beginnt und endet mit einem Anführungszeichen und sind trotzdem fünf Werte.
-**Nur ein Komma außerhalb der Anführungszeichen entscheidet.**
+That begins and ends with a quotation mark and is five values regardless. **Only
+a comma outside the quotation marks decides.**
 
-### Was übernommen wird
+### What is taken over
 
 ```bash
 weewx-evo config import /etc/weewx/weewx.conf
@@ -127,92 +123,91 @@ weewx-evo config import /etc/weewx/weewx.conf --write --overwrite
 
 | | |
 |---|---|
-| `[Station]` | Name, Breite, Länge, Höhe (`_altitude_metres` rechnet Fuß um) |
-| `[DataBindings]` / `[Databases]` | `_databases()` findet die SQLite-Datei hinter dem Archiv-Binding |
-| `[StdArchive]` | Archivintervall, `loop_hilo` |
-| Der Treiber | `_driver()` findet heraus, welcher in Benutzung ist, und bringt seine Einstellungen mit |
-| `[Accumulator]` | `_accumulators()` — siehe unten |
+| `[Station]` | Name, latitude, longitude, altitude (`_altitude_metres` converts feet) |
+| `[DataBindings]` / `[Databases]` | `_databases()` finds the SQLite file behind the archive binding |
+| `[StdArchive]` | Archive interval, `loop_hilo` |
+| The driver | `_driver()` works out which one is in use and brings its settings along |
+| `[Accumulator]` | `_accumulators()` — see below |
 
-### `[Accumulator]` ist besonders
+### `[Accumulator]` is special
 
-**Das ist der eine Teil von `weewx.conf`, der aufgezeichnete Zahlen ändert statt
-Verhalten.** Ein Extraktor entscheidet, ob ein Feld über ein Intervall gemittelt
-oder summiert wird. Ihn zu übersehen heißt, dass dieselbe Station in zwei
-Systemen zwei verschiedene Zahlen aufzeichnet.
+**It is the one part of `weewx.conf` that changes recorded numbers rather than
+behaviour.** An extractor decides whether a field is averaged or summed over an
+interval. Overlooking it means the same station records two different numbers in
+two systems.
 
 → [Aggregation](Aggregation#obstypes)
 
-### Was nicht übernommen wird — und warum
+### What is not taken over — and why
 
-`_NOT_OURS` benennt es einzeln:
+`_NOT_OURS` names each of them:
 
-| Abschnitt | Grund |
+| Section | Reason |
 |---|---|
-| `[StdReport]` | Berichtserzeugung, die weewx-evo (noch) nicht macht |
-| `[StdRESTful]` | Uploads zu Wetterdiensten — siehe [Uploads](Uploads) |
+| `[StdReport]` | Report generation, which weewx-evo does not (yet) do |
+| `[StdRESTful]` | Uploads to weather services — see [Uploads](Uploads) |
 | … | |
 
-**Schweigen liest sich wie „verloren".** Der Bericht nennt, was liegen blieb,
-und benennt, warum.
+**Silence reads like "lost".** The report names what was left behind, and says
+why.
 
-## Die Diagramme
+## The plots
 
 ```bash
 weewx-evo plots import /etc/weewx/skins/Seasons/skin.conf --write
 ```
 
-Zwei Fallen, beide echt gewesen:
+Two pitfalls, both of them real:
 
-- **WeeWX' Suffixe sind nicht unsere.** Dort ist `M` eine Minute und `m` ein
-  *Monat*. Eine Datei, die für WeeWX geschrieben wurde, wird nach WeeWX' Regeln
-  gelesen — und nichts wird je mit einem mehrdeutigen Suffix zurückgeschrieben.
-- **`skip_if_empty = year` ist eine Zeitspanne, kein Boolean.** Als Boolean
-  gelesen schreibt der Seasons-Satz 100 Dateien statt 71.
+- **WeeWX's suffixes are not ours.** There, `M` is a minute and `m` is a
+  *month*. A file written for WeeWX is read by WeeWX's rules — and nothing is
+  ever written back with an ambiguous suffix.
+- **`skip_if_empty = year` is a timespan, not a boolean.** Read as a boolean,
+  the Seasons set writes 100 files instead of 71.
 
-→ [Plots](Plots#zwei-fallen-im-importer)
+→ [Plots](Plots#two-pitfalls-in-the-importer)
 
-## Was WeeWX kann und weewx-evo nicht
+## What WeeWX can do and weewx-evo cannot
 
-- **Berichte und Skins.** Die Generatorseite ist nicht im Umfang. Der JSON-Feed
-  ist die Grundlage, auf der eine Skin gebaut werden könnte.
-- **RESTful-Uploads** zu Wetterdiensten.
-- **Pull-Treiber** für serielle Hardware — die Schnittstelle steht
-  (`listener.push()`), die Treiber gibt es nicht.
+- **Reports and skins.** The generator side is out of scope. The JSON feed is
+  the foundation a skin could be built on.
+- **RESTful uploads** to weather services.
+- **Pull drivers** for serial hardware — the interface is there
+  (`listener.push()`), the drivers are not.
 
-## Was weewx-evo kann und WeeWX nicht
+## What weewx-evo can do and WeeWX cannot
 
 | | |
 |---|---|
-| Neustart mitten im Intervall kostet nichts | Es gibt keinen In-Memory-Akkumulator, der ihn nicht überlebt |
-| Ein verspätetes Push-Paket landet im richtigen Intervall | Es wird nach seinem Zeitstempel eingeordnet, nicht nach seiner Ankunft |
-| Rückwirkende Korrektur | Solange die Rohpakete in der Retention liegen |
-| Mehrere Quellen ohne Wrapper-Treiber | Zusammengeführt beim Bau des Intervalls, je Feld → [Multiple-Sources](Multiple-Sources) |
-| Listener und Archiver getrennt betreibbar | Ohne Codeänderung |
-| Was keine Spalte hat, wird **gemeldet** | `weewx-evo columns` |
-| Plot-Definitionen gehören nicht dem Renderer | → [Plots](Plots) |
-| Feed und Export sind getrennt | → [Feeds](Feeds), [Exports](Exports) |
+| A restart mid-interval costs nothing | There is no in-memory accumulator to lose |
+| A late push packet lands in the right interval | It is placed by its timestamp, not by its arrival |
+| Correction after the fact | As long as the raw packets are within retention |
+| Several sources with no wrapper driver | Merged while the interval is built, field by field → [Multiple-Sources](Multiple-Sources) |
+| Listener and archiver can run separately | With no code change |
+| Anything without a column is **reported** | `weewx-evo columns` |
+| Plot definitions do not belong to the renderer | → [Plots](Plots) |
+| Feed and export are separate | → [Feeds](Feeds), [Exports](Exports) |
 
-## Eine bewusste Abweichung
+## One deliberate departure
 
-**Ein Mittelwert ist hier immer mit `interval` gewichtet.** WeeWX gewichtet in
-den Tagesstatistiken so, benutzt aber ein schlichtes `AVG()` auf der
-Archivtabelle — in einer Datenbank, deren Archivintervall sich geändert hat,
-widerspricht WeeWX also sich selbst.
+**A mean here is always weighted by `interval`.** WeeWX weights that way in the
+daily summaries, but uses a plain `AVG()` on the archive table — so in a database
+whose archive interval has changed, WeeWX contradicts itself.
 
-Gemessen: `tools/seriestest.py`, 94 Vergleiche, 19 957 Punkte, 0 Fehler,
-8 bekannte Abweichungen (genau diese).
+Measured: `tools/seriestest.py`, 94 comparisons, 19,957 points, 0 failures,
+8 known departures (exactly these).
 
-→ [Series](Series#eine-bewusste-abweichung)
+→ [Series](Series#one-deliberate-departure)
 
-## Nebeneinander betreiben
+## Running side by side
 
-Beide Systeme können dieselbe Station füttern und ihre Archive Satz für Satz
-vergleichbar halten. Praktisch heißt das: eine Quelle, die den Rohbody an zwei
-Ziele weiterreicht, jedes mit **eigener Pause**, damit ein Ausfall des einen das
-andere nicht mitnimmt.
+Both systems can feed the same station and keep their archives comparable record
+by record. In practice that means a source passing the raw body on to two
+destinations, each with a **pause of its own**, so that an outage of one does
+not take the other with it.
 
-Dieselbe Datenbank gleichzeitig von beiden **beschreiben** zu lassen, ist etwas
-anderes und nicht vorgesehen.
+Letting both **write** to the same database at the same time is a different
+thing and is not provided for.
 
 <!-- covers
 src/weewx_evo/weewxconf.py

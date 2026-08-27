@@ -1,61 +1,61 @@
-# CLI-Referenz
+# CLI reference
 
-Ein Programm, `weewx-evo`, definiert in `cli.py`. Drei Dienste und ein paar
-Operationen auf den Datenbanken. Jeder Dienst läuft allein oder alle in einem
-Prozess, weil sie über die Datenbank reden und nie miteinander.
+One program, `weewx-evo`, defined in `cli.py`. Three services and a few
+operations on the databases. Every service runs on its own, or all of them in
+one process, because they talk through the database and never to each other.
 
 ```
-weewx-evo [--log-level LEVEL] <kommando> …
+weewx-evo [--log-level LEVEL] <command> …
 ```
 
-`--log-level` gilt global, Default `INFO`, auch über `WEEWX_EVO_LOG_LEVEL`.
+`--log-level` is global, default `INFO`, also via `WEEWX_EVO_LOG_LEVEL`.
 
-## Gemeinsame Argumente
+## Common arguments
 
-`add_common()` hängt diese an fast jedes Kommando:
+`add_common()` attaches these to almost every command:
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `--config PATH` | Die TOML-Konfiguration. Auch `WEEWX_EVO_CONFIG` |
-| `--live PATH` | Die Live-Paketdatenbank |
-| `--archive PATH` | Die WeeWX-Archivdatenbank |
-| `--interval SPEC` | Archivintervall, z. B. `5m` |
-| `--table NAME` | Die Archivtabelle |
-| `--sources PATH` | TOML mit `[sources]`. Auch `WEEWX_EVO_SOURCES` |
-| `--weewx-conf PATH` | Eine `weewx.conf` zum Zurückfallen. Auch `WEEWX_EVO_WEEWX_CONF` |
-| `--driver-dir PATH` | Wo fremde Treiber liegen |
+| `--config PATH` | The TOML configuration. Also `WEEWX_EVO_CONFIG` |
+| `--live PATH` | The live packet database |
+| `--archive PATH` | The WeeWX archive database |
+| `--interval SPEC` | Archive interval, e.g. `5m` |
+| `--table NAME` | The archive table |
+| `--sources PATH` | TOML with `[sources]`. Also `WEEWX_EVO_SOURCES` |
+| `--weewx-conf PATH` | A `weewx.conf` to fall back to. Also `WEEWX_EVO_WEEWX_CONF` |
+| `--driver-dir PATH` | Where third-party drivers live |
 
-**Keines davon hat einen argparse-Default.** Das ist keine Nachlässigkeit:
-argparse kann „nicht angegeben" nicht von „auf den Default gesetzt"
-unterscheiden, und ein Default hier schlüge die Konfigurationsdatei. Die
-Defaults leben im Schema. → [Configuration](Configuration)
+**None of them has an argparse default.** That is not carelessness: argparse
+cannot tell "not given" from "set to the default", and a default here would beat
+the configuration file. The defaults live in the schema.
+→ [Configuration](Configuration)
 
-## Dienste
+## Services
 
 ### `serve`
 
-Listener und Archiver in einem Prozess. Für eine kleine Maschine. Sie reden
-trotzdem nur über die Datenbank; sie später zu trennen ist eine Änderung an den
-Unit-Dateien, nicht am Code.
+Listener and archiver in one process. For a small machine. They still talk only
+through the database; splitting them later is a change to the unit files, not to
+the code.
 
 ```bash
 weewx-evo serve --config evo.toml
 weewx-evo serve --config evo.toml --explain
 ```
 
-Zusätzlich zu `add_common`, `add_listen_args` und `add_archive_args`:
+In addition to `add_common`, `add_listen_args` and `add_archive_args`:
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `--explain` | Jede Einstellung und ihre Herkunft drucken, dann aufhören |
+| `--explain` | Print every setting and where it came from, then stop |
 
-`serve` startet außerdem, was konfiguriert ist: die Admin-Seite (wenn
-`admin.token` gesetzt ist), den Web-Server (wenn `web.enabled`), den Feed-Runner
-und den Export-Runner.
+`serve` also starts whatever is configured: the admin page (when `admin.token`
+is set), the web server (when `web.enabled`), the feed runner and the export
+runner.
 
 ### `listen`
 
-Nur der Listener. Öffnet das Archiv nie — das ist der Punkt.
+The listener only. Never opens the archive — that is the point.
 
 ```bash
 weewx-evo listen --config evo.toml
@@ -63,20 +63,20 @@ weewx-evo listen --config evo.toml
 
 `add_listen_args()`:
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `--host` | Bindeadresse |
-| `--port` | HTTP-Port |
-| `--udp-port` | `0` schaltet den UDP-Listener ab |
-| `--token` | Das Pfadsegment. Ohne es kann jeder schreiben |
-| `--driver` | Treiber für Uploads, deren Pfad keinen nennt |
-| `--rate` | Anfragen je Sekunde und Adresse. Eine Konsole sendet im schnellsten Fall 0.5. `0` schaltet ab |
-| `--behind-proxy` | Ratelimit dem Proxy überlassen |
-| `--allow` | Wer eine Antwort bekommt: `private` (Default), `any`, oder eine Liste |
+| `--host` | Bind address |
+| `--port` | HTTP port |
+| `--udp-port` | `0` turns the UDP listener off |
+| `--token` | The path segment. Without it anybody can write |
+| `--driver` | Driver for uploads whose path names none |
+| `--rate` | Requests per second per address. A console sends 0.5 at the fastest. `0` turns it off |
+| `--behind-proxy` | Leave the rate limit to the proxy |
+| `--allow` | Who gets an answer: `private` (default), `any`, or a list |
 
 ### `archive`
 
-Nur der Archiver. Hält keine Treiber, hört auf nichts.
+The archiver only. Holds no drivers, listens to nothing.
 
 ```bash
 weewx-evo archive --config evo.toml --spool /data/packets
@@ -84,105 +84,105 @@ weewx-evo archive --config evo.toml --spool /data/packets
 
 `add_archive_args()`:
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `--grace` | Wie lange nach Intervallende gewartet wird |
-| `--poll` | Wie oft nachgesehen wird, in Sekunden |
-| `--retention-days` | Wie lange Pakete bleiben, in Tagen |
-| `--spool PATH` | Pakete vor dem Verwerfen als gzip-NDJSON schreiben |
-| `--raw-minutes` | Wie lange die Rohuploads bleiben. `0` behält keine |
+| `--grace` | How long to wait after the end of an interval |
+| `--poll` | How often to look, in seconds |
+| `--retention-days` | How long packets stay, in days |
+| `--spool PATH` | Write packets out as gzip NDJSON before discarding them |
+| `--raw-minutes` | How long the raw uploads stay. `0` keeps none |
 
 ### `web`
 
-Nur die Feeds ausliefern. Getrennt von `serve` aus demselben Grund wie `listen`:
-eine Maschine, die nur Seiten zeigt, muss nicht die sein, die sie aufzeichnet.
+Serving the feeds only. Separate from `serve` for the same reason as `listen`: a
+machine that only shows pages need not be the one that records them.
 
 ```bash
 weewx-evo web --config evo.toml --port 8081
 ```
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
 | `--host`, `--port` | |
-| `--allow` | Wer eine Antwort bekommt (Default `private`) |
+| `--allow` | Who gets an answer (default `private`) |
 
 → [Web-Server](Web-Server)
 
 ### `admin`
 
-Die Einstellungsseite. Eigener Port und eigenes Token, absichtlich: ein
-Upload-Endpunkt kann schlimmstenfalls einen falschen Messwert schreiben, dieser
-hier kann das Archiv woandershin zeigen lassen.
+The settings page. Its own port and its own token, deliberately: an upload
+endpoint can at worst write a wrong reading, this one can point the archive
+somewhere else.
 
 ```bash
 weewx-evo admin --config evo.toml
 ```
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `--config PATH` | Die Datei, die diese Seite editiert |
+| `--config PATH` | The file this page edits |
 | `--host`, `--port` | Default `0.0.0.0:8080` |
-| `--allow` | `private` (Default), `any`, oder eine Liste |
-| `--token` | Das eigene Token, nie das Upload-Token |
-| `--rate` | Anfragen je Sekunde und Adresse (Default 5) |
-| `--behind-proxy` | Ratelimit dem Proxy überlassen |
-| `--read-only` | Einstellungen zeigen, Speichern verweigern |
+| `--allow` | `private` (default), `any`, or a list |
+| `--token` | Its own token, never the upload token |
+| `--rate` | Requests per second per address (default 5) |
+| `--behind-proxy` | Leave the rate limit to the proxy |
+| `--read-only` | Show the settings, refuse to save |
 
 → [Admin-Page](Admin-Page)
 
-## Auf den Datenbanken
+## On the databases
 
 ### `catchup`
 
-Jedes Intervall bauen, das die Live-Tabelle abdeckt. Nach einer Ausfallzeit oder
-beim ersten Start gegen eine gefüllte Live-Datei.
+Build every interval the live table covers. After an outage, or on the first
+start against a filled live file.
 
 ```bash
 weewx-evo catchup --config evo.toml
 weewx-evo catchup --config evo.toml --replace
 ```
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `--replace` | Bereits vorhandene Sätze überschreiben |
+| `--replace` | Overwrite records that are already there |
 
 ### `rebuild`
 
-Eine Zeitspanne noch einmal rechnen und ersetzen. Danach werden die
-Tagesstatistiken jedes betroffenen Tages aus der Archivtabelle neu aufgebaut und
-anschließend wieder aus den Paketen geschärft.
+Recompute a timespan and replace it. Afterwards the daily summaries of every
+affected day are rebuilt from the archive table and then sharpened from the
+packets again.
 
 ```bash
 weewx-evo rebuild 1755000000 1755086400
 ```
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `start` | Unix-Zeitstempel, exklusiv |
-| `stop` | Unix-Zeitstempel, inklusiv |
+| `start` | Unix timestamp, exclusive |
+| `stop` | Unix timestamp, inclusive |
 
 → [Archiver](Archiver)
 
 ### `columns`
 
-Messwerte, für die das Archiv keine Spalte hat.
+Readings the archive has no column for.
 
 ```bash
 weewx-evo columns --config evo.toml
 weewx-evo columns --config evo.toml --add
 ```
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
-| `--add` | Die fehlenden Spalten anlegen. **Vorher die Datenbank sichern** |
+| `--add` | Create the missing columns. **Back the database up first** |
 
-Das Standardschema hat 113 Spalten, Ecowitt-Hardware kann das Vierfache füllen.
-Wohin ein Messwert gehört, ist eine Entscheidung — `python -m
-weewx_evo.ingest.plugins.ecowitt` sagt genauer, wohin.
+The default schema has 113 columns; Ecowitt hardware can fill four times that.
+Where a reading belongs is a decision — `python -m
+weewx_evo.ingest.plugins.ecowitt` says more precisely where.
 
 ### `status`
 
-Was in den beiden Datenbanken steht.
+What is in the two databases.
 
 ```bash
 weewx-evo status --config evo.toml
@@ -190,44 +190,44 @@ weewx-evo status --config evo.toml
 
 ### `url`
 
-Die Adressen der Live-Ansicht und des Upload-Endpunkts, mit Token.
+The addresses of the live view and the upload endpoint, with the token.
 
 ```bash
 weewx-evo url --config evo.toml
 weewx-evo url --config evo.toml --qr
 ```
 
-| Argument | Bedeutung |
+| Argument | What it means |
 |---|---|
 | `--config PATH` | |
-| `--token`, `--port` | Überschreiben, was in der Konfiguration steht |
-| `--driver NAME` | Welchen Treiber die Upload-Adresse nennen soll |
-| `--public URL` | Die Außenadresse, z. B. hinter einem Reverse Proxy. Auch `WEEWX_EVO_PUBLIC_URL` |
-| `--qr` | Zusätzlich einen QR-Code im Terminal |
+| `--token`, `--port` | Override what is in the configuration |
+| `--driver NAME` | Which driver the upload address should name |
+| `--public URL` | The outside address, e.g. behind a reverse proxy. Also `WEEWX_EVO_PUBLIC_URL` |
+| `--qr` | A QR code in the terminal as well |
 
-Das Token ist ein Pfadsegment, also ist eine Adresse ohne es nutzlos und eine
-mit ihm der ganze Schlüssel. Genau deshalb gibt es dieses Kommando: die beiden
-sind immer zusammen.
+The token is a path segment, so an address without it is useless and one with it
+is the whole key. That is exactly why this command exists: the two always go
+together.
 
-Der QR-Code ist handgerollt statt als Abhängigkeit — das ist eine Bequemlichkeit
-in einem Kommando, und eine Wetterstation, die jahrelang läuft, sollte dafür
-kein Paket dazubekommen.
+The QR code is hand-rolled rather than a dependency — it is a convenience in one
+command, and a weather station that runs for years should not gain a package for
+it.
 
 ## `config`
 
 ```bash
 weewx-evo config show   [--config PATH] [--defaults]
-weewx-evo config set    [--config PATH] <name> <wert>
+weewx-evo config set    [--config PATH] <name> <value>
 weewx-evo config check  [--config PATH]
 weewx-evo config import <weewx.conf> [--config PATH] [--write] [--overwrite]
 ```
 
 | | |
 |---|---|
-| `show` | Die Konfiguration, wie sie ist, kommentiert. `--defaults` füllt jeden Default auf, um zu sehen, was es gibt |
-| `set` | Einen Wert setzen, geprüft gegen das Schema, das ihn besitzt |
-| `check` | Jeden Wert gegen sein Schema prüfen und sagen, was falsch ist |
-| `import` | Eine `weewx.conf` lesen und übernehmen. Ohne `--write` wird nur berichtet. `--overwrite` ersetzt auch, was hier schon gesetzt ist |
+| `show` | The configuration as it is, with comments. `--defaults` fills in every default, to see what there is |
+| `set` | Set a value, checked against the schema that owns it |
+| `check` | Check every value against its schema and say what is wrong |
+| `import` | Read a `weewx.conf` and take it over. Without `--write` it only reports. `--overwrite` replaces what is already set here too |
 
 → [Configuration](Configuration), [WeeWX-Compatibility](WeeWX-Compatibility)
 
@@ -235,21 +235,20 @@ weewx-evo config import <weewx.conf> [--config PATH] [--write] [--overwrite]
 
 ```bash
 weewx-evo driver list
-weewx-evo driver install <quelle> [--name NAME] [--force]
+weewx-evo driver install <source> [--name NAME] [--force]
 weewx-evo driver remove <name>
 ```
 
-Die Quelle ist eine Git-URL, eine Zip-URL, eine `.zip`-Datei oder ein
-Verzeichnis. Bei der Installation wird **nichts ausgeführt und nichts
-importiert** — ein Treiber ist Code, der später als der Dienst läuft, und die
-Entscheidung, ihn zu installieren, kommt vor dem ersten Ausführen.
+The source is a git URL, a zip URL, a `.zip` file or a directory. Installing
+**runs nothing and imports nothing** — a driver is code that will later run as
+the service, and the decision to install it comes before the first run.
 
-`install` liest den Code und meldet, wonach er greift: `sqlite3`, `subprocess`,
-`socket`. Ein Hinweis, keine Garantie.
+`install` reads the code and reports what it reaches for: `sqlite3`,
+`subprocess`, `socket`. A hint, not a guarantee.
 
-Diese Unterkommandos nehmen `--driver-dir` und `--archive` (letzteres nur, um
-das Default-Treiberverzeichnis zu finden), aber kein `--config`. Ein blankes
-`weewx-evo driver list` funktioniert dadurch weiter.
+These subcommands take `--driver-dir` and `--archive` (the latter only to find
+the default driver directory), but no `--config`. A bare `weewx-evo driver list`
+therefore carries on working.
 
 → [Drivers](Drivers)
 
@@ -265,14 +264,14 @@ weewx-evo plots run    [--into DIR] [--no-page] [--plots PATH]
 
 | | |
 |---|---|
-| `list` | Welche Diagramme es gibt |
-| `show` | Eines vollständig |
-| `import` | Die Diagramme aus einer WeeWX-Skin holen. Gelesen, berichtet, und erst auf `--write` behalten. `--replace` fängt bei null an, statt zu ergänzen |
-| `remove` | Eines löschen |
-| `run` | Das JSON jetzt erzeugen und sagen, was herauskam. `--no-page` lässt die Diagnoseseite weg |
+| `list` | Which plots there are |
+| `show` | One of them in full |
+| `import` | Fetch the plots out of a WeeWX skin. Read, reported, and only kept on `--write`. `--replace` starts from nothing rather than adding |
+| `remove` | Delete one |
+| `run` | Produce the JSON now and say what came out. `--no-page` leaves the diagnostic page out |
 
-Ein Import, der stillschweigend einen mühsam eingestellten Satz Diagramme
-ersetzt, wäre schlimmer als gar kein Import.
+An import silently replacing a painstakingly tuned set of plots would be worse
+than no import at all.
 
 → [Plots](Plots)
 
@@ -286,18 +285,17 @@ weewx-evo export run   [name] [--source DIR] [--all]
 
 | | |
 |---|---|
-| `list` | Was verfügbar und was konfiguriert ist |
-| `check` | Das Ziel probieren, ohne etwas zu senden. Ein falsches Passwort oder ein falscher Pfad sofort zurück ist viel wert |
-| `run` | Senden. `--all` sendet alles, nicht nur Geändertes. `--source` überschreibt das Quellverzeichnis |
+| `list` | What is available and what is configured |
+| `check` | Try the destination without sending anything. Getting a wrong password or a wrong path back straight away is worth a lot |
+| `run` | Send. `--all` sends everything, not only what changed. `--source` overrides the source directory |
 
 → [Exports](Exports)
 
-## Exit-Codes
+## Exit codes
 
-`0` bei Erfolg. Ein Fehler wird als Zeile auf stdout berichtet und gibt einen
-Wert ungleich null zurück — Kommandos, die etwas prüfen (`config check`,
-`export check`), geben ungleich null zurück, wenn etwas nicht stimmt, damit sie
-in einem Skript brauchbar sind.
+`0` on success. An error is reported as a line on stdout and returns a non-zero
+value — commands that check something (`config check`, `export check`) return
+non-zero when something is wrong, so that they are usable in a script.
 
 <!-- covers
 src/weewx_evo/cli.py

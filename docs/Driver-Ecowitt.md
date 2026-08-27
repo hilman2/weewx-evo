@@ -1,279 +1,271 @@
-# Treiber: Ecowitt
+# Driver: Ecowitt
 
-`ingest/plugins/ecowitt/`. **Kern von weewx-evo**, kein übernommenes Fremdrepo.
+`ingest/plugins/ecowitt/`. **Core weewx-evo**, not an adopted foreign repo.
 
-Die Herkunft ist [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) —
-Katalog, Protokoll und die 59 Tests kamen von dort. Das ist Geschichte, keine
-laufende Bindung: der Treiber wird hier weiterentwickelt und folgt den Regeln
-dieses Repos.
+Its origin is [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) — the
+catalogue, the protocol and the 59 tests came from there. That is history, not a
+running tie: the driver is developed further here and follows this repo's rules.
 
-> **Kein Rückfluss.** weewx-ecowitt ist ein WeeWX-Plugin. Es kennt weder
-> `options()` noch `view()`, weder die Live-Tabelle noch die Herkunft eines
-> Feldes — es kennt `weewx.drivers` und eine `weewx.conf`. Ein Fix hier gegen
-> dort zu spiegeln hieße, zwei verschiedene Programme mit demselben Diff zu
-> bedienen. Wer beides pflegt, portiert von Hand und mit Verstand.
+> **No back-flow.** weewx-ecowitt is a WeeWX plugin. It knows neither
+> `options()` nor `view()`, neither the live table nor the provenance of a field
+> — it knows `weewx.drivers` and a `weewx.conf`. Mirroring a fix from here to
+> there would mean serving two different programs with the same diff. Anyone
+> maintaining both ports by hand and with judgement.
 
-## Die Dateien
+## The files
 
-| Datei | Zeilen | Was |
+| File | Lines | What |
 |---|---|---|
-| `catalog.py` | 1074 | Was die Hardware sendet und wohin es in WeeWX gehört. **Generiert, nicht von Hand editieren** |
-| `protocol.py` | 165 | Aus dem Gesendeten benannte Messwerte machen. Rein: Text rein, Dict raus |
-| `mapping.py` | 207 | Katalog, eigene Abbildung und Inferenz treffen sich hier |
-| `infer.py` | 200 | Was mit einem Feld geschieht, das niemand abgebildet hat |
-| `consoles.py` | 215 | Welchen Konsolen dieser Treiber antwortet |
-| `columns.py` | 110 | Welche Datenbankspalten eine Station wirklich braucht |
-| `report.py` | 69 | Einen Bericht dort hinterlassen, wo ihn jemand findet |
-| `driver.py` | 384 | Das weewx-evo-Ende. Bewusst dünn |
-| `__main__.py` | 174 | Einmal lauschen und sagen, was die Hardware sendet |
+| `catalog.py` | 1074 | What the hardware sends and where it belongs in WeeWX. **Generated, do not edit by hand** |
+| `protocol.py` | 165 | Turning what was sent into named readings. Pure: text in, dict out |
+| `mapping.py` | 207 | Catalogue, custom mapping and inference meet here |
+| `infer.py` | 200 | What happens to a field nobody has mapped |
+| `consoles.py` | 215 | Which consoles this driver answers |
+| `columns.py` | 110 | Which database columns a station really needs |
+| `report.py` | 69 | Leaving a report where somebody will find it |
+| `driver.py` | 384 | The weewx-evo end. Deliberately thin |
+| `__main__.py` | 174 | Listen once and say what the hardware sends |
 
-## `protocol.py` — zwei Protokolle, eine Funktion
+## `protocol.py` — two protocols, one function
 
-Ecowitt-Gateways sprechen zwei Protokolle, und beide landen hier:
+Ecowitt gateways speak two protocols, and both land here:
 
-- **Ecowitt POST** — ein urlencodierter Formularkörper
-- **Wunderground GET** — dieselbe Form im Query-String
+- **Ecowitt POST** — a urlencoded form body
+- **Wunderground GET** — the same shape in the query string
 
-Ein urlencodierter Body und ein Query-String sind dasselbe, also reicht eine
-Funktion.
+A urlencoded body and a query string are the same thing, so one function does.
 
-| Funktion | Bedeutung |
+| Function | What it means |
 |---|---|
-| `parse(text)` | In rohe Name/Wert-Paare zerlegen, in Ankunftsreihenfolge |
-| `device_time(raw, now, max_behind, max_ahead)` | Der Zeitstempel des Geräts, oder `None` |
-| `numbers(raw)` | `(readings, text)` — was als Zahl lesbar war und was nicht |
-| `redact(text)` | Die Werte ersetzen, die eine Station identifizieren |
-| `station_id(text)` | Was die Konsole identifiziert, ohne den Rest zu parsen |
+| `parse(text)` | Break into raw name/value pairs, in arrival order |
+| `device_time(raw, now, max_behind, max_ahead)` | The device's timestamp, or `None` |
+| `numbers(raw)` | `(readings, text)` — what was readable as a number and what was not |
+| `redact(text)` | Replace the values that identify a station |
+| `station_id(text)` | What identifies the console, without parsing the rest |
 
-Alles hier ist **rein**: Text rein, Dictionary raus, keine Sockets, keine Uhr,
-keine Konfiguration. Das ist, was die Feldarbeit von einer gespeicherten
-Aufzeichnung aus testbar macht.
+Everything here is **pure**: text in, dictionary out, no sockets, no clock, no
+configuration. That is what makes the fieldwork testable from a stored
+recording.
 
-### Die Uhr der Konsole
+### The console's clock
 
 `MAX_BEHIND = 3600`, `MAX_AHEAD = 60`.
 
-Konsolen liegen häufig falsch, manchmal um Jahre, und ein Satz, der auf 2015
-gestempelt ist, ist schlimmer als gar kein Satz. Ein Zeitstempel, der bloß
-verspätet ist, ist dagegen genau der Fall, für den es die Live-Tabelle gibt.
-Darum die zwei Grenzen und nicht eine.
+Consoles are frequently wrong, sometimes by years, and a record stamped 2015 is
+worse than no record at all. A timestamp that is merely late, on the other hand,
+is exactly the case the live table exists for. Hence the two limits and not one.
 
-Es gibt keine Messwerte aus der Zukunft, `max_ahead` deckt also nur Drift
-zwischen zwei ungefähr richtigen Uhren ab.
+There are no readings from the future, so `max_ahead` only covers drift between
+two roughly correct clocks.
 
-### Redaktion
+### Redaction
 
 `SECRETS = ("PASSKEY", "ID", "PASSWORD", "key", "stationkey")`
 
-Eine Nutzlast landet früher oder später in einem Issue-Tracker, und der PASSKEY
-ist, woran Ecowitts Server eine Station erkennen. Alles andere darin sind
-Messwerte.
+A payload ends up in an issue tracker sooner or later, and the PASSKEY is how
+Ecowitt's servers recognise a station. Everything else in it is readings.
 
-## `catalog.py` — der Feldkatalog
+## `catalog.py` — the field catalogue
 
-Generiert von `tools/import_catalog.py` aus dem `ecowittcustom`-Treiber von
-Werner Krenn, der selbst vom `interceptor`-Treiber von Matthew Wall abstammt.
-Beide GPLv3, dieser also auch.
+Generated by `tools/import_catalog.py` from Werner Krenn's `ecowittcustom`
+driver, which itself descends from Matthew Wall's `interceptor` driver. Both
+GPLv3, so this one too.
 
-> **Nicht von Hand editieren.** Stattdessen das Werkzeug erneut laufen lassen,
-> damit das nächste Update stromaufwärts eine Änderung an einer Datei bleibt.
+> **Do not edit by hand.** Run the tool again instead, so that the next update
+> upstream stays a change to one file.
 
-| Konstante | Was |
+| Constant | What |
 |---|---|
-| `FIELDS` | Rohname → WeeWX-Feld |
-| `GROUPS` | WeeWX-Feld → Einheitengruppe |
-| `CHANNELS` | Welche Sensorfamilie wie viele Kanäle hat |
-| `PLACEMENT_UNKNOWN` | Felder, bei denen der Name mehr behauptet als die Hardware weiß |
-| `CONTESTED` | Felder, über die zwei Treiber uneinig sind |
-| `CONTESTED_WITH` | Mit wem — `ecowittcustom` |
+| `FIELDS` | Raw name → WeeWX field |
+| `GROUPS` | WeeWX field → unit group |
+| `CHANNELS` | Which sensor family has how many channels |
+| `PLACEMENT_UNKNOWN` | Fields where the name claims more than the hardware knows |
+| `CONTESTED` | Fields two drivers disagree about |
+| `CONTESTED_WITH` | With whom — `ecowittcustom` |
 
 ### `PLACEMENT_UNKNOWN`
 
-Ein WN34 meldet auf `tf_chN`, ob es eine Sonde in einem Beet oder eine Leitung
-in einem Pool ist, und der Katalog muss es irgendwie nennen. Wer es installiert
-hat, ist der Einzige, der es weiß — also sagt der Treiber es und rät nicht.
+A WN34 reports on `tf_chN` whether it is a probe in a flower bed or a line in a
+pool, and the catalogue has to call it something. Whoever installed it is the
+only one who knows — so the driver says so rather than guessing.
 
-## `infer.py` — unbekannte Felder
+## `infer.py` — unknown fields
 
-Ecowitt bringt neue Sensoren schneller heraus, als Treiber aktualisiert werden,
-und das übliche Ergebnis ist, dass die Messwerte ankommen und weggeworfen
-werden. Ein HP2561 sendet `tf_ch1`, `lightning_num` und sechs `soil_ec_*`-Felder,
-und ein Treiber, der sie nicht kennt, loggt „unrecognized parameter".
+Ecowitt brings new sensors out faster than drivers are updated, and the usual
+result is that the readings arrive and are thrown away. An HP2561 sends
+`tf_ch1`, `lightning_num` and six `soil_ec_*` fields, and a driver that does not
+know them logs "unrecognized parameter".
 
-Zwei Dinge lassen sich über ein unbekanntes Feld sagen:
+Two things can be said about an unknown field:
 
-1. **Es setzt eine bekannte Serie fort.** Der Katalog kennt `temp1` bis `temp8`;
-   `temp9` gehört sichtbar dazu. `_learn_series()` findet diese Familien im
-   Katalog selbst: ein Stamm und ein Suffix, deren Mitglieder alle auf Ziele mit
-   einem gemeinsamen Stamm und Suffix zeigen, mit gleichbleibendem Index-Offset.
-2. **Sein Name sagt etwas.** `RULES` ist die Liste: `rssi$` → `group_db`,
+1. **It continues a known series.** The catalogue knows `temp1` through `temp8`;
+   `temp9` visibly belongs with them. `_learn_series()` finds these families in
+   the catalogue itself: a stem and a suffix whose members all point at targets
+   with a common stem and suffix, at a constant index offset.
+2. **Its name says something.** `RULES` is the list: `rssi$` → `group_db`,
    `_sig$` → `group_count`, `batt` → `group_count`, `_time$` → `group_time`.
 
 ```python
 @dataclass
 class Guess:
-    raw: str      # der Name der Hardware
-    field: str    # das WeeWX-Feld
-    group: str    # die Einheitengruppe
+    raw: str      # the hardware's name
+    field: str    # the WeeWX field
+    group: str    # the unit group
     unit: str
     certain: bool
     why: str
 ```
 
-`report(guesses)` rendert sie als das, was ein Mensch braucht, um zu handeln.
+`report(guesses)` renders them as what a person needs in order to act.
 
-### Die drei Modi
+### The three modes
 
-| `infer_unknown` | Verhalten |
+| `infer_unknown` | Behaviour |
 |---|---|
-| `off` | Fallen lassen |
-| `series` | **Default.** Nehmen, wenn sie eine bekannte Serie fortsetzen; den Rest melden |
-| `all` | Alles nehmen, was benennbar ist |
+| `off` | Drop them |
+| `series` | **Default.** Take them if they continue a known series; report the rest |
+| `all` | Take everything that can be named |
 
-`series` ist die vernünftige Vorgabe: ein Kanal, den die Hardware dazubekommt,
-braucht kein Release, und was bloß am Namen erkennbar ist, wird gemeldet statt
-geraten. **Ein Messwert in der falschen Spalte lässt sich danach nicht wieder
-heraustrennen.**
+`series` is the sensible default: a channel the hardware gains needs no release,
+and what is only recognisable from the name is reported rather than guessed. **A
+reading in the wrong column cannot be separated out afterwards.**
 
-## `mapping.py` — wo alles zusammenkommt
+## `mapping.py` — where it all comes together
 
-`Mapper.to_packet(text, now)` gibt `(packet, guesses)` zurück. Das Paket ist
-fertig für WeeWX bis auf sein Einheitensystem, das der Aufrufer setzt — das ist
-eine Entscheidung über den ganzen Treiber, nicht über einen Upload.
+`Mapper.to_packet(text, now)` returns `(packet, guesses)`. The packet is ready
+for WeeWX apart from its unit system, which the caller sets — that is a decision
+about the whole driver, not about one upload.
 
-Das Modul hält sich frei von WeeWX-Importen, damit es mit nichts als einer
-aufgezeichneten Nutzlast testbar ist: die Einheitengruppen, die es registriert
-haben will, kommen als **Daten** zurück, und der Treiber registriert sie.
+The module keeps itself free of WeeWX imports so that it is testable with
+nothing but a recorded payload: the unit groups it wants registered come back as
+**data**, and the driver registers them.
 
-`_check_shared_channels()` warnt, wenn zwei Sensoren doch dasselbe Feld
-beschreiben. Ein WH51 und ein WH52 sind mit je sechzehn Kanälen dokumentiert,
-aber die Kompatibilitätstabelle der Konsole gibt ihnen einen gemeinsamen
-Satz — `SHARED_CHANNELS = [("soilmoisture", "soil_ec_hum")]`.
+`_check_shared_channels()` warns when two sensors do describe the same field
+after all. A WH51 and a WH52 are documented with sixteen channels each, but the
+console's compatibility table gives them one shared set —
+`SHARED_CHANNELS = [("soilmoisture", "soil_ec_hum")]`.
 
-`_say_undecided()` sagt **einmal**, dass ein Feld auf eine Entscheidung wartet,
-und was sie erledigt.
+`_say_undecided()` says **once** that a field is waiting on a decision, and what
+settles it.
 
-## `consoles.py` — welchen Konsolen geantwortet wird
+## `consoles.py` — which consoles get answered
 
-Ein Listener antwortet allem, was seinen Port erreicht. Wer die Adresse kennt,
-kann eine Konsole darauf zeigen lassen, und Ecowitt-Hardware kündigt sich mit
-einem PASSKEY an, der aus ihrer MAC-Adresse abgeleitet ist.
+A listener answers anything that reaches its port. Anyone who knows the address
+can point a console at it, and Ecowitt hardware announces itself with a PASSKEY
+derived from its MAC address.
 
-**Zwei Konsolen nummerieren ihre Kanäle beide ab eins.** Eine zweite, die in
-dieselben Felder schreibt, würde zwei Sensoren in eine Spalte mischen, und
-danach kann nichts sie mehr trennen.
+**Two consoles both number their channels from one.** A second one writing into
+the same fields would mix two sensors into one column, and after that nothing
+can separate them.
 
-`Store` liest und schreibt die Liste. **Die Datenbank wird zuerst gefragt und
-zuerst geschrieben**; die Datei (`ecowitt-consoles.txt`) ist der Fallback, für
-Tests und wenn der Treiber direkt läuft.
+`Store` reads and writes the list. **The database is asked first and written
+first**; the file (`ecowitt-consoles.txt`) is the fallback, for tests and for
+when the driver runs on its own.
 
-Der Schlüssel in der Metadaten-Tabelle ist `ecowitt_consoles` — **derselbe, den
-WeeWX benutzt**. Eine geteilte Datenbank behält dadurch dieselbe Station, egal
-welches der beiden Systeme sie gerade aufzeichnet.
+The key in the metadata table is `ecowitt_consoles` — **the same one WeeWX
+uses**. That is how a shared database keeps the same station, whichever of the
+two systems is recording at the time.
 
-`_StateMetadata` lässt einen weewx-evo-`State` wie einen WeeWX-Manager aussehen,
-damit `Store` unverändert bleiben kann. Der Zustand ist `get`/`set`/`delete` auf
-Strings und sonst nichts — es gibt von dort keinen Weg zum Archiv.
-→ [Drivers](Drivers#treiber-zustand)
+`_StateMetadata` makes a weewx-evo `State` look like a WeeWX manager, so that
+`Store` can stay unchanged. The state is `get`/`set`/`delete` on strings and
+nothing else — there is no route from there to the archive.
+→ [Drivers](Drivers#driver-state)
 
-`path_for()` legt die Fallback-Datei **neben die Datenbank**: das ist ein
-Verzeichnis, in das der Dienst als er selbst schreibt, und das, was Leute
-sichern. Bei einer Paketinstallation gehört das Konfigurationsverzeichnis root.
+`path_for()` puts the fallback file **next to the database**: that is a
+directory the service writes to as itself, and the one people back up. With a
+package installation the configuration directory belongs to root.
 
-## `columns.py` — was in die Datenbank passt
+## `columns.py` — what fits in the database
 
-Ein Messwert überlebt das Archivintervall nur, wenn die Tabelle eine Spalte für
-ihn hat. Das Standardschema hat 113, Ecowitt-Hardware kann das Vierfache füllen.
+A reading survives the archive interval only if the table has a column for it.
+The default schema has 113; Ecowitt hardware can fill four times that.
 
-Zwei Wege, damit umzugehen. Ein Schema mit jedem denkbaren Feld ausliefern — was
-die Alternativen tun, und was vierhundert Spalten für die zwölf Sensoren
-bedeutet, die jemand tatsächlich hat. Oder sagen, was fehlt, und den Menschen
-entscheiden lassen.
+Two ways to deal with it. Ship a schema with every conceivable field — which is
+what the alternatives do, and what means four hundred columns for the twelve
+sensors somebody actually has. Or say what is missing and let the person decide.
 
-| Funktion | Bedeutung |
+| Function | What it means |
 |---|---|
-| `schema_fields()` | Was das Standardschema schon hat |
-| `missing(packet, groups, known)` | Welche Spalten ein Paket braucht und die Datenbank nicht hat |
-| `commands(wanted, config)` | Als `weectl`-Kommandos — unverändert aus dem WeeWX-Bau, weil eine Datenbank oft geteilt wird |
-| `evo_commands(wanted, archive)` | Dasselbe für weewx-evo |
-| `occupied(archive)` | `{Feld: (Anzahl, letzter Zeitstempel)}` für Spalten, die Daten halten |
+| `schema_fields()` | What the default schema already has |
+| `missing(packet, groups, known)` | Which columns a packet needs and the database does not have |
+| `commands(wanted, config)` | As `weectl` commands — unchanged from the WeeWX build, because a database is often shared |
+| `evo_commands(wanted, archive)` | The same for weewx-evo |
+| `occupied(archive)` | `{field: (count, last timestamp)}` for columns holding data |
 
-**`occupied()` ist das, was zwischen einer Treiberänderung und einer ruinierten
-Messreihe steht.** Hält ein Feld, in das dieser Treiber schreiben will, schon
-Historie, dann kam die von woanders — und zwei Quellen in einer Spalte sind
-danach nicht mehr trennbar.
+**`occupied()` is what stands between a driver change and a ruined record.** If
+a field this driver wants to write to already holds history, that came from
+somewhere else — and two sources in one column cannot be separated afterwards.
 
-## `driver.py` — das weewx-evo-Ende
+## `driver.py` — the weewx-evo end
 
-Bewusst dünn, genauso wie `driver.py` im WeeWX-Bau dünn ist. Der Socket gehört
-dem Kern-Listener, das Protokoll `protocol.py`, die Feldnamen `catalog.py`, die
-Konsolenliste `consoles.py`.
+Deliberately thin, exactly as `driver.py` is thin in the WeeWX build. The socket
+belongs to the core listener, the protocol to `protocol.py`, the field names to
+`catalog.py`, the console list to `consoles.py`.
 
 ```python
 ECOWITT_RESPONSE = (b'{"errcode":"0","errmsg":"ok"}', "application/json")
 ALIASES = ("wunderground",)
 ```
 
-| Methode | Bedeutung |
+| Method | What it means |
 |---|---|
-| `packets(body, meta)` | Die Schnittstelle |
-| `options()` | Die Einstellungen → [Settings-Reference](Settings-Reference#treiber-ecowitt) |
-| `redact(raw)` | Der Upload mit ersetztem PASSKEY |
+| `packets(body, meta)` | The interface |
+| `options()` | The settings → [Settings-Reference](Settings-Reference#driver-ecowitt) |
+| `redact(raw)` | The upload with the PASSKEY replaced |
 | `status()` | |
-| `unit_groups()` | Welche Gruppe zu welchem Feld gehört — die des Katalogs plus was die Mapper seither gelernt haben |
-| `missing_columns(known)` | Was diese Station braucht und die Datenbank nicht hat |
+| `unit_groups()` | Which group belongs to which field — the catalogue's, plus what the mappers have learned since |
+| `missing_columns(known)` | What this station needs and the database does not have |
 | `hardware_name()` | |
 
 ### Adoption
 
-`_adopt()` merkt sich die erste je gehörte Konsole und antwortet ihr von da an.
-`_suggest_passkey()` weist dann auf die Einstellung hin, die nicht davon
-abhängt, dass eine Datei überlebt: eine kopierte Datenbank, eine neu aufgesetzte
-Maschine oder ein Verzeichnis, das niemand gesichert hat, lässt sie zurück.
+`_adopt()` remembers the first console it ever heard and answers that one from
+then on. `_suggest_passkey()` then points at the setting that does not depend on
+a file surviving: a copied database, a freshly set up machine or a directory
+nobody backed up leaves it behind.
 
-`_refuse()` weist eine unbekannte Konsole ab. `_maybe_report()` schreibt beim
-**ersten Mal**, dass etwas nicht platziert werden kann, den Upload heraus —
-sonst an einen Rohupload zu kommen hieße, die Konsole umzukonfigurieren und ein
-Intervall zu warten.
+`_refuse()` turns an unknown console away. `_maybe_report()` writes the upload
+out the **first time** something cannot be placed — getting hold of a raw upload
+otherwise means reconfiguring the console and waiting an interval.
 
-## `__main__.py` — vor dem Verkabeln
+## `__main__.py` — before wiring anything up
 
 ```bash
 python -m weewx_evo.ingest.plugins.ecowitt --port 8000
 ```
 
-Wartet auf **einen** Upload und druckt dann:
+Waits for **one** upload and then prints:
 
-- was ankam
-- was der Treiber nicht platzieren konnte
-- die Kommandos, die diesen Messwerten einen Platz gäben
-- **welche dieser Felder schon die Historie von jemand anderem halten**
+- what arrived
+- what the driver could not place
+- the commands that would give those readings somewhere to live
+- **which of those fields already hold somebody else's history**
 
-Nichts wird verändert. Vor dem Verkabeln laufen lassen, oder wenn ein Sensor in
-den Berichten fehlt.
+Nothing is changed. Run it before wiring anything up, or when a sensor is
+missing from the reports.
 
-## Die Tests
+## The tests
 
-59 Tests, unverändert übernommen:
+59 tests, adopted unchanged:
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
   cd /mnt/d/Git/weewx-evo && python -m pytest tests/ecowitt -q'
 ```
 
-| Datei | Was |
+| File | What |
 |---|---|
-| `test_protocol.py` | Beide Protokolle, Zeitstempel, Redaktion |
-| `test_mapping.py` | Katalog, Erweiterungen, Inferenz |
-| `test_infer.py` | Serienerkennung und die Namensregeln |
-| `test_consoles.py` | Adoption, Ablehnung, Datei und Datenbank |
-| `test_columns.py` | Was fehlt, was besetzt ist |
-| `test_report.py` | Der Bericht |
-| `test_resilience.py` | Was passiert, wenn die Nutzlast Unfug ist |
-| `fixtures/hp2561ae_pro.txt` | Eine echte Aufzeichnung |
+| `test_protocol.py` | Both protocols, timestamps, redaction |
+| `test_mapping.py` | Catalogue, extensions, inference |
+| `test_infer.py` | Series detection and the naming rules |
+| `test_consoles.py` | Adoption, refusal, file and database |
+| `test_columns.py` | What is missing, what is occupied |
+| `test_report.py` | The report |
+| `test_resilience.py` | What happens when the payload is nonsense |
+| `fixtures/hp2561ae_pro.txt` | A real recording |
 
-**Aufzeichnungen sind die einzige ehrliche Prüfung**, weil Konsolen nicht das
-senden, was ihre Dokumentation sagt.
+**Recordings are the only honest check**, because consoles do not send what
+their documentation says.
 
 <!-- covers
 src/weewx_evo/ingest/plugins/ecowitt/__init__.py

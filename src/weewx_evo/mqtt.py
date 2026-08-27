@@ -114,6 +114,59 @@ def encode_string(text: str) -> bytes:
     return struct.pack("!H", len(raw)) + raw
 
 
+def decode_string(body: bytes, at: int = 0) -> tuple[str, int]:
+    """A length-prefixed UTF-8 string out of a packet body.
+
+    The other half of `encode_string`, and the one a broker needs: it reads
+    what a client wrote. Returns the string and where the next field starts,
+    because every MQTT body is a run of these and the caller has to walk it.
+
+    A length that runs past the end is a malformed packet rather than a short
+    string. Silently truncating it is how a topic filter becomes a shorter
+    topic filter that matches something else.
+    """
+    if at + 2 > len(body):
+        raise MqttError("packet ended where a string was expected")
+    length = struct.unpack("!H", body[at:at + 2])[0]
+    end = at + 2 + length
+    if end > len(body):
+        raise MqttError("a string in the packet claims to be longer than the "
+                        "packet")
+    return body[at + 2:end].decode("utf-8", "replace"), end
+
+
+def topic_matches(filter_: str, topic: str) -> bool:
+    """Whether an MQTT topic filter matches a topic name.
+
+    Two wildcards, and the rules are not symmetric:
+
+      `+`   exactly one level. `a/+/c` matches `a/b/c` and not `a/b/d/c`.
+      `#`   this level and everything under it, and only at the end.
+            `a/#` matches `a`, `a/b` and `a/b/c`.
+
+    The case that catches people: `#` matches the parent as well as the
+    children, so `weather/#` gets `weather` itself. And a filter starting
+    with `+` or `#` must not match a topic starting with `$`, which is where
+    brokers keep their own statistics -- a client subscribing to `#` should
+    not be handed those.
+    """
+    if topic.startswith("$") and filter_[:1] in ("+", "#"):
+        return False
+
+    wanted = filter_.split("/")
+    have = topic.split("/")
+    for index, part in enumerate(wanted):
+        if part == "#":
+            # Only legal as the last level, and it takes everything from
+            # here down -- including nothing, so `a/#` matches `a`.
+            return index <= len(have)
+        if index >= len(have):
+            return False
+        if part != "+" and part != have[index]:
+            return False
+    return len(wanted) == len(have)
+
+
 class Reader:
     """Reads whole MQTT packets off a socket."""
 
@@ -402,13 +455,19 @@ class Client:
         `publish` reads whatever is waiting while it looks for a PUBACK.
         """
         deadline = time.monotonic() + seconds
-        sock = self._sock
-        if sock is None:
+        if self._sock is None:
             raise MqttError("not connected")
         while True:
             left = deadline - time.monotonic()
             if left <= 0:
                 break
+            # Read the socket each turn rather than once. Anything in this
+            # loop may find the connection gone and close it, and carrying on
+            # with the reference from before that raises `OSError: [10038]
+            # not a socket` -- which reads like a Windows quirk and is this.
+            sock = self._sock
+            if sock is None:
+                return
             sock.settimeout(max(0.1, min(left, 1.0)))
             try:
                 kind, flags, body = self._read()

@@ -181,50 +181,50 @@ def render_index(found: list[Page]) -> str:
 
     now = when(dt.datetime.now().timestamp())
     lines = [
-        "# Datei-Index",
+        "# File index",
         "",
-        "Welche Datei zu welcher Wiki-Seite gehört, und wo die Seite dem Code",
-        "hinterherhinkt.",
+        "Which file belongs to which wiki page, and where the page is behind",
+        "the code.",
         "",
-        f"**Erzeugt:** {now} · `python tools/docsindex.py`",
+        f"**Generated:** {now} · `python tools/docsindex.py`",
         "",
-        "Diese Seite wird erzeugt. Von Hand geändert wird sie beim nächsten Lauf",
-        "überschrieben — die Zuordnung steht in den `covers`-Blöcken am Ende jeder",
-        "Wiki-Seite.",
+        "This page is generated. Edited by hand, it is overwritten on the next",
+        "run — the mapping lives in the `covers` blocks at the end of every wiki",
+        "page.",
         "",
-        "## Legende",
+        "## Key",
         "",
         "| | |",
         "|---|---|",
-        "| ✅ | Die Seite ist neuer als jede Datei, die sie abdeckt |",
-        "| ⚠️ | Eine abgedeckte Datei wurde **nach** der Seite geändert — ansehen |",
-        "| — | Die Seite deckt keine Datei ab (Glossar, Navigation) |",
+        "| ✅ | The page is newer than every file it covers |",
+        "| ⚠️ | A covered file was changed **after** the page — worth a look |",
+        "| — | The page covers no file (glossary, navigation) |",
         "",
-        "„⚠️\" heißt *prüfen*, nicht *falsch*. Wer nachgesehen hat und nichts ändern",
-        "musste, hakt es ab:",
+        "\"⚠️\" means *look*, not *wrong*. Anyone who has looked and had nothing",
+        "to change ticks it off:",
         "",
         "```bash",
-        "python tools/docsindex.py --accept <Seite>.md",
+        "python tools/docsindex.py --accept <page>.md",
         "```",
         "",
     ]
 
     # -- the summary --------------------------------------------------
     lines += [
-        "## Stand",
+        "## Where things stand",
         "",
         "| | |",
         "|---|---|",
-        f"| Wiki-Seiten | {len(found)} |",
-        f"| Abgedeckte Dateien | {len(covered)} von {len(everything)} |",
-        f"| Seiten zu prüfen | {len(behind)} |",
-        f"| Dateien ohne Seite | {len(orphans)} |",
+        f"| Wiki pages | {len(found)} |",
+        f"| Files covered | {len(covered)} of {len(everything)} |",
+        f"| Pages to look at | {len(behind)} |",
+        f"| Files with no page | {len(orphans)} |",
         "",
     ]
 
     if behind:
-        lines += ["## Zu prüfen", "",
-                  "| Seite | Geändert seit der Seite | Datei zuletzt | Seite zuletzt |",
+        lines += ["## To look at", "",
+                  "| Page | Changed since the page | File last | Page last |",
                   "|---|---|---|---|"]
         for page in sorted(behind, key=lambda p: p.newest_covered(), reverse=True):
             stale = page.stale()
@@ -235,13 +235,13 @@ def render_index(found: list[Page]) -> str:
                          f"| {when(stale[0][1])} | {when(page.mtime)} |")
         lines.append("")
     else:
-        lines += ["## Zu prüfen", "",
-                  "Nichts. Jede Seite ist neuer als der Code, den sie beschreibt.",
+        lines += ["## To look at", "",
+                  "Nothing. Every page is newer than the code it describes.",
                   ""]
 
     # -- page by page -------------------------------------------------
-    lines += ["## Seiten", "",
-              "| | Seite | Dateien | Code zuletzt | Seite zuletzt |",
+    lines += ["## Pages", "",
+              "| | Page | Files | Code last | Page last |",
               "|---|---|---|---|---|"]
     for page in sorted(found, key=lambda p: p.title.lower()):
         if not page.declares:
@@ -256,8 +256,8 @@ def render_index(found: list[Page]) -> str:
     lines.append("")
 
     # -- file by file -------------------------------------------------
-    lines += ["## Dateien", "",
-              "| Datei | Zeilen | Wiki-Seite | Zuletzt geändert |",
+    lines += ["## Files", "",
+              "| File | Lines | Wiki page | Last changed |",
               "|---|---|---|---|"]
     for path in everything:
         rel = relative(path)
@@ -267,7 +267,7 @@ def render_index(found: list[Page]) -> str:
             flag = "⚠️ " if any(path in p.covers and p.stale() and
                                 stamp(path) > p.mtime for p in holders) else ""
         else:
-            where, flag = "**keine**", ""
+            where, flag = "**none**", ""
         try:
             count = sum(1 for _ in path.open("r", encoding="utf-8",
                                              errors="replace"))
@@ -277,25 +277,25 @@ def render_index(found: list[Page]) -> str:
     lines.append("")
 
     if orphans:
-        lines += ["## Ohne Seite", "",
-                  "Diese Dateien nennt kein `covers`-Block. Entweder gehören sie in",
-                  "eine bestehende Seite, oder es fehlt eine.", "",
-                  "| Datei | Zuletzt geändert |", "|---|---|"]
+        lines += ["## With no page", "",
+                  "No `covers` block names these files. Either they belong in an",
+                  "existing page, or one is missing.", "",
+                  "| File | Last changed |", "|---|---|"]
         for path in orphans:
             lines.append(f"| `{relative(path)}` | {when(stamp(path))} |")
         lines.append("")
 
     broken = [(p, name) for p in found for name in p.missing]
     if broken:
-        lines += ["## Kaputte Verweise", "",
-                  "Ein `covers`-Block nennt eine Datei, die es nicht gibt.", "",
-                  "| Seite | Genannt |", "|---|---|"]
+        lines += ["## Broken references", "",
+                  "A `covers` block names a file that does not exist.", "",
+                  "| Page | Named |", "|---|---|"]
         for page, name in broken:
             lines.append(f"| [{page.title}]({page.name}) | `{name}` |")
         lines.append("")
 
     lines += ["---", "",
-              "Erzeugt von `tools/docsindex.py`. Siehe [Mitarbeiten](Contributing).",
+              "Generated by `tools/docsindex.py`. See [Contributing](Contributing).",
               ""]
     return "\n".join(lines)
 
@@ -357,13 +357,13 @@ def render_api(found: list[Page]) -> str:
     lines = [
         "# API-Index",
         "",
-        "Jede öffentliche Klasse, Funktion und Methode, ihre Datei und die",
-        "Wiki-Seite, die sie beschreibt.",
+        "Every public class, function and method, its file, and the wiki page",
+        "that describes it.",
         "",
-        f"**Erzeugt:** {now} · `python tools/docsindex.py`",
+        f"**Generated:** {now} · `python tools/docsindex.py`",
         "",
-        "Private Namen (`_foo`) fehlen, `__init__` ist dabei. Wer einen Namen",
-        "sucht, benutzt die Suche des Browsers.",
+        "Private names (`_foo`) are left out, `__init__` is included. To find a",
+        "name, use the browser's search.",
         "",
     ]
 
@@ -375,10 +375,10 @@ def render_api(found: list[Page]) -> str:
             continue
         rel = relative(path)
         page = owner.get(rel)
-        where = f"[{page.title}]({page.name})" if page else "**keine Seite**"
+        where = f"[{page.title}]({page.name})" if page else "**no page**"
         lines += [f"## `{rel}`", "",
-                  f"{where} · zuletzt geändert {when(stamp(path))}", "",
-                  "| | Name | Zeile | |", "|---|---|---|---|"]
+                  f"{where} · last changed {when(stamp(path))}", "",
+                  "| | Name | Line | |", "|---|---|---|---|"]
         for kind, name, lineno, doc in found_syms:
             mark = {"class": "**C**", "def": "f", "method": "·"}[kind]
             shown = f"`{name}`" if kind != "method" else f"&nbsp;&nbsp;`{name}`"
@@ -386,7 +386,7 @@ def render_api(found: list[Page]) -> str:
         lines.append("")
 
     lines += ["---", "",
-              "Erzeugt von `tools/docsindex.py`. Siehe [Datei-Index](Index).",
+              "Generated by `tools/docsindex.py`. See [File index](Index).",
               ""]
     return "\n".join(lines)
 

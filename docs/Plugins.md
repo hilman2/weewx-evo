@@ -1,136 +1,132 @@
 # Plugins
 
-Was nicht im Kern liegt, und wie es trotzdem dazukommt.
+What lives outside the core, and how it gets in anyway.
 
-Zwei Formen, und welche gilt, hängt davon ab, was das Plugin ist.
+Two forms, and which applies depends on what the plugin is.
 
-## Ein Entry Point — Exports, Uploads, Feeds, Vorhersagequellen
+## An entry point — exports, uploads, feeds, forecast sources
 
-Ein pip-installierbares Paket mit einer Zeile in seiner `pyproject.toml`:
+A pip-installable package with one line in its `pyproject.toml`:
 
 ```toml
 [project.entry-points."weewx_evo.exports"]
 sftp = "weewx_evo_sftp:SftpExport"
 ```
 
-Mehr ist es nicht. `pip install weewx-evo-sftp`, und danach steht `sftp` in
-`weewx-evo export list`, in der Auswahl auf der Einstellungsseite und als
-`kind = "sftp"` in der Konfiguration — ohne eine Zeile Änderung an weewx-evo.
+That is all it is. `pip install weewx-evo-sftp`, and afterwards `sftp` appears
+in `weewx-evo export list`, in the choices on the settings page and as
+`kind = "sftp"` in the configuration — without one line of change to weewx-evo.
 
-Die vier Gruppen:
+The four groups:
 
-| Gruppe | Wofür | Schnittstelle |
+| Group | What for | Interface |
 |---|---|---|
-| `weewx_evo.exports` | ein Verzeichnis woandershin | `send(source, files)` |
-| `weewx_evo.uploads` | die Messwerte an einen Dienst | `post(records)` |
-| `weewx_evo.feeds` | etwas erzeugen | `produce(into)` |
-| `weewx_evo.forecast` | was kommt | `fetch(place)` |
+| `weewx_evo.exports` | a directory somewhere else | `send(source, files)` |
+| `weewx_evo.uploads` | the readings to a service | `post(records)` |
+| `weewx_evo.feeds` | producing something | `produce(into)` |
+| `weewx_evo.forecast` | what is coming | `fetch(place)` |
 
-Jede Registry liest ihre Gruppe beim ersten Zugriff (`load()`). **Ein Plugin,
-das nicht importiert, wird gemeldet und übersprungen** — dieselbe Regel wie
-bei den Treibern: eines, das kaputt ist, darf die anderen nicht kosten.
+Every registry reads its group on first use (`load()`). **A plugin that will
+not import is reported and skipped** — the same rule as with the drivers: one
+that is broken must not cost the others.
 
-Ein Plugin, das `options()` hat, bekommt sein Formular auf der
-Einstellungsseite geschenkt. Es muss dafür nichts tun und die Admin-Seite
-nichts über es wissen.
+A plugin that has `options()` gets its form on the settings page for free. It
+has to do nothing for it, and the admin page has to know nothing about it.
 
-## Ein Verzeichnis — Treiber
+## A directory — drivers
 
-Treiber liegen **neben den Daten** statt im Paket, damit ein Upgrade sie nicht
-anfasst:
+Drivers live **next to the data** rather than in the package, so that an upgrade
+does not touch them:
 
 ```bash
-weewx-evo driver install https://github.com/jemand/weewx-evo-acurite
+weewx-evo driver install https://github.com/someone/weewx-evo-acurite
 ```
 
-→ [Drivers](Drivers#2-installiert--datenverzeichnisdrivers)
+→ [Drivers](Drivers#2-installed--data-directorydrivers)
 
-## Warum die zwei Formen verschieden sind
+## Why the two forms differ
 
-Nicht aus Prinzip, sondern aus einem praktischen Unterschied: ein Treiber
-muss ein Upgrade des Pakets überleben und in einem Container das Neuanlegen
-des Images. Deshalb liegt er im Datenvolume.
+Not on principle, but from a practical difference: a driver has to survive an
+upgrade of the package, and in a container the image being rebuilt. So it lives
+in the data volume.
 
-Ein Entry-Point-Plugin liegt in `site-packages` und ist nach einem
-`docker compose build` weg. Das ist für eine Installation auf einem Pi ohne
-Container kein Problem und für eine im Container eines — siehe unten.
+An entry-point plugin lives in `site-packages` and is gone after a
+`docker compose build`. That is no problem for an installation on a Pi without
+a container, and is one for an installation in a container — see below.
 
-## Was ein Plugin darf, was der Kern nicht darf
+## What a plugin may do that the core may not
 
-**Eine Abhängigkeit nehmen.** Der Kern läuft auf der Standardbibliothek, und
-das ist keine Parole: es ist das, was `pip install weewx-evo` auf einem
-Raspberry Pi ohne Compiler funktionieren lässt. Ein Plugin hat diese
-Verpflichtung nicht — wer `paramiko`, `pillow` oder `numpy` braucht, nimmt es.
+**Take a dependency.** The core runs on the standard library, and that is not a
+slogan: it is what makes `pip install weewx-evo` work on a Raspberry Pi with no
+compiler. A plugin has no such obligation — anyone who needs `paramiko`,
+`pillow` or `numpy` takes it.
 
-`weewx-evo-sftp` tut es trotzdem nicht, und der Grund steht in seiner README:
-`cryptography` auf einem Pi ohne passendes Wheel ist eine Rust-Toolchain und
-vierzig Minuten. Aber es wäre erlaubt gewesen, und das ist der Punkt.
+`weewx-evo-sftp` does not do so regardless, and the reason is in its README:
+`cryptography` on a Pi with no matching wheel is a Rust toolchain and forty
+minutes. But it would have been allowed, and that is the point.
 
-## Der Katalog
+## The catalogue
 
-[**weewx-evo-plugins**](https://github.com/hilman2/weewx-evo-plugins). Eine
-`plugins.toml`, ein Eintrag je Plugin, jeder zeigt auf dessen eigenes
-Repository.
+[**weewx-evo-plugins**](https://github.com/hilman2/weewx-evo-plugins). One
+`plugins.toml`, one entry per plugin, each pointing at that plugin's own
+repository.
 
-**Ein Repo je Plugin, nicht eins für alle.** Jedes hat eigene Issues, eigene
-Releases und einen eigenen Maintainer — und genau das lässt jemanden, der
-nicht wir ist, eines am Leben halten.
+**One repo per plugin, not one for all of them.** Each has its own issues, its
+own releases and its own maintainer — and that is exactly what lets somebody who
+is not us keep one alive.
 
-Der Fehler, den das vermeidet, ist der von `weewx-DWD`: zehn unabhängige Dinge
-in einem Paket, wo eine Änderung am Radar-Code die Vorhersage kaputt macht und
-wer nur Warnungen will, alles mitinstalliert.
+The mistake this avoids is `weewx-DWD`'s: ten independent things in one package,
+where a change to the radar code breaks the forecast and anyone who only wants
+warnings installs the lot.
 
-Denselben Fall gibt es hier schon: der Ecowitt-Treiber kam aus
-`weewx-ecowitt`, einem eigenen Repo für ein **WeeWX**-Plugin. Weil die beiden
-verschiedene Programme sind, wanderte kein Fix mehr sinnvoll hin und her. Der
-Treiber ist jetzt Kern, jenes Repo bleibt was es ist.
+The same case already exists here: the Ecowitt driver came out of
+`weewx-ecowitt`, a repo of its own for a **WeeWX** plugin. Because the two are
+different programs, no fix travelled sensibly between them any more. The driver
+is core now; that repo stays what it is.
 
-## Was drin ist
+## What is in it
 
-| Plugin | Art | `kind` | Wofür |
+| Plugin | Kind | `kind` | What for |
 |---|---|---|---|
-| [weewx-evo-sftp](https://github.com/hilman2/weewx-evo-sftp) | Export | `sftp` | Ein Server mit SSH, aber ohne rsync |
+| [weewx-evo-sftp](https://github.com/hilman2/weewx-evo-sftp) | Export | `sftp` | A server with SSH but without rsync |
 
-## Aus der Admin-Seite installieren?
+## Installing from the admin page?
 
-Die Frage kommt sofort, wenn es einen kuratierten Katalog gibt, deshalb hier
-die Antwort statt in einem Issue.
+The question comes up immediately once there is a curated catalogue, so here is
+the answer rather than in an issue.
 
-**Für Treiber: ja, und der Mechanismus steht schon.** Sie liegen im
-Datenvolume, überleben ein Update, und `driver install` gibt es. Ein Knopf auf
-der Einstellungsseite wäre eine Oberfläche vor etwas Vorhandenem.
+**For drivers: yes, and the mechanism is already there.** They live in the data
+volume, survive an update, and `driver install` exists. A button on the settings
+page would be an interface in front of something that exists.
 
-**Für Entry-Point-Plugins: noch nicht**, und aus einem konkreten Grund. Sie
-gehen nach `site-packages`, und in einem Container ist das nach dem nächsten
-`docker compose build` weg. Ein Plugin, das nach einem Update verschwindet,
-ist schlimmer als eines, das man von Hand installiert hat: es sieht aus wie
-ein Fehler und niemand weiß, wo er herkommt.
+**For entry-point plugins: not yet**, and for a concrete reason. They go into
+`site-packages`, and in a container that is gone after the next
+`docker compose build`. A plugin that disappears after an update is worse than
+one installed by hand: it looks like a bug and nobody knows where it came from.
 
-**Was dagegen unabhängig von der Form spricht**, und was zuerst beantwortet
-sein muss:
+**What speaks against it independently of the form**, and what has to be
+answered first:
 
-- **Der Admin-Token bekäme eine neue Bedeutung.** Heute kann er die
-  Konfiguration ändern — schlimmstenfalls das Archiv auf eine andere Datei
-  zeigen lassen. Mit einem Installations-Knopf kann er beliebigen Code
-  ausführen, als der Nutzer, unter dem der Dienst läuft. Das ist eine andere
-  Größenordnung und muss eine bewusste Entscheidung sein, keine Beigabe.
-- **„Kuratiert" ist eine Aussage, die der Katalog gerade nicht macht.** Er
-  sagt, dass ein Plugin existiert und was es zu tun behauptet. Ein Knopf
-  daneben liest sich als Empfehlung. Entweder wird wirklich kuratiert — mit
-  dem Aufwand und der Verantwortung — oder der Knopf muss ehrlich beschriftet
-  sein.
-- **Ein Neustart.** Entry Points werden beim Import gelesen; ein frisch
-  installiertes Plugin ist erst danach da. Machbar (`needs_restart()` gibt es),
-  aber aus „ein Klick" wird „ein Klick, und dann ist die Station eine Minute
-  weg".
+- **The admin token would take on a new meaning.** Today it can change the
+  configuration — at worst point the archive at a different file. With an
+  install button it can run arbitrary code, as the user the service runs as.
+  That is a different order of magnitude and has to be a deliberate decision,
+  not a freebie.
+- **"Curated" is a claim the catalogue is precisely not making.** It says that a
+  plugin exists and what it claims to do. A button next to that reads as a
+  recommendation. Either it really is curated — with the effort and the
+  responsibility — or the button has to be labelled honestly.
+- **A restart.** Entry points are read on import; a freshly installed plugin is
+  only there afterwards. Doable (`needs_restart()` exists), but "one click"
+  becomes "one click, and then the station is away for a minute".
 
-**Der Weg, der das auflöst**, ist nicht der Knopf, sondern eine gemeinsame
-Ladeschicht: Exports, Uploads und Feeds auch als Verzeichnis im Datenvolume
-laden zu können, so wie Treiber es schon werden. Dann überlebt jedes Plugin
-ein Update, und ein Installations-Knopf hat für alle dieselbe Bedeutung.
+**The route that resolves this** is not the button but a shared loading layer:
+being able to load exports, uploads and feeds from a directory in the data
+volume too, the way drivers already are. Then every plugin survives an update,
+and an install button means the same thing for all of them.
 
-Wenn das steht, bleibt vom Rest nur noch die Token-Frage — und die ist mit
-zwei Einstellungen zu beantworten: Installation nur aus dem Katalog, nie aus
-einer freien URL, und ein Schalter, der es ganz abschaltet.
+With that in place, all that is left of the rest is the token question — and
+that is answered with two settings: installation only from the catalogue, never
+from a free-form URL, and a switch that turns it off entirely.
 
 → [Drivers](Drivers) · [Exports](Exports) · [Uploads](Uploads) · [Feeds](Feeds)

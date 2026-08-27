@@ -119,6 +119,72 @@ is what Home Assistant leads with.
 A daily rainfall total is set to `total_increasing`: it drops back to zero at
 midnight, and as `measurement` that would read as negative rain.
 
+## Being the broker
+
+`broker.py`. Switch it on and weewx-evo is the broker — nothing else to
+install, the MQTT upload points at `localhost`, and a skin is live.
+
+The realisation that makes it reasonable: we already speak the protocol.
+`mqtt.py` builds and parses MQTT packets, and a broker is the same bytes with
+the roles reversed. What was genuinely missing was websockets, and that is
+`websocket.py` — a handshake and a framing layer, both fully specified.
+
+```toml
+[broker]
+enabled = true
+port = 1883             # what the station's own upload connects to
+websocket_port = 9001   # what a browser connects to
+allow = "private"
+```
+
+A station that already runs Mosquitto, or publishes to a broker somewhere
+else, leaves this off and nothing changes.
+
+### Deliberately small
+
+A broker for a weather station, not for a fleet. Not in it, and not planned:
+
+- **QoS 2.** A subscriber asking for it is granted QoS 1, which the
+  specification allows — the granted QoS may be lower than the one requested.
+- **Persistent sessions.** `clean_session = 0` is accepted and treated as
+  clean. Everything worth resuming is in the archive, and a queue that
+  survives restarts is most of the complexity of a real broker.
+- **Bridging, clustering, `$SYS`.**
+
+What it does do is the part that matters: **retained messages**. A browser
+that subscribes gets the last value in the same second rather than a blank
+dashboard until the next reading.
+
+### Two accounts, and they are not the same
+
+| | |
+|---|---|
+| `broker.password` | what the station's own upload uses. May publish. |
+| `broker.read_password` | what goes into a public web page. Read-only, and may be empty — a page is served to anybody, so a credential in it is a credential published. |
+
+**A subscriber can never publish.** That is not a setting: it is the
+difference between somebody reading your weather and somebody writing it. A
+publish from a read-only client is dropped and acknowledged — refusing it at
+the socket would make the client retry forever.
+
+Private networks only, unless somebody says otherwise. A broker open to the
+internet with no password is a machine anybody can publish into, and what
+they publish is what the page shows.
+
+### Three things the test found
+
+Written down because each is the kind of mistake that works everywhere except
+where it matters:
+
+- **SUBACK before the retained messages.** A subscription is not established
+  until the acknowledgement, and a message arriving before it is one some
+  clients discard.
+- **A client must mask every frame, a server must never.** Getting it
+  backwards works against every library and fails in a browser.
+- **Websockets carry messages, MQTT carries packets, and they do not line
+  up.** A client may put two packets in one frame. Treating a frame as a
+  packet works right up until a library batches.
+
 ## Configuration
 
 ```toml
@@ -133,7 +199,8 @@ home_assistant = true
 ## Checking it
 
 ```bash
-python tools/mqtt_test.py
+python tools/mqtt_test.py      # the client
+python tools/broker_test.py    # the broker, and the websocket layer
 ```
 
 A broker on loopback, enough of MQTT 3.1.1 to answer honestly. It is
@@ -145,5 +212,10 @@ What is checked is what actually goes over the socket: the byte layout of
 CONNECT, that a QoS 1 publish waits for its own PUBACK, that a rejected password
 is rejected permanently, and that a dropped connection comes back with its
 subscriptions.
+
+`broker_test.py` drives the broker from the other side: with our own client,
+and with a websocket built by hand and masked the way a browser masks it. The
+last check is the whole chain — a record through the real upload, into our own
+broker, out to a page — with nothing else installed.
 
 → [Uploads](Uploads) · [Live database](Database-Live) · [Feeds](Feeds)

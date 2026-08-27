@@ -1,66 +1,65 @@
 # Testing
 
-Alle Tests laufen **ohne Netz** und **ohne Zustand außerhalb eines
-Temp-Verzeichnisses**.
+All tests run **without a network** and **without state outside a temp
+directory**.
 
-## Alles auf einmal
+## Everything at once
 
 ```bash
-python tools/difftest.py reference/weewx.sdb    # die Arithmetik
-python tools/roundtrip.py reference/weewx.sdb   # das Schreiben
-python tools/derive_test.py reference/weewx.sdb # die abgeleiteten Werte
-python tools/seriestest.py reference/weewx.sdb  # die Zeitreihen (braucht WeeWX)
-python tools/unitcheck.py                       # alle Umrechnungen
-python tools/suncheck.py                        # Sonnenauf- und -untergang
-python tools/smoke.py                           # alles zusammen
-python tools/multisource.py                     # mehrere Stationen
-python tools/driverinstall.py                   # Fremdtreiber
-python tools/adminpage.py                       # die Einstellungsseite
-python tools/netaccess_test.py                  # wer geantwortet wird
-python tools/ratelimit_test.py                  # die zwei Grenzen
-python tools/settings_test.py                   # die Rangfolge
-python tools/export_test.py                     # FTP und rsync
-python tools/web_test.py                        # Routing und Verzeichnisgrenze
+python tools/difftest.py reference/weewx.sdb    # the arithmetic
+python tools/roundtrip.py reference/weewx.sdb   # the writing
+python tools/derive_test.py reference/weewx.sdb # the derived readings
+python tools/seriestest.py reference/weewx.sdb  # the series (needs WeeWX)
+python tools/unitcheck.py                       # every conversion
+python tools/suncheck.py                        # sunrise and sunset
+python tools/smoke.py                           # all of it together
+python tools/multisource.py                     # several stations
+python tools/driverinstall.py                   # third-party drivers
+python tools/adminpage.py                       # the settings page
+python tools/netaccess_test.py                  # who gets an answer
+python tools/ratelimit_test.py                  # the two limits
+python tools/settings_test.py                   # the precedence
+python tools/export_test.py                     # FTP and rsync
+python tools/web_test.py                        # routing and the directory boundary
 ```
 
-Dazu die übernommenen Treibertests:
+Plus the adopted driver tests:
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
   cd /mnt/d/Git/weewx-evo && python -m pytest tests/ecowitt -q'
 ```
 
-## Was ein Test hier wert ist
+## What a test is worth here
 
-Die Tests, die etwas gefunden haben, prüfen alle dasselbe Muster: **eine
-Annahme, die im Browser nie auffällt.**
+The tests that found something all check the same pattern: **an assumption that
+never shows up in a browser.**
 
-| Was gefunden wurde | Wo |
+| What was found | Where |
 |---|---|
-| Ein Teil-POST, der alles andere auf Default zurücksetzt | `adminpage.py` |
-| Ein Roundtrip, bei dem `"5m"` als String zurückkommt statt als 300 | `adminpage.py` |
-| SQLite-Verbindungen sind thread-gebunden | `smoke.py` |
-| Eine Konsole sperrt sich nach fünf **gültigen** Uploads selbst aus | `ratelimit_test.py` |
-| Drei Transkriptionsfehler in den Knoten-Faktoren | `unitcheck.py` |
-| pyephem zählt Refraktion doppelt, wenn man ihm `horizon` gibt | `suncheck.py` |
-| `skip_if_empty = year` als Boolean gelesen: 100 Dateien statt 71 | Plot-Importer |
+| A partial POST resetting everything else to the default | `adminpage.py` |
+| A roundtrip in which `"5m"` comes back as a string instead of 300 | `adminpage.py` |
+| SQLite connections are thread-bound | `smoke.py` |
+| A console locking itself out after five **valid** uploads | `ratelimit_test.py` |
+| Three transcription errors in the knot factors | `unitcheck.py` |
+| pyephem counting refraction twice when given `horizon` | `suncheck.py` |
+| `skip_if_empty = year` read as a boolean: 100 files instead of 71 | the plot importer |
 
-Wer etwas hinzufügt, sucht **diese Sorte Fall**.
+Anyone adding one should look for **that sort of case**.
 
-## Die Werkzeuge im Einzelnen
+## The tools one by one
 
-### `difftest.py` — der Abnahmetest
+### `difftest.py` — the acceptance test
 
-**Der Abnahmetest für das ganze Projekt.** Kann weewx-evos Arithmetik die
-Tagesstatistiken einer Datenbank nicht reproduzieren, die WeeWX selbst
-geschrieben hat, ist nichts darauf Gebautes vertrauenswürdig, und keine noch so
-gute Architektur macht das wett.
+**The acceptance test for the whole project.** If weewx-evo's arithmetic cannot
+reproduce the daily summaries of a database WeeWX wrote itself, then nothing
+built on it is trustworthy, and no amount of good architecture makes up for it.
 
 ```bash
 python tools/difftest.py reference/weewx.sdb
 ```
 
-Zwei Spaltenklassen, zwei Maßstäbe:
+Two classes of column, two standards:
 
 ```python
 SUM_COLUMNS     = {"sum", "count", "wsum", "sumtime", "xsum", "ysum",
@@ -68,10 +67,9 @@ SUM_COLUMNS     = {"sum", "count", "wsum", "sumtime", "xsum", "ysum",
 EXTREME_COLUMNS = {"min", "mintime", "max", "maxtime", "max_dir"}
 ```
 
-- **Summen** stammen ausschließlich aus Archivsätzen und müssen **exakt**
-  stimmen.
-- **Extreme** dürfen abweichen — aber nur **stumpfer**, nie schärfer. Schärfer
-  wäre ein Fehler, und genau darauf prüft der Test.
+- **Sums** come exclusively from archive records and have to match **exactly**.
+- **Extremes** may differ — but only **duller**, never sharper. Sharper would be
+  a bug, and that is exactly what the test checks.
 
 ```
 sum mismatches:            0
@@ -81,200 +79,195 @@ extremes duller than DB:   189   (expected: LOOP highs/lows)
 
 → [Aggregation](Aggregation)
 
-### `roundtrip.py` — das Schreiben
+### `roundtrip.py` — the writing
 
-`difftest` prüft die Arithmetik. Das hier prüft das **Schreiben**: eine Kopie
-einer echten Datenbank, die letzten N Tage gelöscht — Archivsätze und
-Tagesstatistiken — und über den **normalen Schreibpfad** zurückgeschrieben, Satz
-für Satz, genau wie der Archiver es bei einem Catch-up täte.
+`difftest` checks the arithmetic. This checks the **writing**: a copy of a real
+database, the last N days deleted — archive records and daily summaries — and
+written back over the **normal write path**, record by record, exactly as the
+archiver would on a catch-up.
 
 ```bash
 python tools/roundtrip.py reference/weewx.sdb --days 3
 python tools/roundtrip.py reference/weewx.sdb --days 3 --packets
 ```
 
-`--packets` speist die gespeicherten LOOP-Pakete wieder ein (`feed_packets()`).
-Wo sie den Zeitraum abdecken, sinkt die Zahl der stumpfen Extreme entsprechend:
-**109 → 89 bei 76 % Abdeckung.**
+`--packets` feeds the stored LOOP packets back in (`feed_packets()`). Where they
+cover the period, the number of dull extremes drops accordingly: **109 → 89 at
+76 % coverage.**
 
-Das ist der messbare Beleg für die [Live-Tabelle](Database-Live).
+That is the measurable evidence for the [live table](Database-Live).
 
-`Tally` zählt Unterschiede und behält die ersten paar jeder Art zum Zeigen.
+`Tally` counts differences and keeps the first few of each kind to show.
 
-### `derive_test.py` — die abgeleiteten Werte
+### `derive_test.py` — the derived readings
 
-Die Referenzdatenbank hat Jahre von Sätzen, in denen WeeWX Taupunkt, Hitzeindex
-und den Rest aus Messwerten gerechnet hat, **die in derselben Zeile stehen**.
-Ein Testorakel, das niemand schreiben musste.
+The reference database has years of records in which WeeWX computed dewpoint,
+heat index and the rest from readings that are **in the same row**. A test
+oracle nobody had to write.
 
-Dazu `rain_tests()` (der eine, der eine Messung ist), `policy_tests()` (die drei
-Politiken) und `edge_tests()` (die Ränder der Definitionsbereiche).
+Plus `rain_tests()` (the one that is a measurement), `policy_tests()` (the three
+policies) and `edge_tests()` (the edges of the domains).
 
 → [Derived-Readings](Derived-Readings)
 
-### `seriestest.py` — die Zeitreihen
+### `seriestest.py` — the series
 
-Fragt **WeeWX und weewx-evo nach derselben Reihe** und vergleicht.
+Asks **WeeWX and weewx-evo for the same series** and compares.
 
 ```python
 TOLERANCE = 1e-06
 ```
 
-94 Vergleiche, 19 957 Punkte, 0 Fehler, 8 bekannte Abweichungen — alle acht die
-[bewusste Abweichung](Series#eine-bewusste-abweichung) beim gewichteten
-Mittelwert.
+94 comparisons, 19,957 points, 0 failures, 8 known departures — all eight of
+them the [deliberate departure](Series#one-deliberate-departure) on the weighted
+mean.
 
-Braucht ein installiertes WeeWX.
+Needs an installed WeeWX.
 
-### `unitcheck.py` — die Einheiten
+### `unitcheck.py` — the units
 
-Alle 147 Umrechnungen gegen WeeWX, bei neun Werten:
+All 147 conversions against WeeWX, at nine values:
 
 ```python
 SAMPLES = (0.0, 1.0, -1.0, 7.5, 100.0, -40.0, 1013.25, 0.001, 98765.4321)
 ```
 
-Dazu Gruppen, Systeme, Beschriftungen und Formate.
+Plus groups, systems, labels and formats.
 
-Die Ausfallart, gegen die das schützt, ist **leise**: ein Faktor, der in der
-vierten Nachkommastelle danebenliegt, erzeugt ein Diagramm, das richtig aussieht
-und von WeeWX' Diagramm desselben Tages abweicht.
+The failure mode this guards against is a **quiet** one: a factor that is out in
+the fourth decimal place produces a plot that looks right and differs from
+WeeWX's plot of the same day.
 
 → [Units](Units)
 
-### `suncheck.py` — die Sonne
+### `suncheck.py` — the sun
 
-Sechs Orte von Tromsø bis Ushuaia, fünf Tage einschließlich der vier Wendepunkte
-des Jahres, gegen pyephem **und** gegen `weeutil.Sun`.
+Six places from Tromsø to Ushuaia, five days including the four turning points
+of the year, against pyephem **and** against `weeutil.Sun`.
 
 ```python
-TOLERANCE = 60.0    # Sekunden
+TOLERANCE = 60.0    # seconds
 LOOSE     = 600.0
 ```
 
 → [Sun](Sun)
 
-### `smoke.py` — alles zusammen
+### `smoke.py` — all of it together
 
-Startet einen Listener, postet **echte** Ecowitt-Uploads dagegen, lässt den
-Archiver die Intervalle ausrechnen und prüft, was landete.
+Starts a listener, posts **real** Ecowitt uploads at it, lets the archiver work
+out the intervals and checks what landed.
 
-Das ist der Test, der die Fehler fängt, die die Einzeltests nicht können:
+This is the test that catches the bugs the individual tests cannot:
 
-- ein Parser, dessen Feldnamen nicht zum Schema passen
-- ein Archiver, der einen Satz ohne `interval` schreibt
-- ein Listener, der antwortet, bevor er gespeichert hat
+- a parser whose field names do not match the schema
+- an archiver writing a record with no `interval`
+- a listener answering before it has stored anything
 
-`post()` gibt Body **und** Content-Type zurück. Beides zählt: das Gateway prüft
-beides.
+`post()` returns both the body **and** the content type. Both count: the gateway
+checks both.
 
-### `multisource.py` — mehrere Stationen
+### `multisource.py` — several stations
 
-Prüft genau die drei Fälle, die `weewx-metadriver` als seine Grenzen nennt.
+Checks exactly the three cases `weewx-metadriver` names as its own limits.
 
 → [Multiple-Sources](Multiple-Sources)
 
-### `driverinstall.py` — Fremdtreiber
+### `driverinstall.py` — third-party drivers
 
-Baut ein Treiberpaket auf der Platte auf, wie jemand es veröffentlichen würde,
-installiert es, lädt es und nimmt einen Upload damit entgegen.
+Builds a driver package on disk the way somebody would publish one, installs it,
+loads it and takes an upload with it.
 
-Der Test dafür, dass ein fremder Treiber an **derselben Schnittstelle** hängt
-wie ein mitgelieferter.
+The test that a third-party driver hangs off **the same interface** as a bundled
+one.
 
 → [Drivers](Drivers)
 
-### `adminpage.py` — die Einstellungsseite
+### `adminpage.py` — the settings page
 
-Rendert die Seite, speichert durch sie hindurch und bricht sie absichtlich.
-Geprüft wird die Kette **Deklaration → Formular → Validierung → Datei**, für
-jede Art von Einstellung, die es gibt.
+Renders the page, saves through it and breaks it on purpose. What is checked is
+the chain **declaration → form → validation → file**, for every kind of setting
+there is.
 
-`multipart()` und `upload()` posten ein Formular so, wie ein Browser eines mit
-einer Datei darin postet — `SKIN` ist eine kleine `[ImageGenerator]`-Sektion.
-Damit ist auch der Plot-Importer über den echten Weg geprüft, nicht über einen
-Umweg an ihm vorbei.
+`multipart()` and `upload()` post a form the way a browser posts one with a file
+in it — `SKIN` is a small `[ImageGenerator]` section. That checks the plot
+importer over the real route as well, not over a detour round it.
 
 → [Admin-Page](Admin-Page)
 
-### `netaccess_test.py` — wer geantwortet wird
+### `netaccess_test.py` — who gets an answer
 
-Treibt beide Server mit einem Socket, dessen Quelladresse tatsächlich anders
-ist. **Eine Peer-Adresse lässt sich über TCP nicht fälschen**, also ist das
-echt prüfbar und nicht gemockt.
+Drives both servers with a socket whose source address really is different. **A
+peer address cannot be forged over TCP**, so this is really checkable and not
+mocked.
 
-### `ratelimit_test.py` — die zwei Grenzen
+### `ratelimit_test.py` — the two limits
 
-Und **dass es nicht dieselbe Grenze ist**. Beides zu vermengen gibt einem das
-Schlechteste von beidem: entweder eine Grenze, die locker genug zum Durchraten
-ist, oder eine, die so eng ist, dass eine Konsole sich selbst aussperrt.
+And **that they are not the same limit**. Mixing the two gives you the worst of
+both: either a limit loose enough to guess through, or one so tight that a
+console locks itself out.
 
 → [Security](Security)
 
-### `settings_test.py` — die Rangfolge
+### `settings_test.py` — the precedence
 
-Fünf Orte, eine feste Reihenfolge, ein Auflöser. Die Reihenfolge ist leicht zu
-formulieren und leicht subtil falsch zu machen, deshalb ist sie hier festgenagelt
-statt in einem Kommentar beschrieben.
+Five places, one fixed order, one resolver. The order is easy to state and easy
+to get subtly wrong, so it is nailed down here rather than described in a
+comment.
 
-**Der Teil, der am härtesten geprüft wird, ist der, der wie ein Detail
-aussieht**: ein Argument, das *nicht* angegeben wurde, darf die
-Konfigurationsdatei nicht schlagen.
+**The part that is checked hardest is the one that looks like a detail**: an
+argument that was *not* given must not beat the configuration file.
 
-`args_with(**kwargs)` baut einen Namespace, in dem alles Unbenannte `None` ist —
-so wie argparse ihn hinterlässt.
+`args_with(**kwargs)` builds a namespace in which everything unnamed is `None` —
+the way argparse leaves it.
 
-→ [Configuration](Configuration)
+### `export_test.py` — FTP and rsync
 
-### `export_test.py` — FTP und rsync
+The FTP half runs against a server **in this process**: files land on disk,
+directories come into existence, the move-into-place happens. No mock.
 
-Die FTP-Hälfte läuft gegen einen Server **in diesem Prozess**: Dateien landen
-auf der Platte, Verzeichnisse entstehen, das Hineinbewegen passiert. Kein Mock.
+`pyftpdlib` is not a dependency of weewx-evo, so that part is skipped when it is
+missing and the rest runs anyway.
 
-`pyftpdlib` ist keine Abhängigkeit von weewx-evo, dieser Teil wird also
-ausgelassen, wenn es fehlt, und der Rest läuft trotzdem.
+The rsync half checks the command line — nothing goes through a shell.
 
-Die rsync-Hälfte prüft die Kommandozeile — nichts geht durch eine Shell.
+`local_export()` checks the failure modes FTP does not have: a hard link
+silently sharing an inode; a delete taking more with it than what this export
+put there; a destination that is the source directory. And after that, that the
+**web server really serves what the export published** — both halves of the
+chain in one test.
 
-`local_export()` prüft die Ausfallarten, die FTP nicht hat: ein Hardlink, der
-still einen Inode teilt; ein Löschen, das mehr mitnimmt als das, was dieser
-Export hingelegt hat; ein Ziel, das das Quellverzeichnis ist. Und danach, dass
-der **Web-Server tatsächlich ausliefert, was der Export veröffentlicht hat** —
-die beiden Hälften der Kette in einem Test.
-
-`runner_tests()` prüft mit einem absichtlich langsamen `FakeExport`, wann welcher
-Export läuft und dass einer den anderen nicht aufhalten kann.
+`runner_tests()` uses a deliberately slow `FakeExport` to check when each export
+runs and that one cannot hold another up.
 
 → [Exports](Exports)
 
-### `web_test.py` — Routing und Grenze
+### `web_test.py` — routing and the boundary
 
-Liefert ein paar Dateien aus und versucht, aus dem Verzeichnis herauszukommen.
+Serves a few files and tries to get out of the directory.
 
 → [Web-Server](Web-Server)
 
-## Was hinausgeht
+## What goes out
 
 ```bash
-python tools/upload_test.py     # was an einen Wetterdienst geht
-python tools/mqtt_test.py       # der MQTT-Client, gegen einen eigenen Broker
-python tools/forecast_test.py   # die Vorhersagequellen und ihr Speicher
-python tools/realtime_test.py   # realtime.txt und wxnow.txt
-python tools/deck_live_test.py  # die Live-Anzeige im Deck-Skin
+python tools/upload_test.py     # what goes to a weather service
+python tools/mqtt_test.py       # the MQTT client, against a broker of our own
+python tools/forecast_test.py   # the forecast sources and their store
+python tools/realtime_test.py   # realtime.txt and wxnow.txt
+python tools/deck_live_test.py  # the live display in the Deck skin
 ```
 
-`deck_live_test.py` braucht Cheetah und rendert die echte Skin, mit und ohne
-Broker. Geprüft wird beides: dass die Live-Anzeige **nur** erscheint, wenn
-einer konfiguriert ist. Eine Station ohne Broker, die auf jeder Karte ein
-rotes OFFLINE zeigt, hat einen Fehler bekommen, den sie nicht hat.
+`deck_live_test.py` needs Cheetah and renders the real skin, with and without a
+broker. Both are checked: that the live display appears **only** when one is
+configured. A station with no broker showing a red OFFLINE on every card has
+been given a fault it does not have.
 
-Keiner davon fasst das Netz an. `upload_test.py` und `forecast_test.py` bauen
-Anfragen und sehen sie an; `mqtt_test.py` startet einen Broker auf loopback.
+None of these touches the network. `upload_test.py` and `forecast_test.py` build
+requests and look at them; `mqtt_test.py` starts a broker on loopback.
 
-`upload_test.py` vergleicht zusätzlich gegen WeeWX, wenn es importierbar ist —
-die Ambient-Query parameterweise und das CWOP-Paket Zeichen für Zeichen. Beide
-sind Transkriptionen, und eine Transkription ist entweder identisch oder ein
-Fehler:
+`upload_test.py` additionally compares against WeeWX when it is importable — the
+Ambient query parameter by parameter and the CWOP packet character by character.
+Both are transcriptions, and a transcription is either identical or a bug:
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
@@ -282,24 +275,24 @@ wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
   python3 tools/upload_test.py'
 ```
 
-## Die Treibertests
+## The driver tests
 
-59 Tests unter `tests/ecowitt/`, ursprünglich aus weewx-ecowitt.
+59 tests under `tests/ecowitt/`, originally from weewx-ecowitt.
 
 ```bash
 python -m pytest tests/ecowitt -q
 ```
 
-Sie gehören jetzt hierher und dürfen wachsen: der Treiber ist Kern, kein
-gespiegeltes Fremdrepo.
+They belong here now and are allowed to grow: the driver is core, not a mirrored
+foreign repo.
 
-→ [Driver-Ecowitt](Driver-Ecowitt#die-tests)
+→ [Driver-Ecowitt](Driver-Ecowitt#the-tests)
 
-## Die Referenzdaten
+## The reference data
 
-`reference/` liegt in `.gitignore` — echte Messwerte, mehrere Megabyte.
+`reference/` is in `.gitignore` — real readings, several megabytes.
 
-Neu ziehen:
+Pulling a fresh copy:
 
 ```bash
 ssh <host> 'docker exec weewx python3 -c "
@@ -311,23 +304,23 @@ scp <host>:/opt/weewx/data/snap-weewx.sdb reference/weewx.sdb
 ssh <host> 'rm -f /opt/weewx/data/snap-*.sdb'
 ```
 
-**`VACUUM INTO` statt `cp`**: die Datenbank wird nebenher beschrieben, und ein
-kopiertes WAL ist ein zerrissener Zustand.
+**`VACUUM INTO` rather than `cp`**: the database is being written to alongside,
+and a copied WAL is a torn state.
 
-## Dev-Tooling
+## Dev tooling
 
-Alle Python-Dev-Tools laufen in **WSL Ubuntu**, nie mit Windows-Python:
+All Python dev tools run in **WSL Ubuntu**, never with Windows Python:
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
   cd /mnt/d/Git/weewx-evo && ruff check src tools tests'
 ```
 
-Die Default-WSL-Distro ist `docker-desktop` und hat kein Python — deshalb immer
-explizit `-d Ubuntu`.
+The default WSL distro is `docker-desktop` and has no Python — hence always an
+explicit `-d Ubuntu`.
 
-Venvs liegen unter `~/venvs/<project>` **innerhalb** WSL, nicht im Repo auf
-`/mnt/d` (NTFS-Long-Path-Bug).
+Venvs live under `~/venvs/<project>` **inside** WSL, not in the repo on `/mnt/d`
+(NTFS long-path bug).
 
 <!-- covers
 tools/difftest.py
