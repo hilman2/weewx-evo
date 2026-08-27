@@ -237,6 +237,125 @@ def edge_tests() -> int:
     return failures
 
 
+def moisture_tests() -> int:
+    """What the air is carrying, rather than how close to full it is.
+
+    Checked against textbook numbers rather than against each other: two
+    formulas that agree with one another and with nothing else is the
+    failure mode here, and it is invisible.
+    """
+    print("\nwhat the air is actually carrying")
+    failures = 0
+
+    # 20 C: the saturation vapour pressure is about 23.4 mbar. Magnus, with
+    # the coefficients `dewpoint_c` already uses, read forwards.
+    failures += not close("saturation vapour pressure at 20 C",
+                          derive.sat_vapor_pressure_mbar(20.0), 23.4, 0.2)
+    failures += not close("and at 0 C",
+                          derive.sat_vapor_pressure_mbar(0.0), 6.11, 0.05)
+    # At 50 % it is half of that, by definition.
+    failures += not close("half of it at 50 %",
+                          derive.vapor_pressure_mbar(20.0, 50.0), 11.7, 0.15)
+
+    # 20 C at 50 % holds about 8.6 g of water per cubic metre.
+    failures += not close("absolute humidity at 20 C and 50 %",
+                          derive.absolute_humidity(20.0, 50.0), 8.65, 0.1)
+    failures += not close("twice that when saturated",
+                          derive.absolute_humidity(20.0, 100.0), 17.3, 0.2)
+    # Cold air holds far less at the same relative humidity, which is the
+    # entire reason absolute humidity is a different question.
+    failures += not close("cold air at the same relative humidity",
+                          derive.absolute_humidity(0.0, 50.0), 2.4, 0.1)
+
+    # 20 C, 50 %, 1013 mbar is about 7.3 g of water per kg of dry air.
+    failures += not close("mixing ratio",
+                          derive.mixing_ratio(20.0, 50.0, 1013.25), 7.3, 0.1)
+    # A sensor reporting saturation past the ambient pressure is broken.
+    # Nothing is better than a division that explodes.
+    failures += not check("impossible air gives nothing",
+                          derive.mixing_ratio(60.0, 100.0, 100.0), None)
+    return failures
+
+
+def sunshine_tests() -> int:
+    """Seconds of sunshine in an interval, worked out from the radiation."""
+    print("\nsunshine, from the radiation against the clear-sky maximum")
+    failures = 0
+
+    failures += not check("a bright interval counts in full",
+                          derive.sunshine_seconds(700.0, 800.0, 300.0), 300.0)
+    failures += not check("an overcast one counts for nothing",
+                          derive.sunshine_seconds(200.0, 800.0, 300.0), 0.0)
+    # The boundary somebody will sit on for an hour in March.
+    failures += not check("exactly at the threshold counts",
+                          derive.sunshine_seconds(600.0, 800.0, 300.0), 300.0)
+    # Night is zero, definitely, rather than absent: "no sunshine" is a fact
+    # worth recording and a gap is not.
+    failures += not check("night is zero, not absent",
+                          derive.sunshine_seconds(0.0, 0.0, 300.0), 0.0)
+    # At dawn the clear-sky maximum is tiny, so a fraction of it is met by a
+    # bright overcast. The floor is what stops that counting as sunshine.
+    failures += not check("a bright overcast at dawn does not count",
+                          derive.sunshine_seconds(15.0, 18.0, 300.0), 0.0)
+    failures += not check("no radiation reading means no answer",
+                          derive.sunshine_seconds(None, 800.0, 300.0), None)
+    return failures
+
+
+def new_reading_tests() -> int:
+    """And that they reach a record, in the right unit system."""
+    from weewx_evo.units import METRICWX
+
+    print("\nand they reach a record")
+    failures = 0
+    station = derive.Station(latitude=48.4, longitude=11.7, altitude_m=440.0)
+
+    metric = {"dateTime": 1756308600, "usUnits": METRICWX, "interval": 5,
+              "outTemp": 20.0, "outHumidity": 50.0, "barometer": 1013.25,
+              "radiation": 700.0, "maxSolarRad": 800.0}
+    got = derive.Deriver(station=station).apply(dict(metric))
+    failures += not close("absolute humidity", got.get("absoluteHumidity"),
+                          8.65, 0.1)
+    failures += not close("mixing ratio", got.get("mixingRatio"), 7.3, 0.15)
+    failures += not close("vapour pressure in millibars",
+                          got.get("vaporPressure"), 11.7, 0.15)
+    failures += not check("sunshine", got.get("sunshine_time"), 300.0)
+
+    # The same air in US units. A vapour pressure is a pressure, so it comes
+    # back in inches of mercury the way the barometer does.
+    imperial = {"dateTime": 1756308600, "usUnits": US, "interval": 5,
+                "outTemp": 68.0, "outHumidity": 50.0, "barometer": 29.92}
+    got = derive.Deriver(station=station).apply(dict(imperial))
+    failures += not close("vapour pressure in inches of mercury",
+                          got.get("vaporPressure"), 0.345, 0.01)
+    # Grams per cubic metre in every system: there is no customary unit for
+    # it, and WeeWX has no group for one either.
+    failures += not close("absolute humidity stays metric",
+                          got.get("absoluteHumidity"), 8.65, 0.15)
+
+    # A live packet has no interval, so there is no span to attribute
+    # sunshine to. Nothing, rather than a guess.
+    live = {"dateTime": 1756308600, "usUnits": METRICWX, "outTemp": 20.0,
+            "outHumidity": 50.0, "radiation": 700.0, "maxSolarRad": 800.0}
+    got = derive.Deriver(station=station).apply(dict(live))
+    failures += not check("a packet with no interval gets no sunshine",
+                          "sunshine_time" in got, False)
+    failures += not check("while the moisture still follows",
+                          "absoluteHumidity" in got, True)
+
+    # A station that sends its own is not overruled.
+    record = dict(metric, absoluteHumidity=99.0)
+    got = derive.Deriver(station=station).apply(dict(record))
+    failures += not check("the station's own value stands",
+                          got["absoluteHumidity"], 99.0)
+    always = derive.Deriver(station=station,
+                            how={"absoluteHumidity": "software"})
+    got = always.apply(dict(record))
+    failures += not close("and is replaced when told to",
+                          got["absoluteHumidity"], 8.65, 0.1)
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -255,6 +374,9 @@ def main() -> int:
     failures += rain_tests()
     failures += policy_tests()
     failures += edge_tests()
+    failures += moisture_tests()
+    failures += sunshine_tests()
+    failures += new_reading_tests()
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")
     return 1 if failures else 0

@@ -27,6 +27,33 @@ import weewx_evo.units as ours
 #: here and nowhere else), small, ordinary, large, negative.
 SAMPLES = (0.0, 1.0, -1.0, 7.5, 100.0, -40.0, 1013.25, 0.001, 98765.4321)
 
+#: Units this project has and WeeWX does not, with the reason. Listed rather
+#: than reported as failures, because a check that calls a deliberate
+#: addition a failure is one people learn to skip -- and because this list is
+#: then the documentation of exactly how far the transcription goes beyond
+#: its original.
+#:
+#: Every one of these exists because `derive.py` can now work out a reading
+#: WeeWX leaves to an extension. `weewx-GTS` adds the same units at run time;
+#: the names are its, so a skin written against it works here untouched.
+OURS = {
+    "gram_per_meter_cubed": "absolute humidity, which weewx-GTS adds",
+    "milligram_per_meter_cubed": "the same, at a scale a sensor reports in",
+    "gram_per_kilogram": "the mixing ratio, which weewx-GTS adds",
+}
+
+#: Readings the same applies to.
+OUR_READINGS = {
+    "absoluteHumidity": "derive.py works it out",
+    "outHumAbs": "what weewx-GTS calls the same thing",
+    "mixingRatio": "derive.py works it out",
+    "vaporPressure": "derive.py works it out",
+    "satVaporPressure": "derive.py works it out",
+    "sunshine_time": "derive.py works it out; sunduration's name",
+    "cloudCover": "the forecast publishes it; WeeWX has only 'cloudcover'",
+    "rainProbability": "only a forecast has one",
+}
+
 
 def main() -> int:
     import weewx.defaults
@@ -54,10 +81,15 @@ def main() -> int:
                     break
     for from_unit, targets in ours.CONVERT.items():
         for to_unit in targets:
-            if to_unit not in theirs.conversionDict.get(from_unit, {}):
-                print(f"  EXTRA {from_unit} -> {to_unit} (WeeWX has no such)")
+            if to_unit in theirs.conversionDict.get(from_unit, {}):
+                continue
+            if from_unit in OURS or to_unit in OURS:
+                # Ours on purpose. Named rather than counted as a failure.
                 extra += 1
-                failures += 1
+                continue
+            print(f"  EXTRA {from_unit} -> {to_unit} (WeeWX has no such)")
+            extra += 1
+            failures += 1
     print(f"  {pairs} pair(s) x {len(SAMPLES)} value(s), exact"
           f"{f', {missing} missing' if missing else ''}"
           f"{f', {extra} extra' if extra else ''}")
@@ -71,6 +103,9 @@ def main() -> int:
     for from_unit, targets in ours.CONVERT.items():
         for to_unit in targets:
             if from_unit not in ours.CONVERT.get(to_unit, {}):
+                continue
+            if from_unit in OURS or to_unit in OURS:
+                # WeeWX has no such pair to drift the same way as.
                 continue
             for x in (1.0, 100.0, -40.0):
                 mine = ours.CONVERT[to_unit][from_unit](
@@ -98,11 +133,18 @@ def main() -> int:
             wrong += 1
             failures += 1
     for obs_type in ours.GROUPS:
-        if obs_type not in theirs.obs_group_dict:
-            print(f"  EXTRA {obs_type}")
-            wrong += 1
-            failures += 1
+        if obs_type in theirs.obs_group_dict or obs_type in OUR_READINGS:
+            continue
+        print(f"  EXTRA {obs_type}")
+        wrong += 1
+        failures += 1
     print(f"  {len(ours.GROUPS)} reading(s), {wrong} wrong")
+    print(f"\n{len(OURS)} unit(s) and {len(OUR_READINGS)} reading(s) are "
+          f"ours rather than WeeWX's:")
+    for name, why in sorted(OURS.items()):
+        print(f"  {name:<28} {why}")
+    for name, why in sorted(OUR_READINGS.items()):
+        print(f"  {name:<28} {why}")
 
     print("\nwhich unit each group uses")
     wrong = 0

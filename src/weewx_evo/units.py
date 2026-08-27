@@ -171,6 +171,14 @@ CONVERT: dict[str, dict[str, Callable[[float], float]]] = {
     "byte": {"bit": lambda x: x * 8},
     "cm": {"inch": lambda x: x / CM_PER_INCH,
            "mm": lambda x: x * 10.0},
+    # Absolute humidity. `microgram_per_meter_cubed` was already here for
+    # particulates; these two are the same group at scales a person reads.
+    "gram_per_meter_cubed": {
+        "milligram_per_meter_cubed": lambda x: x * 1000.0,
+        "microgram_per_meter_cubed": lambda x: x * 1000000.0},
+    "milligram_per_meter_cubed": {
+        "gram_per_meter_cubed": lambda x: x * 0.001,
+        "microgram_per_meter_cubed": lambda x: x * 1000.0},
     "cm_per_hour": {"inch_per_hour": lambda x: x * 0.393700787,
                     "mm_per_hour": lambda x: x * 10.0},
     "cubic_foot": {"gallon": lambda x: x * 7.48052,
@@ -440,9 +448,11 @@ GROUPS: dict[str, str] = {
     "barometerRate": "group_pressurerate",
     "beaufort": "group_count",
     "cloudbase": "group_altitude",
+    "cloudCover": "group_percent",
     "cloudcover": "group_percent",
     "co": "group_fraction",
     "co2": "group_fraction",
+    "absoluteHumidity": "group_humidity_absolute",
     "consBatteryVoltage": "group_volt",
     "cooldeg": "group_degree_day",
     "dateTime": "group_time",
@@ -481,6 +491,13 @@ GROUPS: dict[str, str] = {
     "humidex1": "group_temperature",
     "illuminance": "group_illuminance",
     "inDewpoint": "group_temperature",
+    "mixingRatio": "group_mixingratio",
+    # `weewx-GTS` calls it this, and a skin written against that extension
+    # asks for it by that name. It puts the reading in `group_concentration`
+    # and gets away with it because there a unit travels with its value;
+    # here the unit comes from the group, and sharing one with particulates
+    # would print 7.4 g/m3 as 7.4 ug/m3.
+    "outHumAbs": "group_humidity_absolute",
     "inHumidity": "group_percent",
     "inTemp": "group_temperature",
     "interval": "group_interval",
@@ -515,6 +532,7 @@ GROUPS: dict[str, str] = {
     "rain": "group_rain",
     "rain24": "group_rain",
     "rainDur": "group_deltatime",
+    "rainProbability": "group_percent",
     "rainRate": "group_rainrate",
     "referenceVoltage": "group_volt",
     "rms": "group_speed2",
@@ -534,7 +552,12 @@ GROUPS: dict[str, str] = {
     "soilTemp4": "group_temperature",
     "stormRain": "group_rain",
     "stormStart": "group_time",
+    "satVaporPressure": "group_pressure",
     "sunshineDur": "group_deltatime",
+    # What `Jterrettaz/sunduration` calls it, which is the name every German
+    # skin that shows sunshine hours already asks for.
+    "sunshine_time": "group_deltatime",
+    "vaporPressure": "group_pressure",
     "supplyVoltage": "group_volt",
     "totalRain": "group_rain",
     "vecavg": "group_speed2",
@@ -575,6 +598,8 @@ _US: dict[str, str] = {
     "group_interval": "minute",
     "group_length": "inch",
     "group_localtime": "local_djd",
+    "group_humidity_absolute": "gram_per_meter_cubed",
+    "group_mixingratio": "gram_per_kilogram",
     "group_moisture": "centibar",
     "group_percent": "percent",
     "group_power": "watt",
@@ -614,6 +639,8 @@ _METRIC: dict[str, str] = {
     "group_interval": "minute",
     "group_length": "cm",
     "group_localtime": "local_djd",
+    "group_humidity_absolute": "gram_per_meter_cubed",
+    "group_mixingratio": "gram_per_kilogram",
     "group_moisture": "centibar",
     "group_percent": "percent",
     "group_power": "watt",
@@ -653,6 +680,8 @@ _METRICWX: dict[str, str] = {
     "group_interval": "minute",
     "group_length": "cm",
     "group_localtime": "local_djd",
+    "group_humidity_absolute": "gram_per_meter_cubed",
+    "group_mixingratio": "gram_per_kilogram",
     "group_moisture": "centibar",
     "group_percent": "percent",
     "group_power": "watt",
@@ -757,6 +786,9 @@ LABELS: dict[str, Any] = {
     "meter_per_second": " m/s",
     "meter_per_second2": " m/s",
     "microgram_per_meter_cubed": [" µg/m³"],
+    "milligram_per_meter_cubed": [" mg/m³"],
+    "gram_per_meter_cubed": [" g/m³"],
+    "gram_per_kilogram": [" g/kg"],
     "mile": [" mile", " miles"],
     "mile_per_hour": " mph",
     "mile_per_hour2": " mph",
@@ -831,6 +863,9 @@ FORMATS: dict[str, str] = {
     "meter_per_second": "%.1f",
     "meter_per_second2": "%.1f",
     "microgram_per_meter_cubed": "%.0f",
+    "milligram_per_meter_cubed": "%.1f",
+    "gram_per_meter_cubed": "%.1f",
+    "gram_per_kilogram": "%.1f",
     "mile": "%.1f",
     "mile_per_hour": "%.0f",
     "mile_per_hour2": "%.1f",

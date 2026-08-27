@@ -83,7 +83,24 @@ DEFAULTS: dict[str, str] = {
     "rainRate": "prefer_hardware",
     "windchill": "prefer_hardware",
     "windrun": "prefer_hardware",
+    # The four below are not WeeWX's. Each is a reading people install an
+    # extension to get, each is pure arithmetic, and none needs the network.
+    "sunshine_time": "prefer_hardware",
+    "vaporPressure": "prefer_hardware",
+    "satVaporPressure": "prefer_hardware",
+    "absoluteHumidity": "prefer_hardware",
+    "mixingRatio": "prefer_hardware",
 }
+
+#: What counts as sunshine, as a fraction of the clear-sky maximum for that
+#: moment. The WMO defines a sunshine hour by direct irradiance above
+#: 120 W/m2, which a station with a plain pyranometer cannot measure -- so
+#: this is the usual approximation, and the threshold is a setting because
+#: the right value depends on the sensor and how clean it is.
+SUNSHINE_FRACTION = 0.75
+#: Below this, nothing counts however clear it is: at dawn the maximum is
+#: small enough that a fraction of it is met by a bright overcast.
+SUNSHINE_FLOOR = 20.0
 
 #: Running totals a reading can be taken from, best first. A console sends the
 #: total since midnight and expects the difference to be taken; which total is
@@ -361,6 +378,75 @@ def delta(now: float | None, before: float | None,
     return now - before
 
 
+def sat_vapor_pressure_mbar(t_c: float) -> float:
+    """The most water vapour the air could hold, in millibars.
+
+    Magnus, with the coefficients WeeWX uses in `dewpoint_c` -- the same
+    formula read forwards. Using a different set here would make the dew
+    point and the vapour pressure disagree about the same air, which is the
+    kind of inconsistency nobody finds because each is right on its own.
+    """
+    return 6.112 * math.exp((17.62 * t_c) / (243.12 + t_c))
+
+
+def vapor_pressure_mbar(t_c: float, rh: float) -> float:
+    """What the moisture actually in the air is worth, in millibars."""
+    return sat_vapor_pressure_mbar(t_c) * (rh / 100.0)
+
+
+def absolute_humidity(t_c: float, rh: float) -> float:
+    """Grams of water per cubic metre.
+
+    The number a greenhouse, a cellar or a museum cares about: relative
+    humidity says how close the air is to saturated, which changes when the
+    temperature does without any water moving. This does not.
+    """
+    pressure = vapor_pressure_mbar(t_c, rh)
+    # From the ideal gas law: 100 converts millibars to pascals, 461.5 is the
+    # specific gas constant for water vapour, and 1000 makes it grams.
+    return (pressure * 100.0) / (461.5 * (t_c + 273.15)) * 1000.0
+
+
+def mixing_ratio(t_c: float, rh: float, pressure_mbar: float) -> float | None:
+    """Grams of water per kilogram of dry air.
+
+    Conserved when air rises or is heated, which is why meteorology uses it
+    where a percentage would mislead.
+    """
+    vapour = vapor_pressure_mbar(t_c, rh)
+    dry = pressure_mbar - vapour
+    if dry <= 0:
+        # Saturated past the ambient pressure. Physically impossible, so a
+        # sensor is wrong; better nothing than a division that explodes.
+        return None
+    return 621.97 * vapour / dry
+
+
+def sunshine_seconds(radiation: float | None, maximum: float | None,
+                     seconds: float, fraction: float = SUNSHINE_FRACTION,
+                     floor: float = SUNSHINE_FLOOR) -> float | None:
+    """How much of this interval was sunshine.
+
+    All or nothing per interval, which is what every implementation of this
+    does: the reading is one number for the whole interval, so there is no
+    information about which minute of it the sun was out.
+
+    The WMO's definition is direct irradiance above 120 W/m2, which needs a
+    pyrheliometer. A weather station has a pyranometer measuring global
+    radiation, so the usual approximation is used instead: a fraction of the
+    clear-sky maximum for that moment, which `maxSolarRad` already computes.
+    """
+    if radiation is None or maximum is None or seconds <= 0:
+        return None
+    if maximum <= 0:
+        # Night. Not "no sunshine yet" -- zero, definitely, which is a fact
+        # worth recording rather than a gap.
+        return 0.0
+    if radiation < floor:
+        return 0.0
+    return float(seconds) if radiation >= maximum * fraction else 0.0
+
+
 # ---------------------------------------------------------------------------
 # Applying them
 # ---------------------------------------------------------------------------
@@ -393,6 +479,11 @@ class Deriver:
 
     station: Station = field(default_factory=Station)
     how: dict[str, str] = field(default_factory=lambda: dict(DEFAULTS))
+    #: What counts as sunshine, as a fraction of the clear-sky maximum. A
+    #: setting because the right value depends on the sensor and how clean
+    #: it is -- a dusty dome reads low all day.
+    sunshine_fraction: float = SUNSHINE_FRACTION
+    sunshine_floor: float = SUNSHINE_FLOOR
     _totals: dict[str, float] = field(default_factory=dict)
 
     def wanted(self, name: str, record: dict) -> bool:
@@ -418,6 +509,10 @@ class Deriver:
         self._pressure(record, units)
         self._sun(record)
         self._wind(record)
+        # Last, because it reads `maxSolarRad` and the vapour pressures read
+        # what `_temperatures` may have just filled in.
+        self._moisture(record, units)
+        self._sunshine(record, units)
         return record
 
     # -- the groups ------------------------------------------------------
@@ -482,6 +577,57 @@ class Deriver:
             feet = cloudbase_ft(_to_f(t, units), rh, self.station.altitude_ft)
             if feet is not None:
                 record["cloudbase"] = feet if units == US else feet / 3.280839895
+
+    def _moisture(self, record: dict, units: int) -> None:
+        """What the air is actually carrying, rather than how close to full.
+
+        None of these are WeeWX's, and all four are things people install an
+        extension for. They are four lines of arithmetic on readings the
+        station already sends.
+        """
+        t, rh = record.get("outTemp"), record.get("outHumidity")
+        if t is None or rh is None:
+            return
+        t_c = _to_c(t, units)
+        # Millibars in both metric systems and inches of mercury in US, so
+        # the result is converted back the same way the barometer is.
+        to_mbar = 1.0 if units != US else 33.8639
+        from_mbar = 1.0 if units != US else 1.0 / 33.8639
+
+        if self.wanted("satVaporPressure", record):
+            record["satVaporPressure"] = sat_vapor_pressure_mbar(t_c) * from_mbar
+        if self.wanted("vaporPressure", record):
+            record["vaporPressure"] = vapor_pressure_mbar(t_c, rh) * from_mbar
+        if self.wanted("absoluteHumidity", record):
+            # Grams per cubic metre in every unit system: there is no
+            # customary unit for it, and WeeWX has no group for one either.
+            record["absoluteHumidity"] = absolute_humidity(t_c, rh)
+        if self.wanted("mixingRatio", record):
+            pressure = record.get("pressure") or record.get("barometer")
+            if pressure is not None:
+                value = mixing_ratio(t_c, rh, float(pressure) * to_mbar)
+                if value is not None:
+                    record["mixingRatio"] = value
+
+    def _sunshine(self, record: dict, units: int) -> None:
+        """Seconds of sunshine in this interval, from the radiation.
+
+        Needs `maxSolarRad`, which `_sun` works out just above -- and needs
+        to know how long the interval was, which is `interval` in minutes.
+        A packet without one is a live reading rather than an interval, and
+        there is nothing to accumulate.
+        """
+        if not self.wanted("sunshine_time", record):
+            return
+        interval = record.get("interval")
+        if interval is None:
+            return
+        value = sunshine_seconds(
+            record.get("radiation"), record.get("maxSolarRad"),
+            float(interval) * 60.0, self.sunshine_fraction,
+            self.sunshine_floor)
+        if value is not None:
+            record["sunshine_time"] = value
 
     def _pressure(self, record: dict, units: int) -> None:
         if not self.wanted("altimeter", record):
@@ -568,10 +714,31 @@ def from_settings(settings: Any) -> Deriver:
     )
     how = dict(DEFAULTS)
     configured = settings.config.get("derive") or {}
+    fraction, floor = SUNSHINE_FRACTION, SUNSHINE_FLOOR
     for name, choice in configured.items():
+        # Two settings in this section are numbers rather than a policy: how
+        # bright counts as sunshine, and how dim is too dim to count at all.
+        # Named here rather than in a second section, because that is where
+        # somebody looking for them will look.
+        if name == "sunshine_fraction":
+            fraction = _fraction(choice, fraction, name)
+            continue
+        if name == "sunshine_floor":
+            floor = _fraction(choice, floor, name)
+            continue
         if choice in HOW:
             how[name] = choice
         else:
             log.warning("derive.%s is %r, which is not one of %s. Ignoring it.",
                         name, choice, ", ".join(HOW))
-    return Deriver(station=station, how=how)
+    return Deriver(station=station, how=how, sunshine_fraction=fraction,
+                   sunshine_floor=floor)
+
+
+def _fraction(value: Any, fallback: float, name: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        log.warning("derive.%s is %r, which is not a number. Using %s.",
+                    name, value, fallback)
+        return fallback
