@@ -1220,12 +1220,18 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
 /* An hour needs a time, a picture and a number and nothing else, so it fits
    in half the width of a day -- and twenty-four of them are four rows on a
    phone rather than a scrollbar. */
+/* Eight three-hour tiles for a day, not twenty-four one-hour ones. At
+   5.5rem that is four and four on a phone and a single row on a desktop --
+   and the columns land near the day above them, which is what makes the two
+   rows read as one thing. */
 .forecast-list.hourly {
-  grid-template-columns: repeat(auto-fit, minmax(3.5rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
   margin-top: var(--s-4);
   padding-top: var(--s-4);
   border-top: 1px solid var(--line-soft);
 }
+
+.forecast-hour--none { grid-column: 1 / -1; text-align: start; }
 
 .forecast-list p { margin: 0; }
 
@@ -1240,10 +1246,38 @@ dialog .card__head { justify-content: space-between; padding: var(--s-4); }
 
 .forecast-hour { gap: 0; padding-inline: 0; }
 
-/* Today, and the hour we are in. The same sunk surface the rest of the skin
-   uses for "this one", not a colour invented here. */
-.forecast-day:first-child, .forecast-hour:first-child {
+/* A day is the control that chooses which hours are shown below it, so it is
+   a button. Stripped back to the tile it already was: a button that looks
+   like a button here would be seven buttons in a row where the page has
+   none. */
+button.forecast-day {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: center;
+  transition: background-color .12s ease;
+}
+
+button.forecast-day:hover { background: var(--surface-hover); }
+button.forecast-day:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The chosen day, and the hour we are in. The same sunk surface the rest of
+   the skin uses for "this one", not a colour invented here. */
+.forecast-day[aria-selected="true"],
+.forecast-list.daily:not([role]) .forecast-day:first-child,
+.forecast-hour:first-child {
   background: var(--bg-sunk);
+}
+
+/* Which day is being shown, said in ink as well as in a background: a
+   difference in shade alone is not a difference for everyone. */
+.forecast-day[aria-selected="true"] .forecast-day__name {
+  color: var(--accent);
 }
 
 .forecast-day__name, .forecast-hour__time { white-space: nowrap; }

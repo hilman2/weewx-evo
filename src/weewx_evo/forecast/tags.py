@@ -52,14 +52,35 @@ class Entry:
     itself.
     """
 
-    __slots__ = ("item", "kind", "language", "target")
+    __slots__ = ("item", "kind", "language", "owner", "target")
 
     def __init__(self, item: Any, target: units.Target,
-                 language: Any = None, kind: str = "hour") -> None:
+                 language: Any = None, kind: str = "hour",
+                 owner: Any = None) -> None:
         self.item = item
         self.target = target
         self.language = language
         self.kind = kind
+        #: The source this came from, so a day can be asked for its own
+        #: hours. Only days carry one; an hour has nothing to look up.
+        self.owner = owner
+
+    def hours(self, step: int = 1) -> list[Entry]:
+        """The hours inside this day, one entry per `step` of them.
+
+        What a page does with it: seven days across the top, and the one
+        somebody clicked drawn out hour by hour underneath.
+
+        Today starts at the hour we are in rather than at midnight. A
+        forecast for this morning is not a forecast, and a row that opens
+        with six hours nobody can act on pushes the ones they can off the
+        screen.
+        """
+        if self.kind != "day" or self.owner is None:
+            return []
+        start = int(self.item.dateTime)
+        return self.owner.between(max(start, int(time.time()) - 3600),
+                                  start + 86400, step)
 
     @property
     def dateTime(self) -> Value:  # noqa: N802 - the column's name
@@ -138,6 +159,46 @@ class Entry:
 
     def __bool__(self) -> bool:
         return True
+
+
+def _severity(code: int | None) -> tuple:
+    """A ranking for picking the one code that speaks for a span of hours.
+
+    Not a physical ordering and not meant as one: thunder first, then
+    anything falling out of the sky, then the state of the sky itself, and
+    within each the WMO number, which runs light to heavy. Sorting on the
+    number alone would let "light rain showers" (80) outrank "heavy rain"
+    (65), which is the wrong one to put on the tile.
+    """
+    if code is None:
+        return (False, False, -1)
+    return (codes.is_severe(code), codes.is_wet(code), int(code))
+
+
+def _summarise(block: list) -> Any:
+    """One hour standing for several, without losing the interesting one.
+
+    Sampling every third hour and taking what happens to be there throws the
+    shower away: nothing is sampled at 17:00, so an hour of rain between two
+    dry ones disappears from the page entirely. So the entry keeps its own
+    hour's temperature -- that is what its label says -- and the worst of the
+    span for the sky and for the chance of rain, which is what somebody
+    deciding whether to go out has to see.
+    """
+    from dataclasses import replace
+
+    head = block[0]
+    chances = [m.rainProbability for m in block if m.rainProbability is not None]
+    falls = [m.rain for m in block if m.rain is not None]
+    seen = [m.code for m in block if m.code is not None]
+    return replace(
+        head,
+        rainProbability=max(chances) if chances else head.rainProbability,
+        # Summed, not maxed: rain is an accumulation and three hours of it
+        # is three hours of it.
+        rain=sum(falls) if falls else head.rain,
+        code=max(seen, key=_severity) if seen else head.code,
+    )
 
 
 #: Forecast field names that are an archive reading under another name, so
@@ -227,7 +288,34 @@ class SourceTag:
         except Exception:
             log.debug("could not read the forecast days", exc_info=True)
             return []
-        return [Entry(d, self.target, self.language, "day") for d in found]
+        # Each day knows which source it came from, so it can be asked for
+        # its own hours. See `Entry.hours`.
+        return [Entry(d, self.target, self.language, "day", owner=self)
+                for d in found]
+
+    def every(self, step: int = 1) -> list[Entry]:
+        """From this hour forward, one entry per `step` hours."""
+        return self._blocks(self._hours(int(time.time()) - 3600), step)
+
+    def between(self, start: int, stop: int, step: int = 1) -> list[Entry]:
+        """The hours in a span, one entry per `step` of them."""
+        try:
+            found = self.store.hours(self.source, start=int(start),
+                                     stop=int(stop))
+        except Exception:
+            log.debug("could not read the forecast hours", exc_info=True)
+            return []
+        return self._blocks(found, step)
+
+    def _blocks(self, moments: list, step: int) -> list[Entry]:
+        """Group hours into spans of `step`, one entry each."""
+        step = max(1, int(step))
+        made = []
+        for at in range(0, len(moments), step):
+            block = moments[at:at + step]
+            made.append(Entry(block[0] if step == 1 else _summarise(block),
+                              self.target, self.language, "hour"))
+        return made
 
     @property
     def now(self) -> Entry | Unknown:

@@ -1,4 +1,4 @@
-/* Every icon on the page has a colour, from somewhere.
+/* What a real parser makes of the rendered page.
  *
  * An inline `<svg>` with no `fill` of its own is black. That is invisible on
  * a dark background, and it is invisible in a way nothing else here can
@@ -11,7 +11,7 @@
  *
  * Called by tools/deck_test.py:
  *
- *     node tools/deck_icons_test.js <page.html> <deck.css>
+ *     node tools/deck_dom_test.js <page.html> <deck.css>
  *
  * Prints one JSON object on stdout. Judging it is the caller's job.
  */
@@ -93,8 +93,39 @@ for (const svg of d.querySelectorAll("svg")) {
   if (!matched) uncoloured.push(where(svg));
 }
 
+/* The days choose which hours are shown below them. `deck.js` wires that
+ * from the ARIA attributes alone, so getting them wrong is a section that
+ * renders perfectly and does nothing when clicked -- and one a keyboard
+ * cannot reach at all. Only a parser can answer this: it turns on ids. */
+const tablists = [...d.querySelectorAll("[role='tablist']")].map((list) => {
+  const tabs = [...list.querySelectorAll("[role='tab']")];
+  const panelOf = (tab) =>
+    d.getElementById(tab.getAttribute("aria-controls") || "");
+  return {
+    tabs: tabs.length,
+    /* A tab whose `aria-controls` names nothing is a button wired nowhere. */
+    danglingTabs: tabs.filter((tab) => !panelOf(tab)).length,
+    selected: tabs.filter((t2) => t2.getAttribute("aria-selected") === "true")
+      .length,
+    /* Two panels visible is two answers to one question; none is a section
+     * that looks broken. Exactly one, before any script has run. */
+    visiblePanels: tabs.filter((tab) => {
+      const panel = panelOf(tab);
+      return panel && !panel.hasAttribute("hidden");
+    }).length,
+    /* Reachable by keyboard: a `<button>` is, a `<div role="tab">` is not. */
+    notFocusable: tabs.filter(
+      (tab) => tab.tagName.toLowerCase() !== "button"
+               && !tab.hasAttribute("tabindex")
+    ).length,
+  };
+});
+
 process.stdout.write(JSON.stringify({
   rulesThatPaint: painted.length,
   iconsNeedingCss: checked,
   uncoloured: [...new Set(uncoloured)],
+  forecastDays: d.querySelectorAll(".forecast-day").length,
+  forecastPanels: d.querySelectorAll("[data-test='forecast-hours']").length,
+  tablists: tablists,
 }));

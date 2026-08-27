@@ -205,7 +205,7 @@ def check_forecast(database: Path, out: Path) -> list[str]:
         if needle not in page:
             problems.append(f"the forecast section has no {what}")
 
-    days = _re.findall(r'<li class="forecast-day">', page)
+    days = _re.findall(r'class="forecast-day"', page)
     if len(days) != 7:
         problems.append(f"{len(days)} day card(s), wanted 7")
 
@@ -269,7 +269,7 @@ def check_icons_have_a_colour(page_html: str, out: Path) -> list[str]:
     where = out / "icons.html"
     where.parent.mkdir(parents=True, exist_ok=True)
     where.write_text(page_html, encoding="utf-8")
-    script = Path(__file__).resolve().parent / "deck_icons_test.js"
+    script = Path(__file__).resolve().parent / "deck_dom_test.js"
     css = Path(bundled()["deck"]) / "assets" / "deck.css"
     finished = subprocess.run(["node", str(script), str(where), str(css)],
                               capture_output=True, text=True, timeout=60,
@@ -281,6 +281,78 @@ def check_icons_have_a_colour(page_html: str, out: Path) -> list[str]:
     return [f"an icon under {said} is given no colour, so it is black -- "
             f"invisible on a dark page"
             for said in found["uncoloured"]]
+
+
+def check_the_days_choose_the_hours(page_html: str, out: Path) -> list[str]:
+    """Clicking a day shows that day's hours, and a keyboard can do it too.
+
+    `deck.js` wires this from the ARIA attributes and nothing else, so a
+    wrong id is a row of buttons that render perfectly and do nothing when
+    pressed. The page also has to be right before any script runs: exactly
+    one panel visible, or a reader without JavaScript gets all seven at once.
+    """
+    found = _dom(page_html, out)
+    if found is None:
+        return []
+
+    problems: list[str] = []
+    days = found["forecastDays"]
+    if days == 0:
+        return ["no day tiles at all"]
+    if found["forecastPanels"] != days:
+        problems.append(f"{days} day(s) but {found['forecastPanels']} "
+                        f"panel(s) of hours")
+
+    forecast = [one for one in found["tablists"] if one["tabs"] == days]
+    if not forecast:
+        problems.append("the days are not a tablist, so clicking one does "
+                        "nothing")
+        return problems
+    for one in forecast:
+        if one["danglingTabs"]:
+            problems.append(f"{one['danglingTabs']} day(s) point at an id "
+                            f"that is not on the page")
+        if one["selected"] != 1:
+            problems.append(f"{one['selected']} day(s) marked as chosen, "
+                            f"wanted exactly one")
+        if one["visiblePanels"] != 1:
+            problems.append(f"{one['visiblePanels']} panel(s) of hours "
+                            f"visible before any script runs, wanted one")
+        if one["notFocusable"]:
+            problems.append(f"{one['notFocusable']} day(s) a keyboard cannot "
+                            f"reach")
+    return problems
+
+
+def _dom(page_html: str, out: Path) -> dict | None:
+    """The rendered page, as a browser's own parser sees it.
+
+    None where there is no node with jsdom: such a machine runs every other
+    check here and is told which one it is not running.
+    """
+    import shutil
+    import subprocess
+
+    from weewx_evo.skins import bundled
+
+    if shutil.which("node") is None:
+        return None
+    if subprocess.run(["node", "-e", "require('jsdom')"],
+                      capture_output=True, check=False).returncode != 0:
+        return None
+
+    where = out / "dom.html"
+    where.parent.mkdir(parents=True, exist_ok=True)
+    where.write_text(page_html, encoding="utf-8")
+    script = Path(__file__).resolve().parent / "deck_dom_test.js"
+    css = Path(bundled()["deck"]) / "assets" / "deck.css"
+    finished = subprocess.run(["node", str(script), str(where), str(css)],
+                              capture_output=True, text=True, timeout=60,
+                              check=False)
+    if finished.returncode != 0 or not finished.stdout.strip():
+        why = finished.stderr.strip()[:300]
+        raise RuntimeError(f"the page could not be parsed: {why}")
+    return json.loads(finished.stdout)
 
 
 def check_no_sideways_scrolling() -> list[str]:
@@ -337,9 +409,11 @@ def main(argv: list[str]) -> int:
         failures += check_forecast(database, out)
         failures += check_no_sideways_scrolling()
 
-        forecast_page, _ = with_forecast(database, out / "icons")
+        forecast_page, _ = with_forecast(database, out / "dom")
         if forecast_page:
-            failures += check_icons_have_a_colour(forecast_page, out / "icons")
+            failures += check_icons_have_a_colour(forecast_page, out / "dom")
+            failures += check_the_days_choose_the_hours(forecast_page,
+                                                        out / "dom")
 
         pages = sorted(out.glob("*.html"))
         if len(pages) < 5:

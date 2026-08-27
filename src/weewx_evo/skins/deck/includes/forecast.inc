@@ -41,12 +41,11 @@
 #end if
 ##
 #set $day_count = $int($conf.get('days', 7))
-#set $hour_count = $int($conf.get('hours', 24))
+#set $hour_step = $max(1, $int($conf.get('hour_step', 3)))
 #set $show_hours = $to_bool($conf.get('show_hours', True))
 #set $show_warnings = $to_bool($conf.get('show_warnings', True))
 ##
 #set global $forecast_days = $outlook.days[:$day_count]
-#set global $forecast_hours = $outlook.hours[:$hour_count]
 #if $show_warnings
 #set global $forecast_warnings = $outlook.active_warnings
 #else
@@ -89,7 +88,7 @@
 #end if
 
 <!--prettier-ignore-->
-#if $len($forecast_days) > 0 or $len($forecast_hours) > 0
+#if $len($forecast_days) > 0
 <div>
   <header class="section-header">
     <h2>$gettext($conf.get('heading', 'Forecast'))</h2>
@@ -98,11 +97,28 @@
 
 <div class="card forecast-tile">
   <div class="card__body">
+    ## The days are the choice, and the hours below are what was chosen.
+    ## `role="tablist"` is not decoration: `assets/deck.js` already wires
+    ## arrow keys, `aria-selected` and hiding the panels, so this needs no
+    ## script of its own. Every day's hours are written out and all but one
+    ## hidden -- seven short rows of markup, and nothing to fetch when
+    ## somebody clicks.
     <!--prettier-ignore-->
     #if $len($forecast_days) > 0
-    <ol class="forecast-list daily" data-test="forecast-days">
+    #if $show_hours
+    <div class="forecast-list daily" role="tablist" value="0"
+         aria-label="$gettext('Forecast')" data-test="forecast-days">
+    #else
+    <div class="forecast-list daily" data-test="forecast-days">
+    #end if
       #for $i, $day in $enumerate($forecast_days)
-      <li class="forecast-day">
+      #if $show_hours
+      <button type="button" class="forecast-day" role="tab" value="$i"
+              id="fc-tab-$i" aria-controls="fc-hours-$i"
+              aria-selected="#if $i == 0#true#else#false#end if#">
+      #else
+      <div class="forecast-day">
+      #end if
         <p class="stat-label forecast-day__name">
           #if $i == 0
           $gettext("Today")
@@ -129,29 +145,42 @@
           $day.windMax
         </p>
         #end if
-      </li>
+      #if $show_hours
+      </button>
+      #else
+      </div>
+      #end if
       #end for
-    </ol>
+    </div>
     #end if
 
     <!--prettier-ignore-->
-    #if $show_hours and $len($forecast_hours) > 0
-    <ol class="forecast-list hourly" data-test="forecast-hours">
-      #for $hour in $forecast_hours
+    #if $show_hours
+    #for $i, $day in $enumerate($forecast_days)
+    #set $slots = $day.hours($hour_step)
+    <ol class="forecast-list hourly" role="tabpanel" id="fc-hours-$i"
+        aria-labelledby="fc-tab-$i" data-test="forecast-hours"#if $i > 0# hidden#end if#>
+      #if $len($slots) == 0
+      <li class="forecast-hour forecast-hour--none">
+        <p class="stat-detail">$gettext("No hourly detail for this day.")</p>
+      </li>
+      #end if
+      #for $slot in $slots
       <li class="forecast-hour">
-        <p class="stat-label forecast-hour__time">$hour.dateTime.format("%H")</p>
-        #set global $forecast_symbol = $hour.symbol
+        <p class="stat-label forecast-hour__time">$slot.dateTime.format("%H")</p>
+        #set global $forecast_symbol = $slot.symbol
         #include "includes/forecast-icon.inc"
-        <p class="forecast-hour__temp">$hour.outTemp</p>
+        <p class="forecast-hour__temp">$slot.outTemp</p>
         ## Only when there is some. A dry afternoon printed "0%" twenty-four
         ## times under twenty-four identical clouds, which is a column of
         ## noise in the place a reader looks for the one hour that differs.
-        #if $hour.rainProbability.raw
-        <p class="stat-detail forecast-hour__wet">$hour.rainProbability</p>
+        #if $slot.rainProbability.raw
+        <p class="stat-detail forecast-hour__wet">$slot.rainProbability</p>
         #end if
       </li>
       #end for
     </ol>
+    #end for
     #end if
   </div>
 
