@@ -758,13 +758,18 @@ def test_the_page_shows_what_was_pushed(tmp: Path) -> None:
 
     ok("the page asked for the file", result["fetches"] > 0)
     shown = {row["obs"]: row["shown"] for row in result["values"]}
-    check("the pushed temperature is on the card",
-          shown.get("outTemp"), "27.5")
+    # With the unit the skin printed, not the bare number. Replacing the whole
+    # text took every unit off the page the moment the first reading arrived:
+    # "1013.2 mbar" became "1013.2", on every card at once.
+    check("the pushed temperature is on the card, with its unit",
+          shown.get("outTemp"), "27.5 °C")
+    check("and the pressure keeps its unit too",
+          shown.get("barometer"), "1008.3 mbar")
     # Whole numbers: the card carries `data-rounding="0"` for humidity, and
     # the page rounds the way the skin says rather than the way the document
     # happens to be written.
     check("and the humidity, at the skin's own rounding",
-          shown.get("outHumidity"), "44")
+          shown.get("outHumidity"), "44 %")
 
     # Green, not red: the document is seconds old.
     ok("the badges say live", "live-badge--live" in result["badgeStates"])

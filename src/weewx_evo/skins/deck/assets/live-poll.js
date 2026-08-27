@@ -54,6 +54,34 @@
     return isNaN(places) ? 1 : places;
   }
 
+  /* What the skin printed after the number -- " mbar", " °C", " %". Learned
+   * from the rendered page rather than rebuilt from `data-unit`, because the
+   * skin decides the spacing and the wording and this way it keeps deciding
+   * them.
+   *
+   * Learned once, on the first sight of a card. After that the element holds
+   * only what this wrote, so reading it again would learn the empty string --
+   * which is the bug this comment is here to stop coming back. Every unit on
+   * the page vanished the moment the first reading arrived. */
+  function suffixOf(card, element) {
+    var known = element.getAttribute("data-live-suffix");
+    if (known !== null) {
+      return known;
+    }
+    var printed = element.textContent.trim();
+    /* The number, then whatever follows it. A card showing N/A has no number
+     * and therefore nothing to learn; `data-unit` is the fallback, and an
+     * empty one leaves the value bare, which is what it was. */
+    var found = printed.match(/^[-+]?[\d.,]+\s*(.*)$/);
+    var suffix = found && found[1] ? " " + found[1].trim() : "";
+    if (!suffix) {
+      var unit = card.getAttribute("data-unit");
+      suffix = unit ? " " + unit : "";
+    }
+    element.setAttribute("data-live-suffix", suffix);
+    return suffix;
+  }
+
   function apply(data) {
     /* The reading's own timestamp, not when the file was written. A station
      * that stopped an hour ago wrote its last reading an hour ago, and the
@@ -76,17 +104,13 @@
       if (!target) {
         return;
       }
-      var shown = typeof value === "number"
+      var shown = (typeof value === "number"
         ? value.toFixed(decimals(card))
-        : String(value);
-      if (target.textContent.trim() === shown) {
-        /* Written anyway, and deliberately: `live-status.js` watches for the
-         * change to decide whether a card is live, and a value that happens
-         * not to have moved is still a fresh reading. Setting the same text
-         * still fires the observer. */
-        target.textContent = shown;
-        return;
-      }
+        : String(value)) + suffixOf(card, target);
+      /* Written even when it has not changed, and deliberately:
+       * `live-status.js` watches for the change to decide whether a card is
+       * live, and a value that happens not to have moved is still a fresh
+       * reading. Setting the same text still fires the observer. */
       target.textContent = shown;
     });
 
