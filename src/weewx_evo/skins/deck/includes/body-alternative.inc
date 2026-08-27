@@ -134,7 +134,6 @@
 
 #include "includes/section-heading.inc"
 
-<div class="grid grid--wide">
 #set $diagram_index = 0
 #set $context_for_diagrams = $context if $context != 'yesterday' else 'day'
 #set $diagram_context_config = $DisplayOptions.get("diagrams", {}).get($context_for_diagrams, {}).get('observations', {})
@@ -170,8 +169,14 @@
     #set $only_plots = [$only_plots]
   #end if
   #set $only_text = ", ".join($only_plots)
-  <div data-plots="$context_for_diagrams" data-only="$only_text"></div>
+  ## The attributes sit on the grid itself, so the cards `charts.js` builds
+  ## are its own children. Nested one deeper, the grid had a single item and
+  ## laid out one chart per row -- four abreast became one, on a screen with
+  ## room for three.
+  <div class="grid grid--wide" data-plots="$context_for_diagrams"
+       data-only="$only_text"></div>
 #else
+<div class="grid grid--wide">
 #for $skin_obs in $diagram_context_config
   #if $skin_obs in $combined.keys()
     #set $combined_diagram = $combined[$skin_obs]

@@ -92,6 +92,17 @@ window.matchMedia = window.matchMedia || function () {
            removeEventListener() {}, removeListener() {} };
 };
 
+/* The page's own inline scripts first. `window.deckConfig` is set there and
+ * carries the language the tooltips are written in -- run without it, every
+ * chart falls back to English and a German page reads AM and PM. */
+for (const tag of window.document.querySelectorAll("script:not([src])")) {
+  try {
+    window.eval(tag.textContent);
+  } catch (error) {
+    /* A page script needing something not stubbed here is not under test. */
+  }
+}
+
 window.eval(fs.readFileSync(process.argv[3], "utf-8"));
 
 /* The fetches resolve as microtasks; a turn of the event loop is enough. */
@@ -112,6 +123,20 @@ setTimeout(() => {
     plots: [...d.querySelectorAll("[data-plot]")]
       .map((one) => one.getAttribute("data-plot")),
     charts: drawn.length,
+    /* The cards have to be children of the grid, or the grid holds one item
+     * and lays out one chart per row on a screen with room for three. */
+    grid: (function () {
+      var container = d.querySelector("[data-plots]");
+      if (!container) return null;
+      return {
+        classes: container.getAttribute("class") || "",
+        directChildren: container.children.length,
+        cardsInside: container.querySelectorAll(".diagram-tile").length,
+      };
+    })(),
+    /* Which language the tooltips are written in. */
+    locale: (window.deckConfig && window.deckConfig.chartSpec
+             && window.deckConfig.chartSpec.locale) || null,
     /* The numbers reached the drawing, and the timestamps came through as
      * milliseconds -- the units ECharts measures a time axis in. */
     firstPoint: points.length ? points[0] : null,

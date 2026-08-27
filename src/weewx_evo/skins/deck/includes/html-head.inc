@@ -53,6 +53,13 @@
     /* Where the plot files are published. A separate export from the pages,
        so only the operator knows how the two sit on the host. */
     chartsPath: "$Extras.get('charts_path', '/json/')",
+    /* How this skin draws a chart, for the tiles built in the browser.
+       What a chart *holds* is in its file; this is the rest -- and the
+       language above all, or a German page gets AM and PM in its tooltips. */
+    chartSpec: {
+      locale: "$get_locale()",
+      format: "%.1f"
+    },
     translations: {
       "Daily": "$gettext('Daily')",
       "Hourly": "$gettext('Hourly')",

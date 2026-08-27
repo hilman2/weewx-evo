@@ -1030,8 +1030,14 @@
         container.querySelectorAll("[data-chart]").forEach(build);
       })
       .catch(function (why) {
-        container.textContent = "no chart index at " + chartsPath()
-          + "index.json";
+        /* Somewhere to go from here. The charts are a different export from
+         * these pages -- to a different host, in the FTP case -- so nothing
+         * on this page can work out where they landed, and a dead end that
+         * only says the URL leaves somebody guessing which of the two ends
+         * is wrong. */
+        container.textContent =
+          "No charts at " + chartsPath() + "index.json. That address is the "
+          + "skin's charts_path setting; the files come from the json feed.";
         container.classList.add("muted");
         if (window.console) console.info("deck: " + why.message);
       });

@@ -504,6 +504,21 @@ def check_charts_build_themselves(page_html: str, out: Path) -> list[str]:
         problems.append("a tile has no heading; the file's title was not used")
     if found["charts"] == 0:
         problems.append("tiles were built and nothing was drawn")
+    grid = found.get("grid")
+    if not grid:
+        problems.append("nothing on the page asks for a span of charts")
+    else:
+        if "grid" not in grid["classes"]:
+            problems.append(f"the element the charts go in is not a grid "
+                            f"({grid['classes']!r}), so they stack one per row")
+        if grid["cardsInside"] and grid["directChildren"] != grid["cardsInside"]:
+            problems.append(f"{grid['cardsInside']} card(s) but "
+                            f"{grid['directChildren']} grid item(s): nested, "
+                            f"so the columns do not apply to them")
+    # A German page with English tooltips reads AM and PM.
+    if found.get("locale") in (None, "", "en"):
+        problems.append(f"the charts are drawn in {found.get('locale')!r} "
+                        f"rather than the language of the page")
     if found["firstPoint"] is None:
         problems.append("the drawing got no points")
     else:

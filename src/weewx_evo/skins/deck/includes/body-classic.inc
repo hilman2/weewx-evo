@@ -136,7 +136,11 @@
     #set $only_plots = [$only_plots]
   #end if
   #set $only_text = ", ".join($only_plots)
-  <div data-plots="$context_for_diagrams" data-only="$only_text"></div>
+  ## The grid class goes on the element `charts.js` fills, so the cards are
+  ## its own children. One level deeper, the grid holds a single item and
+  ## lays out one chart per row -- three abreast became one.
+  <div class="grid grid--wide" data-plots="$context_for_diagrams"
+       data-only="$only_text"></div>
 #else
 #for $skin_obs in $diagram_context_config
       #if $skin_obs in $combined.keys()
