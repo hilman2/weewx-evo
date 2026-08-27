@@ -1071,6 +1071,151 @@ def cmd_derive(args: argparse.Namespace) -> int:
     return 0
 
 
+def _shim_config(args: argparse.Namespace) -> dict:
+    """The weewx.conf a WeeWX driver is configured by.
+
+    Its own file, not ours. A WeeWX driver reads its settings out of the
+    section named after it, and those settings are the ones that were already
+    working -- serial port, station model, sensor map. Copying them into our
+    file would mean maintaining a second place for them and getting the
+    translation wrong for the drivers nobody here can test.
+    """
+    from .ingest import weewxshim
+
+    path = args.conf or "/etc/weewx/weewx.conf"
+    if not Path(path).exists():
+        raise SystemExit(f"no weewx.conf at {path}. Say where it is with --conf.")
+    return weewxshim.read_config(path)
+
+
+def cmd_weewx_driver_list(args: argparse.Namespace) -> int:
+    """What this weewx.conf asks for, and whether it can be built."""
+    from .ingest import weewxshim
+
+    try:
+        import weewx
+    except ImportError:
+        print("WeeWX is not installed here, so its drivers cannot run.",
+              file=sys.stderr)
+        print("This command needs it; nothing else in weewx-evo does.",
+              file=sys.stderr)
+        return 1
+
+    config_dict = _shim_config(args)
+    print(f"WeeWX {getattr(weewx, '__version__', 'unknown')}")
+    station = (config_dict.get("Station") or {}).get("station_type", "?")
+    print(f"station_type: {station}")
+    try:
+        module = args.driver or weewxshim.driver_module_name(config_dict)
+    except ValueError as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+    print(f"driver:       {module}")
+
+    section = config_dict.get(station) or {}
+    settings = [k for k in section if k != "driver"]
+    if settings:
+        print(f"its settings: {', '.join(sorted(settings))}")
+    return 0
+
+
+def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
+    """Build the driver, take a few packets, deliver nothing.
+
+    The question this answers is the one worth asking before a service is
+    installed: does this driver, this configuration and this hardware work
+    together at all. It writes nothing and needs no listener, so it is also
+    what to run when something has stopped arriving.
+    """
+    from .ingest import weewxshim
+
+    config_dict = _shim_config(args)
+    try:
+        found = weewxshim.probe(config_dict, args.driver, count=args.count,
+                                source=args.source)
+    except Exception as exc:
+        print(f"the driver could not be run: {exc}", file=sys.stderr)
+        log.debug("driver probe failed", exc_info=True)
+        return 1
+
+    print(f"driver:           {found['driver']}")
+    print(f"source name:      {found['source']}")
+    print(f"archive interval: {found['archive_interval']}s")
+    print(f"callbacks bound:  {found['callbacks']}")
+    print(f"packets:          {found['packets']}")
+    print(f"usUnits:          {found['usUnits']}")
+    print(f"fields ({len(found['fields'])}): {', '.join(found['fields'])}")
+    if found["sample"]:
+        print("\nfirst packet, first few fields:")
+        for name, value in found["sample"].items():
+            print(f"  {name:<20} {value}")
+    if not found["packets"]:
+        print("\nThe driver built but produced nothing. For hardware that is "
+              "usually\nthe wrong port or a console that is asleep.")
+        return 1
+    return 0
+
+
+def cmd_weewx_driver_run(args: argparse.Namespace) -> int:
+    """Run the driver and deliver what it produces to the listener.
+
+    This is the long-running form, meant for a service file. It stays in its
+    own process on purpose: that is the whole reason a WeeWX driver is safe to
+    run here, and putting it inside `serve` would give back exactly what the
+    arrangement buys.
+    """
+    import signal
+
+    from .ingest import weewxshim
+
+    cfg = settings_for(args)
+    config_dict = _shim_config(args)
+    # From the settings, and deliberately not from a --token argument the way
+    # `url` and `listen` take one. Those are typed and over in a second; this
+    # is a service that runs for months, and an argument would put the token
+    # in /proc/<pid>/cmdline, where `ps` prints it for every user on the
+    # machine. WEEWX_EVO_TOKEN in the unit's EnvironmentFile, or the
+    # configuration file.
+    token = cfg.get("token")
+    port = args.port or cfg.get("port") or 8000
+    host = args.host or "127.0.0.1"
+
+    if not token:
+        print("No upload token is set, so the listener would refuse every",
+              file=sys.stderr)
+        print("packet and this would run and deliver nothing.", file=sys.stderr)
+        print(file=sys.stderr)
+        print("  WEEWX_EVO_TOKEN=...  in the environment, or `token` in the",
+              file=sys.stderr)
+        print("  configuration file. Not an argument: it would show up in ps.",
+              file=sys.stderr)
+        return 1
+
+    shim = weewxshim.Shim(
+        config_dict, args.driver, source=args.source, host=host, port=port,
+        token=token, batch_seconds=args.batch,
+        catchup_seconds=int(args.catchup or 0), dry_run=args.dry_run)
+
+    def bye(_signum, _frame):
+        # The generator blocks on the hardware, so the flag is read between
+        # packets. A console that has gone quiet still needs the second
+        # signal, which is the supervisor's job and not ours.
+        shim.stop()
+
+    signal.signal(signal.SIGINT, bye)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, bye)
+
+    where = "nowhere (--dry-run)" if args.dry_run else f"{host}:{port}"
+    print(f"running {shim.module_name}, delivering to {where}")
+    sent = shim.run(limit=args.limit)
+    print(f"{sent} packet(s) delivered in {shim.delivered_batches} batch(es)")
+    if shim.dropped:
+        print(f"{shim.dropped} packet(s) dropped while the listener was "
+              f"unreachable", file=sys.stderr)
+    return 0
+
+
 def cmd_columns(args: argparse.Namespace) -> int:
     """Readings that the archive has no column for.
 
@@ -2662,6 +2807,59 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="say what would change and change nothing.")
     p.set_defaults(func=cmd_derive)
+
+    # A WeeWX driver, run in its own process. Its own subcommand rather than
+    # an option on `listen`, because that is the arrangement: the driver is
+    # somewhere else, and what reaches the listener is an ordinary upload.
+    p = sub.add_parser("weewx-driver",
+                       help="run a WeeWX driver and deliver what it produces")
+    shim_sub = p.add_subparsers(dest="shim_command", required=True)
+
+    def add_shim_common(q):
+        add_common(q)
+        q.add_argument("--conf", default=None,
+                       help="the weewx.conf the driver is configured by. "
+                            "/etc/weewx/weewx.conf by default.")
+        q.add_argument("--driver", default=None,
+                       help="the driver module, if not the one [Station] "
+                            "names. For example weewx.drivers.vantage.")
+        q.add_argument("--source", default=None,
+                       help="what to record these readings under. The "
+                            "driver's own hardware name by default.")
+
+    q = shim_sub.add_parser("list", help="what the weewx.conf asks for")
+    add_shim_common(q)
+    q.set_defaults(func=cmd_weewx_driver_list)
+
+    q = shim_sub.add_parser("check", help="build it, take a few packets, "
+                                          "deliver nothing")
+    add_shim_common(q)
+    q.add_argument("--count", type=int, default=3,
+                   help="how many packets to wait for")
+    q.set_defaults(func=cmd_weewx_driver_check)
+
+    q = shim_sub.add_parser("run", help="deliver to the listener, until stopped")
+    add_shim_common(q)
+    q.add_argument("--host", default=None,
+                   help="the listener's address. Loopback by default, which "
+                        "is where it is when both run on one machine.")
+    q.add_argument("--port", type=int, default=None,
+                   help="the listener's port")
+    q.add_argument("--batch", type=float, default=5.0,
+                   help="seconds of packets per delivery. One request per "
+                        "loop packet is a round trip every two seconds for "
+                        "readings that are aggregated at the end of the "
+                        "interval anyway.")
+    q.add_argument("--catchup", type=int, default=None,
+                   help="seconds of the console's own logged records to "
+                        "fetch at startup, for hardware that keeps them. "
+                        "This is how an outage becomes a filled gap instead "
+                        "of a lost one.")
+    q.add_argument("--limit", type=int, default=None,
+                   help="stop after this many packets. For trying it out.")
+    q.add_argument("--dry-run", action="store_true",
+                   help="run the driver and deliver nothing.")
+    q.set_defaults(func=cmd_weewx_driver_run)
 
     p = sub.add_parser("columns", help="readings that have nowhere to live")
     add_common(p)

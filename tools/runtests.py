@@ -134,6 +134,9 @@ def tests() -> list[Test]:
              "the realtime files, field by field"),
         Test("forecast", ["forecast_test.py"],
              "Open-Meteo, DWD, MeteoAlarm and NWS, from recorded responses"),
+        Test("shim", ["shim_test.py"],
+             "a WeeWX driver, run in its own process, delivering to us",
+             needs=("weewx",)),
 
         # -- what a page comes out as ------------------------------------
         Test("feeds", ["feeds_test.py"],

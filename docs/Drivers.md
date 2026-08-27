@@ -238,6 +238,57 @@ as readings.
 
 Reachable at `/<token>/json/`, over UDP, and via `listener.push()`.
 
+## Running a WeeWX driver — `ingest/weewxshim.py`
+
+WeeWX has fifteen years of drivers: fourteen in its own tree and around a
+hundred outside it, for hardware nobody here owns and cannot test against.
+They run unchanged.
+
+```bash
+weewx-evo weewx-driver check --conf /etc/weewx/weewx.conf   # build it, send nothing
+weewx-evo weewx-driver run   --conf /etc/weewx/weewx.conf   # deliver
+```
+
+Its own process, delivering over `listener.push()` like any other collector.
+That is the point rather than an implementation detail: in WeeWX the driver
+lives inside the engine, so a serial port that stops answering stops
+everything. Here it can wedge, crash or leak and the listener and archiver
+carry on — and it does not have to be on the same machine. `deploy/weewx-driver.service`
+is a unit file for it.
+
+**Where it taps in.** WeeWX's engine puts a loop packet through four groups of
+services before the accumulator sees it:
+
+```
+genLoopPackets()
+  -> prep     StdTimeSynch
+  -> process  StdConvert, StdCalibrate, StdQC, StdWXCalculate
+  -> xtype    StdWXXTypes, StdPressureCooker, StdRainRater, StdDelta
+  -> archive  StdArchive
+```
+
+None of it is reproduced, because running it would run it twice: `units.py`
+is StdConvert, `derive.py` is StdWXCalculate and the four xtype services,
+`archiver.py` is StdArchive. The raw packet is what is taken. (StdCalibrate
+and StdQC have no counterpart here yet.)
+
+The shapes already match — a loop packet is `{dateTime, usUnits, …readings}`
+and the envelope is that plus `source`, `kind` and `interval`. Two keys move
+out and the rest is `data`. That is not luck: the field names and the
+`usUnits` constants are WeeWX's, because keeping a WeeWX database readable
+meant adopting them.
+
+**What a driver may ask of the engine** is one method, `bind`. Measured over
+WeeWX's fourteen own drivers, exactly one — Vantage — touches the engine at
+all, because it is a driver and a service at once. Its events are really
+dispatched, including `END_ARCHIVE_PERIOD`: Vantage accumulates the loop gust
+across packets and clears it only there, so a shim that skipped it would
+report a gust that never falls, with nothing about the numbers looking wrong.
+
+Hardware that keeps its own records can be asked for them at startup with
+`--catchup`, delivered as `kind="archive"`, which the archiver already prefers
+over what it accumulated. That is what turns an outage into a filled gap.
+
 ## `parsers.py`
 
 The older, function-based registry: a parser gets bytes and returns packets. It
