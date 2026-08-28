@@ -368,14 +368,17 @@ def _forecast_state(admin: Any, state: State) -> None:
         return
     try:
         for name in sorted(configured):
-            # The `run` table, which is where the store records when a source
-            # last answered. There is no `hour` table -- the readings are in
-            # `moment` -- and asking for one raised, which this function
-            # caught and logged, leaving a card that said nothing was
-            # configured on an installation fetching one every hour.
+            # `run` is keyed on the provider, not on the name somebody gave
+            # this entry: [forecast.kirchdorf] with kind = "open-meteo" is
+            # stored under "open-meteo". Two entries against one provider
+            # therefore share a row, which is the store's business and not
+            # something to correct from here.
+            settings = configured.get(name) or {}
+            provider = str(settings.get("kind") or name) if isinstance(
+                settings, dict) else name
             row = conn.execute(
                 "SELECT fetched, hours, days FROM run WHERE source = ?",
-                (name,)).fetchone()
+                (provider,)).fetchone()
             if row is None:
                 state.forecasts.append(Link(
                     name, unreachable="configured, not fetched yet",

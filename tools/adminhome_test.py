@@ -303,7 +303,9 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
         current["feeds"] = {"json": {"kind": "json"}}
         current["exports"] = {"site": {"kind": "local", "directory": str(work)}}
         current["uploads"] = {"wu": {"kind": "wunderground"}}
-        current["forecast"] = {"kirchdorf": {"source": "openmeteo"}}
+        # `kind` is the provider, and it is what the forecast store keys its
+        # `run` table on -- not the name of the entry.
+        current["forecast"] = {"kirchdorf": {"kind": "open-meteo"}}
         admin.config = lambda: current  # type: ignore[method-assign]
 
         state = adminhome.read(admin)
@@ -321,7 +323,7 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
 
         store = ForecastStore(work / "data" / "forecast.sdb")
         try:
-            store.store(Reading(source="kirchdorf", issued=int(time.time())),
+            store.store(Reading(source="open-meteo", issued=int(time.time())),
                         fetched=int(time.time() - 30))
         finally:
             store.close()
