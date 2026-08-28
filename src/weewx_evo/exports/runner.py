@@ -220,6 +220,10 @@ class Runner:
 
     def __init__(self, exports: list[Scheduled], note: Any = None) -> None:
         self.exports = exports
+        #: Kept, so a replaced set is noted the same way. Without it an
+        #: export added while running stopped recording what it did, and the
+        #: settings page had nothing to show for the one just made.
+        self._note = note
         for one in exports:
             one.note = note
         self._stopping = threading.Event()
@@ -228,7 +232,41 @@ class Runner:
         self._wake = {s.name: threading.Event() for s in exports}
         self._threads: list[threading.Thread] = []
 
+    def replace(self, exports: list[Scheduled]) -> None:
+        """Swap in a new set, after the configuration changed.
+
+        A method rather than three assignments at the call site -- the same
+        one the upload runner has, and for the same reason, which was written
+        down there and then not done here: the events, the stop flag and the
+        thread list all have to be rebuilt with the list, and a caller that
+        remembers two of the three gets a runner whose threads never wake.
+
+        That is exactly what happened. `apply_live` called stop(), assigned
+        `exports` and called start(); the stop flag was still set from the
+        line above, so every new thread checked it and returned at once.
+        The watchdog was right: "the export-evoftp, export-json,
+        export-seasonspics, export-wdc thread(s) have died."
+
+        It stayed hidden because nothing reached this path. `reload()` only
+        answered about the *core* settings, and adding an export changes none
+        of those -- so the whole of apply_live ran for the first time on the
+        day that was fixed.
+        """
+        self.stop()
+        self.exports = exports
+        for one in exports:
+            one.note = self._note
+        self._stopping = threading.Event()
+        self._wake = {s.name: threading.Event() for s in exports}
+        self._threads = []
+        self.start()
+
     def start(self) -> None:
+        # Safe to call after a stop, whoever does it: a flag left set would
+        # end every thread it starts, in the same tick, silently.
+        if self._stopping.is_set():
+            self._stopping = threading.Event()
+            self._threads = []
         for scheduled in self.exports:
             if scheduled.trigger == "manual":
                 log.info("export %s runs only when asked", scheduled.name)

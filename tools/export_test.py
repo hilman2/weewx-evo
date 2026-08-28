@@ -648,6 +648,85 @@ def what_it_last_did(check) -> int:
     return failures
 
 
+def a_replaced_set_keeps_running(check) -> int:
+    """An export added while the service runs must actually run.
+
+    The watchdog found this in the field, half an hour after the reload path
+    started working: "the export-evoftp, export-json, export-seasonspics,
+    export-wdc thread(s) have died". Every one of them, seconds after the
+    line saying four exports were running.
+
+    `apply_live` did stop(), assigned the new list, and called start(). The
+    stop flag was still set from the line above, so each new thread checked
+    it and returned -- and nothing ever published again. The upload runner
+    has had a `replace` for exactly this since it was written, with the
+    reason in its docstring; the exports never got one.
+    """
+    import tempfile
+    import threading
+    import time
+    from pathlib import Path
+
+    from weewx_evo.exports import Sent
+    from weewx_evo.exports import runner as export_runner
+
+    failures = 0
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        source = Path(raw) / "site"
+        source.mkdir()
+        (source / "index.html").write_text("x", encoding="utf-8")
+
+        sent: list[str] = []
+
+        class Counting:
+            trigger = "record"
+
+            def __init__(self, name):
+                self.name = name
+
+            def send(self, where, files=None, **kw):
+                sent.append(self.name)
+                return Sent(sent=1)
+
+        def one(name):
+            return export_runner.Scheduled(name, Counting(name), source)
+
+        noted: list[str] = []
+        runner = export_runner.Runner(
+            [one("first")], note=lambda n, r, e: noted.append(n))
+        runner.start()
+        try:
+            alive = [t for t in runner._threads if t.is_alive()]
+            failures += not check("it starts", len(alive), 1)
+
+            # The same thing apply_live does when the file gains an export.
+            runner.replace([one("first"), one("second")])
+            time.sleep(0.2)
+            alive = [t.name for t in runner._threads if t.is_alive()]
+            failures += not check("both threads are alive after a replace",
+                                  sorted(alive),
+                                  ["export-first", "export-second"])
+
+            runner.record_written()
+            deadline = time.monotonic() + 5
+            while len(sent) < 2 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            failures += not check("and both actually send", sorted(sent),
+                                  ["first", "second"])
+            # The record keeps working across the swap: an export added while
+            # running stopped noting what it did, so the settings page had
+            # nothing to show for exactly the export somebody just made.
+            failures += not check("and both are noted", sorted(set(noted)),
+                                  ["first", "second"])
+        finally:
+            runner.stop()
+
+        left = [t for t in threading.enumerate()
+                if t.name.startswith("export-") and t.is_alive()]
+        failures += not check("and stop really stops them", left, [])
+    return failures
+
+
 def main() -> int:
     failures = 0
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-export-"))
@@ -711,6 +790,7 @@ def main() -> int:
     failures += feed_to_export(check)
     failures += two_feeds_one_export(check)
     failures += what_it_last_did(check)
+    failures += a_replaced_set_keeps_running(check)
 
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")

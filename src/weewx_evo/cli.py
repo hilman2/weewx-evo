@@ -2409,9 +2409,10 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
         fresh = build_schedule(args, cfg)
         if _differs(fresh, runner):
             # An export added on the settings page joins the running set.
-            runner.stop()
-            runner.exports = fresh
-            runner.start()
+            # `replace`, not stop-assign-start: the stop flag, the wake-up
+            # events and the thread list belong together, and doing two of
+            # the three left every new thread ending the moment it started.
+            runner.replace(fresh)
             log.info("%d export(s) running", len(fresh))
 
     if uploader is not None:
