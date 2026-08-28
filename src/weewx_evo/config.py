@@ -49,6 +49,46 @@ def get(config: dict, dotted: str, default: Any = None) -> Any:
     return node
 
 
+def resolved(config: dict, dotted: str, default: Any = None) -> Any:
+    """A value the way the running process resolves it: environment first.
+
+    `get()` reads the file, which is what the settings page edits. This reads
+    what is actually in force, which is not the same thing whenever a
+    container sets `WEEWX_EVO_LIVE` -- and that is the ordinary case, not an
+    edge one.
+
+    The reason this exists as its own function: the settings page said a
+    station had never been heard from, while the database beside it held four
+    hundred of its packets. It read `live_db` out of the file, resolved a
+    relative path against the wrong directory, found nothing and reported
+    nothing. Then the overview did it again, with `/data/data/live.sdb`.
+    Twice is a function.
+    """
+    import os
+
+    from .settings import ENV_ALIASES
+
+    primary = "WEEWX_EVO_" + dotted.replace(".", "_").upper()
+    for name in [primary, *[n for n, _ in ENV_ALIASES.get(dotted, ())]]:
+        found = os.environ.get(name)
+        if found:
+            return found
+    return get(config, dotted, default)
+
+
+def resolved_path(config: dict, dotted: str, base: Path,
+                  default: str = "") -> Path:
+    """The same, as a path, against the settings file rather than the cwd.
+
+    Relative to the file and not to whatever directory this process happened
+    to start in. In a container the second reading points inside the image,
+    where nothing writes and nobody serves.
+    """
+    where = str(resolved(config, dotted, "") or default)
+    found = Path(where)
+    return found if found.is_absolute() else base / found
+
+
 def put(config: dict, dotted: str, value: Any) -> None:
     """Set a value by its dotted name, making the sections on the way."""
     parts = dotted.split(".")

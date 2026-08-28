@@ -101,14 +101,10 @@ def live_db(admin: Any) -> Path | None:
     which is what made this page say a station had never been heard from while
     the database beside it held four hundred of its packets.
     """
-    import os
+    from . import config as config_file
 
-    where = os.environ.get("WEEWX_EVO_LIVE") or admin.config().get("live_db")
-    if not where:
-        where = "live.sdb"
-    found = Path(str(where))
-    if not found.is_absolute():
-        found = Path(admin.path).parent / found
+    found = config_file.resolved_path(admin.config(), "live_db",
+                                      Path(admin.path).parent, "live.sdb")
     return found if found.exists() else None
 
 

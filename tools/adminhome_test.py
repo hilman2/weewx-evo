@@ -193,6 +193,51 @@ def what_cannot_be_read_says_so() -> None:
               True)
 
 
+def a_relative_path_and_an_environment_variable() -> None:
+    """How this page finds the databases, which it got wrong twice.
+
+    Once as "a station that has never been heard from" beside a database
+    holding four hundred of its packets, and once as `/data/data/live.sdb`
+    on the running instance. Both times the file was read and the
+    environment, which is what a container actually sets, was not.
+
+    Everything else in this test writes absolute paths, so none of it would
+    have caught either.
+    """
+    print("\nwhere the databases are, the way a container writes it")
+    import os
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        (work / "data").mkdir()
+        (work / "evo.toml").write_text(
+            f'token = "{TOKEN}"\n'
+            'live_db = "data/live.sdb"\n'      # relative, as shipped
+            'archive_db = "data/weewx.sdb"\n', encoding="utf-8")
+        LiveStore(work / "data" / "live.sdb", interval_seconds=INTERVAL).close()
+        admin = Admin(work / "evo.toml",
+                      lambda: all_schemas(work / "evo.toml"), TOKEN)
+
+        state = adminhome.read(admin)
+        check("a relative path resolves against the settings file",
+              bool(state.live and not state.live.unreachable), True)
+
+        # And the environment beats it, because that is the order the
+        # archiver itself resolves in.
+        elsewhere = work / "elsewhere.sdb"
+        LiveStore(elsewhere, interval_seconds=INTERVAL).close()
+        was = os.environ.get("WEEWX_EVO_LIVE")
+        os.environ["WEEWX_EVO_LIVE"] = str(elsewhere)
+        try:
+            found = adminhome._setting(admin, "live_db", "data/live.sdb")
+            check("the environment wins", found, elsewhere)
+        finally:
+            if was is None:
+                del os.environ["WEEWX_EVO_LIVE"]
+            else:
+                os.environ["WEEWX_EVO_LIVE"] = was
+
+
 def the_page_renders_and_carries_the_numbers() -> None:
     """The HTML itself, because everything above tests the reading."""
     print("\nthe page")
@@ -231,6 +276,7 @@ def main() -> int:
     a_stranger_is_worth_saying()
     no_token_is_worth_saying()
     what_cannot_be_read_says_so()
+    a_relative_path_and_an_environment_variable()
     the_page_renders_and_carries_the_numbers()
     ages_read_as_ages()
 

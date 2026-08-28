@@ -121,19 +121,26 @@ def _base(admin: Any) -> Path:
     return Path(admin.path).parent
 
 
-def _resolve(admin: Any, where: str | None, fallback: str) -> Path:
-    """A configured path, against the settings file rather than the cwd.
+def _setting(admin: Any, name: str, fallback: str) -> Path:
+    """A configured path, as the process that writes it sees it.
 
-    The same rule everything else here follows. Read from the wrong
-    directory, a container answers about a file inside its own image.
+    Through `config.resolved_path`, so the environment wins. A container sets
+    `WEEWX_EVO_LIVE`, and reading the file alone gave `/data/data/live.sdb`
+    on the running instance -- a page reporting confidently about a file that
+    does not exist.
     """
+    return config_file.resolved_path(admin.config(), name, _base(admin),
+                                     fallback)
+
+
+def _under(admin: Any, where: str | None, fallback: str) -> Path:
+    """A path that is not a setting: a feed's destination, an archive's file."""
     path = Path(str(where or fallback))
     return path if path.is_absolute() else _base(admin) / path
 
 
 def _live_state(admin: Any, state: State) -> None:
-    current = admin.config()
-    path = _resolve(admin, config_file.get(current, "live_db"), "data/live.sdb")
+    path = _setting(admin, "live_db", "data/live.sdb")
     if not path.exists():
         state.live = Link("Live table", unreachable=f"no database at {path}",
                           href="./core")
@@ -198,7 +205,7 @@ def _last_from(path: Path, source: str) -> float | None:
 def _archive_state(admin: Any, state: State) -> None:
     register = adminarchives.load(admin)
     for one in register.all():
-        path = _resolve(admin, one.file, "data/weewx.sdb")
+        path = _under(admin, one.file, "data/weewx.sdb")
         if not path.exists():
             state.archives.append(Link(
                 one.title, unreachable=f"no file at {path} yet",
@@ -245,7 +252,7 @@ def _newest_file(where: Path) -> tuple[int, float | None]:
 
 def _feed_state(admin: Any, state: State) -> None:
     current = admin.config()
-    root = _resolve(admin, config_file.get(current, "feeds_dir"), "data/feeds")
+    root = _setting(admin, "feeds_dir", "data/feeds")
     configured = current.get("feeds") or {}
     for name, settings in sorted(configured.items()):
         if not isinstance(settings, dict):
@@ -254,7 +261,7 @@ def _feed_state(admin: Any, state: State) -> None:
             state.feeds.append(Link(name, "switched off", href=f"./feed:{name}"))
             continue
         where = str(settings.get("destination") or "").strip()
-        directory = _resolve(admin, where, "") if where else root / name
+        directory = _under(admin, where, "") if where else root / name
         count, newest = _newest_file(directory)
         if not count:
             state.feeds.append(Link(
@@ -281,14 +288,14 @@ def _sent_state(admin: Any, state: State) -> None:
             continue
         # The tracker is written after a successful send, so its mtime is
         # when something last actually went out. Nothing else on disk knows.
-        tracker = _resolve(admin, settings.get("state"),
-                           f"data/exports/{name}.json")
+        tracker = _under(admin, settings.get("state"),
+                         f"data/exports/{name}.json")
         when = tracker.stat().st_mtime if tracker.exists() else None
         kind = str(settings.get("kind") or "")
         state.exports.append(Link(name, kind, when=when,
                                   href=f"./export:{name}"))
 
-    progress = _resolve(admin, config_file.get(current, "archive_db"),
+    progress = _setting(admin, "archive_db",
                         "data/weewx.sdb").parent / "uploads.json"
     through: dict[str, Any] = {}
     if progress.exists():
@@ -317,8 +324,7 @@ def _forecast_state(admin: Any, state: State) -> None:
     configured = current.get("forecasts") or {}
     if not configured:
         return
-    path = _resolve(admin, config_file.get(current, "forecast_db"),
-                    "data/forecast.sdb")
+    path = _setting(admin, "forecast_db", "data/forecast.sdb")
     if not path.exists():
         for name in sorted(configured):
             state.forecasts.append(Link(name, unreachable="not fetched yet",
