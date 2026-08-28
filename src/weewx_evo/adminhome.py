@@ -101,8 +101,12 @@ def sparkline(counts: list[int], label: str) -> str:
                     f'y="{high - length:.1f}" width="{wide:.1f}" '
                     f'height="{length:.1f}" rx="1"/>')
     width = len(counts) * (wide + gap)
+    # `preserveAspectRatio="none"` so it stretches to the card rather than
+    # being scaled to fit and centred -- the default left a hundred-pixel
+    # strip in the middle of a three-hundred-pixel card. Bars have no aspect
+    # ratio worth preserving: the height is the count and the width is time.
     return (f'<svg class="spark" viewBox="0 0 {width:.0f} {high:.0f}" '
-            f'width="{width:.0f}" height="{high:.0f}" role="img" '
+            f'preserveAspectRatio="none" height="{high:.0f}" role="img" '
             f'aria-label="{html.escape(label)}">{"".join(bars)}</svg>')
 
 
@@ -615,9 +619,13 @@ def _row(one: Link) -> str:
         when = html.escape(ago(one.when))
     detail = f'<span class="note">{html.escape(one.detail)}</span>' \
         if one.detail else ""
-    name = html.escape(one.name)
+    # The column clips with an ellipsis, so the whole name goes in a title:
+    # "Kirchdorf an ..." is not a name somebody can act on.
+    shown, whole = html.escape(one.name), html.escape(one.name)
+    name = f'<span title="{whole}">{shown}</span>'
     if one.href:
-        name = f'<a href="{html.escape(one.href)}">{name}</a>'
+        name = (f'<a href="{html.escape(one.href)}" title="{whole}">'
+                f"{shown}</a>")
     shape = sparkline(one.history, f"{one.name}, hourly, last {HOURS} hours")
     if shape:
         # Across the row rather than in a column. It is the shape of the
