@@ -370,6 +370,13 @@ def read_archives(args: argparse.Namespace,
     if register.several():
         log.info("%d archive(s) in %s: %s", len(register), where,
                  ", ".join(register.names()))
+    # Said at info even for one archive: a container without TZ set runs on
+    # UTC, and a station in Germany then gets days that begin at two in the
+    # morning. Nothing fails, no reading is wrong, and every daily maximum is
+    # for the wrong day -- which is exactly the sort of thing that goes
+    # unnoticed for a year.
+    for name, said in register.concerns().items():
+        log.warning("archive %r: %s", name, said)
     return register
 
 
@@ -597,7 +604,21 @@ def cmd_archive(args: argparse.Namespace) -> int:
     announced, _sightings = read_stations(args, cfg, live)
     registry = read_archives(args, cfg)
     series = build_archivers(args, cfg, live, registry, announced)
+    # Every archive is still marked pending, whichever ones this process
+    # works: another process is doing the rest, and an interval nobody marked
+    # is one nobody builds.
     live.archives = registry.names()
+
+    wanted = getattr(args, "series", None)
+    if wanted:
+        # One process, one place. This is how two sites in two timezones
+        # work: the day boundary comes from the process clock, so each gets
+        # its own archiver with its own TZ, both reading this one live table.
+        series = [one for one in series if one[0].name == wanted]
+        if not series:
+            print(f"no series called {wanted!r}. There is: "
+                  f"{', '.join(registry.names())}", file=sys.stderr)
+            return 2
     stopping = threading.Event()
 
     def handle(signum: int, frame: object) -> None:
@@ -3142,6 +3163,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("archive", help="the archiver alone")
     add_common(p), add_archive_args(p)
+    add_archive_arg(p)
     p.set_defaults(func=cmd_archive)
 
     p = sub.add_parser("catchup", help="build every interval the live table covers")

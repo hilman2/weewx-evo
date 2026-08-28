@@ -134,6 +134,56 @@ def from_settings(cfg: Any) -> Archive:
     )
 
 
+#: How far a place may sit from the process's timezone before the daily
+#: statistics stop meaning what they say. Solar time and clock time differ by
+#: up to about an hour and a half inside a single zone -- Spain runs an hour
+#: ahead of its own sun, western China two and a half -- so anything under two
+#: hours is normal and worth no words. Beyond that, the day is starting at the
+#: wrong end of the morning.
+TIMEZONE_TOLERANCE = 2.0
+
+
+def timezone_gap(archive: Archive, now: float | None = None) -> float | None:
+    """Hours between this place's sun and the clock this process keeps.
+
+    None when the archive has no longitude, because then there is nothing to
+    compare and guessing would be worse than silence.
+
+    Longitude rather than a configured zone, because longitude is already
+    there: it had to be, for sunrise. A place at 174.8 degrees east keeps a
+    day that begins twelve hours before UTC, whatever this machine thinks.
+    """
+    if archive.longitude is None:
+        return None
+    import datetime
+
+    when = (datetime.datetime.fromtimestamp(now) if now is not None
+            else datetime.datetime.now())
+    offset = when.astimezone().utcoffset()
+    if offset is None:  # pragma: no cover - a clock with no zone at all
+        return None
+    return archive.longitude / 15.0 - offset.total_seconds() / 3600.0
+
+
+def timezone_concern(archive: Archive, now: float | None = None) -> str:
+    """Why this archive's days may not be its days, or an empty string.
+
+    Said rather than fixed. The fix is to run this archive's archiver in its
+    own process with TZ set, which is a deployment decision -- and one this
+    program must not make on somebody's behalf by quietly writing days at a
+    boundary they did not choose.
+    """
+    gap = timezone_gap(archive, now)
+    if gap is None or abs(gap) < TIMEZONE_TOLERANCE:
+        return ""
+    where = "east" if archive.longitude >= 0 else "west"
+    return (f"{abs(archive.longitude):.1f}° {where} is about "
+            f"{abs(gap):.0f} h from this process's timezone. Daily "
+            f"statistics for this series use this machine's midnight, not "
+            f"the one where it stands. Run its archiver separately with TZ "
+            f"set to fix it.")
+
+
 class Register:
     """Every archive, and which file each one is.
 
@@ -252,6 +302,20 @@ class Register:
     def overriding(self) -> bool:
         """Whether the file is what decides, rather than the settings."""
         return bool(self.archives)
+
+    def concerns(self, now: float | None = None) -> dict[str, str]:
+        """What is wrong with this arrangement, by archive name.
+
+        Empty is the ordinary answer. It exists because the one thing that
+        can be wrong here is wrong *silently*: readings stay correct and only
+        the day boundaries move, so nothing fails and nothing looks odd.
+        """
+        found = {}
+        for one in self.all():
+            said = timezone_concern(one, now)
+            if said:
+                found[one.name] = said
+        return found
 
     # -- changing them -------------------------------------------------
 

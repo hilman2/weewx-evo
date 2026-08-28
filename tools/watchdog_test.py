@@ -45,6 +45,20 @@ def check(what: str, got: object, want: object) -> bool:
     return ok
 
 
+def _a_free_port() -> int:
+    """One nobody is using, asked of the kernel rather than picked here.
+
+    A test that binds a chosen number passes until something else on the
+    machine has it, and then fails now and then for a reason unconnected to
+    what it checks. That is worse than failing every time.
+    """
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 class Asked:
     """Stands in for the loop being asked to stop."""
 
@@ -302,7 +316,7 @@ def a_real_serve_stops_when_asked() -> None:
             "w.EVERY = 0.5\n", encoding="utf-8")
         (work / "evo.toml").write_text(
             'token = "abcdefghij123456"\n'
-            "port = 18321\n"
+            f"port = {_a_free_port()}\n"
             f'live_db = "{(work / "live.sdb").as_posix()}"\n'
             f'archive_db = "{(work / "weewx.sdb").as_posix()}"\n'
             "watchdog = true\n"

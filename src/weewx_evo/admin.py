@@ -1532,6 +1532,10 @@ _PAGE = """<!doctype html>
   table.stations code {{ font-family: var(--mono); font-size: .8125rem;
       word-break: break-all; }}
   table.stations .note {{ font-size: .75rem; color: var(--dim); }}
+  /* Something that is wrong and would otherwise be invisible: the readings
+     stay right, only the day boundaries move. */
+  .warn {{ font-size: .75rem; color: var(--warn); }}
+  nav .warn {{ font-weight: 700; }}
   table.stations td form {{ display: inline; margin: 0; }}
   table.stations input[type=text] {{ font-size: .8125rem; padding: .3rem .5rem;
       width: 9rem; }}

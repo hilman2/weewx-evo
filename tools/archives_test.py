@@ -352,6 +352,21 @@ def a_page_prints_its_own_place() -> None:
 # -- end to end --------------------------------------------------------
 
 
+def a_free_port() -> int:
+    """One nobody is using, asked of the kernel.
+
+    Not a number picked here. A test that binds 18331 passes until something
+    else on the machine has it, and then fails once in a while for a reason
+    that has nothing to do with what it checks -- which is worse than failing
+    every time.
+    """
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def upload(base: str, source: str, temp: float) -> str:
     # No PASSKEY in here. An empty one still reads as Ecowitt to `claims()`,
     # and then the upload is answered by the wrong driver -- which happened
@@ -403,9 +418,10 @@ def two_sites_through_a_real_serve() -> None:
             'identity = "nordhof"\n'
             'archive = "nordfeld"\n', encoding="utf-8")
 
+        port = a_free_port()
         (work / "evo.toml").write_text(
             f'token = "{TOKEN}"\n'
-            "port = 18331\n"
+            f"port = {port}\n"
             "interval = 60\n"
             "grace = 1\n"
             "poll = 1\n"
@@ -423,7 +439,7 @@ def two_sites_through_a_real_serve() -> None:
              "--config", str(work / "evo.toml")],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True)
-        base = "http://127.0.0.1:18331"
+        base = f"http://127.0.0.1:{port}"
         try:
             if not _wait_for(base):
                 proc.terminate()
@@ -662,12 +678,53 @@ def a_command_can_name_its_series() -> None:
         check("and the answer lists the ones there are",
               "nordfeld" in missing.stderr, True)
 
+        # The archiver takes it too, which is how two timezones work: one
+        # process per place, each with its own TZ, both reading the one live
+        # table. Checked through the refusal because the other branch is a
+        # daemon that does not return.
+        wrong = subprocess.run(
+            [sys.executable, "-m", "weewx_evo.cli", "archive",
+             "--config", str(work / "evo.toml"), "--series", "westfeld"],
+            env=env, capture_output=True, text=True, timeout=60, check=False)
+        check("the archiver refuses an unknown series too", wrong.returncode, 2)
+        check("naming what there is", "nordfeld" in wrong.stderr, True)
+
+
+def a_place_in_another_timezone_is_said_out_loud() -> None:
+    """The one thing here that goes wrong without anything failing.
+
+    Readings stay right. Only the day boundary moves, so every daily maximum
+    is for a day that ran from ten in the morning to ten in the morning --
+    and nothing in the output looks odd. It has to be said, or it is found a
+    year later.
+    """
+    print("\na place whose day does not start when this machine's does")
+    here = archives.Archive("here", "h.sdb", latitude=48.4, longitude=11.6)
+    far = archives.Archive("far", "f.sdb", latitude=-36.85, longitude=174.76)
+    blank = archives.Archive("blank", "b.sdb")
+
+    gap = archives.timezone_gap(here)
+    print(f"  --   11.6 deg east is {gap:+.1f} h from this process's clock")
+    check("a place under this clock says nothing",
+          archives.timezone_concern(here), "")
+    said = archives.timezone_concern(far)
+    check("one on the other side of the world does", bool(said), True)
+    check("and it says what to do about it",
+          "TZ" in said and "archiver separately" in said, True)
+    check("an archive with no longitude is not guessed at",
+          archives.timezone_concern(blank), "")
+
+    register = archives.Register([here, far], None, here)
+    check("the register collects them by name",
+          sorted(register.concerns()), ["far"])
+
 
 def main() -> int:
     one_archive_is_the_settings()
     the_second_one_brings_the_first_with_it()
     a_name_nobody_defined_falls_back()
     the_two_defaults_agree()
+    a_place_in_another_timezone_is_said_out_loud()
     two_archives_do_not_clear_each_others_work()
     an_old_database_gains_the_column()
     each_series_takes_only_its_own()

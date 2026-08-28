@@ -153,7 +153,14 @@ def nav(admin: Any, active: str) -> list[str]:
     register = load(admin)
     out = ['<p class="navhead">Archives</p>']
     current = " aria-current='page'" if active == "archives" else ""
-    out.append(f'<a href="./archives"{current}>Series'
+    # The count carries a mark when something is wrong, because the one thing
+    # that can be wrong here is invisible everywhere else: the readings stay
+    # right and only the day boundaries move.
+    trouble = register.concerns()
+    mark = ""
+    if trouble:
+        mark = ' <span class="warn" title="something needs looking at">!</span>'
+    out.append(f'<a href="./archives"{current}>Series{mark}'
                f'<span class="count">{len(register)}</span></a>')
     if not admin.read_only:
         current = " aria-current='page'" if active == "new-archive" else ""
@@ -189,6 +196,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     said = f'<p class="ok">{html.escape(message)}</p>' if message else ""
 
+    trouble = register.concerns()
     rows = []
     for one in register.all():
         writing = sorted(s.name for s in stations if s.archive == one.name)
@@ -203,13 +211,16 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
         <form method="post" action="./archives/{html.escape(one.name)}/remove">
           <button class="quiet" type="submit">Remove</button>
         </form>'''
+        said = trouble.get(one.name, "")
+        concern = (f'<br><span class="warn">{html.escape(said)}</span>'
+                   if said else "")
         rows.append(f'''
     <tr>
       <td><strong>{html.escape(one.title)}</strong>
           <br><span class="note">{html.escape(one.name)}</span></td>
       <td><code>{html.escape(one.file)}</code>
           <br><span class="note">{_size(where)}</span></td>
-      <td>{_place(one)}</td>
+      <td>{_place(one)}{concern}</td>
       <td>{who}</td>
       <td>{removable}</td>
     </tr>''')
