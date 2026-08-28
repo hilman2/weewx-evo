@@ -271,6 +271,48 @@ def the_chooser_offers_past_the_schema() -> None:
         check("pm2_5 is not offered as pm2_6", "pm2_6" in offered, False)
 
 
+def the_rows_are_raw_names_not_mapped_ones() -> None:
+    """What the hardware calls it, not what it was turned into.
+
+    The first version read the stored packet, which holds the mapping's
+    *output* -- `barometer`, `extraTemp9`. Every row then offered to place a
+    field that had just been written, and said "not written" about it,
+    because no catalog has a raw field called `extraTemp9`.
+
+    A placement is a decision about `baromrelin` and `tf_ch1`. Those are in
+    the kept upload, which is why it is kept.
+    """
+    print("\nthe rows are what the hardware sends")
+    from weewx_evo.adminstations import what_it_sends
+    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.stations import load
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        an_archive(work / "data" / "weewx.sdb")
+
+        upload = ("PASSKEY=X&stationtype=GW2000A&dateutc=now"
+                  "&baromrelin=29.923&tf_ch1=68.2&tempf=64.9")
+        live = LiveStore(work / "data" / "live.sdb", interval_seconds=300)
+        live.add(Packet(dateTime=int(time.time()), usUnits=1,
+                        source="kirchdorf", raw=upload,
+                        data={"barometer": 29.923, "extraTemp9": 68.2,
+                              "outTemp": 64.9}))
+        live.close()
+
+        found = what_it_sends(admin, load(work / "stations.toml")
+                              .by_name("kirchdorf"))
+        names = sorted(found.get("values") or {})
+        check("the raw names are what is offered",
+              names, ["baromrelin", "tempf", "tf_ch1"])
+        check("and not the mapped ones",
+              "extraTemp9" in names or "barometer" in names, False)
+        check("nor what names the device",
+              [n for n in ("PASSKEY", "stationtype", "dateutc")
+               if n in names], [])
+
+
 def main() -> int:
     a_field_with_nowhere_to_go()
     a_column_that_already_holds_something()
@@ -279,6 +321,7 @@ def main() -> int:
     placing_and_making_the_column()
     nowhere_is_a_decision()
     the_chooser_offers_past_the_schema()
+    the_rows_are_raw_names_not_mapped_ones()
 
     print()
     if failures:

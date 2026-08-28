@@ -681,10 +681,17 @@ def what_it_sends(admin: Any, station: Any) -> dict:
     import json as _json
 
     try:
-        values = _json.loads(row[0]) or {}
+        stored_values = _json.loads(row[0]) or {}
     except ValueError:
         return {}
-    sent = sorted(values)
+    sent = sorted(stored_values)
+
+    # The raw names, from the upload as it arrived. `data` holds the packet
+    # *after* mapping -- `barometer`, `extraTemp9` -- and showing those as
+    # the things to place made every row say "not written" about a reading
+    # that had just been written. What the hardware calls it is `baromrelin`
+    # and `tf_ch1`, and that is what a placement is a decision about.
+    values = _raw_values(row[1] or "") or stored_values
     known = admin.columns()
     # An empty schema means the archive could not be read, not that every
     # field is homeless. Saying "45 dropped" there would be a false alarm on
@@ -702,6 +709,32 @@ def what_it_sends(admin: Any, station: Any) -> dict:
         "when": int(row[2] or 0),
         "catalog": _catalog_of(admin, station),
     }
+
+
+def _raw_values(raw: str) -> dict[str, Any]:
+    """The name/value pairs of the upload as it came off the wire.
+
+    Empty when there is none: the raw copy is kept for an hour, not for the
+    retention period, so a station that has been quiet longer than that has
+    only its packet left. The table then falls back to the mapped names,
+    which at least says what is being written.
+    """
+    if not raw:
+        return {}
+    try:
+        from .ingest.plugins.push import transport
+
+        pairs = transport.parse(raw)
+        # `numbers`, not `parse`: the second gives everything in the upload
+        # including PASSKEY, stationtype and dateutc, and those name the
+        # device rather than measure anything. A chooser asking where to put
+        # `stationtype` is a question with no right answer.
+        readings, _ = transport.numbers(pairs, transport.METADATA,
+                                        transport.ABSENT)
+        return dict(readings)
+    except Exception:
+        log.debug("could not read the raw upload", exc_info=True)
+        return {}
 
 
 def _catalog_of(admin: Any, station: Any) -> dict[str, str]:
