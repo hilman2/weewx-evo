@@ -171,8 +171,8 @@ def tests() -> list[Test]:
              needs=("Cheetah",)),
 
         # -- the driver's own suite --------------------------------------
-        Test("ecowitt", ["-m", "pytest", "tests/ecowitt", "-q"],
-             "the Ecowitt driver's own suite, 73 tests",
+        Test("push", ["-m", "pytest", "tests/push", "-q"],
+             "the six push protocols' own suite, 135 tests",
              needs=("pytest",)),
 
         # -- and the check that finds what no test does -------------------

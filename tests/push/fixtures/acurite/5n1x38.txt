@@ -1,0 +1,1 @@
+dateutc=now&action=updateraw&realtime=1&id=24C86Exxxxxx&mt=5N1x38&sensor=00001398&windspeedmph=9&humidity=76&tempf=84.0&baromin=29.92&battery=normal&rssi=1

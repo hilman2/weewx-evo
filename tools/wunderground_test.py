@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -27,14 +28,29 @@ sys.path.insert(0, str(ROOT / "src"))
 from weewx_evo.db.live import LiveStore  # noqa: E402
 from weewx_evo.ingest import drivers  # noqa: E402
 from weewx_evo.ingest.listener import HttpListener, Ingest  # noqa: E402
-from weewx_evo.ingest.plugins.wunderground.driver import (  # noqa: E402
-    WundergroundDriver,
+from weewx_evo.ingest.plugins.push import protocols  # noqa: E402
+from weewx_evo.ingest.plugins.push.catalogs import (  # noqa: E402
+    wunderground as catalog,
 )
-from weewx_evo.ingest.plugins.wunderground.fields import (  # noqa: E402
-    FIELDS,
-    IGNORED,
-)
+from weewx_evo.ingest.plugins.push.driver import PushDriver  # noqa: E402
+from weewx_evo.ingest.plugins.push.transport import METADATA  # noqa: E402
 from weewx_evo.units import US  # noqa: E402
+
+# The catalog is upstream's now, so the two names this file used come from
+# it: FIELDS is the imperial dialect, and what used to be a hand-kept IGNORED
+# is the shared metadata list plus the catalog's own.
+FIELDS = catalog.FIELDS
+IGNORED = set(METADATA) | set(getattr(catalog, "METADATA", ()))
+
+
+def WundergroundDriver(**options):  # noqa: N802
+    """The Weather Underground protocol, as a driver.
+
+    A function rather than the class, because the six protocols are one
+    driver class now and this test predates that.
+    """
+    return PushDriver(protocols.by_name("wunderground"), **options)
+
 
 TOKEN = "w" * 32
 failures = 0
@@ -63,12 +79,34 @@ def everything_we_send_we_can_read() -> None:
 
     # And the names have to mean the same thing on both sides, or a round
     # trip silently moves a reading into the neighbouring column.
+    #
+    # One exception, and it is deliberate. A station's own dewpoint, wind
+    # chill and heat index are *its* arithmetic, and a receiving server
+    # computes its own from temperature and humidity. Reading them into
+    # `dewpoint` would overwrite a value this program derives with one it
+    # cannot check, so the catalog keeps them beside it under their own
+    # names. We send ours out under the field the protocol names; we read
+    # somebody else's back as theirs.
+    COMPUTED = {"dewptf", "windchillf", "heatindexf", "feelslikef"}
+
     wrong = []
     for obs, name, _unit, _fmt in SENT + INDOOR_FIELDS:
+        if name in COMPUTED:
+            continue
         ours = FIELDS.get(name)
         if ours is not None and ours != obs:
             wrong.append(f"{name}: we send {obs}, we read {ours}")
     check("and every one comes back under the name it went out as", wrong, [])
+
+    # The exception, checked rather than merely excluded: each of them has to
+    # land somewhere of its own, not nowhere and not on the derived column.
+    aside = []
+    for name in sorted(COMPUTED):
+        target = FIELDS.get(name)
+        if not target or target in ("dewpoint", "windchill", "heatindex"):
+            aside.append(f"{name} -> {target}")
+    check("a station's own arithmetic is kept beside ours, not over it",
+          aside, [])
 
 
 def the_three_the_interceptor_drops() -> None:
@@ -83,8 +121,15 @@ def the_three_the_interceptor_drops() -> None:
 def what_a_station_sends() -> None:
     print("\na real upload")
     driver = WundergroundDriver()
+    # Relative to now, not a date written into the file. A console's own
+    # timestamp is only used when it is within an hour of ours, so a fixed
+    # one in the past passes on the day it is written and fails for ever
+    # after -- which is what this line used to do.
+    when = time.gmtime(time.time() - 120)
+    stamp = time.strftime("%Y-%m-%d+%H:%M:%S", when)
     body = (b"ID=KTEST5&PASSWORD=secret&action=updateraw&realtime=1&rtfreq=2.5"
-            b"&dateutc=2026-08-27+18:30:00&softwaretype=EasyWeatherPro"
+            + f"&dateutc={stamp}".encode()
+            + b"&softwaretype=EasyWeatherPro"
             b"&tempf=68.4&humidity=55&dewptf=51.8&baromin=29.92"
             b"&windspeedmph=3.1&winddir=180&windgustmph=7.2"
             b"&rainin=0.04&dailyrainin=0.28&solarradiation=412.5&UV=3"
@@ -100,13 +145,13 @@ def what_a_station_sends() -> None:
     check("dayRain, which derive.py turns into rain",
           packet.data.get("dayRain"), 0.28)
     check("indoor readings", packet.data.get("inTemp"), 70.1)
-    # 2026-08-27 18:30:00 UTC
-    check("its own timestamp, read as UTC", packet.dateTime, 1787855400)
+    check("its own timestamp, read as UTC",
+          packet.dateTime, int(time.mktime(when) - time.timezone))
     check("housekeeping is not a reading",
           [n for n in ("ID", "PASSWORD", "action", "realtime", "softwaretype")
            if n in packet.data], [])
     check("nothing unknown in a standard upload",
-          sorted(driver.unknown), [])
+          sorted(driver.unplaced), [])
 
 
 def the_sensor_that_did_not_report() -> None:
