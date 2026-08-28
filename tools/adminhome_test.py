@@ -284,6 +284,43 @@ def never_is_only_said_when_it_is_true() -> None:
               "set up automatically")
 
 
+def the_live_file_dates_itself() -> None:
+    """`live.json` needs no bookkeeping to be reported.
+
+    The live upload keeps its position in memory on purpose -- it moves every
+    few seconds, and a file written that often wears out an SD card. So this
+    page reads the file the upload already writes instead. Nothing was added
+    to the upload for the page's benefit.
+    """
+    print("\nlive readings, dated from the file they are written to")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        published = work / "site"
+        published.mkdir()
+        current = admin.config()
+        current["exports"] = {"site": {"kind": "local",
+                                       "directory": str(published)}}
+        admin.config = lambda: current  # type: ignore[method-assign]
+
+        state = adminhome.read(admin)
+        check("with no live file, nothing is claimed",
+              [one.name for one in state.uploads], [])
+
+        (published / "live.json").write_text('{"outTemp": 20}',
+                                             encoding="utf-8")
+        state = adminhome.read(admin)
+        posted = {one.name: one for one in state.uploads}
+        check("once it is there, it is reported",
+              "live readings" in posted, True)
+        check("dated from the file itself",
+              posted["live readings"].when is not None
+              if "live readings" in posted else False, True)
+        check("and it names where it is writing",
+              "live.json in" in posted["live readings"].detail
+              if "live readings" in posted else "", True)
+
+
 def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
     """Four sections, and one of them is not plural.
 
@@ -376,6 +413,7 @@ def main() -> int:
     a_relative_path_and_an_environment_variable()
     never_is_only_said_when_it_is_true()
     every_section_is_the_one_the_rest_of_the_program_reads()
+    the_live_file_dates_itself()
     the_page_renders_and_carries_the_numbers()
     ages_read_as_ages()
 

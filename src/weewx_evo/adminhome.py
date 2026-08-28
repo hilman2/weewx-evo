@@ -342,6 +342,51 @@ def _sent_state(admin: Any, state: State) -> None:
         state.uploads.append(Link(name, "set up automatically",
                                   when=through[name] or None,
                                   href="./core"))
+    _live_readings(admin, current, state)
+
+
+def _live_readings(admin: Any, current: dict, state: State) -> None:
+    """The live file, dated from itself.
+
+    `live.json` is rewritten every few seconds, so its own mtime is exactly
+    when the readings last went out. Nothing has to be recorded for this,
+    which matters: the upload keeps its position in memory on purpose --
+
+        it moves every few seconds, and writing a file that often to record
+        something nobody needs after a restart is how an SD card wears out
+
+    -- and making it write one so that this page could read it would be
+    trading a real cost for a cosmetic one. The file it already writes
+    answers the same question.
+
+    Only the local case. An upload that POSTs to somebody else's webspace
+    leaves nothing here to look at, and it has its own row from the progress
+    file when it has sent anything.
+    """
+    if any(one.name == "live readings" for one in state.uploads):
+        return
+    newest, where = None, None
+    for _name, settings in sorted((current.get("exports") or {}).items()):
+        if not isinstance(settings, dict) or settings.get("kind") != "local":
+            continue
+        directory = str(settings.get("directory") or "").strip()
+        if not directory:
+            continue
+        found = _under(admin, directory, "") / "live.json"
+        try:
+            when = found.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or when > newest:
+            newest, where = when, found.parent
+    if newest is None:
+        return
+    # Several served directories each get the file -- a station may publish
+    # more than one site -- so this is one row for all of them, dated from
+    # whichever was written last.
+    state.uploads.append(Link("live readings",
+                              f"live.json in {where}", when=newest,
+                              href="./core"))
 
 
 def _forecast_state(admin: Any, state: State) -> None:
