@@ -24,6 +24,7 @@ import json
 import sqlite3
 import threading
 import time
+import weakref
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,6 +111,22 @@ class Packet:
         return rec
 
 
+class _Held:
+    """One thread's connection, held for exactly as long as that thread.
+
+    `sqlite3.Connection` cannot be weakly referenced, so the store registers
+    these instead. When a thread ends its locals go, this goes with them, and
+    the store's weak set notices -- which is the whole point: the registry
+    must be able to reach another thread's connection without keeping it
+    alive.
+    """
+
+    __slots__ = ("__weakref__", "conn")
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self.conn = conn
+
+
 class LiveStore:
     """The live packet database."""
 
@@ -127,7 +144,14 @@ class LiveStore:
         # listener answers each upload on its own thread. One connection per
         # thread, all onto the same file; WAL is what makes that safe.
         self._local = threading.local()
-        self._all: list[sqlite3.Connection] = []
+        # Weakly, so a connection is free to die with the thread that made it.
+        # Held strongly it could not, and this list is the only other place
+        # one is named: every upload answered on its own thread left a file
+        # descriptor behind for the life of the process. A console uploading
+        # every eight seconds reached the 1024 limit in ten hours, and what
+        # broke first was reading plots.toml -- nothing near the leak, and
+        # nothing naming a database.
+        self._all: weakref.WeakSet[_Held] = weakref.WeakSet()
         self._lock = threading.Lock()
         self.conn.executescript(SCHEMA)
         self._migrate()
@@ -144,7 +168,7 @@ class LiveStore:
         if "raw" not in have:
             self.conn.execute("ALTER TABLE packet ADD COLUMN raw TEXT")
 
-    def _connect(self) -> sqlite3.Connection:
+    def _connect(self) -> _Held:
         conn = sqlite3.connect(self.path, isolation_level=None, timeout=10.0)
         # WAL so a reader never blocks the listener. Writers are serialised by
         # SQLite itself, which is what lets several ingest processes share this
@@ -152,25 +176,26 @@ class LiveStore:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
+        held = _Held(conn)
         with self._lock:
-            self._all.append(conn)
-        return conn
+            self._all.add(held)
+        return held
 
     @property
     def conn(self) -> sqlite3.Connection:
         """This thread's connection, opened on first use."""
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = self._connect()
-            self._local.conn = conn
-        return conn
+        held = getattr(self._local, "held", None)
+        if held is None:
+            held = self._connect()
+            self._local.held = held
+        return held.conn
 
     def close(self) -> None:
         with self._lock:
-            connections, self._all = self._all, []
-        for conn in connections:
+            held, self._all = list(self._all), weakref.WeakSet()
+        for one in held:
             try:
-                conn.close()
+                one.conn.close()
             except sqlite3.ProgrammingError:
                 # Belongs to a thread that has already gone. SQLite releases it
                 # with the thread; there is nothing left to close.
