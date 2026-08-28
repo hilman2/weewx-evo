@@ -106,6 +106,15 @@ class Station:
     #: driver. Applied by the driver, because only it knows what the names
     #: mean before they are parsed.
     field_map: dict[str, str] = field(default_factory=dict)
+    #: `main` or `extra`. One archive has one main station, whose readings go
+    #: where they belong; an extra one's are moved into `extraTemp<n>` and
+    #: `extraHumid<n>` so that two sensors cannot take turns in one column.
+    #: See roles.py -- and note that a second *archive* is the other answer,
+    #: and usually the better one when the two are different places.
+    role: str = "main"
+    #: Which channel an extra station takes. Assigned when the role is set,
+    #: because the lowest free one is not a decision anybody wants to make.
+    channel: int = 0
 
     def matches(self, driver: str, identity: str) -> bool:
         """Whether an upload belongs to this station.
@@ -346,6 +355,8 @@ def from_dict(raw: dict[str, Any], path: Path | None = None) -> Register:
             driver=driver,
             identity=identity,
             archive=str(entry.get("archive") or DEFAULT_ARCHIVE),
+            role=str(entry.get("role") or "main"),
+            channel=int(entry.get("channel") or 0),
             note=str(entry.get("note") or ""),
             learnt=bool(entry.get("learnt", False)),
             indoor=bool(entry.get("indoor", True)),
@@ -402,6 +413,10 @@ def render(register: Register, note: str = "") -> str:
         out.append(f'driver = "{_escape(one.driver)}"')
         out.append(f'identity = "{_escape(one.identity)}"')
         out.append(f'archive = "{_escape(one.archive)}"')
+        if one.role != "main":
+            out.append(f'role = "{_escape(one.role)}"')
+            if one.channel:
+                out.append(f"channel = {one.channel}")
         if one.learnt:
             out.append("learnt = true")
         if not one.indoor:

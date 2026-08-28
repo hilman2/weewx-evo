@@ -205,6 +205,54 @@ def a_console_that_was_renamed_is_not_a_stranger() -> None:
               True)
 
 
+def two_stations_claiming_one_archive() -> None:
+    """A configuration that asks for the one failure that cannot be undone.
+
+    Two stations of one archive both writing `outTemp` take turns at it every
+    few seconds. The listener moves the extra one aside rather than let that
+    happen -- but a configuration that asks for it is worth saying out loud
+    rather than silently working around.
+    """
+    print("\ntwo main stations in one archive")
+    both = ('[stations.kirchdorf]\ndriver = "ecowitt"\n'
+            'identity = "AAAA"\narchive = "default"\n\n'
+            '[stations.garten]\ndriver = "ecowitt"\n'
+            'identity = "BBBB"\narchive = "default"\n')
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        (work / "stations.toml").write_text(both, encoding="utf-8")
+
+        state = adminhome.read(admin)
+        check("it is reported",
+              any("as the main one" in one for one in state.concerns), True)
+        check("naming both",
+              any("garten, kirchdorf" in one for one in state.concerns), True)
+
+        # One of each is the arrangement, not a fault.
+        (work / "stations.toml").write_text(
+            both + 'role = "extra"\nchannel = 1\n', encoding="utf-8")
+        state = adminhome.read(admin)
+        check("with a role set, nothing is said",
+              [one for one in state.concerns if "main one" in one], [])
+
+        # And two archives are two places, so two main stations are right.
+        (work / "archives.toml").write_text(
+            "[archives.default]\n"
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n\n'
+            "[archives.nordfeld]\n"
+            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n',
+            encoding="utf-8")
+        (work / "stations.toml").write_text(
+            both.replace('[stations.garten]', '[stations.nordhof]')
+                .replace('identity = "BBBB"\narchive = "default"',
+                         'identity = "BBBB"\narchive = "nordfeld"'),
+            encoding="utf-8")
+        state = adminhome.read(admin)
+        check("two archives, two main stations, no complaint",
+              [one for one in state.concerns if "main one" in one], [])
+
+
 def no_token_is_worth_saying() -> None:
     print("\nno upload token")
     with tempfile.TemporaryDirectory() as raw:
@@ -525,6 +573,7 @@ def main() -> int:
     a_backlog_is_a_fault()
     a_stranger_is_worth_saying()
     a_console_that_was_renamed_is_not_a_stranger()
+    two_stations_claiming_one_archive()
     no_token_is_worth_saying()
     what_cannot_be_read_says_so()
     a_relative_path_and_an_environment_variable()

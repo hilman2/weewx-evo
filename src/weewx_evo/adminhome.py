@@ -570,6 +570,40 @@ def _judge(admin: Any, state: State) -> None:
         if one.unreachable:
             state.concerns.append(f"Archive {one.name!r}: {one.unreachable}")
 
+    state.concerns.extend(_two_main_stations(admin))
+
+
+def _two_main_stations(admin: Any) -> list[str]:
+    """Archives where more than one station claims the standard columns.
+
+    One archive has one main station. Two of them take turns writing
+    `outTemp` every few seconds, and afterwards the column holds a mixture
+    nothing can separate. The listener drops the second one's readings
+    rather than let that happen -- but a configuration that asks for it is
+    worth saying out loud rather than silently working around.
+    """
+    from . import roles
+
+    try:
+        found = station_defs.load(_base(admin) / station_defs.FILENAME)
+    except Exception:
+        return []
+    by_archive: dict[str, list] = {}
+    for one in found:
+        by_archive.setdefault(
+            getattr(one, "archive", archive_defs.DEFAULT), []).append(one)
+
+    said = []
+    for name, group in sorted(by_archive.items()):
+        clashing = roles.too_many_main(group)
+        if clashing:
+            said.append(
+                f"{len(clashing)} stations write into {name!r} as the main "
+                f"one: {', '.join(clashing)}. One is the station and the "
+                "rest are extra sensors, or they write into each other's "
+                "columns. Set the others to 'extra sensor'.")
+    return said
+
 
 def read(admin: Any) -> State:
     """Everything, gathered once. A failure in one part does not stop it."""

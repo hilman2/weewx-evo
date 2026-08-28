@@ -257,8 +257,30 @@ def configure(admin: Any, name: str, form: dict) -> str:
     station = register.by_name(name)
     if station is None:
         return f"There is no station called {name!r}."
+    from . import roles as role_defs
+
+    wanted = str(form.get("role") or station.role).strip() or role_defs.MAIN
+    if wanted not in role_defs.ROLES:
+        return f"{wanted!r} is not a role. It is 'main' or 'extra'."
+    channel = station.channel
+    if wanted == role_defs.EXTRA and not channel:
+        # The lowest free one in this archive. Not a decision anybody wants
+        # to make, and getting it wrong means two extra stations sharing a
+        # channel, which is the collision this was meant to avoid.
+        taken = {one.channel for one in register
+                 if one.name != name and one.archive == station.archive
+                 and one.role == role_defs.EXTRA and one.channel}
+        channel = role_defs.next_channel(taken) or 0
+        if not channel:
+            return (f"All {role_defs.CHANNELS} extra channels of "
+                    f"{station.archive!r} are taken. A further station needs "
+                    "an archive of its own.")
+    if wanted == role_defs.MAIN:
+        channel = 0
+
     changed = _replace(station,
                        indoor=bool(form.get("indoor")),
+                       role=wanted, channel=channel,
                        archive=str(form.get("archive") or station.archive))
     if changed == station:
         return ""
@@ -339,7 +361,8 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
           {f'<br><span class="note">{html.escape(one.note)}</span>' if one.note else ""}</td>
       <td>{html.escape(one.driver)}</td>
       <td>{shown}</td>
-      <td>{html.escape(one.archive)}</td>
+      <td>{html.escape(one.archive)}
+          {_role_note(one)}</td>
       <td>{html.escape(_ago(when.get(one.name, 0)))}</td>
       <td>
         <form method="post" action="./stations/{html.escape(one.name)}/set"
@@ -348,6 +371,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
             <input type="checkbox" name="indoor" value="1"
                    {"checked" if one.indoor else ""}> indoor
           </label>
+          {_role_choice(one)}
           <button type="submit" class="quiet">Save</button>
         </form>
         <form method="post" action="./stations/{html.escape(one.name)}/remove"
@@ -755,6 +779,42 @@ def _catalog_of(admin: Any, station: Any) -> dict[str, str]:
         log.debug("could not read the catalog for %r", station.name,
                   exc_info=True)
         return {}
+
+
+def _role_note(one: Any) -> str:
+    """What being an extra station costs, said where the role is shown.
+
+    Only for the extra ones: a main station is every station until somebody
+    says otherwise, and a note on all of them would be noise about a
+    situation almost nobody is in.
+    """
+    from . import roles as role_defs
+
+    if getattr(one, "role", role_defs.MAIN) != role_defs.EXTRA:
+        return ""
+    return (f'<br><span class="note">extra, channel {one.channel}: its '
+            f"temperature and humidity go to extraTemp{one.channel} and "
+            f"extraHumid{one.channel}; its wind, rain and pressure have "
+            "nowhere and are dropped</span>")
+
+
+def _role_choice(one: Any) -> str:
+    from . import roles as role_defs
+
+    extra = getattr(one, "role", role_defs.MAIN) == role_defs.EXTRA
+    # A select, not a checkbox with a hidden field before it. Two inputs of
+    # one name send two values when the box is ticked, and which one arrives
+    # depends on the parser -- so the box would be impossible to tick, or
+    # impossible to untick, and which of the two only shows up in use.
+    title = ("An extra station's readings are moved out of the main "
+             "station's columns")
+    return (f'<label class="tick" title="{title}">'
+            f'<select name="role">'
+            f'<option value="{role_defs.MAIN}"'
+            f'{"" if extra else " selected"}>the station</option>'
+            f'<option value="{role_defs.EXTRA}"'
+            f'{" selected" if extra else ""}>extra sensor</option>'
+            "</select></label>")
 
 
 def _what_it_sends_html(admin: Any, station: Any) -> str:

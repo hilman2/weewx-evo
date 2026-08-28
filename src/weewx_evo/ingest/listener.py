@@ -29,6 +29,7 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from .. import roles
 from ..db.live import LiveStore, Packet
 from ..netaccess import PRIVATE_ONLY, Access
 from ..ratelimit import Limits
@@ -199,8 +200,12 @@ class Ingest:
             raw = self._redacted(driver, body)
 
         stored = 0
-        for packet in packets:
-            packet = self._named(packet, name, peer)
+        for one in packets:
+            packet = self._named(one, name, peer)
+            if packet is None:
+                # An extra station that sent nothing this archive has room
+                # for. Said once by `roles.apply`, not once per upload.
+                continue
             if raw is not None and packet.raw is None:
                 packet = replace(packet, raw=raw)
             if self.store.add(packet):
@@ -273,6 +278,19 @@ class Ingest:
                        if name not in ("inTemp", "inHumidity", "inDewpoint")}
             if len(dropped) != len(data):
                 data = dropped
+
+        # And out of the main station's way, where this is not it. Two
+        # stations of one archive both sending `outTemp` would otherwise take
+        # turns writing it every few seconds, and the column would hold a
+        # mixture nothing afterwards can separate. See roles.py, and note
+        # that a `main` station -- which is every station until somebody says
+        # otherwise -- passes through this untouched.
+        role = getattr(station, "role", roles.MAIN)
+        if role != roles.MAIN:
+            data = roles.apply(data, role, getattr(station, "channel", 0),
+                               station.name)
+            if not data:
+                return None
         if station.name == packet.source and data is packet.data:
             return packet
         return replace(packet, source=station.name, data=data)
