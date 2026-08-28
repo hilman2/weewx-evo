@@ -249,12 +249,33 @@ class Ingest:
             refresh()
         station = self.stations.by_identity(driver, packet.source)
         if station is not None:
-            return packet if station.name == packet.source else replace(
-                packet, source=station.name)
+            return self._as_configured(packet, station)
         if self.sightings is not None:
             self.sightings.saw(driver, packet.source, peer,
                                fields=sorted(packet.data)[:12])
         return packet
+
+    @staticmethod
+    def _as_configured(packet: Packet, station: object) -> Packet:
+        """The packet under its station's name, with what it asked for left out.
+
+        Applied here rather than in each driver, because it is not a question
+        about a protocol. Whether the room a console stands in is worth
+        recording is a fact about that console: one in a living room measures
+        a living room, one in a shed on the same station measures a shed, and
+        only one of them is worth a column. It used to be a setting on the
+        Weather Underground driver and absent from the Ecowitt one, which was
+        the same question answered twice and once not at all.
+        """
+        data = packet.data
+        if not getattr(station, "indoor", True):
+            dropped = {name: value for name, value in data.items()
+                       if name not in ("inTemp", "inHumidity", "inDewpoint")}
+            if len(dropped) != len(data):
+                data = dropped
+        if station.name == packet.source and data is packet.data:
+            return packet
+        return replace(packet, source=station.name, data=data)
 
     def _redacted(self, driver: object, body: bytes) -> str | None:
         """The upload as it arrived, with whatever the driver calls secret gone.

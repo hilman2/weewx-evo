@@ -247,6 +247,29 @@ def learn(admin: Any, name: str) -> tuple:
     return filled, ""
 
 
+def configure(admin: Any, name: str, form: dict) -> str:
+    """Change what is true of one console. Returns an error, or empty.
+
+    Only what the page can send. A form arriving without a checkbox means it
+    was unticked, not that the field was left out -- which is why `indoor` is
+    read as presence rather than as a value, the same way the settings page
+    handles every other boolean.
+    """
+    from dataclasses import replace as _replace
+
+    register = load(admin)
+    station = register.by_name(name)
+    if station is None:
+        return f"There is no station called {name!r}."
+    changed = _replace(station,
+                       indoor=bool(form.get("indoor")),
+                       archive=str(form.get("archive") or station.archive))
+    if changed == station:
+        return ""
+    register.stations[register.stations.index(station)] = changed
+    return store(admin, register, f"{name} changed")
+
+
 def remove(admin: Any, name: str) -> str:
     register = load(admin)
     if register.remove(name) is None:
@@ -321,8 +344,18 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
       <td>{shown}</td>
       <td>{html.escape(one.archive)}</td>
       <td>{html.escape(_ago(when.get(one.name, 0)))}</td>
-      <td><form method="post" action="./stations/{html.escape(one.name)}/remove">
-            <button type="submit" class="quiet">Remove</button></form></td>
+      <td>
+        <form method="post" action="./stations/{html.escape(one.name)}/set"
+              class="inline">
+          <label class="tick" title="Record the room the console stands in">
+            <input type="checkbox" name="indoor" value="1"
+                   {"checked" if one.indoor else ""}> indoor
+          </label>
+          <button type="submit" class="quiet">Save</button>
+        </form>
+        <form method="post" action="./stations/{html.escape(one.name)}/remove"
+              class="inline">
+          <button type="submit" class="quiet">Remove</button></form></td>
     </tr>
     <tr class="sendsrow"><td colspan="6">{_what_it_sends_html(admin, one)}</td></tr>''')
     announced = f'''

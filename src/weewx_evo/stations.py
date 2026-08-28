@@ -84,6 +84,29 @@ class Station:
     #: read off it.
     learnt: bool = False
 
+    # -- what is true of this console, not of its protocol --------------
+    #
+    # These lived on the drivers, which is where they do not belong. A
+    # protocol has no opinion about whether the room a console stands in is
+    # worth recording; this console does, and the next one may not. The
+    # symptom was plain once two drivers stood side by side: the Weather
+    # Underground one could be told to leave indoor readings out and the
+    # Ecowitt one could not, for no reason anybody could give.
+
+    #: Record the temperature and humidity of the room the console is in.
+    #: A console in a living room measures a living room; one in a shed on the
+    #: same station measures a shed, and only one of them is worth a column.
+    indoor: bool = True
+    #: What the hardware is, for the page and the log. Cosmetic, and a
+    #: property of this box rather than of the protocol it speaks.
+    model: str = ""
+    #: This console's own field names, where they differ. Two consoles both
+    #: number their channels from one, so `tf_ch1` is a different thermometer
+    #: on each -- which is why the map hangs on the console and not on the
+    #: driver. Applied by the driver, because only it knows what the names
+    #: mean before they are parsed.
+    field_map: dict[str, str] = field(default_factory=dict)
+
     def matches(self, driver: str, identity: str) -> bool:
         """Whether an upload belongs to this station.
 
@@ -325,6 +348,10 @@ def from_dict(raw: dict[str, Any], path: Path | None = None) -> Register:
             archive=str(entry.get("archive") or DEFAULT_ARCHIVE),
             note=str(entry.get("note") or ""),
             learnt=bool(entry.get("learnt", False)),
+            indoor=bool(entry.get("indoor", True)),
+            model=str(entry.get("model") or ""),
+            field_map={str(k): str(v) for k, v
+                       in (entry.get("field_map") or {}).items()},
         ))
     return Register(stations=made, path=path)
 
@@ -377,8 +404,17 @@ def render(register: Register, note: str = "") -> str:
         out.append(f'archive = "{_escape(one.archive)}"')
         if one.learnt:
             out.append("learnt = true")
+        if not one.indoor:
+            out.append("indoor = false")
+        if one.model:
+            out.append(f'model = "{_escape(one.model)}"')
         if one.note:
             out.append(f'note = "{_escape(one.note)}"')
+        if one.field_map:
+            out.append("")
+            out.append(f"[stations.{one.name}.field_map]")
+            for their, ours in sorted(one.field_map.items()):
+                out.append(f'"{_escape(their)}" = "{_escape(ours)}"')
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 

@@ -205,6 +205,40 @@ def an_upload_from_each() -> None:
             live.close()
 
 
+def indoor_is_the_stations_answer() -> None:
+    """And the core applies it, for every driver.
+
+    It was a setting on the Weather Underground driver and absent from the
+    Ecowitt one: the same question answered twice and once not at all. A
+    protocol has no opinion about the room a console stands in.
+    """
+    print("\nindoor readings are left out when the station says so")
+    with tempfile.TemporaryDirectory() as raw:
+        live = LiveStore(Path(raw) / "live.sdb", interval_seconds=60)
+        try:
+            reg = stations.Register()
+            reg.add(stations.Station("inside", "wunderground", "evo-in"))
+            reg.add(stations.Station("outside", "wunderground", "evo-out",
+                                     indoor=False))
+            ingest = Ingest(live, token=None, default_driver="wunderground",
+                            stations=reg, sightings=Sightings(live))
+
+            body = (b"ID=%s&action=updateraw&dateutc=now&tempf=68.4"
+                    b"&indoortempf=70.1&indoorhumidity=48")
+            ingest.submit(body % b"evo-in", "/wunderground/", "1.2.3.4")
+            ingest.submit(body % b"evo-out", "/wunderground/", "1.2.3.4")
+
+            stored = {p.source: p for p in live.packets(0, 2_000_000_000)}
+            check("the one that wants them has them",
+                  stored["inside"].data.get("inTemp"), 70.1)
+            check("the one that does not, does not",
+                  "inTemp" in stored["outside"].data, False)
+            check("and its outdoor reading is untouched",
+                  stored["outside"].data.get("outTemp"), 68.4)
+        finally:
+            live.close()
+
+
 def nothing_announced_changes_nothing() -> None:
     """An installation that has never seen the settings page."""
     print("\nwith no stations announced, an upload is untouched")
@@ -350,6 +384,24 @@ def the_settings_page() -> None:
             check("with the secret already out of it",
                   "[redacted]" in found.get("raw", ""), True)
 
+            print("\nwhat is true of the console, not of its protocol")
+            # `indoor` was a setting on the WU driver and missing from the
+            # Ecowitt one. It is one console's answer, so it lives here and
+            # the core applies it for every driver.
+            status, _ = post(f"{base}/stations/garden/set", {})
+            check("unticking it saves", status, 303)
+            again = stations.load(tmp / "stations.toml").by_name("garden")
+            check("indoor is off", again.indoor, False)
+            check("and written as such",
+                  "indoor = false" in (tmp / "stations.toml").read_text(),
+                  True)
+
+            status, _ = post(f"{base}/stations/garden/set", {"indoor": "1"})
+            check("ticking it again saves", status, 303)
+            check("indoor is on",
+                  stations.load(tmp / "stations.toml").by_name("garden").indoor,
+                  True)
+
             print("\nremoving one")
             status, _ = post(f"{base}/stations/roof/remove", {})
             check("redirects", status, 303)
@@ -368,6 +420,7 @@ def main() -> int:
     the_sightings()
     an_upload_from_each()
     nothing_announced_changes_nothing()
+    indoor_is_the_stations_answer()
     the_settings_page()
 
     print()

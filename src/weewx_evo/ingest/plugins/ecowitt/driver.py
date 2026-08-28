@@ -131,11 +131,6 @@ class EcowittDriver(BaseDriver):
         from ....options import Group, Option
 
         return [
-            Group("Console", "How this driver reads Ecowitt hardware.", (
-                Option("model", "Model", default="Ecowitt",
-                       help="Shown in logs. Cosmetic.", advanced=True),
-            ), prefix="drivers.ecowitt"),
-
             Group("Unknown fields",
                   "Ecowitt ships sensors faster than any catalog is updated.", (
                 Option("infer_unknown", "Fields the catalog does not know",

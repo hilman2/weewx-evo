@@ -225,6 +225,13 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
         # everything else is. It never sees the rest -- not the upload token,
         # not the database paths, not another driver's console list.
         options = dict(section.get(name, {}))
+        # The field maps come from the stations, not from the driver's own
+        # section. Two consoles both number their channels from one, so the
+        # map belongs to the console; it is handed to the driver because only
+        # the driver knows what `tf_ch1` means before it is parsed.
+        maps = station_field_maps(cfg, name)
+        if maps and _accepts(drivers.DEFAULT.get(name), "stations"):
+            options.setdefault("stations", maps)
         factory_only = not options and archive is None
         if factory_only:
             continue
@@ -244,6 +251,36 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
                      f", also serving {', '.join(also)}" if also else "")
 
     install_driver_groups()
+
+
+def station_field_maps(cfg: Settings, driver: str) -> dict:
+    """Per-console field maps for one driver, out of `stations.toml`.
+
+    In the shape the driver already takes them -- keyed by a name, each with a
+    passkey and its own extensions -- so nothing about the driver changes. All
+    that moves is where the answer comes from: a console's own field names sat
+    under `[drivers.ecowitt.stations]`, which is a second place to describe a
+    console after `stations.toml` was built to be the first.
+    """
+    # `_path` rather than a public one: Settings keeps the file it was
+    # read from and nothing else needed it until now.
+    where = getattr(cfg, "_path", None)
+    if not where:
+        return {}
+    try:
+        register = stations_module.load(
+            stations_module.path_for(Path(where).parent))
+    except Exception:
+        log.debug("could not read the stations for %r", driver, exc_info=True)
+        return {}
+
+    made = {}
+    for one in register:
+        if one.driver != driver or not one.field_map:
+            continue
+        made[one.name] = {"passkey": one.identity,
+                          "field_map_extensions": dict(one.field_map)}
+    return made
 
 
 def install_driver_groups() -> None:

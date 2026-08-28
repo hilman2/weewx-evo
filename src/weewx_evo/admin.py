@@ -1493,6 +1493,9 @@ _PAGE = """<!doctype html>
   table.stations td form {{ display: inline; margin: 0; }}
   table.stations input[type=text] {{ font-size: .8125rem; padding: .3rem .5rem;
       width: 9rem; }}
+  label.tick {{ font-size: .75rem; color: var(--dim); margin-right: .5rem;
+      white-space: nowrap; }}
+  label.tick input {{ vertical-align: -1px; margin-right: .15rem; }}
   /* Remove and Ignore are not what anybody came to the page to press. */
   button.quiet {{ background: transparent; color: var(--dim);
       border-color: var(--line); padding: .3rem .8rem; }}
@@ -1879,6 +1882,8 @@ class _Handler(BaseHTTPRequestHandler):
             error = adminstations.ignore(
                 self.admin, form.get("driver", ""), form.get("identity", ""),
                 on=(action == "ignore"))
+        elif action == "set" and len(parts) >= 3:
+            error = adminstations.configure(self.admin, parts[-2], form)
         elif action == "learn" and len(parts) >= 3:
             found, error = adminstations.learn(self.admin, parts[-2])
             if not error and found is None:

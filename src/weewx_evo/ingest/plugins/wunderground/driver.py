@@ -80,6 +80,8 @@ class WundergroundDriver(BaseDriver):
                 "a station_id is configured under [drivers.wunderground]. "
                 "This driver no longer decides which consoles are recorded; "
                 "announce them as stations instead.")
+        # Kept as an argument so an existing configuration still starts, but
+        # it is the station's answer now and the core applies it.
         self.indoor = indoor
         self.seen: dict[str, int] = {}
         self.unknown: dict[str, str] = {}
@@ -91,22 +93,18 @@ class WundergroundDriver(BaseDriver):
 
     @staticmethod
     def options() -> list:
-        """What this driver can be configured with.
+        """Nothing, and that is the answer.
 
-        Groups, not bare options: the admin page, the command line and the
-        comments in the written file are all built from this, and every one of
-        them expects the settings to arrive under a prefix.
+        What this driver does is read a protocol, and a protocol has no
+        settings. Whether to keep the indoor readings, what the hardware is
+        called, which channel is which: those are facts about one console, and
+        they live on its station.
+
+        It had an `indoor` switch, and the Ecowitt driver did not, which was
+        the same question answered twice and once not at all. The core applies
+        it now, for every driver, from the station.
         """
-        from ....options import Group, Option
-
-        return [
-            Group("Readings", "What to take from a Weather Underground upload.", (
-                Option("indoor", "Record indoor readings", kind="bool",
-                       default=True,
-                       help="Consoles report the temperature and humidity of "
-                            "the room they stand in. Off leaves them out."),
-            ), prefix="drivers.wunderground"),
-        ]
+        return []
 
     def claims(self, body: bytes, meta: dict) -> float:
         """Whether this looks like a Weather Underground upload.
