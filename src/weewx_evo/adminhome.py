@@ -346,10 +346,17 @@ def _sent_state(admin: Any, state: State) -> None:
 
 def _forecast_state(admin: Any, state: State) -> None:
     current = admin.config()
-    configured = current.get("forecasts") or {}
+    # "forecast", singular. The other three sections are plural and this one
+    # is not, which is a thing to read off `cli.configured_forecasts` rather
+    # than to assume: assuming it cost a card that said "no forecast is
+    # configured" on an installation fetching one every hour.
+    configured = current.get("forecast") or {}
     if not configured:
         return
-    path = _setting(admin, "forecast_db", "data/forecast.sdb")
+    # Beside the archive rather than a setting of its own, which is where
+    # `cli.forecast_db` puts it.
+    path = _setting(admin, "archive_db",
+                    "data/weewx.sdb").parent / "forecast.sdb"
     if not path.exists():
         for name in sorted(configured):
             state.forecasts.append(Link(name, unreachable="not fetched yet",

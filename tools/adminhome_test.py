@@ -284,6 +284,35 @@ def never_is_only_said_when_it_is_true() -> None:
               "set up automatically")
 
 
+def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
+    """Four sections, and one of them is not plural.
+
+    `[forecast]` is singular where `[feeds]`, `[exports]` and `[uploads]` are
+    not. Reading `forecasts` gave a card saying nothing was configured on an
+    installation fetching one every hour -- a page confidently wrong about
+    the thing it exists to report.
+
+    Checked all four together, because the next one to be renamed will not
+    be the one somebody remembers to look at.
+    """
+    print("\nthe four sections, spelled the way the program spells them")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        current = admin.config()
+        current["feeds"] = {"json": {"kind": "json"}}
+        current["exports"] = {"site": {"kind": "local", "directory": str(work)}}
+        current["uploads"] = {"wu": {"kind": "wunderground"}}
+        current["forecast"] = {"kirchdorf": {"source": "openmeteo"}}
+        admin.config = lambda: current  # type: ignore[method-assign]
+
+        state = adminhome.read(admin)
+        for what, links in (("feeds", state.feeds), ("exports", state.exports),
+                            ("uploads", state.uploads),
+                            ("forecast", state.forecasts)):
+            check(f"[{what}] reaches the page", len(links), 1)
+
+
 def the_page_renders_and_carries_the_numbers() -> None:
     """The HTML itself, because everything above tests the reading."""
     print("\nthe page")
@@ -324,6 +353,7 @@ def main() -> int:
     what_cannot_be_read_says_so()
     a_relative_path_and_an_environment_variable()
     never_is_only_said_when_it_is_true()
+    every_section_is_the_one_the_rest_of_the_program_reads()
     the_page_renders_and_carries_the_numbers()
     ages_read_as_ages()
 
