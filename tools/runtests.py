@@ -136,6 +136,8 @@ def tests() -> list[Test]:
              "Open-Meteo, DWD, MeteoAlarm and NWS, from recorded responses"),
         Test("feedtiming", ["feedtiming_test.py"],
              "every trigger a feed declares is one the runner acts on"),
+        Test("schedule", ["schedule_test.py"],
+             "an interval runs on the hour's grid, not from when it started"),
         Test("watchdog", ["watchdog_test.py"],
              "it restarts for what a restart fixes, and not more often"),
         Test("livedb", ["livedb_test.py"],

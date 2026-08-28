@@ -40,6 +40,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from .. import schedule
 from . import Rejected
 from .progress import Progress
 
@@ -71,6 +72,7 @@ class Scheduled:
         "_refused_since",
         "_runs_since",
         "_sent_since",
+        "_slot",
         "blocked",
         "failures",
         "last",
@@ -125,6 +127,8 @@ class Scheduled:
         # -1, not 0: `monotonic()` can legitimately be 0.0, and tested
         # against falsiness the first run counted as "never logged" -- so the
         # second one printed its own line as well.
+        #: The wall-clock moment this is next due on, for `interval`.
+        self._slot: float | None = None
         self._logged_at = -1.0
         self._runs_since = 0
         self._sent_since = 0
@@ -146,7 +150,21 @@ class Scheduled:
             return False
         if self.trigger == "record":
             return fired == "record"
-        return now - self.last >= self.every
+        # On the hour's grid, not counted from whenever the service started:
+        # a ten-minute upload goes at :00, :10, :20 and stays there across a
+        # restart. See schedule.py.
+        wall = time.time()
+        if self._slot is None:
+            self._slot = schedule.next_slot(wall, self.every)
+            return True
+        if wall < self._slot:
+            return False
+        self._slot = schedule.next_slot(wall, self.every)
+        return True
+
+    def next_run(self) -> float:
+        """When this is next due on the wall clock, for the loop to wait."""
+        return time.time() if self._slot is None else self._slot
 
     def pending(self) -> list[dict]:
         """The records this upload still owes, oldest first.
@@ -374,7 +392,8 @@ class Runner:
                 event.clear()
                 fired = "record"
             else:
-                self._stopping.wait(timeout=min(30, max(1, scheduled.every)))
+                self._stopping.wait(timeout=max(0.5, schedule.wait_for(
+                    time.time(), scheduled.next_run())))
                 if self._stopping.is_set():
                     return
                 fired = ""

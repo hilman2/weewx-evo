@@ -26,6 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import schedule
 from .db.live import DEFAULT_ARCHIVE
 
 log = logging.getLogger(__name__)
@@ -191,7 +192,10 @@ class Runner:
         every = float(self.schedule.get(name, {}).get("every") or 0)
         if every <= 0:
             return
-        self._next[name] = (int(now // every) + 1) * every
+        # The same grid everything else on a clock uses. This was
+        # `now // every`, which agrees wherever the offset is a whole number
+        # of hours and is half an hour out in India -- see schedule.py.
+        self._next[name] = schedule.next_slot(now, every)
 
     def archive_for(self, name: str) -> str:
         """Which series this feed reads. The default unless it says."""

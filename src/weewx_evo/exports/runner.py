@@ -40,6 +40,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .. import schedule
+
 log = logging.getLogger(__name__)
 
 
@@ -60,6 +62,7 @@ class Scheduled:
     """One export, and when it is next due."""
 
     __slots__ = (
+        "_slot",
         "caught_up",
         "changed",
         "export",
@@ -114,6 +117,9 @@ class Scheduled:
         # Set once the first run has been through the whole directory.
         self.caught_up = False
         self.last: float = 0.0
+        #: The wall-clock moment this is next due on, for `interval`. None
+        #: until the first turn.
+        self._slot: float | None = None
         self.running = False
         self.skipped = 0
         self.runs = 0
@@ -165,7 +171,27 @@ class Scheduled:
             return True
         if self.trigger == "record":
             return fired == "record"
-        return now - self.last >= self.every
+        # On the hour's grid rather than counted from whenever this started.
+        # A five-minute export runs at :00, :05, :10, and goes on doing so
+        # across a restart -- see schedule.py.
+        wall = time.time()
+        if self._slot is None:
+            # The first turn publishes at once rather than waiting up to an
+            # interval: an export added to a running station should show
+            # something, and a service that has just come back should not
+            # leave the site as it was for five minutes.
+            self._slot = schedule.next_slot(wall, self.every)
+            return True
+        if wall < self._slot:
+            return False
+        self._slot = schedule.next_slot(wall, self.every)
+        return True
+
+    def next_run(self) -> float:
+        """When this is next due on the wall clock, for the loop to wait."""
+        if self._slot is None:
+            return time.time()
+        return self._slot
 
     def run(self) -> None:
         """Send, and remember what happened. Never raises."""
@@ -342,7 +368,10 @@ class Runner:
                 event.clear()
                 fired = "" if scheduled.trigger == "feed" else "record"
             else:
-                self._stopping.wait(timeout=min(30, max(1, scheduled.every)))
+                # Long enough to land on the slot rather than up to half a
+                # minute after it, short enough to notice a stop.
+                self._stopping.wait(timeout=max(0.5, schedule.wait_for(
+                    time.time(), scheduled.next_run())))
                 if self._stopping.is_set():
                     return
                 fired = ""

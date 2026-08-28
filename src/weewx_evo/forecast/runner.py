@@ -34,6 +34,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from .. import schedule
 from . import ForecastError, Place
 
 log = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class Scheduled:
     """One source, and when it is next due."""
 
     __slots__ = (
+        "_slot",
         "blocked",
         "failures",
         "issued",
@@ -67,6 +69,9 @@ class Scheduled:
         self.place = place
         self.store = store
         self.last: float = 0.0
+        #: The wall-clock moment this is next due on. None until the first
+        #: turn, which fetches at once.
+        self._slot: float | None = None
         self.running = False
         self.runs = 0
         self.failures = 0
@@ -83,7 +88,21 @@ class Scheduled:
         return max(300, int(getattr(self.source, "every", 3600)))
 
     def due(self, now: float) -> bool:
-        return not self.blocked and (now - self.last) >= self.every
+        if self.blocked:
+            return False
+        # On the hour's grid: an hourly forecast is fetched on the hour,
+        # whatever time the service came up. See schedule.py.
+        wall = time.time()
+        if self._slot is None:
+            self._slot = schedule.next_slot(wall, self.every)
+            return True
+        if wall < self._slot:
+            return False
+        self._slot = schedule.next_slot(wall, self.every)
+        return True
+
+    def next_run(self) -> float:
+        return time.time() if self._slot is None else self._slot
 
     def run(self) -> None:
         """Fetch and store. Never raises."""
@@ -165,7 +184,11 @@ class Runner:
             # Waking every thirty seconds rather than sleeping the whole
             # interval, so a stop is answered in seconds rather than in an
             # hour. The `due` check is what actually decides.
-            self._stopping.wait(timeout=30)
+            # Soon enough to land on the slot rather than up to half a
+            # minute past it. See schedule.py.
+            self._stopping.wait(timeout=max(0.5, min(
+                30.0, min((one.next_run() for one in self.sources),
+                          default=time.time() + 30) - time.time())))
             if self._stopping.is_set():
                 return
             if scheduled.due(time.monotonic()):
