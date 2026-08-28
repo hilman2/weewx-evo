@@ -238,6 +238,52 @@ def a_relative_path_and_an_environment_variable() -> None:
                 os.environ["WEEWX_EVO_LIVE"] = was
 
 
+def never_is_only_said_when_it_is_true() -> None:
+    """The running instance said "never" for five exports that had just run.
+
+    An export's own record of what it has sent is named after a hash of both
+    ends, so this page cannot find it. Guessing a path and finding nothing
+    produced a confident wrong answer -- worse than no answer, because
+    somebody would have gone looking for a broken export.
+    """
+    print("\nexports, and what this page can actually know")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        published = work / "site"
+        published.mkdir()
+        (published / "index.html").write_text("<p>hi</p>", encoding="utf-8")
+
+        current = admin.config()
+        current["exports"] = {
+            "site": {"kind": "local", "directory": str(published)},
+            "away": {"kind": "ftp", "trigger": "feed", "feed": "json"},
+        }
+        # The uploads that ran, as the progress file records them. `live` is
+        # not in the configuration at all: it is set up from the export.
+        (work / "data" / "uploads.json").write_text(
+            f'{{"through": {{"live": {int(time.time() - 10)}}}}}',
+            encoding="utf-8")
+        current["uploads"] = {}
+        admin.config = lambda: current  # type: ignore[method-assign]
+
+        state = adminhome.read(admin)
+        by_name = {one.name: one for one in state.exports}
+        check("a local export is dated from what it published",
+              by_name["site"].when is not None, True)
+        check("a remote one says it is not recorded rather than 'never'",
+              by_name["away"].unreachable, "not recorded here")
+        check("and says what it waits for",
+              "on the json feed" in by_name["away"].detail, True)
+
+        posted = {one.name: one for one in state.uploads}
+        check("an upload nobody configured but that is running shows up",
+              "live" in posted, True)
+        check("marked as what it is",
+              posted["live"].detail if "live" in posted else "",
+              "set up automatically")
+
+
 def the_page_renders_and_carries_the_numbers() -> None:
     """The HTML itself, because everything above tests the reading."""
     print("\nthe page")
@@ -277,6 +323,7 @@ def main() -> int:
     no_token_is_worth_saying()
     what_cannot_be_read_says_so()
     a_relative_path_and_an_environment_variable()
+    never_is_only_said_when_it_is_true()
     the_page_renders_and_carries_the_numbers()
     ages_read_as_ages()
 

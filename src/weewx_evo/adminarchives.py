@@ -42,7 +42,10 @@ def settings_of(admin: Any) -> Any:
 
     class Saved:
         def get(self, name: str, default: Any = None) -> Any:
-            value = config_file.get(current, name)
+            # `resolved`, not `get`: a container sets WEEWX_EVO_ARCHIVE, and
+            # reading the file alone had this page reporting about
+            # /data/archive/weewx.sdb while the archiver wrote /data/weewx.sdb.
+            value = config_file.resolved(current, name)
             return default if value in (None, "") else value
 
     return Saved()

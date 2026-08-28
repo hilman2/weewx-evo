@@ -286,14 +286,29 @@ def _sent_state(admin: Any, state: State) -> None:
             state.exports.append(Link(name, "switched off",
                                       href=f"./export:{name}"))
             continue
-        # The tracker is written after a successful send, so its mtime is
-        # when something last actually went out. Nothing else on disk knows.
-        tracker = _under(admin, settings.get("state"),
-                         f"data/exports/{name}.json")
-        when = tracker.stat().st_mtime if tracker.exists() else None
         kind = str(settings.get("kind") or "")
-        state.exports.append(Link(name, kind, when=when,
-                                  href=f"./export:{name}"))
+        # A local export publishes into a directory on this machine, so the
+        # newest file in it is when something last went out -- read directly
+        # rather than inferred. An export's own record of what it has sent is
+        # named after a hash of both ends, so it cannot be found from here.
+        when = None
+        if kind == "local":
+            where = str(settings.get("directory") or "").strip()
+            if where:
+                _count, when = _newest_file(_under(admin, where, ""))
+        detail = kind
+        if when is None and kind:
+            # "never" would be a lie: an FTP export publishes to somewhere
+            # this process cannot look at, and nothing on disk records when
+            # it last succeeded. Say what it waits for instead.
+            waits = str(settings.get("trigger") or "feed")
+            source = str(settings.get("feed") or "").strip()
+            detail = f"{kind}, on the {source} feed" if (
+                waits == "feed" and source) else f"{kind}, on {waits}"
+        state.exports.append(Link(name, detail, when=when,
+                                  href=f"./export:{name}",
+                                  unreachable="" if when is not None
+                                  else "not recorded here"))
 
     progress = _setting(admin, "archive_db",
                         "data/weewx.sdb").parent / "uploads.json"
@@ -306,9 +321,10 @@ def _sent_state(admin: Any, state: State) -> None:
                        .get("through") or {})
         except (OSError, ValueError):
             through = {}
-    for name, settings in sorted((current.get("uploads") or {}).items()):
-        if not isinstance(settings, dict):
-            continue
+    configured = {name: one for name, one
+                  in (current.get("uploads") or {}).items()
+                  if isinstance(one, dict)}
+    for name, settings in sorted(configured.items()):
         if settings.get("enabled") is False:
             state.uploads.append(Link(name, "switched off",
                                       href=f"./upload:{name}"))
@@ -317,6 +333,15 @@ def _sent_state(admin: Any, state: State) -> None:
         state.uploads.append(Link(name, str(settings.get("kind") or ""),
                                   when=when or None,
                                   href=f"./upload:{name}"))
+    # An upload nobody configured but something is running: `live.json` into
+    # a directory this machine serves is set up on its own, from the export
+    # that publishes the pages. It posts every ten seconds, and a page
+    # claiming "no upload is configured" while that happens is wrong about
+    # the thing it exists to report.
+    for name in sorted(set(through) - set(configured)):
+        state.uploads.append(Link(name, "set up automatically",
+                                  when=through[name] or None,
+                                  href="./core"))
 
 
 def _forecast_state(admin: Any, state: State) -> None:
