@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import adminarchives, adminhome, adminplots, adminstations
+from . import adminarchives, adminhome, adminplots, adminpublish, adminstations
 from . import archives as archive_defs
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
@@ -139,7 +139,7 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 
 #: Pages that are neither a schema nor a form to create one. They render
 #: themselves, the way the chart pages do.
-OWN_PAGES = ("overview", "stations", "archives")
+OWN_PAGES = ("overview", "stations", "archives", "publishing")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -695,12 +695,17 @@ def field(option: Option, value: Any, error: str = "",
     return "\n".join(out)
 
 
+def anchor(label: str) -> str:
+    """A fragment name from a group label. Stable, because it is a link."""
+    return "g-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+
+
 def group_html(group: Group, values: dict[str, Any],
                errors: dict[str, str], moved: str = "",
                moved_names: frozenset[str] = frozenset()) -> str:
     plain = [o for o in group.options if not o.advanced]
     advanced = [o for o in group.options if o.advanced]
-    out = ['<section class="group">']
+    out = [f'<section class="group" id="{html.escape(anchor(group.label))}">']
     out.append(f"<h3>{html.escape(group.label)}</h3>")
     if group.help:
         out.append(f'<p class="lede">{html.escape(group.help)}</p>')
@@ -1087,63 +1092,42 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         values.update({k: v for k, v in form.items() if k in values})
 
     nav = []
-    # Feeds and exports are two different things and the page says so: a feed
-    # makes files, an export moves them. See weewx_evo.feeds.
-    empty = {
-        "feed": "None yet. A feed produces something from the readings: a "
-                "CSV, a JSON document, a chart, a whole website.",
-        "export": "None yet. An export moves what a feed produced: FTP, "
-                  "rsync, a copy to a mounted share.",
-        "upload": "None yet. An upload sends the readings to a weather "
-                  "service: Weather Underground, Windy, CWOP, an MQTT "
-                  "broker.",
-        "forecast": "None yet. A forecast says what is coming, and a warning "
-                    "service says when it matters. Both are free and need no "
-                    "account.",
-    }
+    # Fixed sections. The old navigation listed every configured thing --
+    # three feeds, five exports, an upload, each its own link under its own
+    # heading -- so it grew with the installation and was longest on exactly
+    # the installations where finding something matters. The instances live
+    # on their section's page now.
     nav.extend(adminhome.nav(admin, active))
-    for kind, heading in (("core", "System"), ("stations", ""),
-                          ("driver", "Drivers"),
-                          ("feed", "Feeds"), ("charts", ""),
-                          ("export", "Exports"), ("upload", "Uploads"),
-                          ("forecast", "Forecast")):
-        if kind == "charts":
-            nav.extend(adminplots.nav(admin, active))
-            continue
-        if kind == "stations":
-            # Before the drivers, because it is the first thing set up: a
-            # driver reads a protocol, a station is the console itself.
-            nav.extend(adminstations.nav(admin, active))
-            # And the archives right after: a station is asked which one it
-            # writes into, so the list has to be reachable from beside it.
-            nav.extend(adminarchives.nav(admin, active))
-            continue
-        rows = [s for s in admin.schemas if s.kind == kind]
-        if not rows and kind not in empty:
-            continue
-        nav.append(f'<p class="navhead">{heading}</p>')
-        if not rows:
-            nav.append(f'<p class="navempty">{html.escape(empty[kind])}</p>')
-        for s in rows:
-            current = " aria-current='page'" if s.name == active else ""
-            nav.append(f'<a href="./{html.escape(s.name)}"{current}>'
-                       f"{html.escape(s.label)}</a>")
-        if kind == "feed" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-feed" else ""
-            nav.append(f'<a class="add" href="./new-feed"{current}>'
-                       "+ Add a feed</a>")
-        if kind == "export" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-export" else ""
-            nav.append(f'<a class="add" href="./new-export"{current}>'
-                       "+ Add an export</a>")
-        if kind == "upload" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-upload" else ""
-            nav.append(f'<a class="add" href="./new-upload"{current}>'
-                       "+ Add an upload</a>")
-        if kind == "forecast" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-forecast" else ""
-            nav.append(f'<a class="add" href="./new-forecast"{current}>'
-                       "+ Add a forecast</a>")
+
+    nav.append('<p class="navhead">Readings in</p>')
+    nav.extend(adminstations.nav(admin, active))
+    drivers = [s for s in admin.schemas if s.kind == "driver"]
+    for one in drivers:
+        current = " aria-current='page'" if one.name == active else ""
+        nav.append(f'<a href="./{html.escape(one.name)}"{current}>'
+                   f"{html.escape(one.label)}</a>")
+
+    nav.append('<p class="navhead">Readings out</p>')
+    nav.extend(adminpublish.nav(admin, active))
+    nav.extend(adminplots.nav(admin, active))
+    forecasts = [s for s in admin.schemas if s.kind == "forecast"]
+    current = " aria-current='page'" if active in (
+        "forecast", "new-forecast") or active.startswith("forecast:") else ""
+    if forecasts:
+        nav.append(f'<a href="./{html.escape(forecasts[0].name)}"{current}>'
+                   f'Forecast<span class="count">{len(forecasts)}</span></a>')
+    elif not admin.read_only:
+        nav.append(f'<a class="add" href="./new-forecast"{current}>'
+                   "+ Add a forecast</a>")
+
+    nav.append('<p class="navhead">Kept</p>')
+    nav.extend(adminarchives.nav(admin, active))
+
+    nav.append('<p class="navhead">System</p>')
+    for one in [s for s in admin.schemas if s.kind == "core"]:
+        current = " aria-current='page'" if one.name == active else ""
+        nav.append(f'<a href="./{html.escape(one.name)}"{current}>'
+                   f"{html.escape(one.label)}</a>")
 
     if charting:
         if active == "new-plot":
@@ -1157,7 +1141,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                                     admin.columns(), errors, form)]
     elif standing:
         pages = {"overview": adminhome, "archives": adminarchives,
-                 "stations": adminstations}
+                 "stations": adminstations, "publishing": adminpublish}
         body = [pages[active].overview(admin, message, errors.get("", ""))]
     elif active == "new-archive":
         body = [adminarchives.new(admin, errors.get("", ""), form)]
@@ -1185,8 +1169,12 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         except Exception:
             log.debug("could not read the archives for the settings page",
                       exc_info=True)
-        body = [group_html(g, values, errors, moved, moved_names)
-                for g in schema.groups]
+        jump = "".join(
+            f'<a href="#{html.escape(anchor(g.label))}">'
+            f"{html.escape(g.label)}</a>" for g in schema.groups)
+        body = [f'<nav class="jump" aria-label="Sections">{jump}</nav>']
+        body += [group_html(g, values, errors, moved, moved_names)
+                 for g in schema.groups]
 
     # An export gets two more buttons: try the destination, and delete it.
     # Testing is worth a great deal here -- a wrong password found now beats
@@ -1327,11 +1315,16 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "new-forecast": "Add a forecast",
                     "new-station": "Add a station", "stations": "Stations",
                     "new-archive": "Add an archive", "overview": "Overview",
-                    "archives": "Archives"}
+                    "archives": "Archives", "publishing": "Publishing"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
+    # The pages that render themselves write their own <h2>, and it carries
+    # more than a name: "Publishing" with a line under it saying what a feed
+    # and an export each do. Printing the shell's as well gave two headings,
+    # the first of them a bare repetition of the second.
     return _PAGE.format(
         title=html.escape(heading),
+        heading="" if standing else f"<h2>{html.escape(heading)}</h2>",
         body_form_open="" if own_form else f'<form method="post" action="./{html.escape(active)}">',
         body_form_close="" if own_form else "</form>",
         # After the save form closes, never inside it. `extra` is Try it and
@@ -1352,7 +1345,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         readonly=("<p class='lede'>Started read-only: nothing can be saved.</p>"
                   if admin.read_only else ""),
         save="" if admin.read_only or own_form else
-             '<div class="actions"><button type="submit">Save</button>'
+             '<div class="savebar"><button type="submit">Save</button>'
              '<span class="hint">Written to the configuration file. '
              'The previous version is kept as .bak.</span></div>',
         file=html.escape(str(admin.path)),
@@ -1471,6 +1464,10 @@ _PAGE = """<!doctype html>
   .navgroup > summary::-webkit-details-marker {{ display: none; }}
   .navgroup > summary:hover {{ background: color-mix(in srgb, var(--ink) 6%, transparent);
       color: var(--ink); }}
+  nav a .count {{ float: right; font-variant-numeric: tabular-nums;
+                  font-size: .75rem; color: var(--dim); font-weight: 400;
+                  margin-left: .5rem; }}
+  nav a[aria-current] .count {{ color: var(--ink); }}
   .navgroup > summary .count {{ font-variant-numeric: tabular-nums;
       opacity: .65; }}
   .navgroup[open] > summary {{ color: var(--ink); font-weight: 500; }}
@@ -1549,6 +1546,87 @@ _PAGE = """<!doctype html>
   .banner.warn li {{ margin: .25rem 0; }}
   nav a.home {{ font-weight: 600; margin-bottom: .5rem; }}
 
+  /* -- long forms ----------------------------------------------------- */
+
+  /* Seven groups of settings is a page four thousand pixels tall, and the
+     only way to the seventh was scrolling past the other six. */
+  nav.jump {{ display: flex; flex-wrap: wrap; gap: .3rem;
+              margin: 0 0 1.25rem; padding-bottom: .9rem;
+              border-bottom: 1px solid var(--line); }}
+  /* `nav a` is the sidebar's rule and it applies here too -- this is a
+     <nav> as well. Two of its declarations had to be undone: the negative
+     side margin, which made each chip lap over the last letter of the one
+     before it ("Statior", "Archiv"), and the panel background and border
+     that put a white box around the whole strip. */
+  nav.jump {{ background: none; border-right: 0; padding: 0; }}
+  nav.jump a {{ flex: 0 0 auto; white-space: nowrap; margin: 0;
+                font-size: .8125rem; padding: .25rem .6rem; border-radius: 1rem;
+                color: var(--dim); text-decoration: none;
+                border: 1px solid var(--line); background: var(--panel); }}
+  nav.jump a:hover {{ color: var(--ink); border-color: var(--dim); }}
+  .group {{ scroll-margin-top: 1rem; }}
+
+  /* And the Save button was at the bottom of all of it. Sticky rather than
+     repeated: one button, always reachable, and it still belongs to the one
+     form. */
+  .savebar {{ position: sticky; bottom: 0; display: flex; align-items: center;
+              gap: .75rem; margin: 1.5rem -1.5rem -5rem; padding: .8rem 1.5rem;
+              background: color-mix(in srgb, var(--bg) 92%, transparent);
+              backdrop-filter: blur(6px);
+              border-top: 1px solid var(--line); }}
+  .savebar .hint {{ font-size: .75rem; color: var(--dim); }}
+  @media (max-width: 48rem) {{ .savebar {{ margin-left: -1rem;
+                                           margin-right: -1rem; }} }}
+
+  /* -- publishing: the flow ------------------------------------------ */
+
+  .actions {{ display: flex; gap: .5rem; margin: 0 0 1.25rem; }}
+  a.button {{ display: inline-block; padding: .4rem .8rem; border-radius: .35rem;
+              background: var(--accent); color: #fff; text-decoration: none;
+              font-size: .8125rem; font-weight: 600; }}
+  a.button.quiet {{ background: transparent; color: var(--ink);
+                    border: 1px solid var(--line); font-weight: 500; }}
+  .sectionhead {{ margin: 2rem 0 .3rem; font-size: .8125rem;
+                  text-transform: uppercase; letter-spacing: .04em;
+                  color: var(--dim); }}
+  /* One block per feed. The exports sit inside its border rather than
+     beside it, because "inside" is the claim being made: this feed is what
+     they publish. */
+  .flow {{ border: 1px solid var(--line); border-radius: .5rem;
+           background: var(--panel); margin-bottom: .75rem; }}
+  .made {{ display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap;
+           padding: .7rem .9rem; }}
+  .made .title, .sends .title {{ font-weight: 600; font-size: .9375rem;
+                                 color: var(--ink); text-decoration: none; }}
+  .made a.title:hover {{ text-decoration: underline; }}
+  /* The age goes to the right edge and stays on one line. `margin-left:
+     auto` alone does not do it inside a wrapping flex row: the item wraps
+     first and then has a whole line to itself. */
+  /* The age goes to the right edge and stays on one line. Marked with a
+     class rather than :last-child -- a block with no age has its
+     description last, and that was being pushed to the right instead. */
+  .made .when, .sends .when, .made .aside, .sends .aside {{
+      margin-left: auto; color: var(--dim); font-size: .8125rem;
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+      padding-left: 1rem; }}
+  .made .aside, .sends .aside {{ white-space: normal; }}
+  .made .note, .sends .note {{ min-width: 0; overflow-wrap: anywhere; }}
+  .sends {{ list-style: none; margin: 0; padding: 0;
+            border-top: 1px solid var(--line); }}
+  .sends li {{ display: flex; align-items: baseline; gap: .5rem;
+               flex-wrap: wrap; padding: .5rem .9rem .5rem 1.6rem;
+               font-size: .875rem; border-top: 1px solid var(--line); }}
+  .sends li:first-child {{ border-top: 0; }}
+  .sends.plain li {{ padding-left: .9rem; }}
+  .sends li.none {{ color: var(--dim); font-size: .8125rem; }}
+  .sends .arrow {{ position: absolute; margin-left: -.9rem; color: var(--dim); }}
+  .sends li a {{ font-weight: 600; color: var(--ink); }}
+  .chip {{ font-size: .6875rem; padding: .1rem .4rem; border-radius: .25rem;
+           background: color-mix(in srgb, var(--ink) 8%, transparent);
+           color: var(--dim); text-transform: uppercase;
+           letter-spacing: .03em; }}
+  .flow .note {{ font-size: .8125rem; color: var(--dim); }}
+
   /* -- the stations page ------------------------------------------- */
   /* A list of consoles rather than a form, so it is a table. Laid out
      rather than left to the browser: the identity is a 32-character hex
@@ -1606,7 +1684,7 @@ _PAGE = """<!doctype html>
     {nav}
   </nav>
   <main>
-    <h2>{title}</h2>
+    {heading}
     {readonly}
     {banner}
     {body_form_open}

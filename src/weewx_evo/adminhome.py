@@ -448,8 +448,20 @@ def _judge(admin: Any, state: State) -> None:
     packets" fires only when packets are arriving and not being archived,
     which always is.
     """
+    from .options import parse_duration
+
     current = admin.config()
-    state.interval = int(config_file.get(current, "interval") or 300)
+    # A duration, not a number: the file says `interval = "5m"`, which is the
+    # whole point of the duration kind. `int()` on it raised, this function
+    # stopped at its first line, and the page reported nothing wrong about an
+    # installation -- a dashboard silenced by a format it writes itself.
+    raw = config_file.get(current, "interval")
+    try:
+        state.interval = int(parse_duration(str(raw))) if raw else 300
+    except Exception:
+        # A value this page cannot read is not a reason to stop reading the
+        # rest. The default is what the archiver would use anyway.
+        state.interval = 300
 
     if not config_file.get(current, "token"):
         state.concerns.append(

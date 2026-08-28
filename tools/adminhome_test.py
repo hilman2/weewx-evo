@@ -284,6 +284,35 @@ def never_is_only_said_when_it_is_true() -> None:
               "set up automatically")
 
 
+def a_duration_is_a_duration() -> None:
+    """`interval = "5m"` is what the file says, and it is not an integer.
+
+    `int("5m")` raised on the first line of the rules, so nothing after it
+    ran and the page reported nothing wrong about an installation with a
+    backlog. A dashboard silenced by a format it writes itself.
+    """
+    print("\nthe archive interval, written the way the file writes it")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work, packets_ago=5,
+                                record_ago=INTERVAL * 6)
+        current = admin.config()
+        current["interval"] = "5m"
+        admin.config = lambda: current  # type: ignore[method-assign]
+
+        state = adminhome.read(admin)
+        check("it is read as seconds", state.interval, 300)
+        check("and the rules after it still run",
+              any("behind the newest packet" in one
+                  for one in state.concerns), True)
+
+        # And something unreadable does not stop them either.
+        current["interval"] = "whenever"
+        state = adminhome.read(admin)
+        check("an unreadable one falls back", state.interval, 300)
+        check("rather than stopping the page", len(state.concerns) >= 1, True)
+
+
 def the_live_file_dates_itself() -> None:
     """`live.json` needs no bookkeeping to be reported.
 
@@ -413,6 +442,7 @@ def main() -> int:
     a_relative_path_and_an_environment_variable()
     never_is_only_said_when_it_is_true()
     every_section_is_the_one_the_rest_of_the_program_reads()
+    a_duration_is_a_duration()
     the_live_file_dates_itself()
     the_page_renders_and_carries_the_numbers()
     ages_read_as_ages()

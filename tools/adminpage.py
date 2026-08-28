@@ -208,10 +208,25 @@ def main() -> int:
             ('name="interval__amount"', "a duration as a number"),
             ('name="interval__unit"', "with a unit beside it"),
             (">minutes<", "and the units spelled out"),
-            ("Feeds", "a place for feeds, before there are any"),
-            ("Exports", "and one for exports, which are a different thing"),
+            # Feeds and exports had a sidebar heading each, and one entry
+            # per configured thing under them, so the navigation grew with
+            # the installation. They share one entry now and the instances
+            # are on its page -- but the way in still has to exist before
+            # anything is configured, which is what this checks.
+            ("./publishing", "a way to feeds and exports, before there are any"),
         ):
             failures += not check(what, needle in html, True)
+
+        print("\nand that way leads to both, named as the two things they are")
+        code, publishing = get(f"{base}/{TOKEN}/publishing")
+        failures += not check("the page loads", code, 200)
+        for needle, what in (
+            ("A feed makes files", "it says what a feed is"),
+            ("An export moves them", "and what an export is"),
+            ("./new-feed", "and offers to add one of each"),
+            ("./new-export", "the other one too"),
+        ):
+            failures += not check(what, needle in publishing, True)
 
         print("\nwhat can be chosen is offered, not typed")
         # The point of a settings page over the command line: you can see the
