@@ -749,7 +749,6 @@ def new_export_page(admin: Admin, error: str = "", form: dict | None = None) -> 
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add an export</h3>
   <p class="lede">A feed writes into its own working directory. An export is
      what puts those files somewhere anybody can read them. Give it a name
      and a destination; the rest is on the page that appears next.</p>
@@ -794,7 +793,6 @@ def new_upload_page(admin: Admin, error: str = "",
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add an upload</h3>
   <p class="lede">An export moves the files a feed produced. An upload sends
      the readings themselves to a weather service, so they appear on its map
      alongside everybody else\'s. Give it a name and a service; the account
@@ -840,7 +838,6 @@ def new_forecast_page(admin: Admin, error: str = "",
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add a forecast</h3>
   <p class="lede">The station measures what is happening. A forecast is the
      other half of what people look at a weather page for. Two sources is the
      usual arrangement rather than the exception: one for the numbers and one
@@ -885,7 +882,6 @@ def new_feed_page(admin: Admin, error: str = "",
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add a feed</h3>
   <p class="lede">A feed turns the readings into files. Several of one kind
      is normal: two sets of JSON in two unit systems, or two themes side by
      side. Each writes its own directory and has its own settings.</p>

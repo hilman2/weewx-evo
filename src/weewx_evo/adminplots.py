@@ -567,7 +567,6 @@ def new(admin: Any, columns: set[str], error: str = "",
                   for s, v in plot_defs.SPANS.items())
     return f'''
 <section class="group">
-  <h3>Add a chart</h3>
   <p class="lede">A name, how far back, and one reading. Everything else is on
      the page that appears next -- asking for twelve settings before there is
      anything to save them in is how a form loses what somebody typed.</p>

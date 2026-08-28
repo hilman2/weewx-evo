@@ -550,7 +550,6 @@ def new(admin: Any, error: str = "", form: dict | None = None,
 
     return f'''
 <section class="group">
-  <h3>Add a station</h3>
   <p class="lede">For hardware you can point at this server. Fill this in and
      the next page states exactly what to type into the console, including an
      identity that is handed out here so it cannot be used twice.</p>

@@ -419,6 +419,29 @@ def main() -> int:
                                           "evo-abc123"))
         station_defs.save(station_defs.path_for(path.parent), register)
 
+        print("\nthe way to add one is always there")
+        # "Add an upload" was inside the "none yet" branch, so it vanished
+        # the moment an upload existed -- and the live one sets itself up
+        # from a local export. On a station publishing anything at all there
+        # was then no way from this page to Weather Underground or any of the
+        # others, which reads as the feature being missing entirely.
+        for page, wanted in (("publishing", ("./new-feed", "./new-export",
+                                             "./new-upload")),
+                             ("stations", ("./new-station",)),
+                             ("charts", ("./new-plot",))):
+            _code, rendered = get(f"{base}/{TOKEN}/{page}")
+            for link in wanted:
+                failures += not check(f"{page} offers {link}",
+                                      f'href="{link}"' in rendered, True)
+
+        # And one heading per page. The shell prints the page's name; seven
+        # of these printed it again directly underneath.
+        for page in ("new-feed", "new-export", "new-upload", "new-station",
+                     "new-archive", "new-forecast", "new-plot"):
+            _code, rendered = get(f"{base}/{TOKEN}/{page}")
+            failures += not check(f"{page} says its name once",
+                                  rendered.count("<h2>"), 1)
+
         print("\nevery button on every page is wired to something")
         # Read as text this page was perfect: every tag present, every one
         # closed. The nesting was wrong, and only a parser that follows the

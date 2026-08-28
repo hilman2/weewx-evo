@@ -276,7 +276,6 @@ def new(admin: Any, error: str = "", form: dict | None = None) -> str:
     form = form or {}
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
-<h2>Add an archive</h2>
 {problem}
 <p>A second series, for a second place. It gets its own file, so nothing
    about the first one changes -- and its own altitude and coordinates,

@@ -127,6 +127,31 @@ def _chip(text: str, tone: str = "") -> str:
     return f'<span class="chip {tone}">{html.escape(text)}</span>'
 
 
+def _services() -> str:
+    """The upload targets that are installed, named.
+
+    Asked of the registry rather than written out. The sentence said
+    "Weather Underground, Windy, CWOP, or an MQTT broker" and there are
+    eight, so it read as a list of what exists rather than the sample it
+    was -- and the four it left out include the one somebody was looking
+    for.
+    """
+    from . import uploads as upload_registry
+
+    names = []
+    for kind in sorted(upload_registry.DEFAULT.kinds()):
+        factory = upload_registry.DEFAULT.factory_for(kind)
+        label = str(getattr(factory, "label", "") or kind)
+        # Not a weather service: it publishes into the pages this station
+        # writes, and it is set up from an export rather than from here.
+        if kind == "webpush":
+            continue
+        names.append(html.escape(label))
+    if not names:
+        return "none are installed"
+    return ", ".join(names[:-1]) + " or " + names[-1]
+
+
 def _carried(settings: dict) -> list[tuple[str, str]]:
     """The further feeds an export takes along, as (feed, sub-path).
 
@@ -271,11 +296,10 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     <ul class="sends plain">{NEWLINE.join(rows)}</ul>
   </section>'''
     else:
-        posted = '''
+        posted = f'''
   <h3 class="sectionhead">Posted to services</h3>
   <p class="navempty">None yet. An upload sends the readings to a weather
-     service: Weather Underground, Windy, CWOP, or an MQTT broker.
-     <a href="./new-upload">Add an upload</a>.</p>'''
+     service: {_services()}. <a href="./new-upload">Add an upload</a>.</p>'''
 
     return f'''
 <h2>Publishing</h2>
@@ -286,6 +310,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
 <div class="actions">
   <a class="button" href="./new-feed">Add a feed</a>
   <a class="button quiet" href="./new-export">Add an export</a>
+  <a class="button quiet" href="./new-upload">Add an upload</a>
 </div>
 {NEWLINE.join(blocks)}
 {loose}
