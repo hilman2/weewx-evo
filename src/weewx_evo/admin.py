@@ -1682,6 +1682,14 @@ _PAGE = """<!doctype html>
   table.stations tr:first-child td {{ border-top: 0; }}
   /* The identity is the widest thing here and the least often read. It
      breaks rather than pushing the columns somebody is looking at. */
+  /* The placement table. Wider than the station list it folds out of, and
+     the chooser is the widest thing in it. */
+  table.fields select {{ font-size: .8125rem; max-width: 22rem; width: 100%; }}
+  table.fields td {{ vertical-align: top; }}
+  table.fields td.mono {{ font-family: var(--mono); font-size: .8125rem;
+                          white-space: nowrap; }}
+  table.fields button.quiet {{ margin-top: .25rem; font-size: .75rem; }}
+
   table.stations code {{ font-family: var(--mono); font-size: .8125rem;
       word-break: break-all; }}
   table.stations .note {{ font-size: .75rem; color: var(--dim); }}
@@ -2087,6 +2095,39 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._redirect("./archives?saved=1")
 
+    def _place_fields(self, name: str, form: dict) -> str:
+        """Where this station's readings go, and the column one of them needs.
+
+        One form for the whole table, because the decisions are made
+        together: moving `tf_ch1` to `soilTemp3` is usually the same thought
+        as moving `tf_ch2` to `soilTemp4`, and saving them one at a time
+        means four round trips and four chances to stop halfway.
+
+        The "create the column" button submits the same form, so a placement
+        typed beside it is saved too rather than lost to the button.
+        """
+        from . import adminfields
+
+        register = adminstations.load(self.admin)
+        station = register.by_name(name)
+        if station is None:
+            return f"There is no station called {name!r}."
+
+        for key, value in sorted(form.items()):
+            if not key.startswith("place:"):
+                continue
+            error = adminfields.place(self.admin, name, key[6:], str(value))
+            if error:
+                return error
+
+        wanted = str(form.get("addcolumn") or "").strip()
+        if wanted:
+            # Re-read: the placement above may have just decided which
+            # column this is.
+            station = adminstations.load(self.admin).by_name(name) or station
+            return adminfields.add_column(self.admin, station, wanted)
+        return ""
+
     def _station_action(self, action: str, parts: list, form: dict) -> None:
         """Adopt, ignore, remove, or announce a new one.
 
@@ -2118,6 +2159,8 @@ class _Handler(BaseHTTPRequestHandler):
             error = adminstations.ignore(
                 self.admin, form.get("driver", ""), form.get("identity", ""),
                 on=(action == "ignore"))
+        elif action == "fields" and len(parts) >= 3:
+            error = self._place_fields(parts[-2], form)
         elif action == "set" and len(parts) >= 3:
             error = adminstations.configure(self.admin, parts[-2], form)
         elif action == "learn" and len(parts) >= 3:

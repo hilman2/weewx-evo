@@ -681,9 +681,10 @@ def what_it_sends(admin: Any, station: Any) -> dict:
     import json as _json
 
     try:
-        sent = sorted(_json.loads(row[0]) or {})
+        values = _json.loads(row[0]) or {}
     except ValueError:
         return {}
+    sent = sorted(values)
     known = admin.columns()
     # An empty schema means the archive could not be read, not that every
     # field is homeless. Saying "45 dropped" there would be a false alarm on
@@ -691,15 +692,48 @@ def what_it_sends(admin: Any, station: Any) -> dict:
     homeless = sorted(set(sent) - known) if known else []
     return {
         "sent": sent,
+        # The readings themselves, so the table can show what a field last
+        # carried. A name alone does not say whether a placement is right;
+        # "65.5" beside `tf_ch1` does.
+        "values": values,
         "stored": sorted(set(sent) & known) if known else sent,
         "homeless": homeless,
         "raw": row[1] or "",
         "when": int(row[2] or 0),
+        "catalog": _catalog_of(admin, station),
     }
 
 
+def _catalog_of(admin: Any, station: Any) -> dict[str, str]:
+    """What the station's driver would call each raw field, unmapped.
+
+    The starting point every row shows before anybody has decided anything.
+    A driver that cannot say returns nothing, and the rows then start empty
+    rather than wrong.
+    """
+    from .ingest import drivers
+
+    try:
+        drivers.DEFAULT.load()
+        driver = drivers.get(getattr(station, "driver", "") or "")
+        protocol = getattr(driver, "protocol", None)
+        return dict(getattr(protocol, "fields", None) or {})
+    except Exception:
+        log.debug("could not read the catalog for %r", station.name,
+                  exc_info=True)
+        return {}
+
+
 def _what_it_sends_html(admin: Any, station: Any) -> str:
-    """One folded row per station: the fields, and the upload behind them."""
+    """One folded row per station: where each reading goes, and the upload.
+
+    The summary line was the whole of this once -- "45 fields, 38 in the
+    archive, 7 with nowhere to go" -- and there was nothing to be done about
+    the 7 except leave for a terminal. Now the fold holds a row per field
+    with somewhere to put it and a button for the column it needs.
+    """
+    from . import adminfields
+
     found = what_it_sends(admin, station)
     if not found:
         return ""
@@ -731,7 +765,9 @@ def _what_it_sends_html(admin: Any, station: Any) -> str:
     <textarea class="rawupload" rows="4" readonly
               onclick="this.select()">{html.escape(found["raw"])}</textarea>'''
 
+    placements = adminfields.table(admin, station, found.get("values") or {},
+                                   found.get("catalog"))
     return f'''
   <details class="sends">
-    <summary>{html.escape(summary)}</summary>{missing}{raw}
+    <summary>{html.escape(summary)}</summary>{missing}{placements}{raw}
   </details>'''
