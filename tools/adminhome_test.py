@@ -169,6 +169,42 @@ def a_stranger_is_worth_saying() -> None:
               True)
 
 
+def a_console_that_was_renamed_is_not_a_stranger() -> None:
+    """The live instance's own case, and it was a false alarm.
+
+    A console announced under a new name leaves its old packets behind, and
+    they stay for the whole retention period. Sixteen hours after the rename
+    the page still said a source "is uploading" that nothing answered for,
+    and it would have said so for a fortnight. A stranger is something
+    arriving now.
+    """
+    print("\nold packets from a console that has since been named")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        live = LiveStore(work / "data" / "live.sdb", interval_seconds=INTERVAL)
+        old = int(time.time() - adminhome.STRANGER_WINDOW - 3600)
+        live.add(Packet(dateTime=old, usUnits=1, data={"outTemp": 20.0},
+                        source="3178AB6B42A759F51A5A4AD72E37F8DE"))
+        live.close()
+
+        state = adminhome.read(admin)
+        check("nothing is reported", state.strangers, 0)
+        check("and the page stays quiet", state.concerns, [])
+
+        # One arriving now is still a stranger, which is the half that has
+        # to keep working.
+        live = LiveStore(work / "data" / "live.sdb", interval_seconds=INTERVAL)
+        live.add(Packet(dateTime=int(time.time()) - 5, usUnits=1,
+                        data={"outTemp": 9.0}, source="a-neighbour"))
+        live.close()
+        state = adminhome.read(admin)
+        check("a current one is", state.strangers, 1)
+        check("and it says when it last did",
+              "uploaded" in state.concerns[0] and "ago" in state.concerns[0],
+              True)
+
+
 def no_token_is_worth_saying() -> None:
     print("\nno upload token")
     with tempfile.TemporaryDirectory() as raw:
@@ -437,6 +473,7 @@ def main() -> int:
     an_archiver_that_stopped_is_a_fault()
     a_backlog_is_a_fault()
     a_stranger_is_worth_saying()
+    a_console_that_was_renamed_is_not_a_stranger()
     no_token_is_worth_saying()
     what_cannot_be_read_says_so()
     a_relative_path_and_an_environment_variable()

@@ -64,6 +64,12 @@ BEHIND_INTERVALS = 3
 #: than a busy minute.
 PENDING_LIMIT = 5
 
+#: How recently something must have uploaded to count as a stranger rather
+#: than as history. A console announced under a new name leaves its old
+#: packets behind for the whole retention period, and those are not a console
+#: arriving unannounced -- they are the same console, before it was named.
+STRANGER_WINDOW = 3600.0
+
 
 def ago(when: float | None) -> str:
     """How long ago, in words. The only time format on this page."""
@@ -112,6 +118,7 @@ class State:
     pending: int = 0
     interval: int = 300
     strangers: int = 0
+    newest_stranger: float | None = None
 
 
 # -- reading the state -------------------------------------------------
@@ -155,10 +162,16 @@ def _live_state(admin: Any, state: State) -> None:
             "SELECT count(*), max(dateTime) FROM packet").fetchone()
         state.pending = conn.execute(
             "SELECT count(DISTINCT stop) FROM pending").fetchone()[0]
-        sources = [row[0] for row in conn.execute(
-            "SELECT DISTINCT source FROM packet"
-            " WHERE dateTime > ? ORDER BY source",
-            (time.time() - 86400,))]
+        # Recently, not "in the last day". A console announced under a new
+        # name leaves its old packets behind, and they stay for the whole
+        # retention period -- so a day's window reported a stranger that had
+        # stopped uploading sixteen hours earlier, and would have gone on
+        # reporting it for a fortnight. A stranger is something arriving
+        # now.
+        sources = [(row[0], row[1]) for row in conn.execute(
+            "SELECT source, max(dateTime) FROM packet"
+            " WHERE dateTime > ? GROUP BY source ORDER BY source",
+            (time.time() - STRANGER_WINDOW,))]
     except sqlite3.Error as exc:
         state.live = Link("Live table", unreachable=str(exc), href="./core")
         return
@@ -174,7 +187,9 @@ def _live_state(admin: Any, state: State) -> None:
 
     announced = station_defs.load(_base(admin) / station_defs.FILENAME)
     known = {one.name for one in announced}
-    state.strangers = len([one for one in sources if one not in known])
+    strangers = [(name, when) for name, when in sources if name not in known]
+    state.strangers = len(strangers)
+    state.newest_stranger = max((w for _n, w in strangers), default=None)
     for one in announced:
         last = _last_from(path, one.name)
         state.stations.append(Link(one.name, f"into {one.archive}", when=last,
@@ -483,9 +498,10 @@ def _judge(admin: Any, state: State) -> None:
 
     if state.strangers:
         state.concerns.append(
-            f"{state.strangers} source(s) are uploading that no station "
-            "answers for. Their readings are in the live table and are not "
-            "reaching any archive.")
+            f"{state.strangers} source(s) uploaded "
+            f"{ago(state.newest_stranger)} that no station answers for. "
+            "Their readings are in the live table and are not reaching any "
+            "archive.")
 
     for one in state.archives:
         if one.unreachable:
