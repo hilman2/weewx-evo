@@ -518,6 +518,29 @@ def two_feeds_one_export(check) -> int:
                        for f in target.rglob("*") if f.is_file())
         failures += not check("and a second run keeps both", still, landed)
 
+        # Built the way the service builds it, not through a stand-in. The
+        # stand-in is what let this through: every setting under an export's
+        # name is handed to its constructor, `also` included, and none of
+        # the three took it -- so configuring a second feed on the settings
+        # page did not add one, it switched the whole export off with
+        # "FtpExport.__init__() got an unexpected keyword argument 'also'".
+        from weewx_evo.cli import build_export
+
+        for kind, extra in (("ftp", {"host": "h"}),
+                            ("rsync", {"host": "h", "directory": "/x"}),
+                            ("local", {"directory": str(target)})):
+            # `json` because build_export checks the name against the feeds
+            # that exist, and this test has no deck.
+            settings = {"kind": kind, "source": "json",
+                        "also": ["diagnostic -> data/site"], **extra}
+            try:
+                build_export(kind, settings)
+                made = ""
+            except Exception as exc:
+                made = str(exc)
+            failures += not check(f"a {kind} export with a second feed "
+                                  "still builds", made, "")
+
         # A feed nobody configured is left out rather than waited for: an
         # export that waits for a name in an old line never runs again.
         stray = export_runner.build(

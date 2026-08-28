@@ -60,7 +60,13 @@ class RsyncExport(BaseExport):
                  delete: bool = False, compress: bool = True,
                  timeout: int = TIMEOUT, extra: str = "",
                  rsync: str = "rsync", directory_source: str = "",
-                 trigger: str = "feed", every: int = 900) -> None:
+                 trigger: str = "feed", every: int = 900,
+                 # Belongs to the runner, not here: which further feeds
+                 # this export carries is about when it runs and what it
+                 # walks, and the export itself only ever sends one
+                 # directory at a time. Taken and ignored, because every
+                 # setting under an export's name is handed to it.
+                 also: Any = None) -> None:
         self.host = host.strip()
         # `live.php` and its token, sent with the pages. See
         # `exports.livepush` for what it is and why it is derived.

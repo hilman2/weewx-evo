@@ -58,7 +58,13 @@ class LocalExport(BaseExport):
                  every: int = 900, link: bool = True, delete: bool = True,
                  live_push: bool = True, live_push_url: str = "",
                  upload_token: str = "",
-                 tracker: str = "") -> None:
+                 tracker: str = "",
+                 # Belongs to the runner, not here: which further feeds
+                 # this export carries is about when it runs and what it
+                 # walks, and the export itself only ever sends one
+                 # directory at a time. Taken and ignored, because every
+                 # setting under an export's name is handed to it.
+                 also: Any = None) -> None:
         #: Where it ends up. Under what the web server serves, this is the
         #: address it appears at.
         self.directory = str(directory or "").strip()
