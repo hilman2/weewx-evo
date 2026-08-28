@@ -312,6 +312,26 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
                             ("forecast", state.forecasts)):
             check(f"[{what}] reaches the page", len(links), 1)
 
+        # And a real forecast database, built by the store that writes it.
+        # The first version of this read a table called `hour`; there is no
+        # such table, the query raised, and the exception was caught and
+        # logged. A made-up database would have agreed with the mistake.
+        from weewx_evo.forecast import Reading
+        from weewx_evo.forecast.store import ForecastStore
+
+        store = ForecastStore(work / "data" / "forecast.sdb")
+        try:
+            store.store(Reading(source="kirchdorf", issued=int(time.time())),
+                        fetched=int(time.time() - 30))
+        finally:
+            store.close()
+
+        state = adminhome.read(admin)
+        found = state.forecasts[0]
+        check("a forecast that has been fetched is dated",
+              found.when is not None, True)
+        check("and not reported as unreachable", found.unreachable, "")
+
 
 def the_page_renders_and_carries_the_numbers() -> None:
     """The HTML itself, because everything above tests the reading."""

@@ -368,14 +368,25 @@ def _forecast_state(admin: Any, state: State) -> None:
         return
     try:
         for name in sorted(configured):
+            # The `run` table, which is where the store records when a source
+            # last answered. There is no `hour` table -- the readings are in
+            # `moment` -- and asking for one raised, which this function
+            # caught and logged, leaving a card that said nothing was
+            # configured on an installation fetching one every hour.
             row = conn.execute(
-                "SELECT max(fetched) FROM hour WHERE source = ?",
+                "SELECT fetched, hours, days FROM run WHERE source = ?",
                 (name,)).fetchone()
-            when = row[0] if row else None
-            state.forecasts.append(Link(name, "", when=when,
-                                        href=f"./forecast:{name}"))
+            if row is None:
+                state.forecasts.append(Link(
+                    name, unreachable="configured, not fetched yet",
+                    href=f"./forecast:{name}"))
+                continue
+            fetched, hours, days = row
+            state.forecasts.append(Link(
+                name, f"{hours or 0} hours, {days or 0} days",
+                when=fetched, href=f"./forecast:{name}"))
     except sqlite3.Error:
-        log.debug("could not read the forecast state", exc_info=True)
+        log.exception("could not read the forecast state")
     finally:
         conn.close()
 
