@@ -50,12 +50,27 @@ log = logging.getLogger(__name__)
 #: reading, not two weeks of history nobody is waiting for.
 CATCH_UP_HORIZON = 6 * 3600
 
+#: How long one upload may go without a line of its own. Anything slower than
+#: this is logged run by run as it always was; anything faster is collected
+#: and reported once.
+QUIETLY = 60.0
+
+
+def _spell(seconds: float) -> str:
+    """A window, in the roundest words that stay true."""
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    return f"{seconds / 60:.0f} min"
+
 
 class Scheduled:
     """One upload, and when it is next due."""
 
     __slots__ = (
+        "_logged_at",
         "_refused_since",
+        "_runs_since",
+        "_sent_since",
         "blocked",
         "failures",
         "last",
@@ -104,6 +119,15 @@ class Scheduled:
         #: When a refusal that claims to be permanent was first seen. A
         #: sequence, not a state: see `_settled`.
         self._refused_since = 0.0
+        #: When this last wrote a line, and what has happened since. See
+        #: `_say`: the live upload runs six times a minute and used to write
+        #: a line for each.
+        # -1, not 0: `monotonic()` can legitimately be 0.0, and tested
+        # against falsiness the first run counted as "never logged" -- so the
+        # second one printed its own line as well.
+        self._logged_at = -1.0
+        self._runs_since = 0
+        self._sent_since = 0
 
     @property
     def trigger(self) -> str:
@@ -174,7 +198,7 @@ class Scheduled:
                 self.failures += 1
                 log.warning("upload %s: %s", self.name, result.summary())
             elif result.sent:
-                log.info("upload %s: %s", self.name, result.summary())
+                self._say(result)
             else:
                 log.debug("upload %s: %s", self.name, result.summary())
         except Rejected as exc:
@@ -199,6 +223,39 @@ class Scheduled:
         finally:
             self.running = False
 
+
+    def _say(self, result: Any) -> None:
+        """One line at a time, but never more than one a minute.
+
+        The live upload runs every ten seconds, so it wrote three hundred and
+        sixty identical lines an hour -- `upload live: 1 sent, 0.1s`, over and
+        over. A log at that rate is one nobody reads, which costs the lines
+        that matter.
+
+        Collected instead, and reported with the two things worth knowing:
+        how many times it went, and how far apart. A slower upload is
+        unaffected -- more than a minute since the last line means this one
+        is printed at once, which is what a five-minute upload has always
+        done.
+
+        Only the ordinary case is held back. A refusal or a failed file is
+        logged as it happens: something wrong should not wait for a summary.
+        """
+        now = time.monotonic()
+        self._runs_since += 1
+        self._sent_since += int(getattr(result, "sent", 0))
+        if self._logged_at >= 0 and now - self._logged_at < QUIETLY:
+            return
+        window = now - self._logged_at if self._logged_at >= 0 else 0.0
+        if self._runs_since > 1 and window > 0:
+            log.info("upload %s: %d runs in %s, one every %.1fs, %d sent",
+                     self.name, self._runs_since, _spell(window),
+                     window / self._runs_since, self._sent_since)
+        else:
+            log.info("upload %s: %s", self.name, result.summary())
+        self._logged_at = now
+        self._runs_since = 0
+        self._sent_since = 0
 
     def _settled(self, exc: Rejected) -> bool:
         """Whether a refusal has lasted long enough to be believed.
