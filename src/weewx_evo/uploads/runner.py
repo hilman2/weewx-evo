@@ -163,8 +163,27 @@ class Scheduled:
         return True
 
     def next_run(self) -> float:
-        """When this is next due on the wall clock, for the loop to wait."""
-        return time.time() if self._slot is None else self._slot
+        """When this is next due on the wall clock, for the loop to wait.
+
+        Worked out rather than read where nothing has set it. The live
+        trigger never calls `due` -- the clock is the whole of its decision
+        and the query returns nothing when no packet has arrived -- so this
+        answered "now", the loop waited its floor of half a second, and a
+        ten-second upload asked the database a hundred and twenty times a
+        minute instead of six.
+
+        Nothing is stored here. The slot belongs to `due`, and a `next_run`
+        that moved it would make the loop skip the run it just waited for.
+        """
+        if self._slot is not None:
+            return self._slot
+        if self.trigger == "live":
+            # This one never reaches `due`, so nothing will ever set the
+            # slot: it has to be worked out every time round.
+            return schedule.next_slot(time.time(), self.every)
+        # The first turn of anything else runs at once rather than waiting
+        # out an interval, and `due` takes it from there.
+        return time.time()
 
     def pending(self) -> list[dict]:
         """The records this upload still owes, oldest first.

@@ -135,6 +135,83 @@ def the_runners_use_it() -> None:
               feedrunner.__file__).read_text(encoding="utf-8"), True)
 
 
+def a_live_upload_waits_its_interval() -> None:
+    """The one that never asks `due`, and so was never given a slot.
+
+    Its loop calls `run` every time round -- the clock is the whole of the
+    decision, and the query returns nothing when no packet has arrived. So
+    nothing ever set the slot, `next_run` answered "now", the loop fell back
+    on its half-second floor, and a ten-second upload asked the live database
+    a hundred and twenty times a minute instead of six.
+    """
+    print("\na live upload waits for its slot, not for the floor")
+
+
+    import weewx_evo.uploads.runner as upload_runner
+    from weewx_evo.uploads import Posted
+    from weewx_evo.uploads.runner import Scheduled
+
+    class Live:
+        trigger = "live"
+        every = 10
+
+        def post(self, records):
+            return Posted(sent=1, seconds=0.01)
+
+    progress = type("P", (), {"sent": lambda *a: None,
+                              "save": lambda *a: None,
+                              "through": lambda *a, **k: 0})()
+    job = Scheduled("live", Live(), progress=progress,
+                    records=lambda a, b: [], packets=lambda a, b: [])
+
+    now = [at(22, 57, 3)]
+    was, upload_runner.time.time = upload_runner.time.time, lambda: now[0]
+    try:
+        waits, ran = [], []
+        for _ in range(4):
+            pause = max(0.5, schedule.wait_for(now[0], job.next_run()))
+            waits.append(round(pause, 1))
+            now[0] += pause
+            ran.append(clock(now[0]))
+    finally:
+        upload_runner.time.time = was
+
+    check("it waits out the interval", waits, [7.0, 10.0, 10.0, 10.0])
+    check("and lands on the grid", ran,
+          ["22:57:10", "22:57:20", "22:57:30", "22:57:40"])
+
+
+def an_export_publishes_at_once_the_first_time() -> None:
+    """And only then joins the grid.
+
+    A service that has just come back should not leave the published site as
+    it was for a quarter of an hour, and an export somebody adds should show
+    something rather than nothing. So the first turn is now, and `due` puts
+    it on the grid from there.
+    """
+    print("\nthe first run of an export does not wait")
+
+    from weewx_evo.exports import Sent
+    from weewx_evo.exports.runner import Scheduled
+
+    class Fine:
+        trigger = "interval"
+        every = 900
+
+        def send(self, *a, **k):
+            return Sent(sent=1)
+
+    job = Scheduled("site", Fine(), Path("."))
+    # Under a microsecond, not exactly zero: `next_run` reads the clock and
+    # `wait_for` reads it again a few instructions later.
+    check("no wait before the first", schedule.wait_for(
+        time.time(), job.next_run()) < 0.01, True)
+    job.due(time.monotonic(), "")
+    left = job.next_run() - time.time()
+    check("and the next one is inside the quarter hour",
+          0 < left <= 900, True)
+
+
 def main() -> int:
     the_ordinary_intervals()
     it_does_not_depend_on_when_the_service_started()
@@ -142,6 +219,8 @@ def main() -> int:
     the_awkward_values()
     the_wait_is_bounded()
     the_runners_use_it()
+    a_live_upload_waits_its_interval()
+    an_export_publishes_at_once_the_first_time()
 
     print()
     if failures:

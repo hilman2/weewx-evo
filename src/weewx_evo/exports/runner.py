@@ -188,10 +188,14 @@ class Scheduled:
         return True
 
     def next_run(self) -> float:
-        """When this is next due on the wall clock, for the loop to wait."""
-        if self._slot is None:
-            return time.time()
-        return self._slot
+        """When this is next due on the wall clock, for the loop to wait.
+
+        Now, until the first turn has been through `due`. A service that has
+        just come back should not leave the published site as it was for a
+        quarter of an hour, and an export somebody adds should show something
+        rather than nothing.
+        """
+        return time.time() if self._slot is None else self._slot
 
     def run(self) -> None:
         """Send, and remember what happened. Never raises."""
