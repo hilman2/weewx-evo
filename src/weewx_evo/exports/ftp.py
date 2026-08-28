@@ -32,7 +32,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import BaseExport, ExportError, Sent, live_push_options
+from . import BaseExport, ExportError, Sent, also_option, live_push_options
 from .local import _tracker_path, walk
 from .tracker import Tracker
 
@@ -86,17 +86,22 @@ class FtpExport(BaseExport):
         self.delete = bool(delete)
         self.timeout = int(timeout)
         self._tracker_path = tracker
-        self._tracker: Tracker | None = None
+        #: One per (source, sub-path). See `_tracker_for` in local.py.
+        self._trackers: dict[str, Tracker] = {}
         self._made: set[str] = set()
 
     # -- the export interface --------------------------------------------
 
-    def send(self, source: Path, files: list[Path] | None = None) -> Sent:
+    def send(self, source: Path, files: list[Path] | None = None,
+             into: str = "", protect: tuple[str, ...] = ()) -> Sent:
         source = Path(source)
         if not self.host:
             raise ExportError("no host is set")
         if not source.is_dir():
             raise ExportError(f"{source} is not a directory")
+        # Where this source lands, which is the account's directory unless a
+        # second feed was pointed at a path under it.
+        base = self._under(into)
 
         # `live.php` and its token first, so they are picked up like
         # any other file -- which means the record of what was
@@ -105,7 +110,7 @@ class FtpExport(BaseExport):
 
         started = time.monotonic()
         result = Sent()
-        tracker = self._tracker_for(source)
+        tracker = self._tracker_for(source, into)
 
         candidates = walk(source, files)
         wanted, result.skipped = tracker.changed(source, candidates)
@@ -119,7 +124,8 @@ class FtpExport(BaseExport):
             self._made.clear()
             for relative in wanted:
                 try:
-                    result.bytes += self._put(connection, source, relative)
+                    result.bytes += self._put(connection, source, relative,
+                                              base)
                     tracker.record(source, relative)
                     result.sent += 1
                 except (ftplib.all_errors, OSError) as exc:
@@ -132,7 +138,8 @@ class FtpExport(BaseExport):
                 # Only against a full listing, never against the changed
                 # files a feed reported: everything it did not mention would
                 # look gone, and this deletes from somebody's web host.
-                result.deleted = self._remove(connection, tracker, candidates)
+                result.deleted = self._remove(connection, tracker,
+                                              candidates, base)
         finally:
             tracker.save()
             try:
@@ -171,7 +178,7 @@ class FtpExport(BaseExport):
             "host": self.host,
             "directory": self.directory,
             "encrypted": self.tls,
-            "remembers": len(self._tracker) if self._tracker else 0,
+            "remembers": sum(len(t) for t in self._trackers.values()),
         }
 
     # -- the awkward parts -----------------------------------------------
@@ -195,8 +202,16 @@ class FtpExport(BaseExport):
             raise ExportError(f"cannot reach {self.host}: {exc}") from exc
         return connection
 
-    def _put(self, connection: ftplib.FTP, source: Path, relative: Path) -> int:
-        remote_dir = self._remote_dir(relative)
+    def _under(self, into: str) -> str:
+        """The remote directory one source writes into."""
+        trimmed = (into or "").strip("/")
+        if not trimmed:
+            return self.directory
+        return f"{self.directory.rstrip('/')}/{trimmed}"
+
+    def _put(self, connection: ftplib.FTP, source: Path, relative: Path,
+             base: str = "") -> int:
+        remote_dir = self._remote_dir(relative, base or self.directory)
         self._ensure(connection, remote_dir)
 
         target = f"{remote_dir}/{relative.name}".replace("//", "/")
@@ -213,11 +228,12 @@ class FtpExport(BaseExport):
         connection.rename(temporary, target)
         return full.stat().st_size
 
-    def _remote_dir(self, relative: Path) -> str:
+    def _remote_dir(self, relative: Path, base: str = "") -> str:
+        base = base or self.directory
         parent = relative.parent.as_posix()
         if parent in (".", ""):
-            return self.directory
-        return f"{self.directory.rstrip('/')}/{parent}"
+            return base
+        return f"{base.rstrip('/')}/{parent}"
 
     def _ensure(self, connection: ftplib.FTP, remote: str) -> None:
         """Make a directory and its parents, tolerating any that exist.
@@ -247,15 +263,18 @@ class FtpExport(BaseExport):
             self._made.add(path)
 
     def _remove(self, connection: ftplib.FTP, tracker: Tracker,
-                present: list[Path]) -> int:
+                present: list[Path], base: str = "") -> int:
         """Delete what we sent before and is no longer produced.
 
         Only ever files this export put there: the record says what those are,
-        so nothing else on the account is at risk.
+        so nothing else on the account is at risk -- including the files of
+        another feed this same export sends into a path beside this one,
+        which has a record of its own.
         """
         removed = 0
+        base = base or self.directory
         for name in tracker.gone(present):
-            target = f"{self.directory.rstrip('/')}/{name}"
+            target = f"{base.rstrip('/')}/{name}"
             try:
                 connection.delete(target)
                 tracker.forget(Path(name))
@@ -265,13 +284,18 @@ class FtpExport(BaseExport):
                 tracker.forget(Path(name))
         return removed
 
-    def _tracker_for(self, source: Path) -> Tracker:
-        if self._tracker is None:
-            where = (Path(self._tracker_path) if self._tracker_path
+    def _tracker_for(self, source: Path, into: str = "") -> Tracker:
+        """One record per source and sub-path. See the note in local.py."""
+        key = f"{source}\0{into}"
+        found = self._trackers.get(key)
+        if found is None:
+            where = (Path(self._tracker_path)
+                     if self._tracker_path and not into
                      else _tracker_path(
-                         source, f"{self.host}-{self.directory}", "ftp"))
-            self._tracker = Tracker(where)
-        return self._tracker
+                         source, f"{self.host}-{self._under(into)}", "ftp"))
+            found = Tracker(where)
+            self._trackers[key] = found
+        return found
 
     # -- what the admin page asks for ------------------------------------
 
@@ -306,6 +330,7 @@ class FtpExport(BaseExport):
                        help="An export moves what a feed made. The list is the "
                             "feeds that exist; there are none yet, so choose "
                             "the directory below instead."),
+                also_option(),
                 Option("directory_source", "Or a directory", kind="path",
                        placeholder="data/public_html",
                        help="Used when no feed is chosen. Everything under it "

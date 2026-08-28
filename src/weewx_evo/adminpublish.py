@@ -110,16 +110,42 @@ def _chip(text: str, tone: str = "") -> str:
     return f'<span class="chip {tone}">{html.escape(text)}</span>'
 
 
+def _carried(settings: dict) -> list[tuple[str, str]]:
+    """The further feeds an export takes along, as (feed, sub-path).
+
+    Read by the runner's own parser, because two readings of one line is how
+    a page comes to show something the process is not doing. Unlike the
+    runner, this keeps a name nothing matches: the page is where somebody
+    finds out they typed it wrong.
+    """
+    from .exports import runner as export_runner
+
+    return export_runner.named(settings)
+
+
 def _export_row(admin: Any, state: adminhome.State, name: str,
-                settings: dict) -> str:
+                settings: dict, carried: str | None = None) -> str:
+    """One export under one feed.
+
+    `carried` is set where this feed is not the export's main source but one
+    it takes along: the path it lands in, which may be the empty string for
+    the destination itself. Without a row here, the JSON feed a skin draws
+    from reads "nothing publishes this yet" on the very page whose job is to
+    show what reaches the outside -- while it is being published every time.
+    """
     said, tone = _age(admin, state, name, "export")
     off = settings.get("enabled") is False
+    where = _where(admin, settings)
+    if carried is not None:
+        where = f"{where.rstrip('/')}/{carried}" if carried else where
     return f'''
       <li>
         <span class="arrow" aria-hidden="true">&rarr;</span>
         <a href="./export:{html.escape(name)}">{html.escape(name)}</a>
-        <span class="note" title="{html.escape(_where(admin, settings))}"
-              >into {html.escape(_short(_where(admin, settings)))}</span>
+        <span class="note" title="{html.escape(where)}"
+              >into {html.escape(_short(where))}</span>
+        {'<span class="chip">carried along</span>'
+         if carried is not None else ""}
         {_chip(str(settings.get("kind") or ""))}
         <span class="{tone}">{"switched off" if off else html.escape(said)}</span>
       </li>'''
@@ -132,7 +158,8 @@ def _block(admin: Any, state: adminhome.State, name: str, settings: dict,
     off = settings.get("enabled") is False
     reads = str(settings.get("archive") or "").strip()
     where = _chip(f"from {reads}") if reads and reads != "default" else ""
-    sent = NEWLINE.join(_export_row(admin, state, n, s) for n, s in exports)
+    sent = NEWLINE.join(_export_row(admin, state, n, s, carried)
+                        for n, s, carried in exports)
     if not exports:
         sent = ('<li class="none">Nothing publishes this yet. '
                 '<a href="./new-export">Add an export</a></li>')
@@ -166,9 +193,15 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     for name, settings in sorted(exports.items()):
         source = str(settings.get("source") or "").strip()
         if source in by_feed:
-            by_feed[source].append((name, settings))
+            by_feed[source].append((name, settings, None))
         else:
             homeless.append((name, settings))
+        # And under every feed it carries as well. One export sends a skin
+        # and the charts it draws from; the charts are a feed of their own
+        # and this page is where somebody looks to see that they go out.
+        for feed, into in _carried(settings):
+            if feed in by_feed:
+                by_feed[feed].append((name, settings, into))
 
     blocks = [_block(admin, state, name, settings, by_feed[name])
               for name, settings in sorted(feeds.items())]
@@ -288,11 +321,20 @@ def context(admin: Any, active: str) -> str:
         full = _where(admin, exports[name])
         target = (f'<span title="{html.escape(full)}">'
                   f"{html.escape(_short(full, 44))}</span>")
+        carried = [feed for feed, _into in _carried(exports[name])]
         if source and source in feeds:
-            return _band(
-                f'Publishes the <a href="./feed:{html.escape(source)}">'
-                f"{html.escape(source)}</a> feed",
-                f"into {target}")
+            def link(one: str) -> str:
+                return (f'<a href="./feed:{html.escape(one)}">'
+                        f"{html.escape(one)}</a>")
+
+            named = [link(source)] + [link(one) for one in carried]
+            # Named in full rather than "and 2 more": which feeds go up
+            # together is the whole of what this export is, and it decides
+            # when it runs -- it waits for every one of them.
+            joined = (named[0] if len(named) == 1
+                      else ", ".join(named[:-1]) + " and " + named[-1])
+            word = "feed" if len(named) == 1 else "feeds"
+            return _band(f"Publishes the {joined} {word}", f"into {target}")
         return _band("Not tied to a feed", f"into {target}")
 
     if kind == "upload" and name in uploads:

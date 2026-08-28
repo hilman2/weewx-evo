@@ -2447,11 +2447,15 @@ def _differs(fresh: list, runner: Any) -> bool:
     Restarting their threads costs nothing much, but doing it on every write
     to the file would interrupt an upload in progress for no reason.
     """
-    before = [(s.name, str(s.source), getattr(s.export, "trigger", ""),
-               s.feed) for s in (runner.exports if runner is not None else [])]
-    after = [(s.name, str(s.source), getattr(s.export, "trigger", ""), s.feed)
-             for s in fresh]
-    return before != after
+    def shape(one: Any) -> tuple:
+        # `extra` is in here because adding a second feed to an export is a
+        # change to what it sends, and without it the running one would keep
+        # sending only the first until somebody restarted.
+        return (one.name, str(one.source), getattr(one.export, "trigger", ""),
+                one.feed, one.extra)
+
+    before = [shape(s) for s in (runner.exports if runner is not None else [])]
+    return before != [shape(s) for s in fresh]
 
 
 def build_schedule(args: argparse.Namespace, cfg: Settings) -> list:
@@ -2471,7 +2475,11 @@ def build_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     return export_runner.build(
         configured,
         lambda name, settings: build_export(name, settings, token),
-        lambda settings: export_registry.source_for(settings, where.get))
+        lambda settings: export_registry.source_for(settings, where.get),
+        # And where the *other* feeds an export carries write, by name. An
+        # export sends a skin and the charts it draws from, and those are two
+        # feeds writing two directories.
+        feeds=where)
 
 
 def resolve_paths(args: argparse.Namespace, settings: dict) -> dict:

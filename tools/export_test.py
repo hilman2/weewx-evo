@@ -454,6 +454,97 @@ def feed_to_export(check) -> int:
     return failures
 
 
+def two_feeds_one_export(check) -> int:
+    """A skin and the charts it draws from, published together.
+
+    A skin is its pages *and* its diagrams, and those are two feeds writing
+    two directories. Publishing one of them puts up a site whose charts are
+    empty. Two exports to the same account move the files, but nothing holds
+    the second until the first has finished -- so the pages can arrive before
+    the charts they point at, which is the half-published site the `feed`
+    trigger exists to prevent.
+
+    So: one export, several feeds, each with where it lands, and it waits for
+    all of them.
+    """
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from weewx_evo.exports import runner as export_runner
+    from weewx_evo.exports.local import LocalExport
+
+    failures = 0
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        work = Path(raw)
+        pages, charts, target = work / "deck", work / "json", work / "site"
+        pages.mkdir()
+        charts.mkdir()
+        (pages / "index.html").write_text("<p>21.4</p>", encoding="utf-8")
+        (charts / "outTemp.json").write_text("[1,2,3]", encoding="utf-8")
+
+        export = LocalExport(directory=str(target), delete=True,
+                             live_push=False)
+        made = export_runner.build(
+            {"site": {"source": "deck", "also": ["json -> data/json"],
+                      "trigger": "feed"}},
+            lambda name, settings: export,
+            lambda settings: pages,
+            feeds={"deck": pages, "json": charts})
+        failures += not check("one export", len(made), 1)
+        one = made[0]
+        failures += not check("waiting for both", list(one.feeds),
+                              ["deck", "json"])
+
+        now = time.monotonic()
+        failures += not check("the skin alone is not enough",
+                              one.due(now, "deck"), False)
+        failures += not check("with the charts it goes",
+                              one.due(now, "json"), True)
+
+        one.run()
+        landed = sorted(f.relative_to(target).as_posix()
+                        for f in target.rglob("*") if f.is_file())
+        failures += not check("both, each where it belongs", landed,
+                              ["data/json/outTemp.json", "index.html"])
+
+        # The failure this arrangement invites: one source walking the
+        # destination and deleting what the other put there. Each keeps its
+        # own record, so neither can see the other's files as gone.
+        one.due(time.monotonic(), "deck")
+        one.due(time.monotonic(), "json")
+        one.run()
+        still = sorted(f.relative_to(target).as_posix()
+                       for f in target.rglob("*") if f.is_file())
+        failures += not check("and a second run keeps both", still, landed)
+
+        # A feed nobody configured is left out rather than waited for: an
+        # export that waits for a name in an old line never runs again.
+        stray = export_runner.build(
+            {"site": {"source": "deck", "also": ["ghost -> x"],
+                      "trigger": "feed"}},
+            lambda name, settings: export,
+            lambda settings: pages,
+            feeds={"deck": pages})
+        failures += not check("an unknown feed is not waited for",
+                              list(stray[0].feeds), ["deck"])
+
+        # And rsync, which deletes by comparing the far end with the source
+        # rather than from a record -- so the other feed's path has to be
+        # named to it, or the first source of every run removes it.
+        from weewx_evo.exports.rsync import RsyncExport
+
+        pushed = RsyncExport(host="h", directory="/var/www", delete=True,
+                             live_push=False)
+        line = pushed._command(pages, None, into="", protect=("data/json",))
+        failures += not check("rsync is told to protect it",
+                              "--filter=P /data/json/" in line, True)
+        second = pushed._command(charts, None, into="data/json")
+        failures += not check("and the second source lands under it",
+                              second[-1].endswith(":/var/www/data/json"), True)
+    return failures
+
+
 def main() -> int:
     failures = 0
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-export-"))
@@ -515,6 +606,7 @@ def main() -> int:
 
     failures += local_export(check)
     failures += feed_to_export(check)
+    failures += two_feeds_one_export(check)
 
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")

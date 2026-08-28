@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import BaseExport, ExportError, Sent, live_push_options, walk
+from . import BaseExport, ExportError, Sent, also_option, live_push_options, walk
 from .tracker import Tracker
 
 log = logging.getLogger(__name__)
@@ -93,13 +93,15 @@ class LocalExport(BaseExport):
         #: thing.
         self.delete = delete
         self._tracker_path = tracker
-        self._tracker: Tracker | None = None
+        #: One per (source, sub-path). See `_tracker_for`.
+        self._trackers: dict[str, Tracker] = {}
         self.sent_files = 0
         self.last_note = ""
 
     # -- sending ----------------------------------------------------------
 
-    def send(self, source: Path, files: list[Path] | None = None) -> Sent:
+    def send(self, source: Path, files: list[Path] | None = None,
+             into: str = "", protect: tuple[str, ...] = ()) -> Sent:
         source = Path(source)
         if not self.directory:
             raise ExportError("no directory is set")
@@ -108,7 +110,7 @@ class LocalExport(BaseExport):
 
         started = time.monotonic()
         result = Sent()
-        target = Path(self.directory)
+        target = Path(self.directory) / into if into else Path(self.directory)
         if target.resolve() == source.resolve():
             # Publishing a directory into itself would compare every file
             # against itself and then hard link it over itself. Nothing good
@@ -120,7 +122,7 @@ class LocalExport(BaseExport):
         except OSError as exc:
             raise ExportError(f"cannot write to {target}: {exc}") from exc
 
-        tracker = self._tracker_for(source)
+        tracker = self._tracker_for(source, into)
         candidates = walk(source, files)
         wanted, result.skipped = tracker.changed(source, candidates)
         if not wanted and not self.delete:
@@ -227,12 +229,28 @@ class LocalExport(BaseExport):
             tracker.forget(Path(name))
         return removed
 
-    def _tracker_for(self, source: Path) -> Tracker:
-        if self._tracker is None:
-            where = (Path(self._tracker_path) if self._tracker_path
-                     else _tracker_path(source, self.directory, "local"))
-            self._tracker = Tracker(where)
-        return self._tracker
+    def _tracker_for(self, source: Path, into: str = "") -> Tracker:
+        """One record per source, not one per export.
+
+        An export sends more than one feed now -- a skin's pages and the
+        charts they draw from -- and each is walked separately. With a single
+        cached record the second walk found the first one's files listed as
+        sent from a directory that no longer holds them, and deleted them at
+        the far end. That is the exact failure `_tracker_path` was named
+        after both ends to prevent, arriving through the cache instead.
+        """
+        key = f"{source}\0{into}"
+        found = self._trackers.get(key)
+        if found is None:
+            where = (Path(self._tracker_path) if self._tracker_path and not into
+                     else _tracker_path(source, self._target_name(into),
+                                        "local"))
+            found = Tracker(where)
+            self._trackers[key] = found
+        return found
+
+    def _target_name(self, into: str) -> str:
+        return f"{self.directory}/{into}" if into else str(self.directory)
 
     # -- the button on the settings page ----------------------------------
 
@@ -293,6 +311,7 @@ class LocalExport(BaseExport):
                        choices=(("", "-- a directory instead --"),),
                        choices_from=_feed_choices,
                        help="An export moves what a feed made."),
+                also_option(),
                 Option("directory_source", "Or a directory", kind="path",
                        placeholder="data/public_html",
                        help="Used when no feed is chosen. Everything under it "
