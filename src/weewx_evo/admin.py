@@ -31,7 +31,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import adminplots, adminstations
+from . import adminarchives, adminplots, adminstations
+from . import archives as archive_defs
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
 from .options import UNITS, Group, Option, Schema, split_duration
@@ -133,11 +134,12 @@ NEWLINE = chr(10)
 #: listed. One list, used by both the router and the renderer, because two
 #: lists is how one of them ends up short.
 ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
-             "new-plot", "import-plots", "new-station")
+             "new-plot", "import-plots", "new-station",
+             "new-archive")
 
 #: Pages that are neither a schema nor a form to create one. They render
 #: themselves, the way the chart pages do.
-OWN_PAGES = ("stations",)
+OWN_PAGES = ("stations", "archives")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -575,8 +577,16 @@ def overridden(option: Option) -> str:
     return ""
 
 
-def field(option: Option, value: Any, error: str = "") -> str:
-    """One setting as a form field."""
+def field(option: Option, value: Any, error: str = "",
+          moved: str = "") -> str:
+    """One setting as a form field.
+
+    `moved` names the file that has taken this setting over, if one has.
+    Today that is only `archives.toml`: adding a second series moves the
+    station name, the coordinates and the altitude onto the archive, and a
+    field that keeps accepting a value nothing reads is the same failure as
+    an environment variable quietly winning.
+    """
     name = html.escape(option.name)
     shown = option.render(value)
     label = html.escape(option.label)
@@ -672,6 +682,13 @@ def field(option: Option, value: Any, error: str = "") -> str:
             f'<code>{html.escape(beaten)}</code> is set in the environment: '
             f'that outranks the configuration file. Unset it, or change it '
             f'where it is set.</p>')
+    if moved:
+        out.append(
+            f'<p class="err">This moved to the archive when the second one '
+            f'was added. It is now set per series in '
+            f'<code>{html.escape(moved)}</code>, on the '
+            f'<a href="./archives">Archives</a> page, and nothing reads it '
+            f'here.</p>')
     if option.restart:
         out.append('<p class="note">Restarts the service when saved.</p>')
     out.append("</div>")
@@ -679,7 +696,8 @@ def field(option: Option, value: Any, error: str = "") -> str:
 
 
 def group_html(group: Group, values: dict[str, Any],
-               errors: dict[str, str]) -> str:
+               errors: dict[str, str], moved: str = "",
+               moved_names: frozenset[str] = frozenset()) -> str:
     plain = [o for o in group.options if not o.advanced]
     advanced = [o for o in group.options if o.advanced]
     out = ['<section class="group">']
@@ -687,7 +705,9 @@ def group_html(group: Group, values: dict[str, Any],
     if group.help:
         out.append(f'<p class="lede">{html.escape(group.help)}</p>')
     for option in plain:
-        out.append(field(option, values.get(option.name), errors.get(option.name)))
+        out.append(field(option, values.get(option.name),
+                         errors.get(option.name),
+                         moved if option.name in moved_names else ""))
     if advanced:
         # Hidden, not omitted: a setting nobody can find is one that gets
         # found by reading the source, which is worse than a longer page.
@@ -696,7 +716,8 @@ def group_html(group: Group, values: dict[str, Any],
         out.append(f"<summary>{len(advanced)} more, rarely needed</summary>")
         for option in advanced:
             out.append(field(option, values.get(option.name),
-                             errors.get(option.name)))
+                             errors.get(option.name),
+                             moved if option.name in moved_names else ""))
         out.append("</details>")
     out.append("</section>")
     return "\n".join(out)
@@ -1090,6 +1111,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             # Before the drivers, because it is the first thing set up: a
             # driver reads a protocol, a station is the console itself.
             nav.extend(adminstations.nav(admin, active))
+            # And the archives right after: a station is asked which one it
+            # writes into, so the list has to be reachable from beside it.
+            nav.extend(adminarchives.nav(admin, active))
             continue
         rows = [s for s in admin.schemas if s.kind == kind]
         if not rows and kind not in empty:
@@ -1129,7 +1153,10 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             body = [adminplots.edit(admin, active.split(":", 1)[1],
                                     admin.columns(), errors, form)]
     elif standing:
-        body = [adminstations.overview(admin, message, errors.get("", ""))]
+        body = [(adminarchives if active == "archives" else adminstations)
+                .overview(admin, message, errors.get("", ""))]
+    elif active == "new-archive":
+        body = [adminarchives.new(admin, errors.get("", ""), form)]
     elif active == "new-station":
         made = (form or {}).get("_made")
         if made is None and (form or {}).get("learn"):
@@ -1142,7 +1169,20 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                  "new-forecast": new_forecast_page}[active]
         body = [maker(admin, errors.get("", ""), form)]
     else:
-        body = [group_html(g, values, errors) for g in schema.groups]
+        # Which of these the archive list has taken over, if it exists. The
+        # settings are the one archive until there are two; after that they
+        # are read from `archives.toml` and this page has to say so.
+        moved, moved_names = "", frozenset()
+        try:
+            register = adminarchives.load(admin)
+            if register.overriding():
+                moved = str(adminarchives.path_for(admin))
+                moved_names = frozenset(archive_defs.FROM_SETTINGS)
+        except Exception:
+            log.debug("could not read the archives for the settings page",
+                      exc_info=True)
+        body = [group_html(g, values, errors, moved, moved_names)
+                for g in schema.groups]
 
     # An export gets two more buttons: try the destination, and delete it.
     # Testing is worth a great deal here -- a wrong password found now beats
@@ -1281,7 +1321,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         headings = {"new-feed": "Add a feed", "new-export": "Add an export",
                     "new-upload": "Add an upload",
                     "new-forecast": "Add a forecast",
-                    "new-station": "Add a station", "stations": "Stations"}
+                    "new-station": "Add a station", "stations": "Stations",
+                    "new-archive": "Add an archive",
+                    "archives": "Archives"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
     return _PAGE.format(
@@ -1802,6 +1844,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._station_action(action, parts, form)
             return
 
+        if action == "new-archive" or "archives" in parts:
+            self._archive_action(action, parts, form)
+            return
+
         if action in ("new-export", "new-upload", "new-forecast"):
             add = {"new-export": self.admin.add_export,
                    "new-upload": self.admin.add_upload,
@@ -1850,6 +1896,31 @@ class _Handler(BaseHTTPRequestHandler):
             return
         # Redirect after a save, so a reload does not save again.
         self._redirect(f"./{which}?saved=1")
+
+    def _archive_action(self, action: str, parts: list, form: dict) -> None:
+        """Add, change or remove a series. Redirects, like the stations do."""
+        if action in ("new-archive", "add"):
+            made, error = adminarchives.create(self.admin, form)
+            if error:
+                self._reply(200, page(self.admin, "new-archive",
+                                      errors={"": error}, form=form))
+                return
+            log.info("archive %r added, keeping its readings in %s",
+                     made.name, made.file)
+            self._redirect("./archives?saved=1")
+            return
+
+        if action == "set" and len(parts) >= 3:
+            error = adminarchives.configure(self.admin, parts[-2], form)
+        elif action == "remove" and len(parts) >= 3:
+            error = adminarchives.remove(self.admin, parts[-2])
+        else:
+            error = f"Unknown archive action {action!r}."
+
+        if error:
+            self._reply(200, page(self.admin, "archives", errors={"": error}))
+            return
+        self._redirect("./archives?saved=1")
 
     def _station_action(self, action: str, parts: list, form: dict) -> None:
         """Adopt, ignore, remove, or announce a new one.

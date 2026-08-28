@@ -140,6 +140,8 @@ def tests() -> list[Test]:
              "it restarts for what a restart fixes, and not more often"),
         Test("livedb", ["livedb_test.py"],
              "the live table hands a descriptor back when its thread ends"),
+        Test("archives", ["archives_test.py"],
+             "two places, two series, and neither one is the other's"),
         Test("stations", ["stations_test.py"],
              "announced consoles, strangers noticed, neither guessed at"),
         Test("shim", ["shim_test.py"],

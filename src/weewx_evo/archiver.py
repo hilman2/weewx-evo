@@ -25,11 +25,12 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from .aggregate import Accumulator, start_of_archive_day
 from .db.archive import ArchiveStore
-from .db.live import LiveStore, interval_stop
+from .db.live import DEFAULT_ARCHIVE, LiveStore, interval_stop
 from .derive import Deriver
 from .obstypes import DEFAULT_POLICY, Policy
 from .sources import Policy as SourcePolicy
@@ -60,9 +61,20 @@ class Archiver:
     def __init__(self, live: LiveStore, archive: ArchiveStore,
                  interval_seconds: int = 300, policy: Policy = DEFAULT_POLICY,
                  loop_hilo: bool = True, sources: SourcePolicy | None = None,
-                 deriver: Deriver | None = None) -> None:
+                 deriver: Deriver | None = None,
+                 name: str = DEFAULT_ARCHIVE,
+                 stations: Iterable[str] | None = None) -> None:
         self.live = live
         self.archive = archive
+        #: Which series this is. It keys this archiver's own place in the
+        #: pending table, so two of them working the same live table do not
+        #: clear each other's work.
+        self.name = name
+        #: Whose packets belong here, or None for all of them. None is the
+        #: single-archive case and is what every installation had before
+        #: there could be two: it takes everything that arrives, including
+        #: sources nobody has announced. With two archives that guess is not
+        #: available, so each is told.
         self.interval_seconds = interval_seconds
         self.policy = policy
         # Whether LOOP packets sharpen the daily highs and lows. WeeWX's
@@ -77,6 +89,7 @@ class Archiver:
         # rain, which almost no console sends and which is otherwise absent
         # from the record entirely.
         self.deriver = deriver or Deriver()
+        self.stations = None if stations is None else list(stations)
 
     # -- building --------------------------------------------------------
 
@@ -91,7 +104,8 @@ class Archiver:
         start = stop - seconds
 
         loop, archived = [], []
-        for packet in self.live.packets(start, stop):
+        for packet in self.live.packets(start, stop,
+                                        sources=self.stations):
             (archived if packet.kind == "archive" else loop).append(packet)
 
         # Decide which station supplies which field before any arithmetic. Two
@@ -180,12 +194,13 @@ class Archiver:
         costs a repeated computation and nothing else.
         """
         done = 0
-        for stop, seconds in self.live.due(now=now, grace=grace):
+        for stop, seconds in self.live.due(now=now, grace=grace,
+                                           archive=self.name):
             built = self.build(stop, seconds)
             if built is None:
                 # No packets in the span. Nothing to write, and nothing to
                 # come back to -- a late packet would mark it pending again.
-                self.live.clear_pending(stop)
+                self.live.clear_pending(stop, self.name)
                 continue
             existing = self.archive.exists(stop)
             if existing and not replace:
@@ -193,7 +208,7 @@ class Archiver:
             else:
                 self.store(built, replace=existing)
                 done += 1
-            self.live.clear_pending(stop)
+            self.live.clear_pending(stop, self.name)
         return done
 
     def catch_up(self, since: float | None = None, until: float | None = None,
@@ -220,7 +235,7 @@ class Archiver:
                 if not existing or replace:
                     self.store(built, replace=existing)
                     done += 1
-            self.live.clear_pending(stop)
+            self.live.clear_pending(stop, self.name)
             stop += seconds
         return done
 

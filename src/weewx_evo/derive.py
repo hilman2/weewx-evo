@@ -1104,13 +1104,23 @@ def _speed_mps(value: float, units: int) -> float:
     return value
 
 
-def from_settings(settings: Any) -> Deriver:
-    """Build one from the resolved configuration."""
-    station = Station(
-        latitude=settings.get("station.latitude"),
-        longitude=settings.get("station.longitude"),
-        altitude_m=settings.get("station.altitude"),
-    )
+def from_settings(settings: Any, place: Any = None) -> Deriver:
+    """Build one from the resolved configuration.
+
+    `place` is the archive being written, when there is more than one. The
+    pressure reduction, evapotranspiration and the clear-sky radiation all
+    take the altitude and the coordinates, so a second site computed with the
+    first site's numbers is wrong in a way nothing downstream can see.
+    """
+    if place is not None:
+        station = Station(latitude=place.latitude, longitude=place.longitude,
+                          altitude_m=place.altitude)
+    else:
+        station = Station(
+            latitude=settings.get("station.latitude"),
+            longitude=settings.get("station.longitude"),
+            altitude_m=settings.get("station.altitude"),
+        )
     how = dict(DEFAULTS)
     configured = settings.config.get("derive") or {}
     fraction, floor = SUNSHINE_FRACTION, SUNSHINE_FLOOR

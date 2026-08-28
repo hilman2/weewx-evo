@@ -49,6 +49,18 @@ from .. import units
 
 log = logging.getLogger(__name__)
 
+#: The series an upload reads when it names none. The same name the feeds and
+#: the stations use.
+DEFAULT_ARCHIVE = "default"
+
+
+def _archive_names() -> list[tuple[str, str]]:
+    """The archives, for the settings page. The same list the feeds offer."""
+    from ..feeds import archive_names
+
+    return archive_names()
+
+
 ENTRY_POINT_GROUP = "weewx_evo.uploads"
 
 #: Long enough for a service having a slow afternoon, short enough that a dead
@@ -434,5 +446,12 @@ def when_options(trigger: str = "record", every: int = 900,
                         "the newest. The limit exists so that a station "
                         "offline for a week does not come back and fire two "
                         "thousand requests at a free service."),
+            Option("archive", "Sends readings from", kind="choice",
+                   default=DEFAULT_ARCHIVE, choices_from=_archive_names,
+                   advanced=True,
+                   help="Which measurement series. With one there is nothing "
+                        "to choose. With two, a station registered with a "
+                        "weather service belongs to one place, and the "
+                        "coordinates sent with it come from that place."),
         )),
     ]

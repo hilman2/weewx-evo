@@ -324,12 +324,20 @@ class Runner:
 def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
           progress: Progress,
           records: Callable[[int, int], list[dict]],
-          packets: Callable[[int, int], list[dict]] | None = None) -> list[Scheduled]:
+          packets: Callable[[int, int], list[dict]] | None = None,
+          by_archive: dict[str, Callable[[int, int], list[dict]]] | None = None,
+          ) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
     Anything that cannot be built is reported and left out. A misconfigured
     upload must not stop the others, and it certainly must not stop the
     station: the readings are what matters, and an upload is a copy of them.
+
+    `by_archive` is one reader per measurement series, for an installation
+    that has more than one. `records` is the one everything else uses, and it
+    stays the answer for an upload that names a series nobody defined --
+    posting the default site's readings beats posting nothing while somebody
+    works out why the name is wrong.
     """
     ready = []
     for name, settings in sorted(configured.items()):
@@ -338,5 +346,7 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         except Exception as exc:
             log.warning("upload %s is not usable: %s", name, exc)
             continue
-        ready.append(Scheduled(name, upload, progress, records, packets))
+        wanted = str(settings.get("archive") or "").strip()
+        source = (by_archive or {}).get(wanted, records) if wanted else records
+        ready.append(Scheduled(name, upload, progress, source, packets))
     return ready

@@ -481,7 +481,6 @@ def new(admin: Any, error: str = "", form: dict | None = None,
     if made is not None:
         return _what_to_enter(admin, made)
 
-    register = load(admin)
     chosen = form.get("driver") or "wunderground"
     options = NEWLINE.join(
         f'<option value="{html.escape(kind)}"'
@@ -490,9 +489,15 @@ def new(admin: Any, error: str = "", form: dict | None = None,
     explained = "".join(
         f"<li><strong>{html.escape(label)}</strong>: {html.escape(why)}</li>"
         for _kind, (label, why) in TELLABLE.items())
+    # From the archive register rather than from the stations: an archive
+    # nothing writes into yet has to be offerable, or the second one can
+    # never be reached.
+    from . import adminarchives
+
     archives = NEWLINE.join(
-        f'<option value="{html.escape(one)}">{html.escape(one)}</option>'
-        for one in register.archives())
+        f'<option value="{html.escape(one.name)}">'
+        f'{html.escape(one.title)}</option>'
+        for one in adminarchives.load(admin).all())
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
 
     return f'''

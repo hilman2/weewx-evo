@@ -36,6 +36,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import archives as archives_module
 from . import config as config_file
 from . import exports as export_registry
 from . import feedrunner as feed_runner
@@ -74,6 +75,24 @@ log = logging.getLogger("weewx_evo")
 
 def env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(f"WEEWX_EVO_{name}", default)
+
+
+def add_archive_arg(parser: argparse.ArgumentParser) -> None:
+    """Which series a single-shot command works on.
+
+    `--series` rather than `--archive`, because `--archive` is already the
+    path to a database file. Two meanings for one flag -- a path here, a name
+    there -- is the sort of thing that works until somebody has an archive
+    called `data`.
+
+    `default=None` like everything else here: argparse cannot tell "not
+    given" from "given the default", and naming the default here would beat
+    the configuration file the same way an environment variable does.
+    """
+    parser.add_argument("--series", default=None,
+                        help="which measurement series to work on, by name "
+                             "from archives.toml. The default one unless "
+                             "there is more than one.")
 
 
 def add_common(parser: argparse.ArgumentParser) -> None:
@@ -328,6 +347,83 @@ def stations_path(args: argparse.Namespace, cfg: Settings) -> Path:
     return stations_module.path_for(Path(cfg.get("live_db")).parent)
 
 
+def archives_path(args: argparse.Namespace, cfg: Settings) -> Path:
+    """Where archives.toml lives: beside stations.toml, for the same reason."""
+    if getattr(args, "config", None):
+        base = Path(args.config).parent
+    else:
+        base = Path(cfg.get("live_db")).parent
+    return base / archives_module.FILENAME
+
+
+def read_archives(args: argparse.Namespace,
+                  cfg: Settings) -> archives_module.Register:
+    """Every measurement series this installation keeps.
+
+    A missing file is one archive, described by the settings, which is every
+    installation that has not asked for a second one. Nothing to migrate: the
+    file appears when somebody adds the second, and the page writes the first
+    into it at the same moment.
+    """
+    where = archives_path(args, cfg)
+    register = archives_module.Register.load(where, cfg)
+    if register.several():
+        log.info("%d archive(s) in %s: %s", len(register), where,
+                 ", ".join(register.names()))
+    return register
+
+
+def open_archive(archive: archives_module.Archive, cfg: Settings,
+                 base: Path | None = None) -> ArchiveStore:
+    """The store for one series.
+
+    Relative paths resolve against the configuration file, the same as every
+    other path this program is handed. An archive named in `archives.toml`
+    would otherwise land wherever the process happened to be started from.
+    """
+    where = Path(archive.file)
+    if not where.is_absolute() and base is not None:
+        where = base / where
+    return ArchiveStore(where, table_name=cfg.get("table"))
+
+
+def build_archivers(args: argparse.Namespace, cfg: Settings, live: LiveStore,
+                    archives: archives_module.Register,
+                    stations: Any) -> list[tuple[Any, ArchiveStore, Archiver]]:
+    """One archiver per series, each with its own place and its own stations.
+
+    The three numbers come off the archive rather than out of the settings,
+    which is the whole point of there being archives: sunrise for the north
+    field computed with the south field's coordinates is wrong by seconds and
+    looks entirely correct.
+
+    With a single archive nothing is filtered. That is not a shortcut -- it is
+    what every installation did before stations existed, and an unannounced
+    sensor must go on reaching the series it has been reaching for a year.
+    """
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    sources = read_sources(cfg, args.sources)
+    several = archives.several()
+    built = []
+    for archive in archives.all():
+        store = open_archive(archive, cfg, base)
+        mine = None
+        if several:
+            mine = sorted(one.name for one in stations.for_archive(archive.name))
+            if not mine:
+                log.warning("archive %r has no stations, so nothing will be "
+                            "written to %s", archive.name, archive.file)
+        built.append((archive, store, Archiver(
+            live, store,
+            interval_seconds=cfg.get("interval"),
+            loop_hilo=cfg.get("loop_hilo"),
+            sources=sources,
+            deriver=deriver_from(cfg, archive),
+            name=archive.name,
+            stations=mine)))
+    return built
+
+
 def read_stations(args: argparse.Namespace, cfg: Settings,
                   live: object | None = None) -> tuple:
     """The announced consoles, and where strangers get noted.
@@ -389,13 +485,29 @@ def open_stores(args: argparse.Namespace) -> tuple[LiveStore, ArchiveStore]:
 
 
 def make_archiver(args: argparse.Namespace) -> tuple[LiveStore, ArchiveStore, Archiver]:
+    """One archiver, for the series `--archive` named or for the default.
+
+    The single-shot commands work on one at a time. Catching up or rebuilding
+    every series at once would be the sort of thing somebody runs on a
+    Saturday and cannot stop halfway.
+    """
     cfg = settings_for(args)
-    live, archive = open_stores(args)
-    return live, archive, Archiver(live, archive,
-                                   interval_seconds=cfg.get("interval"),
-                                   loop_hilo=cfg.get("loop_hilo"),
-                                   sources=read_sources(cfg, args.sources),
-                                   deriver=deriver_from(cfg))
+    live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
+                     keep_raw_seconds=cfg.get("raw_retention"))
+    announced, _sightings = read_stations(args, cfg, live)
+    registry = read_archives(args, cfg)
+    live.archives = registry.names()
+
+    wanted = getattr(args, "series", None) or archives_module.DEFAULT
+    if wanted not in registry.names():
+        print(f"no series called {wanted!r}. There is: "
+              f"{', '.join(registry.names())}", file=sys.stderr)
+        raise SystemExit(2)
+    for archive_def, store, archiver in build_archivers(
+            args, cfg, live, registry, announced):
+        if archive_def.name == wanted:
+            return live, store, archiver
+    raise SystemExit(2)  # unreachable: the name was checked above
 
 
 def start_watchdog(cfg: Any, live: Any,
@@ -436,6 +548,10 @@ def cmd_listen(args: argparse.Namespace) -> int:
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
     announced, sightings = read_stations(args, cfg, live)
+    # The listener writes the live table, and every archive reads it. It has
+    # to mark all of them pending, so it needs their names even though it
+    # opens none of them.
+    live.archives = read_archives(args, cfg).names()
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
                     access=access, limits=limits,
@@ -476,7 +592,12 @@ def cmd_listen(args: argparse.Namespace) -> int:
 
 def cmd_archive(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
-    live, archive, archiver = make_archiver(args)
+    live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
+                     keep_raw_seconds=cfg.get("raw_retention"))
+    announced, _sightings = read_stations(args, cfg, live)
+    registry = read_archives(args, cfg)
+    series = build_archivers(args, cfg, live, registry, announced)
+    live.archives = registry.names()
     stopping = threading.Event()
 
     def handle(signum: int, frame: object) -> None:
@@ -486,8 +607,9 @@ def cmd_archive(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, handle)
     signal.signal(signal.SIGTERM, handle)
 
-    log.info("archiving every %ds into %s", cfg.get("interval"),
-             cfg.get("archive_db"))
+    for archive_def, _store, _archiver in series:
+        log.info("archiving every %ds into %s (%s)", cfg.get("interval"),
+                 archive_def.file, archive_def.name)
 
     runner = None
     # The feeds. This process has the archive, so in a split deployment it is
@@ -538,13 +660,16 @@ def cmd_archive(args: argparse.Namespace) -> int:
                     # while to read cannot look like a stopped loop.
                     dog.beats()
 
-                n = archiver.process_due(grace=cfg.get("grace"))
-                if n:
-                    log.info("archived %d interval(s)", n)
+                for archive_def, _store, archiver in series:
+                    n = archiver.process_due(grace=cfg.get("grace"))
+                    if not n:
+                        continue
+                    log.info("archived %d interval(s) into %s", n,
+                             archive_def.name)
                     if feeds is not None:
                         # Sets a flag and returns, like the exports. The work
                         # happens elsewhere.
-                        feeds.record_written()
+                        feeds.record_written(archive_def.name)
                     if runner is not None:
                         # Sets a flag and returns. Nothing about an upload
                         # happens on this thread.
@@ -575,7 +700,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
         if forecast_store is not None:
             forecast_store.close()
         live.close()
-        archive.close()
+        for _archive_def, store, _archiver in series:
+            store.close()
     return 0
 
 
@@ -850,11 +976,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
-    archive = ArchiveStore(cfg.get("archive_db"), table_name=cfg.get("table"))
-    archiver = Archiver(live, archive, interval_seconds=cfg.get("interval"),
-                        loop_hilo=cfg.get("loop_hilo"),
-                        sources=read_sources(cfg, args.sources),
-                        deriver=deriver_from(cfg))
+    announced, sightings = read_stations(args, cfg, live)
+    registry = read_archives(args, cfg)
+    series = build_archivers(args, cfg, live, registry, announced)
+    # Every archive marks its own pending intervals, so the table has to know
+    # who is reading it before the first packet lands.
+    live.archives = registry.names()
+    # The first one is the default, and it is what anything wanting "the
+    # archive" without saying which gets: the drivers' state, the status
+    # command, a feed that names nothing.
+    archive = series[0][1]
     configure_drivers(cfg, archive)
     try:
         access = Access.parse(cfg.get("allow"))
@@ -864,7 +995,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
     warn_if_open(access, "The listener")
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
-    announced, sightings = read_stations(args, cfg, live)
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
                     access=access, limits=limits,
@@ -913,9 +1043,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         udp.start()
         log.info("UDP on %s:%s", cfg.get("host"), cfg.get("udp_port"))
 
-    caught = archiver.catch_up()
-    if caught:
-        log.info("caught up %d interval(s) from the live table", caught)
+    for archive_def, _store, archiver in series:
+        caught = archiver.catch_up()
+        if caught:
+            log.info("caught up %d interval(s) from the live table into %s",
+                     caught, archive_def.name)
 
     # The feeds. On their own thread for the same reason the exports are:
     # a hundred charts is most of a second, and a second here is a second the
@@ -1028,13 +1160,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 if dog is not None:
                     dog.beats()
 
-                n = archiver.process_due(grace=cfg.get("grace"))
-                if n:
-                    log.info("archived %d interval(s)", n)
+                for archive_def, _store, archiver in series:
+                    n = archiver.process_due(grace=cfg.get("grace"))
+                    if not n:
+                        continue
+                    log.info("archived %d interval(s) into %s", n,
+                             archive_def.name)
                     if feeds is not None:
                         # Sets a flag and returns, like the exports below. The
-                        # work happens on their own thread.
-                        feeds.record_written()
+                        # work happens on their own thread. The name goes with
+                        # it so a feed reading the north field is not produced
+                        # because the south field wrote a record.
+                        feeds.record_written(archive_def.name)
                     if runner is not None:
                         # Sets a flag and returns. Nothing about an upload
                         # happens on this thread.
@@ -1075,7 +1212,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if udp:
             udp.stop()
         live.close()
-        archive.close()
+        for _archive_def, store, _archiver in series:
+            store.close()
         if restarting:
             log.info("stopped so a new process can pick up the change."
                      " If nothing brings this back, the supervisor is"
@@ -1984,19 +2122,36 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
         live_db = base / live_db
     packets = upload_records.live_source(live_db) if live_db.exists() else None
 
+    # One reader per series, for an installation with more than one. An
+    # upload is a station registered with a weather service, and that station
+    # stands in one place.
+    registry = read_archives(args, cfg)
+    by_archive: dict[str, Any] = {}
+    if registry.several():
+        for one in registry.all():
+            where = Path(one.file)
+            if not where.is_absolute():
+                where = base / where
+            by_archive[one.name] = upload_records.source(where)
+
     def with_station(name: str, settings: dict) -> object:
         # Two settings that belong to the station rather than to a service,
         # filled in here so nobody types them twice -- and only when the
         # upload did not say its own.
         kind = str(settings.get("kind", ""))
+        # The place this upload reports from. Its coordinates go out with
+        # every CWOP packet, so a second site sending the first one's
+        # position puts a station on the map in the wrong field.
+        place = archives_module.placed(cfg, registry.get(
+            settings.get("archive"))) if registry.several() else cfg
         if kind == "cwop":
             # The packet is a position report; without one there is nothing
             # to send.
-            settings.setdefault("latitude", cfg.get("station.latitude"))
-            settings.setdefault("longitude", cfg.get("station.longitude"))
+            settings.setdefault("latitude", place.get("station.latitude"))
+            settings.setdefault("longitude", place.get("station.longitude"))
         if kind == "mqtt" and not settings.get("station"):
             # What Home Assistant calls the device.
-            settings["station"] = cfg.get("station.name") or ""
+            settings["station"] = place.get("station.name") or ""
         if kind == "webpush":
             # Where the pages are and what the token is: both already known
             # to the export that publishes them. Asking again here is how
@@ -2029,7 +2184,7 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
         return build_upload(name, settings)
 
     return upload_runner.build(configured, with_station, progress, records,
-                               packets)
+                               packets, by_archive=by_archive)
 
 
 def live_readings_locally(cfg: Settings,
@@ -2580,6 +2735,7 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
 
     where = feed_dirs(cfg, args)
     configured = configured_feeds(args)
+    registry = read_archives(args, cfg)
 
     def rank(item: tuple[str, dict]) -> tuple[int, str]:
         # A feed that reads another one goes second.
@@ -2590,13 +2746,19 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
         kind = str(settings.get("kind", "")).strip()
         if settings.get("enabled") is False:
             continue
+        # The settings as this feed's archive sees them: same names, the
+        # right place. A page for the north field prints the north field's
+        # altitude and works out its own sunrise, without any feed having
+        # been told that there is more than one series.
+        placed = archives_module.placed(
+            cfg, registry.get(settings.get("archive")))             if registry.several() else cfg
         if kind == "json":
-            made.append((name, _json_feed(cfg, name, charts, args),
+            made.append((name, _json_feed(placed, name, charts, args),
                          where[name]))
         elif kind == "images":
-            made.append((name, _image_feed(cfg, name, args), where[name]))
+            made.append((name, _image_feed(placed, name, args), where[name]))
         elif kind == "cheetah":
-            made.append((name, _cheetah_feed(cfg, name, args), where[name]))
+            made.append((name, _cheetah_feed(placed, name, args), where[name]))
         elif kind == "diagnostic":
             reads = str(settings.get("source") or "json")
             made.append((name, _diagnostic_feed(cfg, name,
@@ -2888,9 +3050,19 @@ def start_feeds(args: argparse.Namespace,
         log.info("the JSON feed is switched off, so no feeds are running")
         return None
 
+    registry = read_archives(args, cfg)
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    paths = {}
+    for archive in registry.all():
+        where = Path(archive.file)
+        if not where.is_absolute() and base is not None:
+            where = base / where
+        paths[archive.name] = where
+
     runner = feed_runner.Runner(build_feeds(args, cfg, charts),
-                                archive_path=Path(cfg.get("archive_db")),
-                                schedule=feed_schedule(args))
+                                archive_path=paths[archives_module.DEFAULT],
+                                schedule=feed_schedule(args),
+                                archives=paths)
     runner.start()
     where = feed_dirs(cfg, args)
     log.info("%d chart(s) from %s, written to %s", len(charts),
@@ -2901,10 +3073,34 @@ def start_feeds(args: argparse.Namespace,
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
     live_path = Path(cfg.get("live_db"))
-    archive_path = Path(cfg.get("archive_db"))
-    live, archive = open_stores(args)
+    live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
+                     keep_raw_seconds=cfg.get("raw_retention"))
+    registry = read_archives(args, cfg)
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    opened = []
     try:
         first, last = live.span()
+        series = {}
+        for one in registry.all():
+            store = open_archive(one, cfg, base)
+            opened.append(store)
+            where = Path(one.file)
+            if not where.is_absolute() and base is not None:
+                where = base / where
+            series[one.name] = {
+                "path": str(where),
+                "records": store.count(),
+                "newest": store.last_timestamp(),
+                "columns": len(store.schema.columns),
+                "daily_tables": len(store.schema.day_types),
+                "summary_version": store.schema.version,
+                "size_mb": round(where.stat().st_size / 1e6, 1)
+                if where.exists() else 0.0,
+                # Per series, because that is how the live table now counts
+                # them: an interval one archive has taken and another has
+                # not is not the same number twice.
+                "pending_intervals": len(live.due(grace=0, archive=one.name)),
+            }
         report = {
             "live": {
                 "path": str(live_path),
@@ -2915,20 +3111,16 @@ def cmd_status(args: argparse.Namespace) -> int:
                 "size_mb": round(live_path.stat().st_size / 1e6, 1),
             },
             "drivers": drivers.names(),
-            "archive": {
-                "path": str(archive_path),
-                "records": archive.count(),
-                "newest": archive.last_timestamp(),
-                "columns": len(archive.schema.columns),
-                "daily_tables": len(archive.schema.day_types),
-                "summary_version": archive.schema.version,
-                "size_mb": round(archive_path.stat().st_size / 1e6, 1),
-            },
+            # The default one under its old name, so anything reading this
+            # output goes on working, and every one of them under "archives".
+            "archive": series[archives_module.DEFAULT],
+            "archives": series,
         }
         print(json.dumps(report, indent=2))
     finally:
         live.close()
-        archive.close()
+        for store in opened:
+            store.close()
     return 0
 
 
@@ -2954,12 +3146,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("catchup", help="build every interval the live table covers")
     add_common(p)
+    add_archive_arg(p)
     p.add_argument("--replace", action="store_true",
                    help="overwrite records that are already there")
     p.set_defaults(func=cmd_catchup)
 
     p = sub.add_parser("rebuild", help="work a time span out again")
     add_common(p)
+    add_archive_arg(p)
     p.add_argument("start", type=int, help="unix timestamp, exclusive")
     p.add_argument("stop", type=int, help="unix timestamp, inclusive")
     p.set_defaults(func=cmd_rebuild)

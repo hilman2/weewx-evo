@@ -26,6 +26,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .db.live import DEFAULT_ARCHIVE
+
 log = logging.getLogger(__name__)
 
 #: How long to wait after a record before running. Several records can land
@@ -46,11 +48,17 @@ class Runner:
     def __init__(self, feeds: list[tuple[str, Callable, Path]],
                  archive_path: Path,
                  on_produced: Callable[[str, list], None] | None = None,
-                 schedule: dict[str, dict] | None = None) -> None:
+                 schedule: dict[str, dict] | None = None,
+                 archives: dict[str, Path] | None = None) -> None:
         #: (name, build(reader) -> feed, where to write). Built late, with a
         #: connection made on this thread.
         self.feeds = list(feeds)
         self.archive_path = Path(archive_path)
+        #: Every series a feed may name, by name. The default is always in
+        #: here and is what a feed naming nothing reads -- which is every
+        #: feed on an installation with one archive.
+        self.archives: dict[str, Path] = {DEFAULT_ARCHIVE: self.archive_path}
+        self.archives.update({k: Path(v) for k, v in (archives or {}).items()})
         #: Per feed: {"trigger": ..., "every": seconds, "archive": name}.
         #: Anything not named here runs on the archive record, which is what
         #: every feed did before there was a choice.
@@ -79,12 +87,15 @@ class Runner:
         self.last_note = ""
         self.last_run: float | None = None
 
-    #: Which archive last wrote a record, so a feed reading another one is
-    #: not produced for somebody else's data. One archive today; the field
-    #: exists so the second is a name rather than a rewrite.
     def record_written(self, archive: str = "") -> None:
-        """Called by the archiver. Sets a flag and returns."""
-        self._wrote = archive or self._wrote
+        """Called by the archiver. Sets a flag and returns.
+
+        `archive` is which series wrote. A feed reading another one is not
+        produced for it: with two sites, the north field writing a record is
+        no reason to rebuild the south field's page, and doing so would
+        publish the same files twice as often for no new data.
+        """
+        self._wrote = archive or DEFAULT_ARCHIVE
         self.due.set()
 
     def packet_stored(self) -> None:
@@ -157,13 +168,30 @@ class Runner:
             return
         self._next[name] = (int(now // every) + 1) * every
 
+    def archive_for(self, name: str) -> str:
+        """Which series this feed reads. The default unless it says."""
+        return self.schedule.get(name, {}).get("archive") or DEFAULT_ARCHIVE
+
+    def path_for(self, name: str) -> Path:
+        """The file behind that name, falling back to the default.
+
+        Falling back rather than failing: the name is in a feed's settings,
+        and one pointing at an archive somebody removed should produce a page
+        from the series that is left.
+        """
+        return self.archives.get(self.archive_for(name), self.archive_path)
+
     def due_now(self, name: str, because: str, now: float | None = None) -> bool:
         """Whether this feed runs on this pass."""
         wanted = self.schedule.get(name, {}).get("trigger", "record")
         if wanted == "packet":
             return because == "packet"
         if wanted != "schedule":
-            return because == "record"
+            if because != "record":
+                return False
+            # Which series wrote. Empty means nobody said, which is every
+            # caller that predates there being more than one.
+            return not self._wrote or self._wrote == self.archive_for(name)
         now = now or time.time()
         if name not in self._next:
             self._plan(name, now)
@@ -182,52 +210,59 @@ class Runner:
         not produced by an archive record, and one on the archive is not
         produced by a reading -- which is the whole point of the setting.
         """
-        if not self.archive_path.exists():
-            log.debug("no archive at %s yet", self.archive_path)
-            return ""
-
         started = time.time()
         notes = []
-        try:
-            connection = sqlite3.connect(
-                f"file:{self.archive_path}?mode=ro", uri=True)
-        except sqlite3.Error as exc:
-            log.error("could not open the archive to produce the feeds: %s",
-                      exc)
-            self.failures += 1
+        # Grouped by the file they read, so one connection serves every feed
+        # on that series -- and a second archive costs a second connection
+        # rather than one per feed.
+        wanted: dict[Path, list] = {}
+        for name, build, into in self.feeds:
+            if self.due_now(name, because):
+                wanted.setdefault(self.path_for(name), []).append(
+                    (name, build, into))
+        if not wanted:
             return ""
 
-        try:
-            from .series import Reader
+        for path, group in wanted.items():
+            if not path.exists():
+                log.debug("no archive at %s yet", path)
+                continue
+            try:
+                connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            except sqlite3.Error as exc:
+                log.error("could not open %s to produce the feeds: %s",
+                          path, exc)
+                self.failures += 1
+                continue
+            try:
+                from .series import Reader
 
-            reader = Reader(connection)
-            for name, build, into in self.feeds:
-                if not self.due_now(name, because):
-                    continue
-                try:
-                    feed = build(reader)
-                    made = feed.produce(into)
-                    notes.append(f"{name}: {made.note}" if made.note else name)
-                    if self.on_produced is not None:
-                        # After the files are written, never before. That
-                        # ordering is the whole reason an export prefers this
-                        # over the archive record: started by the record it
-                        # can begin while the feed is still writing, and half
-                        # a page gets published.
-                        try:
-                            self.on_produced(name, list(made.files))
-                        except Exception:
-                            log.exception("could not hand %r on to the "
-                                          "exports; carrying on", name)
-                except Exception:
-                    # One feed failing must not cost the others. A broken
-                    # template should not stop the JSON that everything else
-                    # is built on.
-                    log.exception("the feed %r failed; carrying on", name)
-                    self.failures += 1
-                    notes.append(f"{name}: failed")
-        finally:
-            connection.close()
+                reader = Reader(connection)
+                for name, build, into in group:
+                    try:
+                        feed = build(reader)
+                        made = feed.produce(into)
+                        notes.append(f"{name}: {made.note}" if made.note else name)
+                        if self.on_produced is not None:
+                            # After the files are written, never before. That
+                            # ordering is the whole reason an export prefers
+                            # this over the archive record: started by the
+                            # record it can begin while the feed is still
+                            # writing, and half a page gets published.
+                            try:
+                                self.on_produced(name, list(made.files))
+                            except Exception:
+                                log.exception("could not hand %r on to the "
+                                              "exports; carrying on", name)
+                    except Exception:
+                        # One feed failing must not cost the others. A broken
+                        # template should not stop the JSON that everything
+                        # else is built on.
+                        log.exception("the feed %r failed; carrying on", name)
+                        self.failures += 1
+                        notes.append(f"{name}: failed")
+            finally:
+                connection.close()
 
         self.runs += 1
         self.last_run = time.time()

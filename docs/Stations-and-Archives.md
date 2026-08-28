@@ -1,7 +1,8 @@
 # Stations and Archives
 
-**A design, not a description. None of this is built yet.** What is built is
-noted as such, because a surprising amount of it already is.
+**Built, as of the commit that added `archives.py`.** This began as a
+design and is kept because the reasoning outlives the diff. Where it says
+what something will do, it now does.
 
 Two ideas, and the point is that they are separate:
 
@@ -274,32 +275,42 @@ knowledge off it.
 
 ## Order of work
 
-1. **Stations as a concept in the core.** A list; each with a name, a driver
-   type and an identity. `sources.py` takes its names from there instead of
-   from free text.
-2. **`new-station` with a wizard.** Choose the type, get the values to enter,
-   wait for the first upload and say what arrived. Whoever is configuring a
-   console is standing next to it anyway.
-3. **What reaches the archive, shown on the station.** Small; `columns` and
-   `_homeless` already have the data.
-4. **"Archive" as a field on the station** — from the start, even while there
-   is only one. It costs almost nothing now and makes the later change
-   additive rather than a migration.
-5. **The drivers follow.** Ecowitt stops refusing consoles and hands its
-   PASSKEYs to the core; its field maps stay, keyed on the station name. WU
-   accepts only announced IDs. Adoption becomes the learning step in the
-   wizard rather than something that happens in service.
-6. **`station.*` moves to the archive**, and a second archive becomes a row
-   rather than a rewrite.
+1. ~~**Stations as a concept in the core.**~~ `stations.py`.
+2. ~~**`new-station` with a wizard.**~~ `adminstations.py`.
+3. ~~**What reaches the archive, shown on the station.**~~ With a redacted
+   snippet of the last raw upload beside it.
+4. ~~**"Archive" as a field on the station.**~~ It was insurance and it paid:
+   step 6 added a file and changed no rows.
+5. ~~**The drivers follow.**~~ Ecowitt hands its PASSKEYs to the core, and
+   what belongs to the console rather than to the protocol -- `indoor`,
+   `model`, the field map -- moved onto the station.
+6. ~~**`station.*` moves to the archive.**~~ `archives.py`, and a second
+   archive is a row.
 
-Steps 1 to 3 are the benefit. Step 4 is the cheap insurance. Steps 5 and 6
-make it binding.
+### What step 6 turned out to be
+
+The 50 reads of `station.latitude` looked like the expensive part and were
+not. `archives.Placed` wraps the settings, so a feed asks for
+`station.altitude` by the name it has always used and gets the altitude of
+the series it is producing. Nothing that formats or draws had to be told that
+archives exist.
+
+The expensive part was one line nobody had listed. `pending` was keyed on the
+interval alone, so whichever archiver reached an interval first deleted the
+row and the second never saw it: two sites, and the slower one silently stops
+archiving. It is keyed on `(stop, archive)` now, and
+`tools/archives_test.py` checks that before it checks anything else.
 
 ## Open
 
 * Should a station be creatable with an identity typed by hand, for hardware
   that has not been heard from yet?
-* How many days before an ignored entry is dropped.
-* Does an archive get its own timezone, or is that one too far? Sites in
-  different zones are a real case for a VPS, and `archive_day_*` is keyed on
-  local midnight.
+* How many days before an ignored entry is dropped. Fourteen today.
+* Does an archive get its own timezone? **Not built, and the reason is
+  that it is not a configuration change.** `archive_day_*` is keyed on
+  local midnight, so a zone per archive means every aggregate has to be
+  told which one -- `series.py`, `aggregate.py` and the day cache all read
+  the process timezone today. Sites in different zones stay a real case.
+* Whether an archive gets its own `sources.toml` policy. It is global now,
+  which is harmless while two archives share no stations, and wrong the
+  moment one does.

@@ -224,20 +224,25 @@ class Feed(Protocol):
 def archive_names() -> list[tuple[str, str]]:
     """The archives a feed can read from, for the settings page.
 
-    Taken from `stations.toml`, because that is where an archive gets named:
-    a station says which one it writes into, and this says which one a feed
-    reads out of. Two lists of archive names would be one list and one way of
-    getting it wrong.
+    From `archives.toml`, which is where an archive is defined. It was read
+    off `stations.toml` while there was nothing else to read: a station named
+    the archive it wrote into, and the set of those names was the list. That
+    could only ever offer archives something already writes into, so the
+    second one was unreachable until a station had been pointed at it.
     """
-    from .. import stations
+    from .. import archives as archive_defs
+    from .. import settings as settings_module
 
     try:
-        register = stations.load(stations.path_for(_config_dir()))
-        found = register.archives()
+        running = settings_module.running()
+        register = archive_defs.Register.load(
+            _config_dir() / archive_defs.FILENAME, running)
+        found = [(one.name, one.title if one.title != one.name else one.name)
+                 for one in register.all()]
     except Exception:
         log.debug("could not read the archives", exc_info=True)
-        found = [DEFAULT_ARCHIVE]
-    return [(one, one) for one in found]
+        found = [(DEFAULT_ARCHIVE, DEFAULT_ARCHIVE)]
+    return found
 
 
 def _config_dir() -> Path:

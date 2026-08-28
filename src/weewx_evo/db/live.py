@@ -21,6 +21,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -29,6 +30,14 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
+
+#: The archive a packet belongs to when nobody has said otherwise. Spelled out
+#: here rather than imported from `stations`: this module imports nothing of
+#: ours and is the better for it. The two constants are checked against each
+#: other in the tests.
+DEFAULT_ARCHIVE = "default"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS packet (
@@ -53,9 +62,16 @@ CREATE INDEX IF NOT EXISTS packet_dateTime ON packet(dateTime);
 
 -- Archive intervals waiting to be worked out. A packet arriving late puts its
 -- interval back in here, which is the whole of the late-packet handling.
+--
+-- Keyed on the archive as well as the interval, because two archives are two
+-- readers of this one table. With a single key the first archiver to finish
+-- an interval cleared it, and the second never saw it at all -- a series that
+-- silently stops at whichever site is quicker.
 CREATE TABLE IF NOT EXISTS pending (
-    stop    INTEGER NOT NULL PRIMARY KEY,   -- the interval ends here
-    seconds INTEGER NOT NULL                -- and is this long
+    stop    INTEGER NOT NULL,               -- the interval ends here
+    seconds INTEGER NOT NULL,               -- and is this long
+    archive TEXT    NOT NULL DEFAULT 'default',
+    PRIMARY KEY (stop, archive)
 );
 
 CREATE TABLE IF NOT EXISTS live_metadata (
@@ -134,6 +150,10 @@ class LiveStore:
                  keep_raw_seconds: int = 3600) -> None:
         self.path = Path(path)
         self.interval_seconds = interval_seconds
+        #: Every archive reading out of this table. One by default, which is
+        #: what an installation has before it has two; the listener sets it
+        #: from the station register and updates it when that file changes.
+        self.archives: list[str] = [DEFAULT_ARCHIVE]
         # How long the raw upload is kept beside the parsed packet. An hour is
         # plenty to look at what just arrived; keeping it for the whole
         # retention period would multiply the database for no further benefit.
@@ -167,6 +187,26 @@ class LiveStore:
         have = {row[1] for row in self.conn.execute("PRAGMA table_info(packet)")}
         if "raw" not in have:
             self.conn.execute("ALTER TABLE packet ADD COLUMN raw TEXT")
+
+        # `pending` gained an archive, and with it a different primary key.
+        # SQLite cannot alter a key in place, so the table is rebuilt --
+        # carrying the rows over rather than dropping them, because a row in
+        # here is an interval whose packets have not reached any archive yet.
+        pending = {row[1] for row in self.conn.execute("PRAGMA table_info(pending)")}
+        if pending and "archive" not in pending:
+            self.conn.executescript("""
+                ALTER TABLE pending RENAME TO pending_one_archive;
+                CREATE TABLE pending (
+                    stop    INTEGER NOT NULL,
+                    seconds INTEGER NOT NULL,
+                    archive TEXT    NOT NULL DEFAULT 'default',
+                    PRIMARY KEY (stop, archive)
+                );
+                INSERT INTO pending (stop, seconds, archive)
+                    SELECT stop, seconds, 'default' FROM pending_one_archive;
+                DROP TABLE pending_one_archive;
+            """)
+            log.info("%s: the pending table now names an archive", self.path)
 
     def _connect(self) -> _Held:
         conn = sqlite3.connect(self.path, isolation_level=None, timeout=10.0)
@@ -238,43 +278,68 @@ class LiveStore:
             self.conn.execute("BEGIN")
             return sum(self.add(p) for p in packets)
 
-    def mark_pending(self, ts: float, seconds: int | None = None) -> int:
-        """Note that the interval containing `ts` needs working out."""
+    def mark_pending(self, ts: float, seconds: int | None = None,
+                     archives: Iterable[str] | None = None) -> int:
+        """Note that the interval containing `ts` needs working out.
+
+        Marked for every archive rather than only the one the packet belongs
+        to. Working out which archive a source writes into means reading the
+        station register from in here, and getting it wrong loses readings
+        with no trace. The cost of the blunt version is one query per archive
+        per interval that turns up empty, which is nothing; the cost of the
+        clever version being wrong is a series with a hole in it.
+        """
         seconds = seconds or self.interval_seconds
         stop = interval_stop(ts, seconds)
-        self.conn.execute(
-            "INSERT OR REPLACE INTO pending (stop, seconds) VALUES (?, ?)", (stop, seconds)
-        )
+        for archive in (archives if archives is not None else self.archives):
+            self.conn.execute(
+                "INSERT OR REPLACE INTO pending (stop, seconds, archive)"
+                " VALUES (?, ?, ?)", (stop, seconds, archive))
         return stop
 
-    def clear_pending(self, stop: int) -> None:
-        self.conn.execute("DELETE FROM pending WHERE stop = ?", (stop,))
+    def clear_pending(self, stop: int, archive: str = DEFAULT_ARCHIVE) -> None:
+        """One archive is done with this interval. The others are not."""
+        self.conn.execute("DELETE FROM pending WHERE stop = ? AND archive = ?",
+                          (stop, archive))
 
     # -- reading ---------------------------------------------------------
 
-    def due(self, now: float | None = None, grace: int = 15) -> list[tuple[int, int]]:
+    def due(self, now: float | None = None, grace: int = 15,
+            archive: str | None = None) -> list[tuple[int, int]]:
         """Intervals that have ended and can be worked out, oldest first.
 
         `grace` holds an interval back for a few seconds after it closes, so a
         packet that is merely slow does not turn into a late packet and force a
         second computation.
+
+        `archive` is which series is asking. None means all of them, which is
+        what `status` wants and no archiver does.
         """
         now = now if now is not None else time.time()
-        return [
-            (stop, seconds)
-            for stop, seconds in self.conn.execute(
-                "SELECT stop, seconds FROM pending WHERE stop + ? <= ? ORDER BY stop",
-                (grace, int(now)),
-            )
-        ]
+        sql = ("SELECT DISTINCT stop, seconds FROM pending"
+               " WHERE stop + ? <= ?")
+        args: list[Any] = [grace, int(now)]
+        if archive is not None:
+            sql += " AND archive = ?"
+            args.append(archive)
+        return [(stop, seconds)
+                for stop, seconds in self.conn.execute(
+                    sql + " ORDER BY stop", args)]
 
     def packets(self, start: float, stop: float, kind: str | None = None,
-                with_raw: bool = False) -> Iterator[Packet]:
+                with_raw: bool = False,
+                sources: Iterable[str] | None = None) -> Iterator[Packet]:
         """Every packet in (start, stop], in time order.
 
         `with_raw` reads the original upload too. Off by default: the archiver
         walks thousands of packets and has no use for it, and the column is the
         largest one in the table.
+
+        `sources` is which stations to take. None is every one of them, which
+        is what a single-archive installation wants and what it has always
+        done. An archive that names its stations gets only those: readings
+        from the north field must not reach the south field's series, and both
+        are in this one table.
         """
         columns = "dateTime, received, source, kind, usUnits, interval, data"
         if with_raw:
@@ -284,6 +349,14 @@ class LiveStore:
         if kind is not None:
             sql += " AND kind = ?"
             params.append(kind)
+        if sources is not None:
+            wanted = list(sources)
+            if not wanted:
+                # An archive with no stations takes nothing. Falling through
+                # to "everything" here would be the opposite of the request.
+                return
+            sql += f" AND source IN ({','.join('?' * len(wanted))})"
+            params.extend(wanted)
         sql += " ORDER BY dateTime, seq"
         for row in self.conn.execute(sql, params):
             ts, received, source, k, units, interval, data = row[:7]
