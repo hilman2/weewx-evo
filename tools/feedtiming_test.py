@@ -136,12 +136,44 @@ def the_runner_wakes_for_packets_only_when_asked() -> None:
     check("with one, it is woken", live.live.is_set(), True)
 
 
+def a_feed_deleted_while_running_stops() -> None:
+    """And a new one starts, without a restart.
+
+    `apply_live` rebuilds the exports, the uploads and the forecasts when the
+    file changes, and its own docstring warns that scattering this across the
+    loop is how three of them came to be missing. The feeds were the fourth:
+    one deleted on the settings page went on being produced, and a new one
+    was not produced at all, until somebody restarted. Nothing said so.
+
+    Seen in the field: a feed removed from the file, and the log still
+    reporting "images: 68 chart(s)" two minutes later.
+    """
+    print("\nthe set of feeds can be swapped while the runner is up")
+    runner = runner_with({"json": {"trigger": "record"}})
+    made = [("json", lambda reader: None, Path("json")),
+            ("images", lambda reader: None, Path("images"))]
+    runner.replace(made, {"json": {"trigger": "record"},
+                          "images": {"trigger": "record"}})
+    check("both are in", [n for n, _b, _i in runner.feeds],
+          ["json", "images"])
+
+    # A due time for a feed that is gone would keep a name alive that
+    # nothing produces any more.
+    runner._next = {"json": 1.0, "images": 2.0}
+    runner.replace([made[0]], {"json": {"trigger": "record"}})
+    check("the deleted one is gone", [n for n, _b, _i in runner.feeds],
+          ["json"])
+    check("and takes its due time with it", sorted(runner._next), ["json"])
+    check("while the survivor keeps its own", runner._next.get("json"), 1.0)
+
+
 def main() -> int:
     every_trigger_does_something()
     the_clock_is_the_clock()
     a_feed_that_says_nothing()
     what_the_feeds_declare()
     the_runner_wakes_for_packets_only_when_asked()
+    a_feed_deleted_while_running_stops()
 
     print()
     if failures:

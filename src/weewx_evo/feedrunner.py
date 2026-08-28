@@ -108,6 +108,31 @@ class Runner:
         if self._wants_packets:
             self.live.set()
 
+    def replace(self, feeds: list[tuple[str, Callable, Path]],
+                schedule: dict[str, dict] | None = None) -> None:
+        """Swap in a new set, after the configuration changed.
+
+        A feed deleted on the settings page kept being produced, and a new
+        one was not produced at all, until somebody restarted -- with nothing
+        anywhere saying so. `apply_live` rebuilds the exports, the uploads
+        and the forecasts, and its own docstring warns that scattering this
+        across the loop is how three of them came to be missing. The feeds
+        were the fourth.
+
+        No thread to restart: there is one, it reads this list each time
+        round, and a *new* list assigned between two rounds is seen whole.
+        Mutating the old one in place would not be -- the loop is walking it.
+        """
+        self.feeds = list(feeds)
+        if schedule is not None:
+            self.schedule = dict(schedule)
+        # A feed that is gone should not keep a due time, and one that is new
+        # should be due at once rather than an interval from now.
+        known = {name for name, _build, _into in self.feeds}
+        self._next = {name: when for name, when in self._next.items()
+                      if name in known}
+        self.due.set()
+
     def start(self) -> None:
         self.thread = threading.Thread(target=self._loop, daemon=True,
                                        name="feeds")

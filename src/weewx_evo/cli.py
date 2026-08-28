@@ -1228,7 +1228,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         restarting = True
                         stopping.set()
                         continue
-                    apply_live(args, cfg, web, runner, uploader, forecaster)
+                    apply_live(args, cfg, web, runner, uploader, forecaster,
+                               feeds)
 
                 if dog is not None:
                     dog.beats()
@@ -2395,7 +2396,7 @@ def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
 
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
                runner: Any, uploader: Any = None,
-               forecaster: Any = None) -> None:
+               forecaster: Any = None, feeds: Any = None) -> None:
     """Apply a changed configuration to a running process.
 
     Everything that can be rebuilt in place, in one function. Scattering
@@ -2414,6 +2415,18 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             # the three left every new thread ending the moment it started.
             runner.replace(fresh)
             log.info("%d export(s) running", len(fresh))
+
+    if feeds is not None:
+        # The fourth. A feed deleted on the settings page went on being
+        # produced and a new one was not produced at all, both silently,
+        # until a restart -- which is the failure this function's own
+        # docstring warns about, arriving in the one place it had missed.
+        charts = load_plots(args, cfg)
+        if len(charts):
+            made = build_feeds(args, cfg, charts)
+            if [n for n, _b, _i in made] != [n for n, _b, _i in feeds.feeds]:
+                feeds.replace(made, feed_schedule(args))
+                log.info("%d feed(s) producing", len(made))
 
     if uploader is not None:
         fresh = build_upload_schedule(args, cfg)
