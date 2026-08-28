@@ -289,13 +289,14 @@ def nav(admin: Any, active: str) -> list[str]:
         out.append('<p class="navempty">None yet. A station is a console '
                    'that uploads: it gets a name, an identity and the '
                    'archive it writes into.</p>')
-    current = " aria-current='page'" if active == "stations" else ""
+    # No "+ Add" here. An action in the navigation is an action you find
+    # by looking for a place to put things rather than by being where the
+    # things are, and it is one more line per section in a list whose whole
+    # problem was length.
+    here = active in ("stations", "new-station")
+    current = " aria-current='page'" if here else ""
     out.append(f'<a href="./stations"{current}>Consoles'
                f'<span class="count">{len(register)}</span></a>')
-    if not admin.read_only:
-        current = " aria-current='page'" if active == "new-station" else ""
-        out.append(f'<a class="add" href="./new-station"{current}>'
-                   "+ Add a station</a>")
     return out
 
 
@@ -364,14 +365,19 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
         'recorded under whatever identity the hardware sends; announcing a '
         'console gives it a name and an archive.</p>')
 
+    add = ""
+    if not admin.read_only:
+        add = ('<div class="actions">'
+               '<a class="button" href="./new-station">Add a station</a>'
+               "</div>")
     return f'''
+<h2>Stations</h2>
+<p class="lede">A station is a console that uploads. It has a name, an
+   identity that tells its packets apart, and the archive it writes into.
+   Two consoles measuring one garden are two stations in one archive; two
+   sites are two archives.</p>
+{said}{problem}{add}
 <section class="group">
-  <h3>Stations</h3>
-  <p class="lede">A station is a console that uploads. It has a name, an
-     identity that tells its packets apart, and the archive it writes into.
-     Two consoles measuring one garden are two stations in one archive; two
-     sites are two archives.</p>
-  {said}{problem}
   {announced}
 </section>
 {_waiting(seen, register)}

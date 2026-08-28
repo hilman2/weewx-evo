@@ -31,6 +31,8 @@ from .series import AGGREGATES
 
 log = logging.getLogger(__name__)
 
+NEWLINE = "\n"
+
 NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 #: What a line can be drawn as, and what that means.
@@ -304,38 +306,86 @@ def bring_over(admin: Any, source: str, replace: bool,
 # -- rendering -------------------------------------------------------------
 
 def nav(admin: Any, active: str) -> list[str]:
-    """The charts, in the sidebar, grouped the way they are grouped."""
+    """One entry. The charts themselves are on its page.
+
+    They used to be four collapsed groups plus two "add" links, which was
+    already the tidied version of a hundred flat entries. One line is the
+    version that does not grow at all -- and a hundred charts want a page
+    with room for their spans and their lines, not a sidebar.
+    """
     charts = load(admin)
-    out = ['<p class="navhead">Charts</p>']
+    here = (active in ("charts", "new-plot", "import-plots")
+            or active.startswith("plot:"))
+    current = " aria-current='page'" if here else ""
+    return [(f'<a href="./charts"{current}>Charts'
+             f'<span class="count">{len(charts)}</span></a>')]
+
+
+def overview(admin: Any, message: str = "", error: str = "") -> str:
+    """Every chart, grouped by the span it covers.
+
+    A hundred charts was four collapsed groups in the sidebar, which was the
+    tidied version of a hundred flat links. Neither had room to say what a
+    chart draws -- and "outTemp, dewpoint" beside the name is the difference
+    between finding one and opening six.
+    """
+    charts = load(admin)
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    said = f'<p class="ok">{html.escape(message)}</p>' if message else ""
+
+    add = ""
+    if not admin.read_only:
+        add = ('<div class="actions">'
+               '<a class="button" href="./new-plot">Add a chart</a>'
+               '<a class="button quiet" href="./import-plots">'
+               "Import from a skin</a></div>")
+
     if not len(charts):
-        out.append('<p class="navempty">None yet. Add one, or bring a whole '
-                   'set over from an existing WeeWX skin.</p>')
+        return f'''
+<h2>Charts</h2>
+{problem}{said}
+<p class="lede">A chart is a definition, not a picture: the feeds draw it,
+   each in their own way. One set serves the PNGs, the JSON and every skin.</p>
+{add}
+<p class="navempty">None yet. Add one, or bring a whole set over from an
+   existing WeeWX skin -- the importer reads a skin.conf and reports what it
+   could not take.</p>
+'''
 
     groups = charts.by_span()
-    # An imported Seasons skin is a hundred charts. Flat, that is a sidebar
-    # nobody can find anything in; collapsed, it is four lines. The group
-    # holding the chart being edited opens itself, so following a link never
-    # loses your place.
+    # The same strip the long forms have. Ninety-two charts in four blocks
+    # is a page somebody scrolls past three times to reach the fourth.
+    jump = "".join(
+        f'<a href="#span-{html.escape(span)}">{html.escape(span)}'
+        f'<span class="count">{len(groups[span])}</span></a>'
+        for span in sorted(groups))
+    blocks = [f'<nav class="jump" aria-label="Spans">{jump}</nav>']
     for span in sorted(groups):
-        group = groups[span]
-        holding = any(f"plot:{p.name}" == active for p in group)
-        out.append(f'<details class="navgroup"{" open" if holding else ""}>')
-        out.append(f'<summary>{html.escape(span)}'
-                   f'<span class="count">{len(group)}</span></summary>')
-        for plot in group:
-            key = f"plot:{plot.name}"
-            current = " aria-current='page'" if key == active else ""
-            out.append(f'<a class="sub" href="./{html.escape(key)}"{current}>'
-                       f"{html.escape(plot.name)}</a>")
-        out.append("</details>")
+        rows = []
+        for plot in groups[span]:
+            drawn = ", ".join(line.obs for line in plot.lines[:4])
+            if len(plot.lines) > 4:
+                drawn += f", and {len(plot.lines) - 4} more"
+            rows.append(f'''
+      <li>
+        <a href="./plot:{html.escape(plot.name)}">{html.escape(plot.name)}</a>
+        <span class="note">{html.escape(drawn)}</span>
+      </li>''')
+        blocks.append(f'''
+  <section class="flow" id="span-{html.escape(span)}">
+    <div class="made"><span class="title">{html.escape(span)}</span>
+      <span class="note aside">{len(groups[span])} chart(s)</span></div>
+    <ul class="sends plain">{NEWLINE.join(rows)}</ul>
+  </section>''')
 
-    if not admin.read_only:
-        current = " aria-current='page'" if active == "new-plot" else ""
-        out.append(f'<a class="add" href="./new-plot"{current}>+ Add a chart</a>')
-        current = " aria-current='page'" if active == "import-plots" else ""
-        out.append(f'<a class="add" href="./import-plots"{current}>'
-                   "+ Import from a skin</a>")
-    return out
+    return f'''
+<h2>Charts</h2>
+{problem}{said}
+<p class="lede">A chart is a definition, not a picture: the feeds draw it,
+   each in their own way. One set serves the PNGs, the JSON and every skin.</p>
+{add}
+{NEWLINE.join(blocks)}
+'''
 
 
 def _select(name: str, options: tuple, value: Any, extra: str = "") -> str:

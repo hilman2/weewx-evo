@@ -139,7 +139,8 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 
 #: Pages that are neither a schema nor a form to create one. They render
 #: themselves, the way the chart pages do.
-OWN_PAGES = ("overview", "stations", "archives", "publishing")
+OWN_PAGES = ("overview", "stations", "archives", "publishing",
+             "charts")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -1141,7 +1142,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                                     admin.columns(), errors, form)]
     elif standing:
         pages = {"overview": adminhome, "archives": adminarchives,
-                 "stations": adminstations, "publishing": adminpublish}
+                 "stations": adminstations, "publishing": adminpublish,
+                 "charts": adminplots}
         body = [pages[active].overview(admin, message, errors.get("", ""))]
     elif active == "new-archive":
         body = [adminarchives.new(admin, errors.get("", ""), form)]
@@ -1315,7 +1317,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "new-forecast": "Add a forecast",
                     "new-station": "Add a station", "stations": "Stations",
                     "new-archive": "Add an archive", "overview": "Overview",
-                    "archives": "Archives", "publishing": "Publishing"}
+                    "archives": "Archives", "publishing": "Publishing",
+                    "charts": "Charts"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
     # The pages that render themselves write their own <h2>, and it carries
@@ -1564,7 +1567,8 @@ _PAGE = """<!doctype html>
                 color: var(--dim); text-decoration: none;
                 border: 1px solid var(--line); background: var(--panel); }}
   nav.jump a:hover {{ color: var(--ink); border-color: var(--dim); }}
-  .group {{ scroll-margin-top: 1rem; }}
+  .group, .flow {{ scroll-margin-top: 1rem; }}
+  nav.jump a .count {{ float: none; margin-left: .35rem; }}
 
   /* And the Save button was at the bottom of all of it. Sticky rather than
      repeated: one button, always reachable, and it still belongs to the one

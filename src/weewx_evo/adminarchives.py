@@ -155,7 +155,8 @@ def _with(archive: archive_defs.Archive, **changes: Any) -> archive_defs.Archive
 def nav(admin: Any, active: str) -> list[str]:
     register = load(admin)
     out = ['<p class="navhead">Archives</p>']
-    current = " aria-current='page'" if active == "archives" else ""
+    here = active in ("archives", "new-archive")
+    current = " aria-current='page'" if here else ""
     # The count carries a mark when something is wrong, because the one thing
     # that can be wrong here is invisible everywhere else: the readings stay
     # right and only the day boundaries move.
@@ -165,10 +166,6 @@ def nav(admin: Any, active: str) -> list[str]:
         mark = ' <span class="warn" title="something needs looking at">!</span>'
     out.append(f'<a href="./archives"{current}>Series{mark}'
                f'<span class="count">{len(register)}</span></a>')
-    if not admin.read_only:
-        current = " aria-current='page'" if active == "new-archive" else ""
-        out.append(f'<a class="add" href="./new-archive"{current}>'
-                   "+ Add an archive</a>")
     return out
 
 
@@ -199,6 +196,11 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     said = f'<p class="ok">{html.escape(message)}</p>' if message else ""
 
+    add = ""
+    if not admin.read_only:
+        add = ('<div class="actions">'
+               '<a class="button" href="./new-archive">Add an archive</a>'
+               "</div>")
     trouble = register.concerns()
     rows = []
     for one in register.all():
@@ -242,9 +244,10 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     return f'''
 <h2>Archives</h2>
 {problem}{said}
-<p>An archive is a measurement series for one place: its own file, its own
-   altitude and its own coordinates. Stations write into one; feeds read out
-   of one.</p>
+<p class="lede">An archive is a measurement series for one place: its own
+   file, its own altitude and its own coordinates. Stations write into one;
+   feeds read out of one.</p>
+{add}
 {note}
 <table class="stations">
   <tr><th>Place</th><th>File</th><th>Where it is</th>

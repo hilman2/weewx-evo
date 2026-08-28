@@ -228,6 +228,18 @@ def main() -> int:
         ):
             failures += not check(what, needle in publishing, True)
 
+        print("\nand the charts are one entry, not a hundred")
+        code, charts = get(f"{base}/{TOKEN}/charts")
+        failures += not check("the page loads", code, 200)
+        # The sidebar used to hold them, first flat and then in collapsed
+        # groups. Neither had room to say what a chart draws, which is what
+        # you are actually looking for.
+        failures += not check("its own page offers both ways in",
+                              "./new-plot" in charts
+                              and "./import-plots" in charts, True)
+        failures += not check("and the sidebar has one link to it",
+                              html.count('href="./charts"'), 1)
+
         print("\nwhat can be chosen is offered, not typed")
         # The point of a settings page over the command line: you can see the
         # options without reading the documentation first.
