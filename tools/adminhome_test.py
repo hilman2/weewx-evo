@@ -437,6 +437,57 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
         check("and not reported as unreachable", found.unreachable, "")
 
 
+def the_shape_of_the_last_day() -> None:
+    """A count is a moment; this page is about whether it is still working.
+
+    "It stopped at four this morning" is a different fact from "it is not
+    working now", and one number cannot tell you which you have.
+    """
+    print("\nthe last day, drawn")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        live = LiveStore(work / "data" / "live.sdb", interval_seconds=INTERVAL)
+        now = int(time.time())
+        start = now - adminhome.HOURS * 3600
+        # Three hours of readings, a gap, then two more. The gap is the thing
+        # a single figure hides.
+        #
+        # Placed in the middle of each bucket, not at "now minus N hours":
+        # four readings a minute apart straddle an hour boundary whenever the
+        # clock is near one, and the first version of this counted eight
+        # buckets instead of six depending on the time of day it ran.
+        filled = (3, 4, 5, 20, 21)
+        for bucket in filled:
+            for n in range(4):
+                live.add(Packet(dateTime=start + bucket * 3600 + 1800 + n,
+                                usUnits=1, data={"outTemp": 20.0},
+                                source="kirchdorf"))
+        live.close()
+
+        state = adminhome.read(admin)
+        counts = state.live.history if state.live else []
+        check("a bar for each of the last 24 hours",
+              len(counts), adminhome.HOURS)
+        check("filled where the readings are",
+              [n for n, one in enumerate(counts) if one][:len(filled)],
+              list(filled))
+        check("four in each of them",
+              [counts[n] for n in filled], [4] * len(filled))
+
+        drawn = adminhome.sparkline(counts, "test")
+        check("it draws as an svg", drawn.startswith("<svg"), True)
+        check("one bar per hour that had something",
+              drawn.count("<rect"), sum(1 for one in counts if one))
+        check("and an hour with nothing draws nothing",
+              drawn.count("<rect") < adminhome.HOURS, True)
+
+        # Nothing at all draws nothing at all, rather than a flat line that
+        # looks like a reading of zero.
+        check("no data, no picture", adminhome.sparkline([0] * 24, "x"), "")
+        check("and no list either", adminhome.sparkline([], "x"), "")
+
+
 def the_page_renders_and_carries_the_numbers() -> None:
     """The HTML itself, because everything above tests the reading."""
     print("\nthe page")
@@ -481,6 +532,7 @@ def main() -> int:
     every_section_is_the_one_the_rest_of_the_program_reads()
     a_duration_is_a_duration()
     the_live_file_dates_itself()
+    the_shape_of_the_last_day()
     the_page_renders_and_carries_the_numbers()
     ages_read_as_ages()
 

@@ -249,3 +249,63 @@ def nav(admin: Any, active: str) -> list[str]:
 def feeds_dir(admin: Any) -> Path:
     return config_file.resolved_path(admin.config(), "feeds_dir",
                                      Path(admin.path).parent, "data/feeds")
+
+
+def context(admin: Any, active: str) -> str:
+    """Where the thing being edited sits in the chain, above its form.
+
+    The Publishing page knows that the `wdc` export publishes the `wdc`
+    feed. On the export's own form that was nowhere: a page of FTP settings
+    with no hint of what it sends or where those files come from. Somebody
+    changing the directory had to hold the arrangement in their head or open
+    a second tab.
+
+    One line, both directions, both ends links. Nothing else changes about
+    the form.
+    """
+    if ":" not in active:
+        return ""
+    kind, _, name = active.partition(":")
+    feeds, exports, uploads = _rows_for(admin)
+
+    if kind == "feed" and name in feeds:
+        publishes = [n for n, one in sorted(exports.items())
+                     if str(one.get("source") or "") == name]
+        if not publishes:
+            return _band(
+                "Nothing publishes this yet.",
+                '<a href="./new-export">Add an export</a>')
+        links = ", ".join(
+            f'<a href="./export:{html.escape(n)}">{html.escape(n)}</a>'
+            for n in publishes)
+        return _band(f"Published by {links}", "")
+
+    if kind == "export" and name in exports:
+        source = str(exports[name].get("source") or "").strip()
+        full = _where(admin, exports[name])
+        target = (f'<span title="{html.escape(full)}">'
+                  f"{html.escape(_short(full, 44))}</span>")
+        if source and source in feeds:
+            return _band(
+                f'Publishes the <a href="./feed:{html.escape(source)}">'
+                f"{html.escape(source)}</a> feed",
+                f"into {target}")
+        return _band("Not tied to a feed", f"into {target}")
+
+    if kind == "upload" and name in uploads:
+        reads = str(uploads[name].get("archive") or "").strip()
+        where = "the archive"
+        if reads:
+            where = (f'the <a href="./archives">{html.escape(reads)}</a>'
+                     " archive")
+        return _band(f"Sends readings from {where}",
+                     "it does not wait for a feed")
+    return ""
+
+
+def _band(said: str, aside: str) -> str:
+    extra = f'<span class="note aside">{aside}</span>' if aside else ""
+    return f'''
+<section class="flow context">
+  <div class="made"><span class="note">{said}</span>{extra}</div>
+</section>'''

@@ -71,6 +71,58 @@ PENDING_LIMIT = 5
 STRANGER_WINDOW = 3600.0
 
 
+#: How many hours of history the little charts show. A day: long enough
+#: that a gap overnight is visible, short enough that each bar is an hour and
+#: needs no axis.
+HOURS = 24
+
+
+def sparkline(counts: list[int], label: str) -> str:
+    """A day of hourly counts, as bars. Inline SVG, no script.
+
+    A number is a moment and this page is about whether something is still
+    working -- and "it stopped at four this morning" is a different fact
+    from "it is not working now", which a single figure cannot tell you.
+
+    Drawn rather than charted: no axis, no grid, no legend. It is a shape,
+    and the shape is the answer.
+    """
+    if not counts or not any(counts):
+        return ""
+    top = max(counts)
+    wide, high, gap = 3.0, 22.0, 1.0
+    bars = []
+    for n, count in enumerate(counts):
+        # A zero hour draws nothing, which is the point: a gap is a gap.
+        if not count:
+            continue
+        length = max(1.5, high * count / top)
+        bars.append(f'<rect x="{n * (wide + gap):.1f}" '
+                    f'y="{high - length:.1f}" width="{wide:.1f}" '
+                    f'height="{length:.1f}" rx="1"/>')
+    width = len(counts) * (wide + gap)
+    return (f'<svg class="spark" viewBox="0 0 {width:.0f} {high:.0f}" '
+            f'width="{width:.0f}" height="{high:.0f}" role="img" '
+            f'aria-label="{html.escape(label)}">{"".join(bars)}</svg>')
+
+
+def _hourly(conn: Any, table: str, column: str = "dateTime") -> list[int]:
+    """How many rows fell in each of the last 24 hours, oldest first."""
+    now = int(time.time())
+    start = now - HOURS * 3600
+    counts = [0] * HOURS
+    try:
+        rows = conn.execute(
+            f"SELECT ({column} - ?) / 3600, count(*) FROM {table}"
+            f" WHERE {column} > ? GROUP BY 1", (start, start))
+    except sqlite3.Error:
+        return []
+    for bucket, count in rows:
+        if 0 <= int(bucket) < HOURS:
+            counts[int(bucket)] = count
+    return counts
+
+
 def ago(when: float | None) -> str:
     """How long ago, in words. The only time format on this page."""
     if not when:
@@ -97,6 +149,9 @@ class Link:
     #: "nothing has happened yet", which is a fact about the station.
     unreachable: str = ""
     href: str = ""
+    #: Hourly counts for the last day, oldest first. Empty where there is
+    #: nothing countable -- an export has no rows, only a last time.
+    history: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -172,6 +227,7 @@ def _live_state(admin: Any, state: State) -> None:
             "SELECT source, max(dateTime) FROM packet"
             " WHERE dateTime > ? GROUP BY source ORDER BY source",
             (time.time() - STRANGER_WINDOW,))]
+        history = _hourly(conn, "packet")
     except sqlite3.Error as exc:
         state.live = Link("Live table", unreachable=str(exc), href="./core")
         return
@@ -180,10 +236,12 @@ def _live_state(admin: Any, state: State) -> None:
 
     state.newest_packet = newest
     size = path.stat().st_size / 1e6
+    # Middle dots and short words: three columns in a card this wide have
+    # room for a phrase, not a sentence.
     state.live = Link("Live table",
-                      f"{count:,} packets, {size:.1f} MB, "
-                      f"{state.pending} interval(s) waiting",
-                      when=newest, href="./stations")
+                      f"{count:,} packets · {size:.1f} MB "
+                      f"· {state.pending} waiting",
+                      when=newest, href="./stations", history=history)
 
     announced = station_defs.load(_base(admin) / station_defs.FILENAME)
     known = {one.name for one in announced}
@@ -230,6 +288,7 @@ def _archive_state(admin: Any, state: State) -> None:
             conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
             count, newest = conn.execute(
                 "SELECT count(*), max(dateTime) FROM archive").fetchone()
+            history = _hourly(conn, "archive")
             conn.close()
         except sqlite3.Error as exc:
             state.archives.append(Link(one.title, unreachable=str(exc),
@@ -237,8 +296,8 @@ def _archive_state(admin: Any, state: State) -> None:
             continue
         size = path.stat().st_size / 1e6
         state.archives.append(Link(
-            one.title, f"{count:,} records, {size:.1f} MB", when=newest,
-            href="./archives"))
+            one.title, f"{count:,} records · {size:.1f} MB",
+            when=newest, href="./archives", history=history))
         if newest and (state.newest_record is None
                        or newest > state.newest_record):
             state.newest_record = newest
@@ -539,9 +598,19 @@ def nav(admin: Any, active: str) -> list[str]:
     return [f'<a class="home" href="./overview"{current}>Overview{mark}</a>']
 
 
+def _short(text: str, keep: int = 34) -> str:
+    """From the end, which is the half of a path that identifies it."""
+    return text if len(text) <= keep else "…" + text[-(keep - 1):]
+
+
 def _row(one: Link) -> str:
     if one.unreachable:
-        when = f'<span class="note">{html.escape(one.unreachable)}</span>'
+        # "nothing written to <a hundred characters of path>" is a sentence
+        # for a title attribute, not for a card three columns wide. Left
+        # whole it widened the table past its grid track and put a
+        # horizontal scrollbar under the entire page.
+        when = (f'<span class="note" title="{html.escape(one.unreachable)}">'
+                f"{html.escape(_short(one.unreachable))}</span>")
     else:
         when = html.escape(ago(one.when))
     detail = f'<span class="note">{html.escape(one.detail)}</span>' \
@@ -549,8 +618,15 @@ def _row(one: Link) -> str:
     name = html.escape(one.name)
     if one.href:
         name = f'<a href="{html.escape(one.href)}">{name}</a>'
+    shape = sparkline(one.history, f"{one.name}, hourly, last {HOURS} hours")
+    if shape:
+        # Across the row rather than in a column. It is the shape of the
+        # whole thing, and squeezed into a third of the width it would be a
+        # smudge.
+        shape = f'''
+    <tr class="sparkrow"><td colspan="3">{shape}</td></tr>'''
     return f'''
-    <tr><td>{name}</td><td>{detail}</td><td class="when">{when}</td></tr>'''
+    <tr><td>{name}</td><td>{detail}</td><td class="when">{when}</td></tr>{shape}'''
 
 
 def _card(title: str, links: list[Link], empty: str, more: str = "") -> str:

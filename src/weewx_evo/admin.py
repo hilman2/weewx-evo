@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import adminarchives, adminhome, adminplots, adminpublish, adminstations
+from . import adminarchives, adminhome, adminplots, adminpublish, adminsearch, adminstations
 from . import archives as archive_defs
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
@@ -140,7 +140,7 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 #: Pages that are neither a schema nor a form to create one. They render
 #: themselves, the way the chart pages do.
 OWN_PAGES = ("overview", "stations", "archives", "publishing",
-             "charts")
+             "charts", "search")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -1140,6 +1140,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         else:
             body = [adminplots.edit(admin, active.split(":", 1)[1],
                                     admin.columns(), errors, form)]
+    elif active == "search":
+        body = [adminsearch.results(admin, (form or {}).get("q", ""))]
     elif standing:
         pages = {"overview": adminhome, "archives": adminarchives,
                  "stations": adminstations, "publishing": adminpublish,
@@ -1174,7 +1176,11 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         jump = "".join(
             f'<a href="#{html.escape(anchor(g.label))}">'
             f"{html.escape(g.label)}</a>" for g in schema.groups)
-        body = [f'<nav class="jump" aria-label="Sections">{jump}</nav>']
+        # Where this thing sits in the chain, first. A page of FTP settings
+        # with no hint of which feed it sends is one nobody can check
+        # without opening a second tab.
+        body = [adminpublish.context(admin, active),
+                f'<nav class="jump" aria-label="Sections">{jump}</nav>']
         body += [group_html(g, values, errors, moved, moved_names)
                  for g in schema.groups]
 
@@ -1318,7 +1324,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "new-station": "Add a station", "stations": "Stations",
                     "new-archive": "Add an archive", "overview": "Overview",
                     "archives": "Archives", "publishing": "Publishing",
-                    "charts": "Charts"}
+                    "charts": "Charts",
+                    "search": "Find a setting"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
     # The pages that render themselves write their own <h2>, and it carries
@@ -1328,6 +1335,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     return _PAGE.format(
         title=html.escape(heading),
         heading="" if standing else f"<h2>{html.escape(heading)}</h2>",
+        find=adminsearch.box(),
         body_form_open="" if own_form else f'<form method="post" action="./{html.escape(active)}">',
         body_form_close="" if own_form else "</form>",
         # After the save form closes, never inside it. `extra` is Try it and
@@ -1467,6 +1475,13 @@ _PAGE = """<!doctype html>
   .navgroup > summary::-webkit-details-marker {{ display: none; }}
   .navgroup > summary:hover {{ background: color-mix(in srgb, var(--ink) 6%, transparent);
       color: var(--ink); }}
+  form.find {{ margin: 0 0 1.25rem; }}
+  form.find input {{ width: 100%; padding: .4rem .6rem; font-size: .8125rem;
+      border: 1px solid var(--line); border-radius: .35rem;
+      background: var(--bg); color: var(--ink); }}
+  form.find input:focus {{ outline: 2px solid var(--accent);
+      outline-offset: -1px; }}
+
   nav a .count {{ float: right; font-variant-numeric: tabular-nums;
                   font-size: .75rem; color: var(--dim); font-weight: 400;
                   margin-left: .5rem; }}
@@ -1525,7 +1540,7 @@ _PAGE = """<!doctype html>
      with what somebody has configured, and a fixed column count would be one
      more thing to keep in step with it. */
   .cards {{ display: grid; gap: 1rem; margin-top: 1.25rem;
-            grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }}
+            grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); }}
   .card {{ border: 1px solid var(--line); border-radius: .5rem;
            padding: .85rem 1rem 1rem; background: var(--panel); }}
   .card h3 {{ margin: 0 0 .5rem; font-size: .8125rem; font-weight: 600;
@@ -1533,17 +1548,32 @@ _PAGE = """<!doctype html>
               color: var(--dim); }}
   .card .navempty {{ margin: 0; }}
   .cardlink {{ margin: .6rem 0 0; font-size: .8125rem; }}
-  table.chain {{ width: 100%; border-collapse: collapse; }}
+  /* `table-layout: fixed` and a min-width of zero on the card: without
+     both, one long path in one cell widened the table past the grid track
+     and put a horizontal scrollbar under the whole page. */
+  .card {{ min-width: 0; }}
+  table.chain {{ width: 100%; border-collapse: collapse;
+                 table-layout: fixed; }}
   table.chain td {{ padding: .3rem 0; vertical-align: baseline;
-                    border-top: 1px solid var(--line); font-size: .875rem; }}
+                    border-top: 1px solid var(--line); font-size: .875rem;
+                    overflow-wrap: anywhere; }}
   table.chain tr:first-child td {{ border-top: 0; }}
-  table.chain td:first-child {{ font-weight: 600; padding-right: .5rem; }}
+  table.chain td:first-child {{ font-weight: 600; padding-right: .5rem;
+                                width: 36%; overflow-wrap: normal;
+                                text-overflow: ellipsis; overflow: hidden;
+                                white-space: nowrap; }}
   /* The age is what the eye goes to, so it is aligned and monospaced: a
      column of "12 s ago" and "4 h ago" compares at a glance, the same
      strings ragged do not. */
   table.chain td.when {{ text-align: right; white-space: nowrap;
                          font-variant-numeric: tabular-nums;
                          color: var(--dim); font-size: .8125rem; }}
+  /* The last day, as a shape. Faint, because it is context and not the
+     number -- a glance should land on the age first. */
+  tr.sparkrow td {{ border-top: 0; padding: 0 0 .35rem; }}
+  svg.spark {{ display: block; width: 100%; height: 22px;
+               fill: color-mix(in srgb, var(--accent) 55%, transparent); }}
+
   .banner.warn ul {{ margin: .4rem 0 0; padding-left: 1.1rem;
                      font-size: .875rem; }}
   .banner.warn li {{ margin: .25rem 0; }}
@@ -1614,6 +1644,12 @@ _PAGE = """<!doctype html>
       white-space: nowrap; font-variant-numeric: tabular-nums;
       padding-left: 1rem; }}
   .made .aside, .sends .aside {{ white-space: normal; }}
+  /* The context band: above the form, and marked as belonging to the page
+     rather than to the settings under it. */
+  .flow.context {{ margin-bottom: 1.25rem;
+      background: color-mix(in srgb, var(--accent) 7%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 25%, transparent); }}
+  .flow.context .made {{ padding: .55rem .9rem; }}
   .made .note, .sends .note {{ min-width: 0; overflow-wrap: anywhere; }}
   .sends {{ list-style: none; margin: 0; padding: 0;
             border-top: 1px solid var(--line); }}
@@ -1685,6 +1721,7 @@ _PAGE = """<!doctype html>
 <div class="shell">
   <nav>
     <h1>weewx-evo<small>settings</small></h1>
+    {find}
     {nav}
   </nav>
   <main>
@@ -1860,6 +1897,10 @@ class _Handler(BaseHTTPRequestHandler):
         # console, so the values to type in are one link away rather than
         # gone once the page was left.
         form = {"learn": said["learn"][0]} if said.get("learn") else None
+        # The search reads its query from the URL, because a search result
+        # you can link to and reload is worth more than a tidy POST.
+        if said.get("q"):
+            form = {"q": said["q"][0]}
         self._reply(200, page(self.admin, self._which(parsed.path),
                               message=message, form=form))
 
