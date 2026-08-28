@@ -115,6 +115,18 @@ class Station:
     #: Which channel an extra station takes. Assigned when the role is set,
     #: because the lowest free one is not a decision anybody wants to make.
     channel: int = 0
+    #: How far out this console's clock may be before the arrival time is
+    #: used instead. None means the figure from the settings, which is what
+    #: nearly every console wants.
+    #:
+    #: Here rather than on the protocol, where both of these were: a stamp is
+    #: too old because a *clock* is wrong, and a clock belongs to a box. Two
+    #: Ecowitt consoles, one a GW2000 keeping NTP and one an older display
+    #: that drifts a quarter of an hour a week, are one protocol and two
+    #: different answers -- and set on the protocol, the tolerant figure the
+    #: old one needs would have been extended to the new one as well.
+    max_behind: float | None = None
+    max_ahead: float | None = None
 
     def matches(self, driver: str, identity: str) -> bool:
         """Whether an upload belongs to this station.
@@ -335,6 +347,29 @@ def load(path: str | Path) -> Register:
     return made
 
 
+def _seconds(value: Any) -> float | None:
+    """A clock tolerance, or None for "whatever the settings say".
+
+    Written as `"20m"` by hand as often as `1200`, because the setting it
+    overrides is a duration and the file is meant to be editable.
+    """
+    if value is None or value == "":
+        return None
+    # A number is already seconds. `parse_duration` takes text -- it is for
+    # what a person types -- and handing it 1200 raised, so a figure this
+    # file had written itself would not read back.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    try:
+        from .options import parse_duration
+
+        return float(parse_duration(str(value)))
+    except Exception:
+        log.warning("could not read %r as a length of time; using the "
+                    "configured one", value)
+        return None
+
+
 def from_dict(raw: dict[str, Any], path: Path | None = None) -> Register:
     made: list[Station] = []
     for name, entry in (raw.get("stations") or {}).items():
@@ -363,6 +398,8 @@ def from_dict(raw: dict[str, Any], path: Path | None = None) -> Register:
             model=str(entry.get("model") or ""),
             field_map={str(k): str(v) for k, v
                        in (entry.get("field_map") or {}).items()},
+            max_behind=_seconds(entry.get("max_behind")),
+            max_ahead=_seconds(entry.get("max_ahead")),
         ))
     return Register(stations=made, path=path)
 
@@ -423,6 +460,13 @@ def render(register: Register, note: str = "") -> str:
             out.append("indoor = false")
         if one.model:
             out.append(f'model = "{_escape(one.model)}"')
+        # Only when this console differs from the configured figure. Writing
+        # the default out would freeze it: a later change to the setting
+        # would then reach every console except the ones already listed.
+        if one.max_behind is not None:
+            out.append(f"max_behind = {one.max_behind:g}")
+        if one.max_ahead is not None:
+            out.append(f"max_ahead = {one.max_ahead:g}")
         if one.note:
             out.append(f'note = "{_escape(one.note)}"')
         if one.field_map:

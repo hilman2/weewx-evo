@@ -1811,6 +1811,16 @@ _PAGE = """<!doctype html>
   table.stations td form.props label.tick {{ margin-right: 0; display: inline-flex;
       align-items: center; gap: .35rem; }}
   table.stations td form.props button {{ margin-left: auto; }}
+  /* The clock, folded away. It takes the whole width below the row so the
+     bar above it stays one line. */
+  table.stations td form.props > details.clock {{ flex: 1 0 100%;
+      margin-top: .2rem; }}
+  details.clock > summary {{ font-size: .75rem; color: var(--dim);
+      cursor: pointer; }}
+  details.clock > summary:hover {{ color: var(--ink); }}
+  details.clock .hint {{ margin: .35rem 0; }}
+  details.clock label {{ font-size: .75rem; color: var(--dim);
+      margin-right: .9rem; }}
   /* Two settings, not one sentence: "indoor Its readings are" read as
      one line of prose with a dropdown in the middle of it. */
   table.stations td form.props > label.tick + label.tick {{

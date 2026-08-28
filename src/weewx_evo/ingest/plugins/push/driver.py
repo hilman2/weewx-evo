@@ -86,7 +86,12 @@ class PushDriver:
     `absbaro`, and Weather Underground carries both on one endpoint.
     """
 
-    def __init__(self, protocol: Any,
+    #: Set on each subclass by `driver_class`. Here so that `__init__` can
+    #: take the protocol from the class rather than as an argument, which is
+    #: what lets the subclass keep this constructor -- see the note there.
+    protocol_class: Any = None
+
+    def __init__(self, protocol: Any = None,
                  field_map_extensions: dict[str, str] | None = None,
                  infer_unknown: str = mapping.SERIES,
                  max_behind: int | None = None, max_ahead: int | None = None,
@@ -97,20 +102,35 @@ class PushDriver:
         # column `tf_ch1` and `soil_ec_temp1` go to. Renaming the option would
         # mean two sensors quietly landing in one column, which is the one
         # failure the whole contested-field mechanism exists to prevent.
+        protocol = protocol or type(self).protocol_class
         self.protocol = protocol
         self.name = protocol.name
         #: One mapper per dialect seen, built on first use.
         self._mappers: dict[str, mapping.Mapper] = {}
         self.field_map = dict(field_map_extensions or {})
         self.infer_unknown = infer_unknown
-        self.max_behind = (transport.MAX_BEHIND if max_behind is None
-                           else max_behind)
-        self.max_ahead = (transport.MAX_AHEAD if max_ahead is None
-                          else max_ahead)
-        #: Per-station field maps, by station name. The core hands these over
-        #: from stations.toml; two consoles both number their channels from
-        #: one, so each needs its own.
-        self.stations = dict(stations or {})
+        # Read here rather than relying on a schema to have done it. These
+        # arrive from three places now -- the core settings, a station, and
+        # `drivers.<name>.max_behind` left in a file from when this was a
+        # per-protocol option -- and only the first two are parsed on the way.
+        # Handed the string "4h", `int()` raises during startup, the
+        # exception is swallowed, and the driver runs on its default: nothing
+        # in any log reads as a wrong setting and the figure silently does
+        # nothing.
+        self.max_behind = _duration(max_behind, transport.MAX_BEHIND)
+        self.max_ahead = _duration(max_ahead, transport.MAX_AHEAD)
+        #: What each console says about itself, keyed by the identity it
+        #: uploads with. The core hands these over from stations.toml.
+        #:
+        #: Keyed by identity, not by name, and that is the whole of a bug
+        #: this had: the lookup below is made with what the protocol read off
+        #: the upload -- a PASSKEY -- while the dictionary arrived keyed by
+        #: the name somebody typed. It therefore never matched, and every
+        #: placement the settings page wrote went nowhere. The installation
+        #: kept working because the same decisions were also sitting in the
+        #: driver's own `field_map_extensions`, where they had been put by
+        #: hand before the page existed.
+        self.stations = _by_identity(stations)
         #: What could not be placed, for the settings page to show.
         self.unplaced: dict[str, Any] = {}
         #: What the device wants to read back. An attribute, because that is
@@ -220,67 +240,97 @@ class PushDriver:
         key = f"{dialect.name}\x00{station}"
         mapper = self._mappers.get(key)
         if mapper is None:
+            mine = self.stations.get((station or "").casefold()) or {}
             # The station's own map wins over the driver-wide one: two
             # consoles both number their channels from one, and the whole
             # point of a per-station map is that channel 1 is not the same
             # sensor on both.
             extensions = dict(self.field_map)
-            extensions.update(self.stations.get(station, {}))
-            mapper = mapping.Mapper(dialect, extensions=extensions,
-                                    infer_unknown=self.infer_unknown,
-                                    max_behind=self.max_behind,
-                                    max_ahead=self.max_ahead)
+            extensions.update(mine.get("field_map_extensions") or {})
+            # And its own clock, where it has been given one. A stamp is too
+            # old because a *clock* is wrong, and a clock belongs to a box:
+            # an old display that drifts and a GW2000 keeping NTP are one
+            # protocol and two different answers.
+            mapper = mapping.Mapper(
+                dialect, extensions=extensions,
+                infer_unknown=self.infer_unknown,
+                max_behind=_clock(mine, "max_behind", self.max_behind),
+                max_ahead=_clock(mine, "max_ahead", self.max_ahead))
             self._mappers[key] = mapper
         return mapper
 
 
-def _options(protocol: Any) -> list:
-    """What is worth asking about one protocol.
+def _duration(value: Any, fallback: float) -> float:
+    """Seconds from a number or from what somebody typed ("4h", "5m")."""
+    if value is None or value == "":
+        return fallback
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    try:
+        from ....options import parse_duration
 
-    Almost nothing about the hardware. What a console is, where it writes and
-    which of its channels is which sensor belong to the station -- that was
-    moved off the drivers deliberately, and it does not come back now there
-    are six of them.
+        return float(parse_duration(str(value)))
+    except Exception:
+        log.warning("could not read %r as a length of time; using %s seconds",
+                    value, fallback)
+        return float(fallback)
 
-    What is left is how to read an upload: what to do with a name the catalog
-    does not have, and how far a console's clock may be out. Both are about
-    the protocol rather than about the console.
+
+def _by_identity(stations: dict[str, dict] | None) -> dict[str, dict]:
+    """The stations keyed by what a console actually sends.
+
+    They arrive keyed by the name somebody typed, because that is what the
+    settings page and `sources.toml` use. What reaches the lookup is a
+    PASSKEY or a station ID, read off the upload -- so the key has to be the
+    identity, and folded, since consoles upper-case what is typed into them.
     """
-    from ....options import Group, Option
+    found: dict[str, dict] = {}
+    for name, entry in (stations or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        identity = str(entry.get("passkey") or entry.get("identity") or "")
+        if identity:
+            found[identity.casefold()] = entry
+        # Under its name as well: a protocol that names its station some
+        # other way still finds itself, and it costs one dictionary entry.
+        found.setdefault(str(name).casefold(), entry)
+    return found
 
-    where = f"drivers.{protocol.name}"
-    return [
-        Group("Unknown fields",
-              "Hardware ships sensors faster than any catalog is updated.", (
-            Option("infer_unknown", "Fields the catalog does not know",
-                   kind="choice", default=mapping.SERIES,
-                   choices=(("off", "Drop them"),
-                            ("series", "Take them when they continue a "
-                                       "known series, report the rest"),
-                            ("all", "Take whatever can be named")),
-                   help="'series' is the sensible default: a channel the "
-                        "hardware gains needs no release, and anything "
-                        "merely recognisable by its name is reported rather "
-                        "than guessed at. A reading put in the wrong column "
-                        "cannot be separated out afterwards."),
-        ), prefix=where),
 
-        Group("Clock", "How far a console's clock may be out.", (
-            Option("max_behind", "Accept timestamps up to this old",
-                   kind="duration", default=transport.MAX_BEHIND, minimum=0,
-                   advanced=True,
-                   help="A console on the internet keeps its clock by NTP, "
-                        "so a stamp a few minutes old means a delayed upload "
-                        "rather than a wrong clock. Beyond this the arrival "
-                        "time is used instead."),
-            Option("max_ahead", "And this far into the future",
-                   kind="duration", default=transport.MAX_AHEAD, minimum=0,
-                   advanced=True,
-                   help="There is no such thing as a reading from the "
-                        "future, so this only covers drift between two "
-                        "clocks that are both roughly right."),
-        ), prefix=where),
-    ]
+def _clock(station: dict, name: str, fallback: float) -> float:
+    found = station.get(name)
+    return fallback if found is None else float(found)
+
+
+def _options(protocol: Any) -> list:
+    """Nothing. A protocol has nothing to configure.
+
+    It had three: what to do with a field the catalog does not name, and how
+    far a console's clock may be out in either direction. Six protocols
+    arrived at once, so that was six settings pages carrying the same three
+    fields, and every one of them described something that is not a property
+    of a protocol:
+
+        infer_unknown   a policy of the installation. Somebody careful about
+                        a guessed field name is careful about all six of
+                        them, so it is asked once, in the core.
+        max_behind      a property of a console. A stamp is too old because
+        max_ahead       a clock is wrong, and a clock is in a box: an old
+                        display that drifts and a GW2000 keeping NTP are one
+                        protocol and two answers. Set per protocol, the
+                        tolerant figure the old one needs would be handed to
+                        the new one as well. They are on the station now,
+                        defaulting to the core's.
+
+    What is genuinely per-protocol -- the endpoint, the answer the hardware
+    waits for, the catalog, which dialects exist -- is in `protocols/` and
+    `catalogs/`, and none of it is anybody's to change.
+
+    So the six drivers have no page, and the sidebar has no six entries. A
+    driver from outside the repository is unaffected: it declares whatever it
+    likes and gets its own page, which is the point of the mechanism.
+    """
+    return []
 
 
 def driver_class(protocol: Any) -> type:
@@ -298,14 +348,20 @@ def driver_class(protocol: Any) -> type:
     def options() -> list:
         return _options(protocol)
 
+    # No `__init__` of its own, and that is not tidiness. The core decides
+    # what to hand a driver by reading its constructor -- `_accepts` in
+    # cli.py, the same way `state` is offered only to a driver that asks for
+    # one. A subclass whose `__init__` was `lambda self, **kw` has a
+    # signature with no parameters in it at all, so it was offered nothing:
+    # not `stations`, not the clock, not the placements the settings page
+    # writes. Uploads kept working on the driver-wide field map alone, which
+    # is why it went unnoticed. The protocol comes off the class instead.
     return type(
         f"{protocol.name.title()}Driver", (PushDriver,),
         {
             "__doc__": f"{protocol.label}: {protocol.hardware}",
             "protocol_class": protocol,
             "options": staticmethod(options),
-            "__init__": lambda self, **kw: PushDriver.__init__(
-                self, protocol, **kw),
         },
     )
 

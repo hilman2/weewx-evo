@@ -243,6 +243,27 @@ def learn(admin: Any, name: str) -> tuple:
     return filled, ""
 
 
+def _clock_field(form: dict, name: str, current: float | None) -> float | None:
+    """One clock tolerance off the form, or None to follow the settings.
+
+    Empty means "whatever the settings say", which is what nearly every
+    console wants and what keeps a later change to that figure reaching all
+    of them. A field absent from the form is left alone rather than cleared:
+    a partial POST must not silently drop what somebody set last week.
+    """
+    if name not in form:
+        return current
+    typed = str(form.get(name) or "").strip()
+    if not typed:
+        return None
+    from .options import Invalid, parse_duration
+
+    try:
+        return float(parse_duration(typed, name))
+    except (Invalid, ValueError) as exc:
+        raise ValueError(f"{typed!r} is not a length of time: {exc}") from exc
+
+
 def configure(admin: Any, name: str, form: dict) -> str:
     """Change what is true of one console. Returns an error, or empty.
 
@@ -278,9 +299,16 @@ def configure(admin: Any, name: str, form: dict) -> str:
     if wanted == role_defs.MAIN:
         channel = 0
 
+    try:
+        behind = _clock_field(form, "max_behind", station.max_behind)
+        ahead = _clock_field(form, "max_ahead", station.max_ahead)
+    except ValueError as exc:
+        return str(exc)
+
     changed = _replace(station,
                        indoor=bool(form.get("indoor")),
                        role=wanted, channel=channel,
+                       max_behind=behind, max_ahead=ahead,
                        archive=str(form.get("archive") or station.archive))
     if changed == station:
         return ""
@@ -857,11 +885,11 @@ def _what_it_sends_html(admin: Any, station: Any) -> str:
 
 
 def _properties(admin: Any, station: Any) -> str:
-    """The two settings of a station, where what they change is visible.
+    """What is true of this console, where what it changes is visible.
 
     They used to sit in the overview row, which put four controls beside
     every station on a page whose job is to say whether the readings are
-    arriving. Changing either is rare; reading the row is not.
+    arriving. Changing any of them is rare; reading the row is not.
 
     Its own form rather than one save for the whole fold: the placements
     write `field_map` and take effect on the next upload, and the role
@@ -881,4 +909,35 @@ def _properties(admin: Any, station: Any) -> str:
         {_role_choice(station)}
       </label>
       <button type="submit" class="quiet">Save</button>
+      {_clock_fields(station)}
     </form>'''
+
+
+def _clock_fields(station: Any) -> str:
+    """This console's clock, folded away because almost none needs it.
+
+    It was a per-protocol setting, which put one figure on every console
+    speaking that protocol: an old display drifting a quarter of an hour a
+    week and a GW2000 keeping NTP got the same tolerance, and the generous
+    one the old display needs is generous for the new one too.
+
+    Empty means the configured figure, and it stays empty on purpose --
+    writing the default onto each station would freeze it, so a later change
+    to the setting would reach every console except the ones already listed.
+    """
+    behind = "" if station.max_behind is None else f"{station.max_behind:g}"
+    ahead = "" if station.max_ahead is None else f"{station.max_ahead:g}"
+    opened = " open" if (behind or ahead) else ""
+    return f'''
+      <details class="clock"{opened}>
+        <summary>Its clock</summary>
+        <p class="hint">How far out a timestamp from this console may be
+           before its arrival time is used instead. Empty follows the
+           setting, which is what a console keeping NTP wants.</p>
+        <label>behind
+          <input type="text" name="max_behind" value="{html.escape(behind)}"
+                 placeholder="as configured" size="10"></label>
+        <label>ahead
+          <input type="text" name="max_ahead" value="{html.escape(ahead)}"
+                 placeholder="as configured" size="10"></label>
+      </details>'''

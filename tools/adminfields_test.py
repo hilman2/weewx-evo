@@ -285,6 +285,80 @@ def placing_and_making_the_column() -> None:
         check("a second time says so", "already has" in again2, True)
 
 
+def a_placement_reaches_the_driver() -> None:
+    """The half nothing checked, and it was not working.
+
+    Every test here stopped at `stations.toml`: the page wrote the file, the
+    file read back, and each of them passed. What none of them asked was
+    whether the driver ever sees it -- and it did not. The core hands the
+    stations over keyed by the name somebody typed, the lookup is made with
+    what the protocol read off the upload, and a PASSKEY is not a name. The
+    dictionary never matched.
+
+    It was invisible because the same two decisions were also sitting in the
+    driver's own `field_map_extensions`, put there by hand before the page
+    existed. So the readings landed in the right columns and the page said
+    "saved", and both were true, and the page had done nothing.
+    """
+    print("\na placement made on the page reaches the driver")
+    from weewx_evo.ingest.plugins.push import driver as push
+    from weewx_evo.ingest.plugins.push import protocols as protocol_defs
+
+    protocol = next(p for p in protocol_defs.registry()
+                    if p.name == "ecowitt")
+    upload = {"PASSKEY": "AAAA", "tf_ch1": "59.9", "tempf": "68.2"}
+    dialect = protocol.dialect(upload)
+    readings = protocol.readings(push._Request(body=b""), upload)
+
+    # Contested on purpose: two drivers disagree about where `tf_ch1` goes,
+    # so nothing is written until somebody decides. That makes it the field
+    # that shows whether the decision arrived.
+    bare = push.driver_class(protocol)()
+    packet, _ = bare._mapper_for(dialect, "AAAA").to_packet(readings)
+    check("without a decision it is not written",
+          "extraTemp9" in packet, False)
+
+    # Keyed by name, exactly as `cli.station_field_maps` hands it over.
+    told = push.driver_class(protocol)(stations={"kirchdorf": {
+        "passkey": "AAAA",
+        "field_map_extensions": {"tf_ch1": "extraTemp9"}}})
+    packet, _ = told._mapper_for(dialect, "AAAA").to_packet(readings)
+    check("with one it goes where the page said", packet.get("extraTemp9"),
+          59.9)
+    # Consoles upper-case what is typed into them.
+    packet, _ = told._mapper_for(dialect, "aaaa").to_packet(readings)
+    check("whatever case the console shouts it in",
+          packet.get("extraTemp9"), 59.9)
+
+    # And the clock, which is a property of the box rather than of the six
+    # protocols it might be speaking.
+    clocks = push.driver_class(protocol)(max_behind=3600, stations={
+        "drifty": {"passkey": "BBBB", "max_behind": 1800.0}})
+    check("a console can be given its own tolerance",
+          clocks._mapper_for(dialect, "BBBB").max_behind, 1800.0)
+    check("and the rest keep the configured one",
+          clocks._mapper_for(dialect, "CCCC").max_behind, 3600)
+
+
+def a_protocol_has_nothing_to_configure() -> None:
+    """Six protocols arrived at once; six settings pages did not follow.
+
+    Each carried the same three fields, and all three describe either a
+    policy of the installation or a property of a console.
+    """
+    print("\nthe six protocols have no settings page")
+    from weewx_evo.cli import all_schemas
+
+    kinds = [s.name for s in all_schemas(None) if s.kind == "driver"]
+    check("none of them", kinds, [])
+
+    from weewx_evo import options as option_defs
+
+    core = [o.name for g in option_defs.core_options() for o in g.options]
+    for moved in ("infer_unknown", "max_behind", "max_ahead"):
+        check(f"{moved} is asked once, in the core", moved in core, True)
+
+
 def nowhere_is_a_decision() -> None:
     """The other half of resolving a collision."""
     print("\nplacing a reading nowhere, on purpose")
@@ -406,6 +480,8 @@ def main() -> int:
     another_station_of_the_same_archive()
     another_station_of_a_different_archive()
     placing_and_making_the_column()
+    a_placement_reaches_the_driver()
+    a_protocol_has_nothing_to_configure()
     nowhere_is_a_decision()
     the_chooser_offers_past_the_schema()
     the_rows_are_raw_names_not_mapped_ones()

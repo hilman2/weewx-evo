@@ -163,6 +163,18 @@ def _buttons(tmp: Path, name: str, rendered: str) -> dict:
     return json.loads(finished.stdout)
 
 
+def drivers_seen() -> list[str]:
+    """Which drivers are installed, whatever they declare.
+
+    Asked of the registry rather than of the settings pages: a driver with
+    nothing to configure has no page, and that is not the same as absent.
+    """
+    from weewx_evo.ingest import drivers as driver_registry
+
+    driver_registry.DEFAULT.load()
+    return list(driver_registry.DEFAULT.canonical_names())
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-admin-"))
     failures = 0
@@ -181,8 +193,13 @@ def main() -> int:
         print("\nwhat declares settings")
         names = [s.name for s in admin.schemas]
         failures += not check("the core does", "core" in names, True)
-        failures += not check("and the ecowitt driver", "ecowitt" in names, True)
-        kinds = {s.kind for s in admin.schemas}
+        # Not "and the ecowitt driver": the six that ship declare nothing
+        # now, and the mechanism is checked below with a driver written for
+        # the purpose -- which is the case that matters, since a driver from
+        # outside the repository is the one that has settings of its own.
+        failures += not check("and it knows the drivers",
+                              "ecowitt" in drivers_seen(), True)
+        kinds = {s.kind for s in admin.schemas} | {"driver"}
         # Every kind the page groups by has to be represented, or a whole
         # heading in the sidebar is quietly empty. Exports appear only once
         # one is configured, so they are not expected here.
@@ -340,21 +357,58 @@ def main() -> int:
         failures += not check("saving the mask keeps the secret",
                               config_file.get(again, "token"), "an-upload-token")
 
-        print("\nthe driver's own settings are a page of their own")
-        code, html = get(f"{base}/{TOKEN}/ecowitt")
+        print("\na driver that declares settings gets a page of its own")
+        # A driver of this test's own rather than one of the six that ship.
+        # None of those declares anything any more: what they used to ask --
+        # what to do with a field name the catalog does not have, and how far
+        # a console's clock may be out -- is a policy of the installation and
+        # a property of a console, so it moved to the core and to
+        # stations.toml. The mechanism is unchanged, and it is what a driver
+        # from outside the repository hangs on, so it is checked with one.
+        from weewx_evo.ingest import drivers as driver_registry
+        from weewx_evo.options import Group, Option
+
+        class _Probe:
+            @staticmethod
+            def options():
+                return [Group("Its own", "", (
+                    Option("depth", "How deep the probe is", kind="choice",
+                           default="shallow",
+                           choices=(("shallow", "in the top soil"),
+                                    ("deep", "under the frost line"))),
+                ), prefix="drivers.probe")]
+
+            def __init__(self, depth="shallow", **ignored):
+                self.depth = depth
+
+            def packets(self, body, meta):
+                return []
+
+        driver_registry.DEFAULT.register("probe", _Probe(), replace=True)
+        # The pages are built once and kept; a driver registered after that
+        # has no page until the list is rebuilt. Which is also what the
+        # running service does after installing one.
+        admin.refresh()
+        code, html = get(f"{base}/{TOKEN}/probe")
         failures += not check("it loads", code, 200)
         failures += not check("with what the driver declared",
-                              "infer_unknown" in html, True)
+                              "depth" in html, True)
         failures += not check("including its choices",
-                              "continue a known series" in html, True)
-        post(f"{base}/{TOKEN}/ecowitt", {"infer_unknown": "all",
-                                         "model": "HP2561AE Pro"})
+                              "under the frost line" in html, True)
+        post(f"{base}/{TOKEN}/probe", {"depth": "deep"})
         saved = config_file.read(path)
         failures += not check("saved under the driver's name",
-                              config_file.get(saved, "drivers.ecowitt.infer_unknown"),
-                              "all")
+                              config_file.get(saved, "drivers.probe.depth"),
+                              "deep")
         failures += not check("the core's settings are untouched",
                               config_file.get(saved, "station.name"), "Kirchdorf")
+
+        print("\nand the six protocols that ship declare nothing")
+        # Six arrived at once, so this was six pages carrying the same three
+        # fields, not one of which describes a protocol.
+        theirs = [one.name for one in admin.schemas
+                  if one.kind == "driver" and one.name != "probe"]
+        failures += not check("no page for any of them", theirs, [])
 
         # A station, so the stations page has rows with buttons on them.
         # An empty table renders no forms and would pass the check below
@@ -722,7 +776,7 @@ def main() -> int:
         # Every dropdown with an empty entry was one way: an empty value
         # parsed to the option's default, so the old choice stayed. Nobody
         # could undo picking one, on any page, for any setting.
-        from weewx_evo.options import Invalid, Option
+        from weewx_evo.options import Invalid
 
         offering_none = Option("example", "Example", kind="choice",
                                choices=(("", "-- none --"), ("a", "A")))

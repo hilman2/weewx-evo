@@ -250,8 +250,35 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
         # map belongs to the console; it is handed to the driver because only
         # the driver knows what `tf_ch1` means before it is parsed.
         maps = station_field_maps(cfg, name)
-        if maps and _accepts(drivers.DEFAULT.get(name), "stations"):
+        instance = drivers.DEFAULT.get(name)
+        if maps and _accepts(instance, "stations"):
             options.setdefault("stations", maps)
+        # How to read an upload used to be asked once per protocol, so six
+        # protocols were six forms carrying the same three fields -- and on
+        # a running installation not one of them was ever filled in. What
+        # they describe is either a policy of the whole installation or a
+        # property of one console, and neither is a property of a protocol.
+        # Offered here to any driver that takes them, the same way `state`
+        # and `stations` are.
+        for shared in ("infer_unknown", "max_behind", "max_ahead"):
+            if not _accepts(instance, shared):
+                continue
+            if shared in options:
+                # Left in the file from when this was asked per protocol. It
+                # still works -- deciding otherwise would change how uploads
+                # are read without anybody asking -- but it no longer appears
+                # on any page, and a setting that is in force and invisible
+                # is the worst of the three possible states. So it is said
+                # once, at the start, with where the setting lives now.
+                log.info("drivers.%s.%s = %r is still in %s and still "
+                         "applies. This is asked once now, under %s in the "
+                         "settings, or per console on the stations page. "
+                         "Delete the line to follow it.",
+                         name, shared, options[shared],
+                         getattr(cfg, "_path", "the configuration file"),
+                         shared)
+                continue
+            options[shared] = cfg.get(shared)
         factory_only = not options and archive is None
         if factory_only:
             continue
@@ -296,10 +323,20 @@ def station_field_maps(cfg: Settings, driver: str) -> dict:
 
     made = {}
     for one in register:
-        if one.driver != driver or not one.field_map:
+        if one.driver != driver:
             continue
-        made[one.name] = {"passkey": one.identity,
-                          "field_map_extensions": dict(one.field_map)}
+        # A console with nothing of its own said about it needs no entry.
+        # With one, the entry carries everything that is true of the box
+        # rather than of the protocol -- its field names and its clock.
+        settings = {}
+        if one.field_map:
+            settings["field_map_extensions"] = dict(one.field_map)
+        if one.max_behind is not None:
+            settings["max_behind"] = one.max_behind
+        if one.max_ahead is not None:
+            settings["max_ahead"] = one.max_ahead
+        if settings:
+            made[one.name] = {"passkey": one.identity, **settings}
     return made
 
 
