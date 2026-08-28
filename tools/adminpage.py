@@ -187,6 +187,17 @@ def main() -> int:
             code, _ = get(base + where)
             failures += not check(f"GET {where}", code, 404)
 
+        print("\nthe root is the overview, not a form")
+        code, html = get(f"{base}/{TOKEN}/")
+        failures += not check("it loads", code, 200)
+        # Arriving on a form was right when there were a dozen settings and
+        # one of everything. Somebody opening this almost never wants to
+        # change a value; they want to know whether it is working.
+        failures += not check("it is the overview",
+                              "<h2>Overview</h2>" in html, True)
+        failures += not check("and not the first form",
+                              'name="station.latitude"' in html, False)
+
         print("\nthe page renders every kind of field")
         code, html = get(f"{base}/{TOKEN}/core")
         failures += not check("it loads", code, 200)

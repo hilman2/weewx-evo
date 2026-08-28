@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import adminarchives, adminplots, adminstations
+from . import adminarchives, adminhome, adminplots, adminstations
 from . import archives as archive_defs
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
@@ -139,7 +139,7 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 
 #: Pages that are neither a schema nor a form to create one. They render
 #: themselves, the way the chart pages do.
-OWN_PAGES = ("stations", "archives")
+OWN_PAGES = ("overview", "stations", "archives")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -1075,8 +1075,10 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                                    or active.startswith("plot:"))
     standing = schema is None and active in OWN_PAGES
     if schema is None and not adding and not charting and not standing:
-        schema = admin.schemas[0]
-        active = schema.name
+        # The overview, not the first form. Somebody arriving here almost
+        # never wants to change a value; they want to know whether it is
+        # working. The forms are one click away and always were.
+        active, standing = "overview", True
 
     # After a failed save, show what was typed rather than what is stored --
     # retyping a form because one field was wrong is how people give up.
@@ -1099,6 +1101,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "service says when it matters. Both are free and need no "
                     "account.",
     }
+    nav.extend(adminhome.nav(admin, active))
     for kind, heading in (("core", "System"), ("stations", ""),
                           ("driver", "Drivers"),
                           ("feed", "Feeds"), ("charts", ""),
@@ -1153,8 +1156,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             body = [adminplots.edit(admin, active.split(":", 1)[1],
                                     admin.columns(), errors, form)]
     elif standing:
-        body = [(adminarchives if active == "archives" else adminstations)
-                .overview(admin, message, errors.get("", ""))]
+        pages = {"overview": adminhome, "archives": adminarchives,
+                 "stations": adminstations}
+        body = [pages[active].overview(admin, message, errors.get("", ""))]
     elif active == "new-archive":
         body = [adminarchives.new(admin, errors.get("", ""), form)]
     elif active == "new-station":
@@ -1322,7 +1326,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "new-upload": "Add an upload",
                     "new-forecast": "Add a forecast",
                     "new-station": "Add a station", "stations": "Stations",
-                    "new-archive": "Add an archive",
+                    "new-archive": "Add an archive", "overview": "Overview",
                     "archives": "Archives"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
@@ -1513,6 +1517,37 @@ _PAGE = """<!doctype html>
            color: #fff; background: var(--accent); border: 1px solid transparent; }}
   button:hover {{ filter: brightness(1.08); }}
   .hint {{ font-size: .8125rem; color: var(--dim); }}
+
+  /* -- the overview -------------------------------------------------- */
+
+  /* Wide enough for "12 345 packets, 45.6 MB" without wrapping, and as many
+     across as the window allows. Not a breakpoint: the number of cards grows
+     with what somebody has configured, and a fixed column count would be one
+     more thing to keep in step with it. */
+  .cards {{ display: grid; gap: 1rem; margin-top: 1.25rem;
+            grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }}
+  .card {{ border: 1px solid var(--line); border-radius: .5rem;
+           padding: .85rem 1rem 1rem; background: var(--panel); }}
+  .card h3 {{ margin: 0 0 .5rem; font-size: .8125rem; font-weight: 600;
+              text-transform: uppercase; letter-spacing: .04em;
+              color: var(--dim); }}
+  .card .navempty {{ margin: 0; }}
+  .cardlink {{ margin: .6rem 0 0; font-size: .8125rem; }}
+  table.chain {{ width: 100%; border-collapse: collapse; }}
+  table.chain td {{ padding: .3rem 0; vertical-align: baseline;
+                    border-top: 1px solid var(--line); font-size: .875rem; }}
+  table.chain tr:first-child td {{ border-top: 0; }}
+  table.chain td:first-child {{ font-weight: 600; padding-right: .5rem; }}
+  /* The age is what the eye goes to, so it is aligned and monospaced: a
+     column of "12 s ago" and "4 h ago" compares at a glance, the same
+     strings ragged do not. */
+  table.chain td.when {{ text-align: right; white-space: nowrap;
+                         font-variant-numeric: tabular-nums;
+                         color: var(--dim); font-size: .8125rem; }}
+  .banner.warn ul {{ margin: .4rem 0 0; padding-left: 1.1rem;
+                     font-size: .875rem; }}
+  .banner.warn li {{ margin: .25rem 0; }}
+  nav a.home {{ font-weight: 600; margin-bottom: .5rem; }}
 
   /* -- the stations page ------------------------------------------- */
   /* A list of consoles rather than a form, so it is a table. Laid out
@@ -1716,7 +1751,10 @@ class _Handler(BaseHTTPRequestHandler):
                 return part
             if part.startswith("plot:"):
                 return part
-        return self.admin.schemas[0].name
+        # Nothing named, so: the overview. It used to be the first schema,
+        # which put somebody who opened the bare URL into a form they had not
+        # asked for.
+        return "overview"
 
     def do_GET(self) -> None:
         if not self._permitted():
