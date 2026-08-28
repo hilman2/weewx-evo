@@ -139,3 +139,30 @@ def url_for(base: str) -> str:
     """
     base = (base or "").rstrip("/")
     return f"{base}/{SCRIPT}" if base else ""
+
+
+def rendered_units(cfg: object, export: dict) -> str:
+    """Which units the pages one export publishes are written in.
+
+    The same three steps the Cheetah feed takes, in the same order: what the
+    feed was told to show, then what the language asks for, then nothing --
+    which means the archive's own units.
+
+    Here rather than in one of the two callers, because both need it and the
+    one that did not have it is the one somebody hit. A local export set its
+    live upload up with this figure; an upload for a web host did not, so a
+    station sending Fahrenheit published Fahrenheit into pages written in
+    Celsius -- and the page cannot tell that 82.8 is not what it was about to
+    print.
+    """
+    feeds = getattr(cfg, "config", {}).get("feeds") or {}
+    feed = feeds.get(str(export.get("source") or "").strip())
+    if not isinstance(feed, dict):
+        feed = {}
+    chosen = str(feed.get("units") or "").strip()
+    if chosen:
+        return chosen
+    from ... import language
+
+    spoken = language.get(str(feed.get("lang") or cfg.get("language") or ""))
+    return str(getattr(spoken, "unit_system", "") or "")

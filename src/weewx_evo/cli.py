@@ -52,6 +52,7 @@ from .archiver import Archiver
 from .db.archive import ArchiveStore
 from .db.live import LiveStore
 from .derive import from_settings as deriver_from
+from .exports import livepush
 from .exports import record as export_record
 from .exports import runner as export_runner
 from .forecast import Place as ForecastPlace
@@ -2239,7 +2240,15 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
             # as a page that renders perfectly and never updates.
             from .uploads.webpush import WebPushUpload
 
-            where, token, directories = WebPushUpload.from_exports(cfg)
+            where, token, directories, system = WebPushUpload.from_exports(cfg)
+            if not settings.get("unit_system") and system:
+                # The units the pages are written in. Without this an upload
+                # added by hand for a web host published whatever the station
+                # sends -- Fahrenheit from an Ecowitt, into pages in Celsius,
+                # with nothing on either side able to notice. The local ones
+                # have always had it; this is the same figure, from the same
+                # function.
+                settings["unit_system"] = system
             if not settings.get("url") and where:
                 settings["url"] = where
                 settings["_inferred"] = True
@@ -2269,71 +2278,71 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
 
 def live_readings_locally(cfg: Settings,
                           configured: dict[str, dict]) -> dict[str, dict]:
-    """Write `live.json` where this machine serves, with nothing configured.
+    """The live upload an export has already asked for, with nothing to fill in.
 
-    A local export saying "live readings" has already said everything there is
-    to say: there is no address to choose, no token to derive and nothing
-    leaves the machine. Making somebody add an upload with no settings in it
-    would be a step that answers no question.
+    An export saying "live readings" has said everything there is to say. A
+    local one knows the directory; one publishing to a web host knows the
+    address, because it was typed into "Address the pages are served at" --
+    and the token is derived from the station's own. Making somebody add an
+    upload with no settings in it is a step that answers no question, and the
+    step they take instead is to add one and leave every field empty, which
+    is how a station sending Fahrenheit came to publish Fahrenheit into pages
+    written in Celsius.
 
-    Only for directories. An upload that *posts* somewhere goes out over
-    somebody else's network, and starting that because a checkbox defaulted on
-    is not this program's decision -- so a web host still wants an upload
-    added on purpose, and this leaves one alone as soon as there is one.
+    **The address is the decision, not the checkbox.** This used to cover
+    directories only, on the grounds that posting somewhere goes out over
+    somebody else's network and should not start because a switch defaulted
+    on. That is right, and the switch is not what starts it: `live_push_url`
+    is empty until a person types a domain into it. With one there, the
+    intent is on the record.
 
     Grouped by the units the pages are rendered in, because that is what the
     numbers have to match. A station reporting Fahrenheit and a page showing
     Celsius is the ordinary case here, not an odd one -- and the page has no
     way to tell that 82.8 is not what it was about to print. Two sites in
     different units are two uploads, which costs a second file of a kilobyte.
+
+    One added by hand still wins: this stands aside as soon as there is a
+    webpush upload of any kind in the file.
     """
     if any(str(one.get("kind", "")) == "webpush" for one in configured.values()):
         return {}
 
     section = cfg.config.get("exports") or {}
     grouped: dict[str, list[str]] = {}
+    posted: dict[str, str] = {}
     for _name, export in sorted(section.items()):
-        if not isinstance(export, dict) or export.get("kind") != "local":
+        if not isinstance(export, dict) or not export.get("live_push", True):
             continue
-        if not export.get("live_push", True):
+        system = livepush.rendered_units(cfg, export)
+        if export.get("kind") == "local":
+            where = str(export.get("directory") or "").strip()
+            if where:
+                grouped.setdefault(system, []).append(where)
             continue
-        where = str(export.get("directory") or "").strip()
-        if not where:
-            continue
-        grouped.setdefault(_rendered_units(cfg, export), []).append(where)
+        # Anything else publishes to a host, and only with an address on it.
+        address = str(export.get("live_push_url") or "").strip()
+        if address:
+            posted.setdefault(system, livepush.url_for(address))
 
-    if not grouped:
+    if not grouped and not posted:
         return {}
-    if len(grouped) == 1:
-        system, directories = next(iter(grouped.items()))
-        return {"live": {"kind": "webpush", "directories": directories,
-                         "unit_system": system, "_inferred": True}}
-    return {f"live-{system.lower() or 'stored'}":
-            {"kind": "webpush", "directories": directories,
-             "unit_system": system, "_inferred": True}
-            for system, directories in grouped.items()}
 
-
-def _rendered_units(cfg: Settings, export: dict) -> str:
-    """Which units the pages this export publishes are written in.
-
-    The same three steps the Cheetah feed takes, in the same order: what the
-    feed was told to show, then what the language asks for, then nothing --
-    which means the archive's own units and is what the upload does with an
-    empty string. Working it out twice in two places is how the two drift, so
-    if that order ever changes it changes in both.
-    """
-    feeds = cfg.config.get("feeds") or {}
-    feed = feeds.get(str(export.get("source") or "").strip())
-    if not isinstance(feed, dict):
-        feed = {}
-    chosen = str(feed.get("units") or "").strip()
-    if chosen:
-        return chosen
-    from . import language
-
-    spoken = language.get(str(feed.get("lang") or cfg.get("language") or ""))
-    return str(getattr(spoken, "unit_system", "") or "")
+    made: dict[str, dict] = {}
+    for system in sorted(set(grouped) | set(posted)):
+        settings: dict = {"kind": "webpush", "unit_system": system,
+                          "_inferred": True}
+        if grouped.get(system):
+            settings["directories"] = grouped[system]
+        if posted.get(system):
+            settings["url"] = posted[system]
+        made[system] = settings
+    if len(made) == 1:
+        return {"live": next(iter(made.values()))}
+    # More than one set of units, so more than one document. Named after the
+    # units rather than numbered: "live-us" says which one it is.
+    return {f"live-{system.lower() or 'stored'}": settings
+            for system, settings in made.items()}
 
 
 def configured_forecasts(args: argparse.Namespace) -> dict[str, dict]:
