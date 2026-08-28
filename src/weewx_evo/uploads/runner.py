@@ -55,6 +55,7 @@ class Scheduled:
     """One upload, and when it is next due."""
 
     __slots__ = (
+        "_refused_since",
         "blocked",
         "failures",
         "last",
@@ -100,6 +101,9 @@ class Scheduled:
         #: year is how an account gets blocked, and the log line that says so
         #: is the useful output.
         self.blocked = ""
+        #: When a refusal that claims to be permanent was first seen. A
+        #: sequence, not a state: see `_settled`.
+        self._refused_since = 0.0
 
     @property
     def trigger(self) -> str:
@@ -176,7 +180,7 @@ class Scheduled:
         except Rejected as exc:
             self.failures += 1
             self.last_summary = str(exc)
-            if exc.permanent:
+            if exc.permanent and self._settled(exc):
                 # Said once, loudly, and then not again. The alternative is
                 # the same line every five minutes forever, which is how a
                 # log stops being read.
@@ -194,6 +198,32 @@ class Scheduled:
             log.warning("upload %s failed: %s", self.name, exc)
         finally:
             self.running = False
+
+
+    def _settled(self, exc: Rejected) -> bool:
+        """Whether a refusal has lasted long enough to be believed.
+
+        Most of them are believed at once: a 401 means one thing and no
+        amount of waiting changes it. `live.php` answering 404 is the
+        exception, because the file is carried up by an export -- so the
+        first answer after a new export is configured is a 404 that means
+        "not yet", and the file appears a few seconds later.
+
+        Waiting separates the two without having to ask anybody: a wrong
+        token answers 404 for ever, and a missing file stops as soon as the
+        export that carries it has run once.
+        """
+        if not exc.after:
+            self._refused_since = 0.0
+            return True
+        now = time.monotonic()
+        if not self._refused_since:
+            self._refused_since = now
+            log.warning("upload %s: %s. Waiting -- a new export carries "
+                        "live.php up with it, so this is the expected answer "
+                        "until it has run once.", self.name, exc)
+            return False
+        return now - self._refused_since >= exc.after
 
 
 class Runner:

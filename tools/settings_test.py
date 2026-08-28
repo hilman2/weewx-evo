@@ -192,6 +192,25 @@ def main() -> int:
         failures += not check("and the new value is there", live.get("port"), 8200)
         failures += not check("what the file dropped went back to its default",
                               live.get("interval"), 300)
+
+        # And the case the caller actually depends on: something in the file
+        # that is not a core option at all. Every export, feed, upload and
+        # forecast is named by the operator, so none of them is in any
+        # schema -- and this answered "nothing changed" for all of them. The
+        # loop only calls `apply_live` when this says yes, so a newly added
+        # FTP export sat in the file until the next restart, whenever that
+        # was, with nothing in any log about it.
+        path.write_text('station.name = "From the file"\nport = 8200\n'
+                        'exports.evoftp.kind = "ftp"\n'
+                        'exports.evoftp.host = "ftp.example.org"\n',
+                        encoding="utf-8")
+        failures += not check("a new export is a change", live.reload(), True)
+        failures += not check("even though no core option moved",
+                              live.changed, [])
+        failures += not check("so nothing asks for a restart",
+                              live.needs_restart(), [])
+        failures += not check("and it is readable", config_file.get(
+            live.config, "exports.evoftp.host"), "ftp.example.org")
         print("\na changed setting either applies or restarts")
         # Not folklore, and not a list anybody maintains: the schema says
         # which options a running process cannot apply, and the loop asks

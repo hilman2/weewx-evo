@@ -119,9 +119,23 @@ class Rejected(UploadError):
     gets blocked; a 503 is Tuesday.
     """
 
-    def __init__(self, message: str, permanent: bool = False) -> None:
+    def __init__(self, message: str, permanent: bool = False,
+                 after: float = 0.0) -> None:
         super().__init__(message)
         self.permanent = permanent
+        #: How long the same refusal has to keep coming before `permanent`
+        #: is believed. Zero means immediately, which is right for an answer
+        #: that can only mean one thing.
+        #:
+        #: It is not right for `live.php` answering 404. That file is carried
+        #: up by an export, so before the first export of a newly configured
+        #: one has finished, a 404 is the expected answer and means nothing
+        #: is wrong. Switching off there, with "fix the settings and
+        #: restart", diagnoses a wrong token from what is a sequence: the
+        #: file appears fifteen seconds later and the upload is off until
+        #: somebody notices. A wrong token answers 404 for ever, so waiting
+        #: separates the two without having to ask anybody.
+        self.after = after
 
 
 @runtime_checkable

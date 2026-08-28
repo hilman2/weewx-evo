@@ -777,6 +777,52 @@ def test_the_page_shows_what_was_pushed(tmp: Path) -> None:
     ok("it still does not run away", result["observerCallbacks"] < 200)
 
 
+def test_a_404_waits_for_the_export() -> None:
+    """The first upload after a new export is configured must not switch off.
+
+    `live.php` is carried up by the export, so before that export has run
+    once the file is genuinely not there and 404 is the right answer. Taking
+    it as a wrong token switched the live readings off and told somebody to
+    fix settings that were right -- fifteen seconds before the export
+    finished and put the file where it belonged.
+
+    A wrong token answers 404 for ever, so the two are told apart by how long
+    it lasts, and nothing has to be asked of anybody.
+    """
+    from weewx_evo.uploads import Rejected
+    from weewx_evo.uploads.runner import Scheduled
+    from weewx_evo.uploads.webpush import NOT_YET
+
+    job = Scheduled("live", object(), _NoProgress(), lambda a, b: [])
+    waiting = Rejected("answered 404", permanent=True, after=NOT_YET)
+
+    ok("the first one is not believed", not job._settled(waiting))
+    ok("nor the next", not job._settled(waiting))
+    ok("and nothing is switched off", job.blocked == "")
+
+    # An hour of the same answer is a wrong token, and then it does switch off.
+    job._refused_since -= NOT_YET + 1
+    ok("an hour of it is believed", job._settled(waiting))
+
+    # Anything that can only mean one thing is still believed at once.
+    fresh = Scheduled("wu", object(), _NoProgress(), lambda a, b: [])
+    ok("a refusal with no grace period is immediate",
+       fresh._settled(Rejected("401 Unauthorized", permanent=True)))
+
+
+class _NoProgress:
+    """Enough of Progress for a Scheduled that never sends anything."""
+
+    def sent(self, *a, **k) -> None:
+        pass
+
+    def save(self) -> None:
+        pass
+
+    def through(self, *a, **k) -> int:
+        return 0
+
+
 def main() -> int:
     global CHECKS
 
@@ -789,6 +835,7 @@ def main() -> int:
         test_no_mqtt_left()
         test_the_document()
         test_it_needs_a_token()
+        test_a_404_waits_for_the_export()
         test_the_local_way(tmp)
         test_a_local_export_carries_no_php(tmp)
         test_the_directory_fills_in_by_itself()

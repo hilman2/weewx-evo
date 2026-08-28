@@ -48,6 +48,11 @@ from .mqtt import NEVER, topic_name
 log = logging.getLogger(__name__)
 
 
+#: How long `live.php` may keep answering 404 before it is taken to mean a
+#: wrong token rather than an export that has not run yet.
+NOT_YET = 3600.0
+
+
 class WebPushUpload(BaseUpload):
     """Posts the current readings to a `live.php` on the web host."""
 
@@ -167,10 +172,17 @@ class WebPushUpload(BaseUpload):
             # What `live.php` answers to a wrong token, on purpose: saying
             # "wrong token" would confirm there is a right one. So this
             # cannot tell the two apart, and says both.
+            # Not believed straight away. `live.php` is carried up by an
+            # export, so the answer before that export has run once is a 404
+            # that means "not yet" -- and switching off there told somebody
+            # to fix settings that were right, fifteen seconds before the
+            # file appeared. A wrong token answers 404 for ever, so an hour
+            # tells the two apart: longer than any export interval, shorter
+            # than leaving it broken.
             raise Rejected(
                 f"{self.host}{self.path} answered 404. Either live.php is "
                 f"not there, or the token does not match the one in "
-                f"live.token beside it.", permanent=True)
+                f"live.token beside it.", permanent=True, after=NOT_YET)
         if status == 503:
             raise Rejected(f"{self.host}: {text[:160]}", permanent=True)
         if status == 405:
