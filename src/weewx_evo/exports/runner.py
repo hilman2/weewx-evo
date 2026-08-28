@@ -70,6 +70,7 @@ class Scheduled:
         "last",
         "last_summary",
         "name",
+        "note",
         "running",
         "runs",
         "skipped",
@@ -93,6 +94,12 @@ class Scheduled:
         #: empty. Two exports to one account would do it, but nothing would
         #: hold the second until the first had finished.
         self.extra = tuple(extra)
+        #: Where to note how a run went, set by the runner. A callable
+        #: rather than a database: this module has never opened one and
+        #: should not start -- the parts of this program talk through the
+        #: live table, and which table that is belongs to whoever built the
+        #: runner.
+        self.note: Any = None
         #: Which of them have finished since this last ran. An export that
         #: sends two feeds waits for both: fired by the first, it would
         #: upload pages that refer to charts still being written.
@@ -112,6 +119,15 @@ class Scheduled:
         self.runs = 0
         self.failures = 0
         self.last_summary = ""
+
+    def _noted(self, result: Any = None, error: str = "") -> None:
+        if self.note is None:
+            return
+        try:
+            self.note(self.name, result, error)
+        except Exception:
+            # A note about an upload is not a reason to stop uploading.
+            log.debug("could not record how %s went", self.name, exc_info=True)
 
     def _sub_paths(self) -> tuple[str, ...]:
         return tuple(into for _f, _d, into in self.extra if into)
@@ -177,6 +193,7 @@ class Scheduled:
                 _add(result, self.export.send(where, None, into=into))
             self.runs += 1
             self.last_summary = result.summary()
+            self._noted(result=result)
             if result.failures:
                 self.failures += 1
                 log.warning("export %s: %s", self.name, result.summary())
@@ -187,6 +204,10 @@ class Scheduled:
         except Exception as exc:
             self.failures += 1
             self.last_summary = str(exc)
+            # Written down as well. A host that refuses the login says so in
+            # the log, which nobody is tailing; the settings page is where
+            # somebody goes to ask whether their upload is working.
+            self._noted(error=str(exc))
             # One export failing is not the others' problem, and certainly not
             # the archiver's. A host that is down comes back.
             log.warning("export %s failed: %s", self.name, exc)
@@ -197,8 +218,10 @@ class Scheduled:
 class Runner:
     """Keeps the exports going, one thread each."""
 
-    def __init__(self, exports: list[Scheduled]) -> None:
+    def __init__(self, exports: list[Scheduled], note: Any = None) -> None:
         self.exports = exports
+        for one in exports:
+            one.note = note
         self._stopping = threading.Event()
         # One event per export rather than one shared: an export coupled to
         # the "website" feed must not wake when "csv" finishes.

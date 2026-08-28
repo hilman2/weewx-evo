@@ -79,6 +79,20 @@ def _short(where: str, keep: int = 34) -> str:
     return "…" + text[-(keep - 1):]
 
 
+def _first(said: str, keep: int = 58) -> str:
+    """A sentence somebody can read at a glance, from the *start*.
+
+    The other way round from `_short`, and the difference matters: on a path
+    the end identifies it, and in "cannot reach example.invalid: [Errno -2]
+    Name or service not known" the beginning is the whole of what to do next.
+    Cut from the front, that row read "…ame or service not known".
+    """
+    text = " ".join(str(said or "").split())
+    if len(text) <= keep:
+        return text
+    return text[:keep - 1].rstrip(" ,;:") + "…"
+
+
 def _where(admin: Any, settings: dict) -> str:
     """Where an export puts things, in one short phrase."""
     kind = str(settings.get("kind") or "")
@@ -101,7 +115,10 @@ def _age(admin: Any, state: adminhome.State, name: str,
     for one in links:
         if one.name == name:
             if one.unreachable:
-                return one.unreachable, "note when"
+                # A refused login and "has not run yet" are both text in one
+                # field, and reading the same as each other is how the first
+                # gets missed on a page full of the second.
+                return one.unreachable, "warn when" if one.wrong else "note when"
             return adminhome.ago(one.when), "when"
     return "", "note when"
 
@@ -135,6 +152,9 @@ def _export_row(admin: Any, state: adminhome.State, name: str,
     """
     said, tone = _age(admin, state, name, "export")
     off = settings.get("enabled") is False
+    # A host's refusal can be a paragraph. The first line of it is what
+    # somebody acts on, and the whole of it is one hover away.
+    shown = _first(said)
     where = _where(admin, settings)
     if carried is not None:
         where = f"{where.rstrip('/')}/{carried}" if carried else where
@@ -147,7 +167,8 @@ def _export_row(admin: Any, state: adminhome.State, name: str,
         {'<span class="chip">carried along</span>'
          if carried is not None else ""}
         {_chip(str(settings.get("kind") or ""))}
-        <span class="{tone}">{"switched off" if off else html.escape(said)}</span>
+        <span class="{tone}" title="{html.escape(said)}"
+              >{"switched off" if off else html.escape(shown)}</span>
       </li>'''
 
 

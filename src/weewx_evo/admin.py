@@ -1731,6 +1731,11 @@ _PAGE = """<!doctype html>
       white-space: nowrap; font-variant-numeric: tabular-nums;
       padding-left: 1rem; }}
   .made .aside, .sends .aside {{ white-space: normal; }}
+  /* Something that went wrong, in the slot the age usually sits in. The
+     rule above is more specific than `.warn` on its own, so without this a
+     refused login was printed in the same grey as "10 s ago". */
+  .made .when.warn, .sends .when.warn {{ color: var(--warn);
+      white-space: normal; }}
   /* The context band: above the form, and marked as belonging to the page
      rather than to the settings under it. */
   .flow.context {{ margin-bottom: 1.25rem;

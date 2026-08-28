@@ -341,7 +341,11 @@ def never_is_only_said_when_it_is_true() -> None:
         current = admin.config()
         current["exports"] = {
             "site": {"kind": "local", "directory": str(published)},
-            "away": {"kind": "ftp", "trigger": "feed", "feed": "json"},
+            # `source`, which is what the setting is called. This said
+            # `feed` and so did the page, so the two agreed and neither was
+            # right: on a real installation the line read "ftp, on feed"
+            # and never named anything.
+            "away": {"kind": "ftp", "trigger": "feed", "source": "json"},
         }
         # The uploads that ran, as the progress file records them. `live` is
         # not in the configuration at all: it is set up from the export.
@@ -355,10 +359,42 @@ def never_is_only_said_when_it_is_true() -> None:
         by_name = {one.name: one for one in state.exports}
         check("a local export is dated from what it published",
               by_name["site"].when is not None, True)
-        check("a remote one says it is not recorded rather than 'never'",
-              by_name["away"].unreachable, "not recorded here")
+        check("one that has not run says so, rather than 'never'",
+              by_name["away"].unreachable, "waiting for its first run")
         check("and says what it waits for",
               "on the json feed" in by_name["away"].detail, True)
+        check("which is not a fault", by_name["away"].wrong, False)
+
+        # And once it has run. This is the whole point of the record: the
+        # page is a different process from the one that does the uploading,
+        # so an FTP export used to say "not recorded here" for ever -- true,
+        # and no use to somebody asking whether their upload is working.
+        from weewx_evo.db.live import LiveStore
+        from weewx_evo.exports import Sent
+        from weewx_evo.exports import record as export_record
+
+        live = LiveStore(work / "data" / "live.sdb", interval_seconds=300)
+        try:
+            export_record.write(live, "away",
+                                Sent(sent=9, skipped=33, seconds=3.2))
+        finally:
+            live.close()
+        after = {one.name: one for one in adminhome.read(admin).exports}
+        check("once it has run, it is dated",
+              after["away"].when is not None, True)
+        check("and says what it did",
+              "9 sent, 33 unchanged" in after["away"].detail, True)
+
+        live = LiveStore(work / "data" / "live.sdb", interval_seconds=300)
+        try:
+            export_record.write(live, "away", None,
+                                error="530 login incorrect")
+        finally:
+            live.close()
+        broken = {one.name: one for one in adminhome.read(admin).exports}
+        check("a refusal is what the page shows",
+              broken["away"].unreachable, "530 login incorrect")
+        check("marked as something wrong", broken["away"].wrong, True)
 
         posted = {one.name: one for one in state.uploads}
         check("an upload nobody configured but that is running shows up",

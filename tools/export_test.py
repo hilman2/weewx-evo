@@ -545,6 +545,86 @@ def two_feeds_one_export(check) -> int:
     return failures
 
 
+def what_it_last_did(check) -> int:
+    """The settings page is a different process, so the runner writes it down.
+
+    A local export can be dated by looking at its directory. An FTP one
+    publishes somewhere this process cannot look, so the page said "not
+    recorded here" -- honest, and no use at all to somebody asking whether
+    their upload is working. Now the runner notes each run in the live table,
+    which is already the one channel between the parts of this program.
+    """
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from weewx_evo.db.live import LiveStore
+    from weewx_evo.exports import Sent
+    from weewx_evo.exports import record as export_record
+    from weewx_evo.exports import runner as export_runner
+
+    failures = 0
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        work = Path(raw)
+        source = work / "site"
+        source.mkdir()
+        (source / "index.html").write_text("<p>21.4</p>", encoding="utf-8")
+        live = LiveStore(work / "live.sdb", interval_seconds=300)
+        try:
+            class Fine:
+                trigger = "manual"
+
+                def send(self, where, files=None, **kw):
+                    return Sent(sent=9, skipped=33, bytes=943210, seconds=3.2)
+
+            class Refused:
+                trigger = "manual"
+
+                def send(self, where, files=None, **kw):
+                    raise RuntimeError("530 login incorrect")
+
+            def note(name, result, error):
+                export_record.write(live, name, result, error)
+
+            good = export_runner.Scheduled("evoftp", Fine(), source)
+            bad = export_runner.Scheduled("other", Refused(), source)
+            export_runner.Runner([good, bad], note=note)
+
+            failures += not check("nothing recorded before the first run",
+                                  export_record.read(live, "evoftp"), None)
+            good.run()
+            bad.run()
+
+            entry = export_record.read(live, "evoftp") or {}
+            failures += not check("what it did", export_record.summary(entry),
+                                  "9 sent, 33 unchanged")
+            failures += not check("and that it worked", entry.get("ok"), True)
+            failures += not check("dated to now",
+                                  abs(time.time() - entry.get("when", 0)) < 30,
+                                  True)
+
+            hurt = export_record.read(live, "other") or {}
+            failures += not check("a refusal is kept too",
+                                  export_record.summary(hurt),
+                                  "530 login incorrect")
+            failures += not check("and marked as one", hurt.get("ok"), False)
+
+            # A failed file is not a failed run, and the difference is what
+            # somebody acts on.
+            partial = Sent(sent=8, skipped=1,
+                           failures=[("charts/x.png", "permission denied")])
+            export_record.write(live, "evoftp", partial)
+            mixed = export_record.read(live, "evoftp") or {}
+            failures += not check("a bad file is counted",
+                                  export_record.summary(mixed),
+                                  "8 sent, 1 unchanged, 1 failed")
+            failures += not check("and the run is not ok", mixed.get("ok"),
+                                  False)
+        finally:
+            live.close()
+    return failures
+
+
 def main() -> int:
     failures = 0
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-export-"))
@@ -607,6 +687,7 @@ def main() -> int:
     failures += local_export(check)
     failures += feed_to_export(check)
     failures += two_feeds_one_export(check)
+    failures += what_it_last_did(check)
 
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")

@@ -52,6 +52,7 @@ from .archiver import Archiver
 from .db.archive import ArchiveStore
 from .db.live import LiveStore
 from .derive import from_settings as deriver_from
+from .exports import record as export_record
 from .exports import runner as export_runner
 from .forecast import Place as ForecastPlace
 from .forecast import codes as forecast_codes
@@ -680,7 +681,14 @@ def cmd_archive(args: argparse.Namespace) -> int:
     # no directory set", which reads like the export is wrong when it is not.
     scheduled = build_schedule(args, cfg)
     if scheduled:
-        runner = export_runner.Runner(scheduled)
+        # How each run went, written where the settings page can read it. It
+        # is a different process, so "not recorded here" was the only honest
+        # answer it had about an FTP export -- true, and no use to anybody
+        # asking whether their upload is working.
+        runner = export_runner.Runner(
+            scheduled,
+            note=lambda name, result, error: export_record.write(
+                live, name, result, error))
         runner.start()
         if feeds is not None:
             # An export set to run when its feed finishes is waiting for
@@ -1145,7 +1153,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # no directory set", which reads like the export is wrong when it is not.
     scheduled = build_schedule(args, cfg)
     if scheduled:
-        runner = export_runner.Runner(scheduled)
+        # How each run went, written where the settings page can read it. It
+        # is a different process, so "not recorded here" was the only honest
+        # answer it had about an FTP export -- true, and no use to anybody
+        # asking whether their upload is working.
+        runner = export_runner.Runner(
+            scheduled,
+            note=lambda name, result, error: export_record.write(
+                live, name, result, error))
         runner.start()
         if feeds is not None:
             # An export set to run when its feed finishes is waiting for

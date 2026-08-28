@@ -50,6 +50,7 @@ from . import adminarchives
 from . import archives as archive_defs
 from . import config as config_file
 from . import stations as station_defs
+from .exports import record as export_record
 
 log = logging.getLogger(__name__)
 
@@ -156,6 +157,10 @@ class Link:
     #: Hourly counts for the last day, oldest first. Empty where there is
     #: nothing countable -- an export has no rows, only a last time.
     history: list[int] = field(default_factory=list)
+    #: Whether `unreachable` is something wrong rather than something not
+    #: started. "waiting for its first run" and "530 login incorrect" are
+    #: both text in the same field, and only one of them is a problem.
+    wrong: bool = False
 
 
 @dataclass
@@ -203,6 +208,45 @@ def _under(admin: Any, where: str | None, fallback: str) -> Path:
     """A path that is not a setting: a feed's destination, an archive's file."""
     path = Path(str(where or fallback))
     return path if path.is_absolute() else _base(admin) / path
+
+
+class _ReadOnlyMeta:
+    """Just enough of a store for `export_record.read`, and closable.
+
+    Opened read-only, once per request, and closed on the way out. Not once
+    per export: a page with six of them would open six connections and hand
+    none of them back, which is the leak that took the VPS out -- three
+    unrelated errors at once because the process had run out of descriptors.
+    """
+
+    def __init__(self, conn: Any) -> None:
+        self.conn = conn
+
+    def get_meta(self, name: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT value FROM live_metadata WHERE name = ?", (name,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def close(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:
+            log.debug("could not close the export record reader",
+                      exc_info=True)
+
+
+def _live_store(admin: Any) -> Any:
+    path = _setting(admin, "live_db", "data/live.sdb")
+    if not path.exists():
+        return None
+    try:
+        return _ReadOnlyMeta(
+            sqlite3.connect(f"file:{path}?mode=ro", uri=True))
+    except sqlite3.Error:
+        log.debug("could not open %s to read the export records", path,
+                  exc_info=True)
+        return None
 
 
 def _live_state(admin: Any, state: State) -> None:
@@ -354,9 +398,30 @@ def _feed_state(admin: Any, state: State) -> None:
                                 href=f"./feed:{name}"))
 
 
+def _export_records(admin: Any, names: list[str]) -> dict[str, dict]:
+    """What each export last did, read in one go and the file closed after.
+
+    One connection for the page rather than one per export, and handed back
+    either way: this runs on every request.
+    """
+    store = _live_store(admin)
+    if store is None:
+        return {}
+    try:
+        found = {}
+        for name in names:
+            entry = export_record.read(store, name)
+            if entry:
+                found[name] = entry
+        return found
+    finally:
+        store.close()
+
+
 def _sent_state(admin: Any, state: State) -> None:
     """Exports and uploads: both are 'did it leave the machine'."""
     current = admin.config()
+    noted_by = _export_records(admin, list(current.get("exports") or {}))
     for name, settings in sorted((current.get("exports") or {}).items()):
         if not isinstance(settings, dict):
             continue
@@ -365,28 +430,41 @@ def _sent_state(admin: Any, state: State) -> None:
                                       href=f"./export:{name}"))
             continue
         kind = str(settings.get("kind") or "")
-        # A local export publishes into a directory on this machine, so the
-        # newest file in it is when something last went out -- read directly
-        # rather than inferred. An export's own record of what it has sent is
-        # named after a hash of both ends, so it cannot be found from here.
-        when = None
-        if kind == "local":
+        detail = kind
+        trouble = ""
+        # What the runner wrote down after its last run, which is the only
+        # answer there is about an export that publishes somewhere this
+        # process cannot look at. Before it existed the page said "not
+        # recorded here" about every FTP and rsync export -- honest, and no
+        # use to somebody asking whether their upload is working.
+        noted = noted_by.get(name)
+        when = float(noted["when"]) if noted and noted.get("when") else None
+        if noted:
+            said = export_record.summary(noted)
+            if not noted.get("ok"):
+                trouble = said or "the last run failed"
+            elif said:
+                detail = f"{kind}, {said}"
+        elif kind == "local":
+            # Nothing written down yet, but a local export publishes into a
+            # directory on this machine: the newest file in it is when
+            # something last went out.
             where = str(settings.get("directory") or "").strip()
             if where:
                 _count, when = _newest_file(_under(admin, where, ""))
-        detail = kind
         if when is None and kind:
-            # "never" would be a lie: an FTP export publishes to somewhere
-            # this process cannot look at, and nothing on disk records when
-            # it last succeeded. Say what it waits for instead.
+            # Never run since this was recorded, which is not the same as
+            # never run. Say what it is waiting for instead.
             waits = str(settings.get("trigger") or "feed")
-            source = str(settings.get("feed") or "").strip()
+            source = str(settings.get("source") or "").strip()
             detail = f"{kind}, on the {source} feed" if (
                 waits == "feed" and source) else f"{kind}, on {waits}"
         state.exports.append(Link(name, detail, when=when,
                                   href=f"./export:{name}",
-                                  unreachable="" if when is not None
-                                  else "not recorded here"))
+                                  wrong=bool(trouble),
+                                  unreachable=trouble or (
+                                      "" if when is not None
+                                      else "waiting for its first run")))
 
     progress = _setting(admin, "archive_db",
                         "data/weewx.sdb").parent / "uploads.json"
