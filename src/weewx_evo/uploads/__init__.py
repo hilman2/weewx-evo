@@ -451,8 +451,17 @@ def when_options(trigger: str = "record", every: int = 900,
                         "Its own schedule is for a service that asks for less "
                         "often than the archive interval."),
             Option("every", "Its own schedule", kind="duration",
-                   default=every, minimum=60, maximum=86400,
-                   help="Only used with 'on its own schedule'."),
+                   # The floor follows the default rather than sitting above
+                   # it. Two uploads shipped a default of ten seconds under a
+                   # minimum of sixty, and a setting that cannot hold its own
+                   # default is one the page cannot render: `field` parses the
+                   # value it is about to show, the parse raised, and the
+                   # whole settings page answered 500 -- so the figure could
+                   # not be corrected either.
+                   default=every, minimum=min(60, every), maximum=86400,
+                   help="Only used with 'on its own schedule'."
+                        + (" A live upload runs far more often than that, so "
+                           "this one goes down to seconds." if live else "")),
             Option("catch_up", "Send up to this many missed records",
                    kind="int", default=catch_up, minimum=0, maximum=288,
                    advanced=True,

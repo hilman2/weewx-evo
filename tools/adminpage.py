@@ -881,6 +881,35 @@ def main() -> int:
         failures += not check("an empty form says what to do",
                               "Choose a file" in said(html, "err"), True)
 
+        # Last, because it makes sixteen of everything, and every
+        # list this test checks before here would be counting them.
+        print("\nevery kind can be made, and its page comes up")
+        # The whole of what somebody does first: click add, choose a kind,
+        # land on its settings. Two upload kinds shipped a default of ten
+        # seconds under a minimum of sixty, so `field` raised while rendering
+        # the very page the redirect goes to. A 500 on the first thing
+        # anybody tries -- and the figure that caused it could not be
+        # corrected from the page either.
+        from weewx_evo import exports as export_registry
+        from weewx_evo import feeds as feed_registry
+        from weewx_evo import uploads as upload_registry
+
+        for what, kinds in (
+                ("upload", sorted(upload_registry.DEFAULT.kinds())),
+                ("export", sorted(export_registry.DEFAULT.kinds())),
+                ("feed", sorted(feed_registry.kinds()))):
+            for kind in kinds:
+                name = f"t{what[0]}{kind}".replace("-", "").replace("_", "")
+                code, _body = post(f"{base}/{TOKEN}/new-{what}",
+                                   {"name": name, "kind": kind})
+                failures += not check(f"a {kind} {what} is made", code, 303)
+                code, rendered = get(f"{base}/{TOKEN}/{what}:{name}")
+                failures += not check(f"{kind} {what}: its page renders",
+                                      code, 200)
+                failures += not check(f"{kind} {what}: with a form on it",
+                                      "<form" in rendered, True)
+
+
         server.stop()
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

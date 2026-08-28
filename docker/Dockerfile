@@ -56,8 +56,14 @@ ENV NODE_PATH=/usr/local/lib/node_modules
 #
 # Pinned, all of it. A comparison against a moving target tells you the target
 # moved, on a morning when you were changing something else.
+#
+# Pinned is not the same as forgotten. This sat on 5.1.0 from the day the
+# container was written while WeeWX went to 5.5, and the gap showed up by
+# accident: the CWOP packet type compared clean in here and did not in a venv
+# with the current release. Raise it deliberately, read what turns red, and
+# decide about each one -- that is the whole value of comparing at all.
 RUN pip install --no-cache-dir \
-        "weewx==5.1.0" \
+        "weewx==5.5.0" \
         "Pillow==12.3.0" \
         "ephem==4.2" \
         "pyftpdlib==2.0.1" \

@@ -35,7 +35,7 @@ from . import adminarchives, adminhome, adminplots, adminpublish, adminsearch, a
 from . import archives as archive_defs
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
-from .options import UNITS, Group, Option, Schema, split_duration
+from .options import UNITS, Group, Invalid, Option, Schema, split_duration
 from .ratelimit import Limits
 
 log = logging.getLogger(__name__)
@@ -607,7 +607,21 @@ def field(option: Option, value: Any, error: str = "",
         # A number and a unit, not a string somebody has to know the syntax
         # for. "300" in a box labelled "interval" is a question about units
         # that a form should not be asking.
-        amount, unit = split_duration(option.parse(value) if value else option.default)
+        #
+        # Parsed inside a try, because a page has to be able to show a value
+        # it disagrees with. Two options shipped a default below their own
+        # minimum, `parse` raised while rendering the field, and the whole
+        # settings page answered 500 -- so the figure that caused it could
+        # not be corrected from the page either. Whatever is in the file is
+        # what somebody has to see in order to change it.
+        try:
+            seconds = option.parse(value) if value else option.default
+        except Invalid:
+            log.warning("%s holds %r, which it will not accept. Showing it "
+                        "as it stands so it can be corrected.",
+                        option.name, value or option.default)
+            seconds = value if isinstance(value, (int, float)) else 0
+        amount, unit = split_duration(seconds)
         units = "".join(
             f'<option value="{code}"{" selected" if code == unit else ""}>'
             f"{word}</option>" for code, word in UNITS)
@@ -624,6 +638,11 @@ def field(option: Option, value: Any, error: str = "",
                        'placeholder="nothing installed to choose from">')
         else:
             out.append(f'<select id="f-{name}" name="{name}">')
+            # Everything through `str`. A choice is usually a word, but MQTT
+            # offers quality-of-service as 0, 1 and 2, and `html.escape` on an
+            # int raises -- which took the settings page of any MQTT upload
+            # with it, and with it the whole connection.
+            available = [(str(choice), str(text)) for choice, text in available]
             known = {choice for choice, _ in available}
             if shown and str(shown) not in known:
                 # A value naming something no longer installed. Kept and
@@ -669,7 +688,10 @@ def field(option: Option, value: Any, error: str = "",
     if option.kind == "choice" and option.options():
         # What else could go here. A dropdown shows one thing at a time, and
         # knowing the alternatives without opening it is worth a line.
-        others = ", ".join(c for c, _ in option.options() if c and c != str(shown))
+        # `str` again, and for the same reason as above: a choice is not
+        # always a word. MQTT's quality of service is 0, 1 and 2.
+        others = ", ".join(str(c) for c, _ in option.options()
+                           if c not in ("", None) and str(c) != str(shown))
         if others:
             out.append(f'<p class="alt">or: {html.escape(others)}</p>')
     if error:
