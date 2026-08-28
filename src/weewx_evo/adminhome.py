@@ -521,28 +521,65 @@ def _live_readings(admin: Any, current: dict, state: State) -> None:
     """
     if any(one.name == "live readings" for one in state.uploads):
         return
-    newest, where = None, None
-    for _name, settings in sorted((current.get("exports") or {}).items()):
-        if not isinstance(settings, dict) or settings.get("kind") != "local":
-            continue
-        directory = str(settings.get("directory") or "").strip()
-        if not directory:
-            continue
-        found = _under(admin, directory, "") / "live.json"
+    made = _implied_live(admin)
+    if not made:
+        return
+    settings = next(iter(made.values()))
+
+    newest = None
+    for directory in settings.get("directories") or []:
+        found = _under(admin, str(directory), "") / "live.json"
         try:
             when = found.stat().st_mtime
         except OSError:
             continue
         if newest is None or when > newest:
-            newest, where = when, found.parent
-    if newest is None:
-        return
-    # Several served directories each get the file -- a station may publish
-    # more than one site -- so this is one row for all of them, dated from
-    # whichever was written last.
-    state.uploads.append(Link("live readings",
-                              f"live.json in {where}", when=newest,
-                              href="./core"))
+            newest = when
+
+    # What it actually does, all of it. This said "live.json in <one
+    # directory>" while the same upload was also posting to a web host --
+    # which is the half somebody had configured on purpose, and the half
+    # they came to this page to see.
+    where = []
+    if settings.get("url"):
+        from urllib.parse import urlsplit
+
+        where.append(f"posts to {urlsplit(str(settings['url'])).netloc}")
+    count = len(settings.get("directories") or [])
+    if count:
+        where.append(f"writes live.json into {count} "
+                     f"{'directory' if count == 1 else 'directories'}")
+    state.uploads.append(Link("live readings", ", and ".join(where),
+                              when=newest, href="./publishing"))
+
+
+def _implied_live(admin: Any) -> dict:
+    """The live upload the exports imply, as the service builds it.
+
+    Asked of the same function rather than worked out again here. This page
+    said one thing and the service did another for exactly as long as there
+    were two readings of it.
+    """
+    try:
+        from .cli import live_readings_locally
+
+        return live_readings_locally(_AsSettings(admin), {})
+    except Exception:
+        log.debug("could not work out the implied live upload", exc_info=True)
+        return {}
+
+
+class _AsSettings:
+    """Enough of `Settings` for the function above: a config and a get."""
+
+    def __init__(self, admin: Any) -> None:
+        self.config = admin.config()
+
+    def get(self, name: str, default: Any = None) -> Any:
+        from . import config as config_file
+
+        found = config_file.get(self.config, name)
+        return default if found is None else found
 
 
 def _forecast_state(admin: Any, state: State) -> None:

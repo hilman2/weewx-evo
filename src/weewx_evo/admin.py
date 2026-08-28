@@ -79,11 +79,30 @@ def export_kind_choices() -> list[tuple[str, str, str]]:
                     getattr(factory, "summary", "")))
     return out
 
+#: Set up from an export rather than chosen here. The live readings for this
+#: station's own pages are not a service somebody signs up to: the address,
+#: the token, the directories and the units all come from the export that
+#: publishes those pages, so there is nothing to fill in and nothing to
+#: choose. Offered here it was a form of eight empty fields, and the empty
+#: one that mattered was the units -- a station sending Fahrenheit published
+#: Fahrenheit into pages written in Celsius.
+#:
+#: A second web host, or the same readings in another unit system, is a line
+#: in the file, which stays editable by hand.
+NOT_CHOSEN = frozenset({"webpush"})
+
+
 def upload_kinds() -> list[str]:
-    """The kinds of upload that can be added. Asked, not listed."""
+    """The kinds of upload that can be added. Asked, not listed.
+
+    Not every kind that exists: see NOT_CHOSEN. The check on the way in uses
+    this too, so the one left out cannot be reached by typing the URL either.
+    """
     from . import uploads
 
-    return uploads.kinds()
+    return [k for k in uploads.kinds() if k not in NOT_CHOSEN]
+
+
 
 
 def upload_kind_choices() -> list[tuple[str, str, str]]:
@@ -96,6 +115,8 @@ def upload_kind_choices() -> list[tuple[str, str, str]]:
 
     out = []
     for kind in uploads.kinds():
+        if kind in NOT_CHOSEN:
+            continue
         factory = uploads.DEFAULT.factory_for(kind)
         out.append((kind, getattr(factory, "label", kind),
                     getattr(factory, "summary", "")))

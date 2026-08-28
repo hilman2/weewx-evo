@@ -452,21 +452,27 @@ def the_live_file_dates_itself() -> None:
                                        "directory": str(published)}}
         admin.config = lambda: current  # type: ignore[method-assign]
 
+        # Configured but nothing written yet. The row is there, because the
+        # export asked for it -- with no date, which is the same answer an
+        # export gives before its first run. Saying nothing at all would be
+        # the page disagreeing with what is set up.
         state = adminhome.read(admin)
-        check("with no live file, nothing is claimed",
-              [one.name for one in state.uploads], [])
+        posted = {one.name: one for one in state.uploads}
+        check("it is reported as soon as an export asks for it",
+              "live readings" in posted, True)
+        check("with no date before anything is written",
+              posted["live readings"].when
+              if "live readings" in posted else "x", None)
 
         (published / "live.json").write_text('{"outTemp": 20}',
                                              encoding="utf-8")
         state = adminhome.read(admin)
         posted = {one.name: one for one in state.uploads}
-        check("once it is there, it is reported",
-              "live readings" in posted, True)
         check("dated from the file itself",
               posted["live readings"].when is not None
               if "live readings" in posted else False, True)
-        check("and it names where it is writing",
-              "live.json in" in posted["live readings"].detail
+        check("and it names what it writes",
+              "writes live.json" in posted["live readings"].detail
               if "live readings" in posted else "", True)
 
 
@@ -487,7 +493,10 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
         admin = an_installation(work)
         current = admin.config()
         current["feeds"] = {"json": {"kind": "json"}}
-        current["exports"] = {"site": {"kind": "local", "directory": str(work)}}
+        # `live_push = false`, so the exports imply no live upload and this
+        # counts what the section is spelled as rather than what is beside it.
+        current["exports"] = {"site": {"kind": "local", "directory": str(work),
+                                       "live_push": False}}
         current["uploads"] = {"wu": {"kind": "wunderground"}}
         # `kind` is the provider, and it is what the forecast store keys its
         # `run` table on -- not the name of the entry.
@@ -602,6 +611,54 @@ def ages_read_as_ages() -> None:
     check("and never is never", adminhome.ago(None), "never")
 
 
+def the_live_row_says_all_of_it() -> None:
+    """One upload, every destination it has.
+
+    The row said "live.json in <a directory>" while the same upload was also
+    posting to a web host -- and the web host is the half somebody configured
+    on purpose, so it is the half they came to the page to see.
+
+    Read from the same function the service builds the upload with. This page
+    said one thing and the service did another for exactly as long as there
+    were two readings of it.
+    """
+    print("\nthe live readings row names every destination")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        served = work / "data" / "site"
+        served.mkdir(parents=True, exist_ok=True)
+        (served / "live.json").write_text('{"dateTime": 1}', encoding="utf-8")
+
+        current = admin.config()
+        current["feeds"] = {"wdc": {"kind": "cheetah", "skin": "deck"}}
+        current["exports"] = {
+            "away": {"kind": "ftp", "host": "example.org", "source": "wdc",
+                     "live_push": True,
+                     "live_push_url": "https://evoftp.example.de"},
+            "here": {"kind": "local", "directory": str(served),
+                     "source": "wdc", "live_push": True},
+        }
+        current["uploads"] = {}
+        admin.config = lambda: current  # type: ignore[method-assign]
+
+        rows = {one.name: one for one in adminhome.read(admin).uploads}
+        check("there is a row for it", "live readings" in rows, True)
+        said = rows["live readings"].detail if "live readings" in rows else ""
+        check("it names the web host", "evoftp.example.de" in said, True)
+        check("and the directory it also writes",
+              "1 directory" in said, True)
+        check("dated from the file it writes",
+              rows["live readings"].when is not None, True)
+
+        # Switched off everywhere is no row at all.
+        current["exports"] = {
+            "away": {"kind": "ftp", "host": "example.org", "live_push": False}}
+        check("nothing when no export asks for it",
+              [one for one in adminhome.read(admin).uploads
+               if one.name == "live readings"], [])
+
+
 def main() -> int:
     a_working_station_says_nothing()
     a_station_switched_off_is_not_a_fault()
@@ -616,6 +673,7 @@ def main() -> int:
     never_is_only_said_when_it_is_true()
     every_section_is_the_one_the_rest_of_the_program_reads()
     a_duration_is_a_duration()
+    the_live_row_says_all_of_it()
     the_live_file_dates_itself()
     the_shape_of_the_last_day()
     the_page_renders_and_carries_the_numbers()

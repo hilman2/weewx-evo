@@ -892,10 +892,13 @@ def main() -> int:
         # corrected from the page either.
         from weewx_evo import exports as export_registry
         from weewx_evo import feeds as feed_registry
-        from weewx_evo import uploads as upload_registry
+        from weewx_evo.admin import upload_kinds
 
         for what, kinds in (
-                ("upload", sorted(upload_registry.DEFAULT.kinds())),
+                # `upload_kinds`, not every kind that exists: the live push
+                # to this station's own pages is set up by the export that
+                # publishes them, so it is not offered here. Checked below.
+                ("upload", sorted(upload_kinds())),
                 ("export", sorted(export_registry.DEFAULT.kinds())),
                 ("feed", sorted(feed_registry.kinds()))):
             for kind in kinds:
@@ -908,6 +911,17 @@ def main() -> int:
                                       code, 200)
                 failures += not check(f"{kind} {what}: with a form on it",
                                       "<form" in rendered, True)
+
+        # And the one that is not offered cannot be reached by typing the URL
+        # either. It was, and what people made was an upload with every field
+        # empty -- including the units, so a station sending Fahrenheit
+        # published Fahrenheit into pages written in Celsius.
+        code, rendered = post(f"{base}/{TOKEN}/new-upload",
+                              {"name": "byhand", "kind": "webpush"})
+        failures += not check("the live push is not one to add by hand",
+                              code, 200)
+        failures += not check("and it says what the choices are",
+                              "is not one of" in rendered, True)
 
 
         server.stop()
