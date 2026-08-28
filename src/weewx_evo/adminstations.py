@@ -341,7 +341,10 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     seen = sightings_for(admin)
     when = last_seen(admin, [one.name for one in register])
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    said = f'<p class="ok">{html.escape(message)}</p>' if message else ""
+    # The banner above the page says it. Printing it a second time in the
+    # body was two "Saved." one under the other, which reads as two things
+    # having happened.
+    said = ""
 
     rows = []
     for one in sorted(register, key=lambda s: s.name):
@@ -364,16 +367,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
       <td>{html.escape(one.archive)}
           {_role_note(one)}</td>
       <td>{html.escape(_ago(when.get(one.name, 0)))}</td>
-      <td>
-        <form method="post" action="./stations/{html.escape(one.name)}/set"
-              class="inline">
-          <label class="tick" title="Record the room the console stands in">
-            <input type="checkbox" name="indoor" value="1"
-                   {"checked" if one.indoor else ""}> indoor
-          </label>
-          {_role_choice(one)}
-          <button type="submit" class="quiet">Save</button>
-        </form>
+      <td class="act">
         <form method="post" action="./stations/{html.escape(one.name)}/remove"
               class="inline">
           <button type="submit" class="quiet">Remove</button></form></td>
@@ -808,13 +802,12 @@ def _role_choice(one: Any) -> str:
     # impossible to untick, and which of the two only shows up in use.
     title = ("An extra station's readings are moved out of the main "
              "station's columns")
-    return (f'<label class="tick" title="{title}">'
-            f'<select name="role">'
+    return (f'<select name="role" title="{title}">'
             f'<option value="{role_defs.MAIN}"'
-            f'{"" if extra else " selected"}>the station</option>'
+            f'{"" if extra else " selected"}>its own</option>'
             f'<option value="{role_defs.EXTRA}"'
-            f'{" selected" if extra else ""}>extra sensor</option>'
-            "</select></label>")
+            f'{" selected" if extra else ""}>from an extra sensor</option>'
+            "</select>")
 
 
 def _what_it_sends_html(admin: Any, station: Any) -> str:
@@ -837,14 +830,10 @@ def _what_it_sends_html(admin: Any, station: Any) -> str:
     if homeless:
         summary += f", {len(homeless)} with nowhere to go"
 
-    missing = ""
-    if homeless:
-        names = ", ".join(html.escape(one) for one in homeless)
-        missing = f'''
-    <p class="err">No column for: <code>{names}</code>. These arrive and are
-       dropped at every archive interval. <code>weewx-evo columns --add</code>
-       creates them; back the database up first.</p>'''
-
+    # No warning line here any more. It named the fields with nowhere to go
+    # and sent the reader to `weewx-evo columns --add`; the table below now
+    # gives each of them its own row and a button that makes the column. Two
+    # statements about the same thing, and the second one can act.
     raw = ""
     if found["raw"]:
         # Already redacted by the driver, which is why it can be shown at all
@@ -862,5 +851,34 @@ def _what_it_sends_html(admin: Any, station: Any) -> str:
                                    found.get("catalog"))
     return f'''
   <details class="sends">
-    <summary>{html.escape(summary)}</summary>{missing}{placements}{raw}
+    <summary>{html.escape(summary)}</summary>
+    {_properties(admin, station)}{placements}{raw}
   </details>'''
+
+
+def _properties(admin: Any, station: Any) -> str:
+    """The two settings of a station, where what they change is visible.
+
+    They used to sit in the overview row, which put four controls beside
+    every station on a page whose job is to say whether the readings are
+    arriving. Changing either is rare; reading the row is not.
+
+    Its own form rather than one save for the whole fold: the placements
+    write `field_map` and take effect on the next upload, and the role
+    changes which columns a station may write at all. One button for both
+    would make a typo in a channel number look like a placement that failed.
+    """
+    if admin.read_only:
+        return ""
+    return f'''
+    <form method="post" action="./stations/{html.escape(station.name)}/set"
+          class="props">
+      <label class="tick" title="Record the room the console stands in">
+        <input type="checkbox" name="indoor" value="1"
+               {"checked" if station.indoor else ""}> indoor
+      </label>
+      <label class="tick">Its readings are
+        {_role_choice(station)}
+      </label>
+      <button type="submit" class="quiet">Save</button>
+    </form>'''

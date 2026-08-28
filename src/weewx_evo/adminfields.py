@@ -19,6 +19,21 @@ So this page shows the decision with everything it needs:
     holds        how many earlier values are in it
     who          which other station fills it
 
+## History is only a warning when it is somebody else's
+
+The first version said "column holds 4,526 earlier values" beside every
+single row, in orange, on an installation with one station that had been
+writing those columns for a year. That is the opposite of the point: a
+warning that stands beside everything says nothing, and the one row where it
+mattered would have read exactly like the other thirty-four.
+
+So the question is not "does this column hold anything" but **whose**. Two
+facts the file already knows answer it: the newest record in the archive, and
+the newest record in which this column was not null. If they are the same
+record, the column is being filled right now -- by this station, since
+`holders()` has already spoken for any other. Then the count is a
+confirmation, not a warning, and it says so in a different colour.
+
 ## The archive is the namespace, not the installation
 
 Upstream this is one question, because there is one database. Here a station
@@ -55,6 +70,12 @@ NEWLINE = "\n"
 #: should have it, and this is the one that should not.
 NOWHERE = "-"
 
+#: How far back from the newest record a column may have been written and
+#: still count as one being filled now. Not a wall clock: both ends come out
+#: of the same file, so a station that has been offline for a week compares
+#: the same way as one uploading this minute.
+FRESH = 3600.0
+
 #: How far past the end of the schema a numbered family is offered. The
 #: standard schema stops at eight extra temperatures because that was enough
 #: when it was written; a gateway with three probes, two indoor sensors and a
@@ -65,13 +86,13 @@ UPTO = 16
 class Placement:
     """One raw field, and everything needed to decide where it goes."""
 
-    __slots__ = ("column", "field", "group", "holder", "holds", "nowhere",
-                 "raw", "value", "why")
+    __slots__ = ("column", "field", "group", "holder", "holds", "last",
+                 "mine", "nowhere", "raw", "value", "why")
 
     def __init__(self, raw: str, value: Any = None, field: str = "",
                  group: str = "", column: bool = False, holds: int = 0,
-                 holder: str = "", why: str = "",
-                 nowhere: bool = False) -> None:
+                 holder: str = "", why: str = "", nowhere: bool = False,
+                 mine: bool = False, last: int | None = None) -> None:
         self.raw = raw
         self.value = value
         self.field = field
@@ -82,6 +103,13 @@ class Placement:
         self.holds = holds
         #: Another station of the same archive that fills it, if any.
         self.holder = holder
+        #: Whether the newest reading in that column arrived with the newest
+        #: record -- so the history in it is this station's own.
+        self.mine = mine
+        #: When the column was last written, which is what makes the warning
+        #: actionable: "4,526 values, last in March 2024" names the sensor
+        #: that used to be there.
+        self.last = last
         self.why = why
         self.nowhere = nowhere
 
@@ -96,6 +124,8 @@ class Placement:
             return "taken"
         if not self.column:
             return "nocolumn"
+        if self.holds and self.mine:
+            return "mine"
         if self.holds:
             return "occupied"
         return "ready"
@@ -152,20 +182,23 @@ def placements(admin: Any, station: Any, sent: dict[str, Any],
     store = _store(admin, archive)
     occupied: dict[str, tuple[int, Any]] = {}
     columns: set[str] = set()
+    newest: int | None = None
     if store is not None:
         try:
             occupied = store.occupied()
             columns = set(store.schema.columns)
+            newest = store.last_timestamp()
         finally:
             store.close()
 
-    mine = dict(getattr(station, "field_map", None) or {})
+    placed = dict(getattr(station, "field_map", None) or {})
     taken = holders(admin, getattr(station, "archive", archive_defs.DEFAULT))
     catalog = catalog or {}
+    groups = _groups_of(admin)
 
     rows = []
     for raw in sorted(sent):
-        field = mine.get(raw, catalog.get(raw, ""))
+        field = placed.get(raw, catalog.get(raw, ""))
         nowhere = field == NOWHERE
         if nowhere:
             field = ""
@@ -176,11 +209,13 @@ def placements(admin: Any, station: Any, sent: dict[str, Any],
             # another raw field of this one. A column takes one answer.
             if who and (who[0] != station.name or who[1] != raw):
                 holder = f"{who[0]}/{who[1]}"
+        holds, last = occupied.get(field, (0, None)) if field else (0, None)
         rows.append(Placement(
             raw=raw, value=sent.get(raw), field=field,
+            group=groups.get(field, "") if field else "",
             column=bool(field) and field in columns,
-            holds=occupied.get(field, (0, None))[0] if field else 0,
-            holder=holder, nowhere=nowhere))
+            holds=holds, holder=holder, nowhere=nowhere, last=last,
+            mine=bool(last and newest and last >= newest - FRESH)))
     return rows
 
 
@@ -316,8 +351,21 @@ def add_column(admin: Any, station: Any, field: str,
 SAYS = {
     "nowhere": ('<span class="note">nowhere, on purpose</span>', ""),
     "unplaced": ('<span class="note">not written</span>', ""),
-    "ready": ('<span class="ok">column ready</span>', ""),
+    "ready": ('<span class="ok">column ready, still empty</span>', ""),
 }
+
+
+def _on(when: int | None) -> str:
+    """The date a column was last written, for the warning to be actionable.
+
+    No `%-d`: it is a glibc extension, and this renders on Windows too.
+    """
+    if not when:
+        return ""
+    import datetime
+
+    stamp = datetime.datetime.fromtimestamp(when)
+    return f"{stamp.day} {stamp:%b %Y}"
 
 
 def _status(one: Placement, archive: archive_defs.Archive,
@@ -327,21 +375,40 @@ def _status(one: Placement, archive: archive_defs.Archive,
     if one.state == "taken":
         return (f'<span class="warn">{html.escape(one.holder)} '
                 "fills this column</span>")
+    if one.state == "mine":
+        # Not a warning. The column holds this station's own history, which
+        # is what a working installation looks like, and orange beside every
+        # row is how the one row that matters gets missed.
+        # A tick and the count. Thirty-five rows saying "writing here" is
+        # the same wall of repeated text the orange warning was, only green.
+        return f'<span class="ok">✓ {one.holds:,} values</span>'
     if one.state == "occupied":
-        return (f'<span class="warn">column holds {one.holds:,} '
-                "earlier values</span>")
+        # This one is the warning the page exists for: readings in the
+        # column, none of them from the record this station just wrote.
+        #
+        # What it says is what was measured, and no more. "from something
+        # else" would be a guess: a sensor whose battery died stops filling
+        # its column too, and it is the same sensor. The date is the fact,
+        # and whoever reads it knows which of the two it is.
+        return (f'<span class="warn">{one.holds:,} values, none since '
+                f'{html.escape(_on(one.last)) or "unknown"}</span>')
     # No column. The button is the point of the row.
     if read_only:
         return ('<span class="bad">no column</span>'
                 '<br><span class="note">this page is read-only</span>')
+    # Which archive is the column heading above, not four words on every
+    # such row: "Create it in Kirchdorf an der Amper" wrapped to two lines
+    # and pushed the row it belongs to twice as tall as its neighbours.
     return (f'<span class="bad">no column</span>'
             f'<br><button class="quiet" type="submit" name="addcolumn"'
-            f' value="{html.escape(one.field)}">Create it in '
-            f"{html.escape(archive.title)}</button>")
+            f' value="{html.escape(one.field)}"'
+            f' title="Adds it to {html.escape(archive.title)}">'
+            "Add it</button>")
 
 
 def _chooser(one: Placement, offered: list[str], groups: dict[str, str],
-             holders_here: dict[str, tuple[str, str]]) -> str:
+             holders_here: dict[str, tuple[str, str]],
+             station: str = "") -> str:
     """Where this reading could go.
 
     The ones that measure the same thing first: a wind speed offered as a
@@ -356,8 +423,12 @@ def _chooser(one: Placement, offered: list[str], groups: dict[str, str],
     def option(name: str) -> str:
         note = ""
         who = holders_here.get(name)
-        if who:
-            note = f" — {who[0]}/{who[1]}"
+        # Not against itself. Every row said "pressure -- kirchdorf/baromabsin"
+        # about the placement it was already showing, so a station's own
+        # settled choices all read as collisions with somebody.
+        if who and who != (station, one.raw):
+            note = (f" — {who[1]}" if who[0] == station
+                    else f" — {who[0]}")
         selected = " selected" if name == one.field else ""
         return (f'<option value="{html.escape(name)}"{selected}>'
                 f"{html.escape(name)}{html.escape(note)}</option>")
@@ -377,9 +448,24 @@ def _chooser(one: Placement, offered: list[str], groups: dict[str, str],
             + groups_html + "</select>")
 
 
+#: The states that are waiting for somebody, in the order they are worth
+#: looking at. A reading with nowhere to go is losing data every interval; a
+#: column with older history in it is the one placement that cannot be taken
+#: back; a contested column is two stations overwriting each other. The rest
+#: of the table is working and does not need reading.
+WANTED = ("nocolumn", "taken", "occupied", "unplaced")
+
+
 def table(admin: Any, station: Any, sent: dict[str, Any],
           catalog: dict[str, str] | None = None) -> str:
-    """The whole thing, as one form per station."""
+    """The whole thing, as one form per station.
+
+    Split, not sorted alphabetically. A gateway sends between thirty and
+    ninety readings and nearly all of them are going exactly where they
+    should; the four that are not were scattered through them by name, so
+    finding them meant reading every row. They are their own list now, and
+    the rest folds away behind a line saying how many there are.
+    """
     rows = placements(admin, station, sent, catalog)
     if not rows:
         return ""
@@ -389,19 +475,45 @@ def table(admin: Any, station: Any, sent: dict[str, Any],
     offered = context["offered"]
     here = context["holders"]
 
-    body = []
-    for one in rows:
+    def row(one: Placement) -> str:
         value = ('<span class="note">no reading</span>' if one.value is None
                  else html.escape(str(one.value)))
-        chooser = _chooser(one, offered, groups, here)
-        body.append(f'''
+        return f'''
       <tr>
         <td class="mono">{html.escape(one.raw)}</td>
         <td class="mono">{value}</td>
-        <td>{chooser}</td>
-        <td class="note">{html.escape(one.group or "")}</td>
+        <td>{_chooser(one, offered, groups, here, station.name)}</td>
+        <td class="note">{html.escape(measures(one.group))}</td>
         <td>{_status(one, archive, admin.read_only)}</td>
-      </tr>''')
+      </tr>'''
+
+    def grid(some: list[Placement]) -> str:
+        return f'''
+    <table class="stations fields">
+      <thead><tr><th>Sends</th><th>Last value</th><th>Goes to</th>
+                 <th>Measures</th><th>In {html.escape(archive.title)}</th>
+      </tr></thead>
+      <tbody>{NEWLINE.join(row(one) for one in some)}</tbody>
+    </table>'''
+
+    waiting = [one for one in rows if one.state in WANTED]
+    waiting.sort(key=lambda one: (WANTED.index(one.state), one.raw))
+    settled = [one for one in rows if one.state not in WANTED]
+
+    parts = []
+    if waiting:
+        parts.append('<p class="lede">'
+                     f"{len(waiting)} of these need a decision.</p>")
+        parts.append(grid(waiting))
+    if settled:
+        word = ("reading is" if len(settled) == 1 else "readings are")
+        # Shut by default when there is something waiting, open when there is
+        # not: with nothing to decide, the fold would be the whole table.
+        opened = "" if waiting else " open"
+        parts.append(
+            f'<details class="settled"{opened}><summary>{len(settled)} '
+            f"{word} going where they should</summary>{grid(settled)}"
+            "</details>")
 
     save = ""
     if not admin.read_only:
@@ -410,22 +522,33 @@ def table(admin: Any, station: Any, sent: dict[str, Any],
                 "effect on the next upload; nothing restarts.</span></p>")
     return f'''
   <form method="post" action="./stations/{html.escape(station.name)}/fields">
-    <table class="stations fields">
-      <thead><tr><th>Sends</th><th>Last value</th><th>Goes to</th>
-                 <th>Measures</th><th>In {html.escape(archive.title)}</th>
-      </tr></thead>
-      <tbody>{NEWLINE.join(body)}</tbody>
-    </table>
+    {"".join(parts)}
     {save}
   </form>'''
 
 
+def measures(group: str) -> str:
+    """`group_pressure` reads as `pressure`.
+
+    The prefix is how the unit table namespaces its keys; on a page it is
+    five characters of noise on every row.
+    """
+    return group[6:].replace("_", " ") if group.startswith("group_") else group
+
+
 def _groups_of(admin: Any) -> dict[str, str]:
-    """What each archive field measures, for sorting the chooser."""
+    """What each archive field measures, for sorting the chooser.
+
+    `all_groups()`, not `GROUPS`: the second is the standard schema alone, so
+    everything a driver names for itself -- `eventRain`, `maxdailygust`, the
+    lightning count -- came back with no group. Those are precisely the
+    fields somebody opens this page to place, and with no group the chooser
+    cannot put the ones measuring the same thing first for any of them.
+    """
     try:
         from . import units
 
-        return dict(units.GROUPS)
+        return units.all_groups()
     except Exception:
         log.debug("could not read the unit groups", exc_info=True)
         return {}

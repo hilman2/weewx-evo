@@ -2019,7 +2019,13 @@ def cmd_admin(args: argparse.Namespace) -> int:
         print("Say which configuration file with --config.", file=sys.stderr)
         return 1
     cfg = settings_for(args)
-    token = args.token or cfg.get("admin.token")
+    # The eleventh place. Nothing configures a driver here, so without this
+    # the field table has no unit group for anything only a driver names --
+    # `eventRain`, `maxdailygust`, the lightning count -- and the chooser
+    # cannot put the fields that measure the same thing first for exactly
+    # the readings somebody came to this page to place.
+    install_driver_groups()
+    token = getattr(args, "admin_token", None) or cfg.get("admin.token")
     if not token:
         import secrets
         token = secrets.token_urlsafe(24)
@@ -3333,7 +3339,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="which addresses get an answer: 'private' (the default, "
                         "meaning the local network), 'any', or a list")
     p.add_argument("--port", type=int, default=None)
-    p.add_argument("--token", default=None,
+    # `dest`, because an argument reaches the settings under the option name
+    # with the dots turned into underscores -- and the option here is
+    # `admin.token`. Without it `--token` set the *upload* token instead, so
+    # the one flag whose help says "never the upload one" was the upload one,
+    # and the command then refused to start because the two now matched.
+    p.add_argument("--token", dest="admin_token", default=None,
                    help="its own token, never the upload one")
     p.add_argument("--rate", type=float, default=None,
                    help="requests a second per address (default: 5)")

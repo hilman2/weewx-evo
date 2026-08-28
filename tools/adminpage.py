@@ -122,8 +122,19 @@ def upload(url: str, fields: dict, files: dict) -> str:
 
 
 def said(html: str, kind: str = "ok") -> str:
-    found = re.search(f'<p class="{kind}">([^<]*)', html)
-    return found.group(1) if found else ""
+    """What the page told the operator, wherever it put it.
+
+    Two places once: a banner at the top and the same words again in the
+    body, so a save said "Saved." twice, one under the other. There is one
+    now, and this asks the question the test means -- did the page say it --
+    rather than the one it happened to be written against.
+    """
+    for pattern in (f'<p class="{kind}">([^<]*)',
+                    f'<div class="banner {kind}">([^<]*)'):
+        found = re.search(pattern, html)
+        if found:
+            return found.group(1).strip()
+    return ""
 
 
 

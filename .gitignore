@@ -41,3 +41,10 @@ evo.toml
 plots.toml
 *.bak
 *.part
+
+# Screenshots taken while working on the settings page. Two have gone in
+# by accident; the page is checked by looking at it, and what is looked at
+# is not what is kept.
+*.png
+!src/**/*.png
+!.charts/*.png

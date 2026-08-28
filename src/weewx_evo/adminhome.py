@@ -688,7 +688,10 @@ def _card(title: str, links: list[Link], empty: str, more: str = "") -> str:
 def overview(admin: Any, message: str = "", error: str = "") -> str:
     state = read(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    said = f'<p class="ok">{html.escape(message)}</p>' if message else ""
+    # The banner above the page says it. Printing it a second time in the
+    # body was two "Saved." one under the other, which reads as two things
+    # having happened.
+    said = ""
 
     trouble = ""
     if state.concerns:

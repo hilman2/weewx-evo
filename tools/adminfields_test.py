@@ -40,6 +40,19 @@ failures = 0
 TOKEN = "abcdefghij123456"
 
 
+def a_workspace():
+    """A temporary directory that does not fail the run while emptying itself.
+
+    Windows keeps a database file locked for a moment after SQLite has closed
+    it, so the cleanup raises where the same code on Linux does not. Ignoring
+    that would also hide a connection genuinely left open -- which is the bug
+    that once put 477 of them on the VPS -- so the run ends by counting the
+    open connections instead. That measures the property directly rather than
+    inferring it from whether a directory could be removed.
+    """
+    return tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+
+
 def check(what: str, got: object, want: object) -> bool:
     global failures
     ok = got == want
@@ -71,11 +84,26 @@ def an_installation(work: Path, *, two_archives: bool = False,
     return Admin(path, lambda: all_schemas(path), TOKEN)
 
 
-def an_archive(path: Path, filled: dict[str, int] | None = None) -> None:
-    """An archive with some columns holding some number of readings."""
+def an_archive(path: Path, filled: dict[str, int] | None = None,
+               ended: float = 0.0) -> None:
+    """An archive with some columns holding some number of readings.
+
+    `ended` is how many hours before the newest record those columns stop.
+    Zero means they run right up to it, which is what a working sensor looks
+    like; anything past an hour is history somebody has to decide about
+    before writing a second sensor into the same column.
+
+    There is always a record at `now`, whatever `ended` says. Without one the
+    two ends of the comparison are the same row and every column looks
+    current -- which is exactly the case this distinction exists to separate.
+    """
     store = ArchiveStore(path)
     try:
         now = int(time.time())
+        store.conn.execute(
+            "INSERT OR REPLACE INTO archive (dateTime, usUnits, `interval`, "
+            "outTemp) VALUES (?, ?, ?, ?)", (now, 1, 5, 19.0))
+        stop = now - int(ended * 3600)
         for field, count in (filled or {}).items():
             if not store.schema.has_column(field):
                 store.add_column(field)
@@ -83,7 +111,7 @@ def an_archive(path: Path, filled: dict[str, int] | None = None) -> None:
                 store.conn.execute(
                     f"INSERT OR REPLACE INTO archive (dateTime, usUnits, "
                     f"`interval`, {field}) VALUES (?, ?, ?, ?)",
-                    (now - n * 300, 1, 5, 20.0 + n))
+                    (stop - n * 300, 1, 5, 20.0 + n))
         store.conn.commit()
     finally:
         store.close()
@@ -91,7 +119,7 @@ def an_archive(path: Path, filled: dict[str, int] | None = None) -> None:
 
 def a_field_with_nowhere_to_go() -> None:
     print("\na reading the archive has no column for")
-    with tempfile.TemporaryDirectory() as raw:
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work)
         an_archive(work / "data" / "weewx.sdb")
@@ -110,12 +138,20 @@ def a_field_with_nowhere_to_go() -> None:
 
 
 def a_column_that_already_holds_something() -> None:
-    """The number that makes the decision safe."""
-    print("\na column with somebody else's history in it")
-    with tempfile.TemporaryDirectory() as raw:
+    """The number that makes the decision safe -- and whose readings they are.
+
+    Both halves, and the second is why this is worth a test of its own. The
+    first version warned about every column holding anything, so a station
+    that had been recording for a year had thirty-four orange rows, and the
+    one where a placement would have destroyed a series read exactly like the
+    thirty-three where it would not.
+    """
+    print("\na column whose history stopped two days ago")
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work)
-        an_archive(work / "data" / "weewx.sdb", {"extraTemp9": 300})
+        an_archive(work / "data" / "weewx.sdb", {"extraTemp9": 300},
+                   ended=48.0)
         station = next(iter(
             __import__("weewx_evo.stations", fromlist=["load"]).load(
                 work / "stations.toml")))
@@ -126,6 +162,7 @@ def a_column_that_already_holds_something() -> None:
         check("the column is there", one.column, True)
         check("and it says how much is in it", one.holds, 300)
         check("which is a warning, not a green light", one.state, "occupied")
+        check("with the date that makes it actionable", bool(one.last), True)
 
         # An empty column of the same archive is the other answer.
         rows = adminfields.placements(admin, station, {"tf_ch2": 66.0},
@@ -133,9 +170,34 @@ def a_column_that_already_holds_something() -> None:
         check("an unused one says so", rows[0].state, "nocolumn")
 
 
+def a_column_being_written_right_now() -> None:
+    """The ordinary case, which must not read as a warning.
+
+    The same 300 readings as above. The only difference is that they run up
+    to the newest record in the file, and that is the whole distinction: two
+    facts out of one database, never a wall clock, so a station that has been
+    offline for a week compares the same way as one uploading this minute.
+    """
+    print("\nthe same column, still being filled")
+    with a_workspace() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        an_archive(work / "data" / "weewx.sdb", {"extraTemp9": 300})
+        station = next(iter(
+            __import__("weewx_evo.stations", fromlist=["load"]).load(
+                work / "stations.toml")))
+
+        rows = adminfields.placements(admin, station, {"tf_ch1": 65.5},
+                                      catalog={"tf_ch1": "extraTemp9"})
+        one = rows[0]
+        check("the history in it is this station's own", one.mine, True)
+        check("so it is not a warning", one.state, "mine")
+        check("and the count is still there to be read", one.holds, 300)
+
+
 def another_station_of_the_same_archive() -> None:
     print("\ntwo stations of one archive on one column")
-    with tempfile.TemporaryDirectory() as raw:
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work, stations=(
             '[stations.kirchdorf]\ndriver = "ecowitt"\n'
@@ -157,7 +219,7 @@ def another_station_of_the_same_archive() -> None:
         kirchdorf = load(work / "stations.toml").by_name("kirchdorf")
         mine = adminfields.placements(admin, kirchdorf, {"tf_ch1": 20.0})
         check("its own placement is not a collision", mine[0].holder, "")
-        check("it is simply occupied", mine[0].state, "occupied")
+        check("it is the column it is filling", mine[0].state, "mine")
 
 
 def another_station_of_a_different_archive() -> None:
@@ -168,7 +230,7 @@ def another_station_of_a_different_archive() -> None:
     for.
     """
     print("\ntwo stations, two archives, one field name")
-    with tempfile.TemporaryDirectory() as raw:
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work, two_archives=True, stations=(
             '[stations.kirchdorf]\ndriver = "ecowitt"\n'
@@ -201,7 +263,7 @@ def another_station_of_a_different_archive() -> None:
 
 def placing_and_making_the_column() -> None:
     print("\nsaving a placement, and creating what it needs")
-    with tempfile.TemporaryDirectory() as raw:
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work)
         an_archive(work / "data" / "weewx.sdb")
@@ -226,7 +288,7 @@ def placing_and_making_the_column() -> None:
 def nowhere_is_a_decision() -> None:
     """The other half of resolving a collision."""
     print("\nplacing a reading nowhere, on purpose")
-    with tempfile.TemporaryDirectory() as raw:
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work)
         an_archive(work / "data" / "weewx.sdb")
@@ -251,7 +313,7 @@ def nowhere_is_a_decision() -> None:
 def the_chooser_offers_past_the_schema() -> None:
     """`extraTemp12` on a database whose schema stops at eight."""
     print("\nwhat the chooser offers")
-    with tempfile.TemporaryDirectory() as raw:
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work)
         an_archive(work / "data" / "weewx.sdb")
@@ -287,7 +349,7 @@ def the_rows_are_raw_names_not_mapped_ones() -> None:
     from weewx_evo.db.live import LiveStore, Packet
     from weewx_evo.stations import load
 
-    with tempfile.TemporaryDirectory() as raw:
+    with a_workspace() as raw:
         work = Path(raw)
         admin = an_installation(work)
         an_archive(work / "data" / "weewx.sdb")
@@ -313,15 +375,41 @@ def the_rows_are_raw_names_not_mapped_ones() -> None:
                if n in names], [])
 
 
+def nothing_is_left_open() -> None:
+    """Every store this page opens is closed again.
+
+    The failure this guards against does not look like a leak. It looks like
+    three unrelated errors at once -- a settings file that cannot be read, a
+    skin directory that is not there, an upload that fails -- because the
+    process has run out of file descriptors and the next open of anything is
+    the one that reports it.
+    """
+    import gc
+    import sqlite3
+
+    print("\nnothing is left holding a database open")
+    gc.collect()
+    open_ones = 0
+    for one in [o for o in gc.get_objects() if isinstance(o, sqlite3.Connection)]:
+        try:
+            one.execute("SELECT 1")
+            open_ones += 1
+        except sqlite3.ProgrammingError:
+            pass
+    check("connections still open", open_ones, 0)
+
+
 def main() -> int:
     a_field_with_nowhere_to_go()
     a_column_that_already_holds_something()
+    a_column_being_written_right_now()
     another_station_of_the_same_archive()
     another_station_of_a_different_archive()
     placing_and_making_the_column()
     nowhere_is_a_decision()
     the_chooser_offers_past_the_schema()
     the_rows_are_raw_names_not_mapped_ones()
+    nothing_is_left_open()
 
     print()
     if failures:

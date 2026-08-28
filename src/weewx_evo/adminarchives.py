@@ -194,7 +194,10 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
         Path(admin.path).parent / station_defs.FILENAME)
     base = Path(admin.path).parent
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    said = f'<p class="ok">{html.escape(message)}</p>' if message else ""
+    # The banner above the page says it. Printing it a second time in the
+    # body was two "Saved." one under the other, which reads as two things
+    # having happened.
+    said = ""
 
     add = ""
     if not admin.read_only:

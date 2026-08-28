@@ -331,7 +331,10 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     """
     charts = load(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    said = f'<p class="ok">{html.escape(message)}</p>' if message else ""
+    # The banner above the page says it. Printing it a second time in the
+    # body was two "Saved." one under the other, which reads as two things
+    # having happened.
+    said = ""
 
     add = ""
     if not admin.read_only:
@@ -612,7 +615,6 @@ def importer(admin: Any, message: str = "", error: str = "",
      same charts. Everything about drawing a picture is left behind, and it
      says what it left. Nothing is overwritten unless you ask.</p>
   {f'<p class="err">{html.escape(error)}</p>' if error else ""}
-  {f'<p class="ok">{html.escape(message)}</p>' if message else ""}
 
   <form method="post" action="./import-plots" enctype="multipart/form-data">
     <fieldset class="line">

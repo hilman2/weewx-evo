@@ -366,6 +366,49 @@ def main() -> int:
                               config_file.get(after, "feeds.wdc.kind"),
                               "cheetah")
 
+        # -- a relative path means the file it was written in ------------
+        #
+        # Two readers of one setting resolved it two different ways: the
+        # settings page against the configuration file, the service against
+        # whatever directory it happened to start in. `archive_db =
+        # "weewx.sdb"` therefore named two different files, and the page's
+        # offer to add a column added it to the one the service was not
+        # writing -- while saying it had worked.
+        print("\na relative path is relative to the file it is written in")
+        elsewhere = tmp / "station"
+        elsewhere.mkdir(exist_ok=True)
+        (elsewhere / "evo.toml").write_text(
+            'token = "abcdefghij123456"\narchive_db = "weewx.sdb"\n',
+            encoding="utf-8")
+        placed = Settings(CORE, config_file.read(elsewhere / "evo.toml"),
+                          args_with(), path=elsewhere / "evo.toml")
+        failures += not check("against the file, not the cwd",
+                              placed.get("archive_db"),
+                              str(elsewhere / "weewx.sdb"))
+        # The default is a relative path too, and it is read before parse()
+        # ever runs -- so it needs the same treatment or `data/weewx.sdb`
+        # still means whatever directory the process was started in.
+        failures += not check("and so is the default",
+                              Path(placed.get("live_db")).parent.parent,
+                              elsewhere)
+
+        # The command line is the exception, and the obvious one: a path
+        # somebody just typed means the directory they typed it in.
+        typed = Settings(CORE, config_file.read(elsewhere / "evo.toml"),
+                         args_with(archive="typed.sdb"),
+                         path=elsewhere / "evo.toml")
+        failures += not check("but a typed one is left alone",
+                              typed.get("archive_db"), "typed.sdb")
+        # An absolute path is nobody's business but its own.
+        (elsewhere / "abs.toml").write_text(
+            'token = "abcdefghij123456"\n'
+            f'archive_db = "{(tmp / "far.sdb").as_posix()}"\n',
+            encoding="utf-8")
+        far = Settings(CORE, config_file.read(elsewhere / "abs.toml"),
+                       args_with(), path=elsewhere / "abs.toml")
+        failures += not check("and an absolute one untouched",
+                              Path(far.get("archive_db")).name, "far.sdb")
+
     finally:
         os.environ.clear()
         os.environ.update(saved_env)

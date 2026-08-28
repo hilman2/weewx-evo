@@ -117,17 +117,39 @@ class Settings:
         raw, source = self._raw(name)
         if raw is None:
             self._sources[name] = "default"
-            return option.default if option is not None else default
+            if option is None:
+                return default
+            return self._anchor(option, option.default, "default")
 
         self._sources[name] = source
         if option is None:
             return raw
         try:
-            return option.parse(raw)
+            return self._anchor(option, option.parse(raw), source)
         except Invalid as exc:
             log.warning("%s (from %s): %s. Using the default instead.",
                         name, source, exc)
             return option.default
+
+    def _anchor(self, option: Any, value: Any, source: str) -> Any:
+        """A relative path from the file, against the file.
+
+        Two readers of one setting were resolving it two different ways: the
+        settings page against the configuration file, the service against
+        whatever directory it was started in. So `archive_db = "weewx.sdb"`
+        named two files, and the page offering to add a column added it to
+        the one the service was not writing -- and said it had worked.
+
+        The command line is the exception, and it is the obvious one: a path
+        somebody just typed means the directory they typed it in.
+        """
+        if (option.kind != "path" or not value
+                or source == "command line" or self._path is None):
+            return value
+        found = Path(str(value))
+        if found.is_absolute():
+            return value
+        return str(self._path.parent / found)
 
     def _raw(self, name: str) -> tuple[Any, str]:
         # 1. the command line

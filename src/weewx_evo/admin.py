@@ -1071,6 +1071,46 @@ def _addresses() -> list[tuple[str, str]]:
     return found
 
 
+def _driver_nav(admin: Any, active: str) -> list[str]:
+    """The drivers, with the ones nobody uses folded away.
+
+    Six protocols arrived at once and the sidebar grew six lines, on an
+    installation running one of them. A driver no station uses has no setting
+    anybody wants to read -- but it has to stay reachable, because setting one
+    up is exactly when it is needed. So: in use first, by name, and the rest
+    behind one line that says how many.
+    """
+    drivers = [s for s in admin.schemas if s.kind == "driver"]
+    if not drivers:
+        return []
+    try:
+        used = {getattr(one, "driver", "") for one in adminstations.load(admin)}
+    except Exception:
+        log.debug("could not read the stations for the driver list",
+                  exc_info=True)
+        used = {one.name for one in drivers}
+
+    def link(one: Any) -> str:
+        current = " aria-current='page'" if one.name == active else ""
+        # "Driver: ecowitt" under a heading that already says Readings in,
+        # beside a link called Consoles. The name is the whole of it.
+        shown = one.label.split(": ", 1)[-1]
+        return (f'<a href="./{html.escape(one.name)}"{current}>'
+                f"{html.escape(shown)}</a>")
+
+    out = [link(one) for one in drivers if one.name in used]
+    rest = [one for one in drivers if one.name not in used]
+    if rest:
+        # Open when one of them is the page being looked at, so following a
+        # search result does not land somewhere the navigation denies.
+        opened = " open" if any(one.name == active for one in rest) else ""
+        out.append(
+            f'<details class="more"{opened}><summary>{len(rest)} more '
+            f'{"driver" if len(rest) == 1 else "drivers"}</summary>'
+            + "".join(link(one) for one in rest) + "</details>")
+    return out
+
+
 def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
@@ -1092,6 +1132,11 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     if form and schema:
         values.update({k: v for k, v in form.items() if k in values})
 
+    # The pages whose content is a wide table rather than a form. Named
+    # here: deciding it from the rendered body would mean a page changing
+    # width depending on how many stations somebody happens to have.
+    wide = "wide" if active in ("stations", "overview", "archives") else ""
+
     nav = []
     # Fixed sections. The old navigation listed every configured thing --
     # three feeds, five exports, an upload, each its own link under its own
@@ -1102,11 +1147,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
 
     nav.append('<p class="navhead">Readings in</p>')
     nav.extend(adminstations.nav(admin, active))
-    drivers = [s for s in admin.schemas if s.kind == "driver"]
-    for one in drivers:
-        current = " aria-current='page'" if one.name == active else ""
-        nav.append(f'<a href="./{html.escape(one.name)}"{current}>'
-                   f"{html.escape(one.label)}</a>")
+    nav.extend(_driver_nav(admin, active))
 
     nav.append('<p class="navhead">Readings out</p>')
     nav.extend(adminpublish.nav(admin, active))
@@ -1333,6 +1374,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # and an export each do. Printing the shell's as well gave two headings,
     # the first of them a bare repetition of the second.
     return _PAGE.format(
+        wide=wide,
         title=html.escape(heading),
         heading="" if standing else f"<h2>{html.escape(heading)}</h2>",
         find=adminsearch.box(),
@@ -1382,11 +1424,30 @@ _PAGE = """<!doctype html>
       --dim: #9a94a3; --accent: #79c79b; --warn: #e0a86a; --bad: #e08a76;
     }}
   }}
+  /* Every link in the page body was the browser's own colour: #0000ee in
+     light, #9e9eff in dark. The second is the one that gives a dark theme
+     away -- a lilac link on a green-accented panel, on every card of the
+     overview. Colour, not the browser's; underline only on hover, because
+     "Add a feed" beside "Add an export" beside "Add an upload" underlined
+     three times is a fence. */
+  main a {{ color: var(--accent); text-decoration: none; }}
+  main a:hover {{ text-decoration: underline; }}
+  main a:focus-visible {{ outline: 2px solid var(--accent);
+      outline-offset: 2px; border-radius: 3px; }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; background: var(--bg); color: var(--ink);
          font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }}
   .shell {{ display: grid; grid-template-columns: 15rem 1fr; min-height: 100vh; }}
-  @media (max-width: 48rem) {{ .shell {{ grid-template-columns: 1fr; }} }}
+  @media (max-width: 48rem) {{
+    .shell {{ grid-template-columns: 1fr; }}
+    /* One column means the whole sidebar comes before the page. It is
+       thirteen entries plus a search box, so on a phone the answer to
+       "is it recording" was below eight hundred pixels of navigation.
+       Capped and scrollable: the top of the page is on the first screen,
+       and the navigation is still all there. */
+    nav {{ max-height: 40vh; overflow-y: auto;
+           border-right: 0; border-bottom: 1px solid var(--line); }}
+  }}
 
   nav {{ background: var(--panel); border-right: 1px solid var(--line);
         padding: 1.25rem 1rem; }}
@@ -1404,7 +1465,20 @@ _PAGE = """<!doctype html>
   nav a[aria-current] {{ background: color-mix(in srgb, var(--accent) 15%, transparent);
                         font-weight: 600; }}
 
-  main {{ padding: 1.75rem 1.5rem 5rem; max-width: 46rem; }}
+  /* 46rem is a reading measure, and most of these pages are forms and
+     prose that want one. The station page is a table five columns wide, and
+     holding it to a paragraph's width made every cell wrap: "LAST VALUE" ran
+     into the heading beside it and a field name broke across two lines. */
+  main {{ padding: 1.75rem 1.5rem 5rem; max-width: 46rem;
+          /* A grid item's default minimum is its content, so a 32-character
+             identity in a table made the whole page scroll sideways on a
+             phone. */
+          min-width: 0; }}
+  main.wide {{ max-width: 72rem; }}
+  /* A table wider than the phone scrolls inside its own card. The page
+     itself never does: a horizontal scrollbar on the body hides content
+     behind a gesture nobody performs on a settings page. */
+  section.group {{ overflow-x: auto; }}
   h2 {{ font-size: 1.375rem; margin: 0 0 1.25rem; letter-spacing: -.01em; }}
   h3 {{ font-size: .9375rem; margin: 0 0 .2rem; }}
   .lede {{ color: var(--dim); font-size: .875rem; margin: 0 0 1rem; }}
@@ -1490,6 +1564,15 @@ _PAGE = """<!doctype html>
       opacity: .65; }}
   .navgroup[open] > summary {{ color: var(--ink); font-weight: 500; }}
   nav a.sub {{ padding-left: 1.1rem; font-size: .8125rem; }}
+  /* The drivers nobody uses. A line that says how many, and the same
+     indentation as anything else nested under a section. */
+  details.more > summary {{ padding: .35rem 0; font-size: .8125rem;
+      color: var(--dim); cursor: pointer; list-style: none; }}
+  details.more > summary::before {{ content: "+ "; }}
+  details.more[open] > summary::before {{ content: "2 "; }}
+  details.more > summary::-webkit-details-marker {{ display: none; }}
+  details.more > summary:hover {{ color: var(--ink); }}
+  details.more > a {{ padding-left: 1.1rem; font-size: .8125rem; }}
   .row {{ display: flex; flex-wrap: wrap; gap: 1rem 1.4rem; margin-bottom: 1rem; }}
   .row > label {{ flex: 1 1 13rem; display: block; font-size: .8125rem;
       color: var(--dim); }}
@@ -1562,6 +1645,10 @@ _PAGE = """<!doctype html>
                                 width: 36%; overflow-wrap: normal;
                                 text-overflow: ellipsis; overflow: hidden;
                                 white-space: nowrap; }}
+  /* With room for it, the name is worth more than the ellipsis: an archive
+     called "Kirchdorf an der Amper" read "Kirchdorf an d..." on a card with
+     four empty centimetres beside it. */
+  main.wide table.chain td:first-child {{ width: 44%; }}
   /* The age is what the eye goes to, so it is aligned and monospaced: a
      column of "12 s ago" and "4 h ago" compares at a glance, the same
      strings ragged do not. */
@@ -1680,6 +1767,7 @@ _PAGE = """<!doctype html>
   table.stations td {{ padding: .55rem .6rem .55rem 0; vertical-align: top;
       border-top: 1px solid var(--line); }}
   table.stations tr:first-child td {{ border-top: 0; }}
+  table.stations td.act {{ text-align: right; white-space: nowrap; }}
   /* The identity is the widest thing here and the least often read. It
      breaks rather than pushing the columns somebody is looking at. */
   /* The placement table. Wider than the station list it folds out of, and
@@ -1687,8 +1775,46 @@ _PAGE = """<!doctype html>
   table.fields select {{ font-size: .8125rem; max-width: 22rem; width: 100%; }}
   table.fields td {{ vertical-align: top; }}
   table.fields td.mono {{ font-family: var(--mono); font-size: .8125rem;
-                          white-space: nowrap; }}
+                          overflow-wrap: anywhere; }}
   table.fields button.quiet {{ margin-top: .25rem; font-size: .75rem; }}
+  /* The readings that are fine, folded away under a count. */
+  details.settled {{ margin-top: .8rem; }}
+  details.settled > summary {{ font-size: .8125rem; color: var(--dim);
+      cursor: pointer; padding: .3rem 0; }}
+  details.settled > summary:hover {{ color: var(--ink); }}
+  /* Which measurement it is, for sorting the chooser. Narrow: it is context
+     for the column beside it, not a column somebody reads down. */
+  table.fields td:nth-child(4) {{ font-size: .75rem; }}
+  /* Fixed, and in per cent. Left to the browser the status column took what
+     it liked and the chooser got the remainder, which read "-- wherever the";
+     given a minimum instead, the table grew wider than the card holding it.
+     Shares of the card is the only one of the three that cannot do either. */
+  table.fields {{ table-layout: fixed; width: 100%; }}
+  table.fields th:nth-child(1) {{ width: 17%; }}
+  table.fields th:nth-child(2) {{ width: 11%; }}
+  table.fields th:nth-child(3) {{ width: 28%; }}
+  table.fields th:nth-child(4) {{ width: 12%; }}
+  /* `table.stations th` is nowrap, and in a fixed layout a nowrap heading
+     does not widen its column -- it runs into the next one. */
+  table.fields th {{ white-space: normal; }}
+  table.fields td.mono {{ overflow-wrap: anywhere; }}
+  table.fields .ok, table.fields .warn, table.fields .bad,
+  table.fields .note {{ font-size: .75rem; }}
+
+  /* The two settings of a station, at the top of its fold. A rule above and
+     air below, so it does not read as the first row of the field table. */
+  table.stations td form.props {{ display: flex; align-items: center; gap: .9rem;
+      flex-wrap: wrap; margin: 0 0 .9rem; padding: .55rem .75rem;
+      background: color-mix(in srgb, var(--ink) 3%, transparent);
+      border-radius: 6px; }}
+  table.stations td form.props select {{ font-size: .75rem; padding: .2rem .4rem; }}
+  table.stations td form.props label.tick {{ margin-right: 0; display: inline-flex;
+      align-items: center; gap: .35rem; }}
+  table.stations td form.props button {{ margin-left: auto; }}
+  /* Two settings, not one sentence: "indoor Its readings are" read as
+     one line of prose with a dropdown in the middle of it. */
+  table.stations td form.props > label.tick + label.tick {{
+      padding-left: .9rem; border-left: 1px solid var(--line); }}
 
   table.stations code {{ font-family: var(--mono); font-size: .8125rem;
       word-break: break-all; }}
@@ -1732,7 +1858,7 @@ _PAGE = """<!doctype html>
     {find}
     {nav}
   </nav>
-  <main>
+  <main class="{wide}">
     {heading}
     {readonly}
     {banner}
