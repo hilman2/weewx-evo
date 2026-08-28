@@ -763,5 +763,19 @@ def core_options() -> list[Group]:
                    help="Settings both systems share -- latitude, altitude, "
                         "the archive interval -- can go on living there. Read, "
                         "never written. Anything set here wins over it."),
+            Option("watchdog", "Restart if this process becomes unwell",
+                   kind="bool", default=True,
+                   help="Watches for a descriptor leak, a runner thread that "
+                        "has died, and an archiver loop that has stopped -- "
+                        "the things a fresh process fixes. It stops; the "
+                        "supervisor starts it again. Needs 'restart: "
+                        "unless-stopped' in compose or 'Restart=always' in a "
+                        "unit file, which the shipped ones have."),
+            Option("watchdog_cooldown", "and not again for", kind="duration",
+                   default=3600, minimum=300, maximum=86400, advanced=True,
+                   help="The floor between two self-restarts. It is written "
+                        "to the live database, so it survives the restart it "
+                        "is limiting. Below this, the symptom is logged every "
+                        "pass and nothing else happens."),
         )),
     ]

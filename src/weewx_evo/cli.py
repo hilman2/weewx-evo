@@ -32,6 +32,7 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,7 @@ from . import options as option_defs
 from . import plots as plot_defs
 from . import settings as settings_state
 from . import stations as stations_module
-from . import units, weewxconf
+from . import units, watchdog, weewxconf
 from . import uploads as upload_registry
 from .admin import Admin, AdminServer
 from .archiver import Archiver
@@ -397,6 +398,28 @@ def make_archiver(args: argparse.Namespace) -> tuple[LiveStore, ArchiveStore, Ar
                                    deriver=deriver_from(cfg))
 
 
+def start_watchdog(cfg: Any, live: Any,
+                   on_unwell: Callable[[str], None], *runners: Any,
+                   heartbeat: bool = True) -> Any:
+    """The watchdog, where this installation asked for one.
+
+    Built here rather than in each command because all three long-running
+    ones want it and they want it identically. The one thing that differs is
+    what stopping means: `serve` and `archive` set their loop's event, the
+    listener shuts its server down.
+    """
+    if not cfg.get("watchdog"):
+        return None
+    dog = watchdog.Watchdog(live, on_unwell,
+                            cooldown=cfg.get("watchdog_cooldown"),
+                            heartbeat=heartbeat,
+                            threads=watchdog.threads_of(*runners))
+    dog.start()
+    log.info("watchdog watching; it will not restart more than once every "
+             "%.0f min", cfg.get("watchdog_cooldown") / 60)
+    return dog
+
+
 def cmd_listen(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
@@ -431,11 +454,19 @@ def cmd_listen(args: argparse.Namespace) -> int:
         udp.start()
         log.info("UDP on %s:%s", cfg.get("host"), cfg.get("udp_port"))
 
+    # No heartbeat here: this process sits in serve_forever, and the last
+    # time it did anything is a fact about the console rather than about
+    # itself. The descriptor and thread checks are the ones that apply --
+    # and a leaked connection per upload is exactly this process's failure.
+    dog = start_watchdog(cfg, live, lambda why: http.stop(), udp,
+                         heartbeat=False)
     try:
         http.serve_forever()
     except KeyboardInterrupt:
         log.info("stopping")
     finally:
+        if dog is not None:
+            dog.stop()
         http.stop()
         if udp:
             udp.stop()
@@ -494,10 +525,19 @@ def cmd_archive(args: argparse.Namespace) -> int:
             forecaster = forecast_runner.Runner(scheduled_forecasts,
                                                 forecast_store)
             forecaster.start()
+
+    dog = start_watchdog(cfg, live, lambda why: stopping.set(),
+                         feeds, runner, uploader, forecaster)
     last_prune = 0.0
     try:
         while not stopping.is_set():
             try:
+                if dog is not None:
+                    # Said here rather than at the top of the loop: this is
+                    # past the settings reload, so a config that takes a
+                    # while to read cannot look like a stopped loop.
+                    dog.beats()
+
                 n = archiver.process_due(grace=cfg.get("grace"))
                 if n:
                     log.info("archived %d interval(s)", n)
@@ -509,8 +549,6 @@ def cmd_archive(args: argparse.Namespace) -> int:
                         # Sets a flag and returns. Nothing about an upload
                         # happens on this thread.
                         runner.record_written()
-                    if uploader is not None:
-                        uploader.record_written()
                     if uploader is not None:
                         uploader.record_written()
                 # The raw uploads go first and far more often: they are a
@@ -951,14 +989,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
 
     watcher = _Watcher(getattr(args, "config", None))
-    # Set when a setting changed that only a fresh process can apply.
-    # The supervisor brings it back: `restart: unless-stopped` in
-    # compose, `Restart=always` in a unit file.
-    restarting = False
-    # Set when a setting changed that only a fresh process can apply. The
-    # supervisor brings it back: `restart: unless-stopped` in compose,
+    # Set when only a fresh process can carry on: a setting that cannot be
+    # applied to a running one, or the watchdog finding this one unwell. The
+    # supervisor brings it back -- `restart: unless-stopped` in compose,
     # `Restart=always` in a unit file.
     restarting = False
+
+    def restart_for(why: str) -> None:
+        nonlocal restarting
+        restarting = True
+        stopping.set()
+
+    dog = start_watchdog(cfg, live, restart_for,
+                         feeds, runner, uploader, forecaster)
     last_prune = 0.0
     try:
         while not stopping.is_set():
@@ -981,6 +1024,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         stopping.set()
                         continue
                     apply_live(args, cfg, web, runner, uploader, forecaster)
+
+                if dog is not None:
+                    dog.beats()
 
                 n = archiver.process_due(grace=cfg.get("grace"))
                 if n:
@@ -1009,6 +1055,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             stopping.wait(cfg.get("poll"))
     finally:
         log.info("stopping")
+        if dog is not None:
+            dog.stop()
         if feeds is not None:
             feeds.stop()
         if runner is not None:
