@@ -5,8 +5,8 @@ to be on the disk, because the driver file says `import weewx` at the top --
 so a station whose only reason to want WeeWX was one USB console had to
 install the whole of it.
 
-Measured across WeeWX's fourteen own drivers, that import is almost entirely
-ceremony. What they actually reach for:
+Measured across the drivers in WeeWX's own tree, that import is almost
+entirely ceremony. What they actually reach for:
 
     weewx.drivers          13   the base classes, which a shim does not use
     weewx.WeeWxIOError     12   an exception, three lines
@@ -17,9 +17,26 @@ ceremony. What they actually reach for:
     weewx.RetriesExceeded   8   another exception
     weewx.METRIC / US       7   the numbers 16 and 1, which are ours as well
 
-fousb is the lightest of the fourteen: four names. So the whole of it comes
-to this file, and the driver runs against it exactly as it does against the
-real thing.
+fousb is the lightest of them at four names, and Vantage the heaviest at
+twenty. **All thirteen import against this file** (`tools/standin_test.py`),
+so it is not a fousb-shaped answer to a fousb-shaped question.
+
+Three of the pieces were added for the heavy end, and each was one driver's
+whole reason not to run:
+
+    weewx.engine      Vantage is a driver *and* a service: it inherits
+                      StdService and binds in its constructor. Without this
+                      the driver behind every Davis station does not import.
+    weewx.crc16       cc3000 and Vantage write `from weewx.crc16 import
+                      crc16`, so it has to be a module and not a function
+                      hung on `weewx`.
+    weewx.units       ultimeter and ws1 want the conversion constants, and
+                      Vantage wants ValueTuple, convert and GenWithConvert.
+
+The constants come from our own `units.py` rather than being retyped. A
+driver dividing by 0.0295299875 and one dividing by 0.02953 disagree in the
+fourth decimal of every pressure reading, and nothing about the number looks
+wrong.
 
 **Where WeeWX is installed, WeeWX wins.** Same rule as pyephem in `sun.py`:
 somebody who has the real one gets the real one's behaviour, down to the
@@ -34,11 +51,11 @@ table for the process. Whichever ran second would silently take the other's
 there is left alone: two stand-ins for different halves of the same program
 can share a process without either of them noticing.
 
-What this is not: an implementation of WeeWX. A driver that wants
-`weewx.engine`, `weewx.manager` or a real `weewx.units` gets an error naming
-what it wanted, which is the thing to add -- not a polite answer that turns
-into a wrong reading three layers down. Same reason `ShimEngine` has no
-`__getattr__`.
+What this is not: an implementation of WeeWX. `weewx.manager` is a database
+and `weewx.engine` here is one class; a driver that wants more gets an error
+with the name in it, and that name is the thing to add -- not a polite answer
+that turns into a wrong reading three layers down. Same reason `ShimEngine`
+has no `__getattr__`.
 """
 
 from __future__ import annotations
@@ -57,7 +74,13 @@ METRIC = 0x10
 METRICWX = 0x11
 
 #: The names this file can claim. Also what `describe()` reports on.
-NAMES = ("weewx", "weewx.drivers", "weewx.wxformulas",
+#:
+#: `weewx.crc16` is a *module* holding a function of the same name, because
+#: cc3000 and Vantage write `from weewx.crc16 import crc16`. As an attribute
+#: on `weewx` it looks right, imports fine from anything that says
+#: `weewx.crc16(...)`, and fails only on the two drivers that need it.
+NAMES = ("weewx", "weewx.drivers", "weewx.wxformulas", "weewx.units",
+         "weewx.engine", "weewx.crc16",
          "weeutil", "weeutil.weeutil", "weeutil.logger")
 
 
@@ -229,6 +252,171 @@ def _wxformulas_module() -> types.ModuleType:
     return formulas
 
 
+def _units_module() -> types.ModuleType:
+    """`weewx.units`, the three names a driver reaches for.
+
+    Not the skin layer's version of it, which is a great deal more --
+    formatters, helpers, the whole of `units.Target`. A driver converts a
+    reading and wraps a generator, and that is all. Built on our own
+    `units.py`, which is a transcription of WeeWX's, so the arithmetic is the
+    same arithmetic and not a second opinion about it.
+    """
+    from .. import units as ours
+
+    module = types.ModuleType("weewx.units")
+    module.obs_group_dict = ours.GROUPS
+    module.USUnits = ours.SYSTEMS.get(US, {})
+    module.MetricUnits = ours.SYSTEMS.get(METRIC, {})
+    module.MetricWXUnits = ours.SYSTEMS.get(METRICWX, {})
+    # The conversion constants, taken from our own units.py rather than
+    # retyped. A driver that divides by 0.0295299875 and one that divides by
+    # 0.02953 disagree in the fourth decimal of every pressure reading, and
+    # nothing about the number looks wrong.
+    for constant in ("INHG_PER_MBAR", "MM_PER_INCH", "CM_PER_INCH",
+                     "METER_PER_MILE", "METER_PER_FOOT", "MILE_PER_KM",
+                     "SECS_PER_DAY"):
+        setattr(module, constant, getattr(ours, constant))
+    for helper in ("CtoK", "KtoC", "CtoF", "FtoC", "KtoF", "FtoK",
+                   "mps_to_mph", "kph_to_mph", "mps_to_knot", "kph_to_knot",
+                   "mph_to_knot"):
+        setattr(module, helper, getattr(ours, helper))
+
+    class ValueTuple(tuple):
+        """WeeWX's `(value, unit, group)`.
+
+        Its own rather than the one in `skinkit.py`, which is the same idea
+        with arithmetic on it -- importing that would pull the tag layer and
+        the series reader into a process whose whole job is to read a serial
+        port. Two classes of this name never meet: whichever stand-in claims
+        `weewx.units` keeps it, and a collector does not render skins.
+        """
+
+        def __new__(cls, *args):
+            return tuple.__new__(cls, args)
+
+        @property
+        def value(self):
+            return self[0]
+
+        @property
+        def unit(self):
+            return self[1]
+
+        @property
+        def group(self):
+            return self[2]
+
+    def convert(val_t, target_unit):
+        """A ValueTuple in another unit. The group comes along unchanged."""
+        return ValueTuple(ours.convert(val_t[0], val_t[1], target_unit),
+                          target_unit, val_t[2])
+
+    def to_std_system(datadict, unit_system):
+        """A whole record in a target unit system.
+
+        Transcribed from `weewx.units.to_std_system`, including the part that
+        matters most: a record already in that system is returned *as it is*,
+        not rebuilt. And `usUnits` is set on the way out -- a converted record
+        that still claims its old system is worse than one not converted at
+        all, because everything downstream believes the label.
+        """
+        if datadict.get("usUnits") == unit_system:
+            return datadict
+        out = dict(datadict)
+        for field, value in datadict.items():
+            if field in ("dateTime", "usUnits", "interval") or value is None:
+                continue
+            was, group = ours.unit_of(field, datadict["usUnits"])
+            if group is None:
+                # Nothing knows what it measures, so nothing can convert it.
+                # Carried across unchanged rather than dropped: the driver
+                # put it there on purpose.
+                continue
+            wanted = ours.SYSTEMS.get(unit_system, {}).get(group)
+            if wanted and wanted != was:
+                out[field] = ours.convert(value, was, wanted)
+        out["usUnits"] = unit_system
+        return out
+
+    module.ValueTuple = ValueTuple
+    module.convert = convert
+    module.to_std_system = to_std_system
+
+    class GenWithConvert:
+        """A generator whose records come out in one unit system.
+
+        Vantage wraps its archive generator in this. Transcribed rather than
+        replaced by a comprehension: `target_unit_system=None` means leave
+        the record alone, and that is the branch a rewrite drops.
+        """
+
+        def __init__(self, input_generator, target_unit_system=METRIC):
+            self.input_generator = input_generator
+            self.target_unit_system = target_unit_system
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            record = next(self.input_generator)
+            if self.target_unit_system is None:
+                return record
+            return to_std_system(record, self.target_unit_system)
+
+    module.GenWithConvert = GenWithConvert
+    return module
+
+
+def _engine_module() -> types.ModuleType:
+    """`weewx.engine`, which for a driver is one class.
+
+    Vantage is a driver *and* a service: it inherits from `StdService`, calls
+    `bind()` in its constructor and writes into the packet from inside an
+    event. Without this it does not import at all -- and it is the driver
+    behind every Davis station there is.
+
+    `StdService` here forwards to whatever engine it was given, which is
+    `ShimEngine`. Nothing else of the engine is offered: a driver that wants
+    the database or the report thread is asking for something a collector in
+    another process does not have, and finding that out from an
+    AttributeError beats finding it out from a wrong reading.
+    """
+    engine = types.ModuleType("weewx.engine")
+    engine.__path__ = []  # type: ignore[attr-defined]
+
+    class StdService:
+        def __init__(self, engine, config_dict, **kwargs):
+            self.engine = engine
+            self.config_dict = config_dict
+
+        def bind(self, event_type, callback):
+            self.engine.bind(event_type, callback)
+
+        def shutDown(self):  # noqa: N802 - WeeWX's name
+            pass
+
+    engine.StdService = StdService
+    return engine
+
+
+def _crc16_module() -> types.ModuleType:
+    """`weewx.crc16`, a module of one function.
+
+    A module and not an attribute, because both drivers that use it write
+    `from weewx.crc16 import crc16`.
+    """
+    module = types.ModuleType("weewx.crc16")
+
+    def crc16(buf) -> int:
+        crc = 0
+        for byte in buf:
+            crc = ((crc << 8) & 0xFF00) ^ _CRC_TABLE[((crc >> 8) & 0xFF) ^ byte]
+        return crc
+
+    module.crc16 = crc16
+    return module
+
+
 def _weeutil_modules() -> tuple[types.ModuleType, ...]:
     import time
 
@@ -282,9 +470,14 @@ def _weeutil_modules() -> tuple[types.ModuleType, ...]:
             "the driver asked for confirmation on a terminal that is not "
             "there; run its own configurator under WeeWX for that")
 
+    def to_sorted_string(d):
+        """A record printed in a stable order. Vantage logs with it."""
+        return ", ".join(f"{k}: {d[k]}" for k in sorted(d))
+
     for name, thing in (("to_bool", to_bool), ("tobool", to_bool),
                         ("to_int", to_int), ("to_float", to_float),
                         ("timestamp_to_string", timestamp_to_string),
+                        ("to_sorted_string", to_sorted_string),
                         ("startOfDay", startOfDay), ("y_or_n", y_or_n)):
         setattr(inner, name, thing)
 
@@ -362,6 +555,9 @@ def install(force: bool = False) -> list[str]:
     for name, module in (("weewx", weewx),
                          ("weewx.drivers", drivers),
                          ("weewx.wxformulas", formulas),
+                         ("weewx.units", _units_module()),
+                         ("weewx.engine", _engine_module()),
+                         ("weewx.crc16", _crc16_module()),
                          ("weeutil", weeutil),
                          ("weeutil.weeutil", weeutil_inner),
                          ("weeutil.logger", weeutil_logger)):

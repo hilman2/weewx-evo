@@ -306,13 +306,23 @@ Counted across the fourteen drivers in WeeWX's tree:
 machine. Point at the file:
 
 ```bash
-weewx-evo weewx-driver check --conf ./fousb.conf \
-    --driver-file ~/weewx/src/weewx/drivers/fousb.py
+weewx-evo weewx-driver check --conf ./vantage.conf \
+    --driver-file ~/weewx/src/weewx/drivers/vantage.py
 ```
 
-fousb, WeeWX's Fine Offset USB driver, asks for four names and is the
-lightest of the fourteen. `tools/standin_test.py` runs it in a process where
-`import weewx` raises, decodes a stored record and checks the packet.
+**All thirteen drivers in WeeWX's tree import against it**, from fousb at
+four names to Vantage at twenty. `tools/standin_test.py` measures that in a
+process where `import weewx` raises, and decodes a stored fousb record on top
+of it.
+
+Vantage — every Davis station — needed three pieces the lighter drivers did
+not, and each was its whole reason not to run: `weewx.engine`, because it is
+a driver *and* a service and inherits `StdService`; `weewx.crc16`, which has
+to be a module because it is imported as `from weewx.crc16 import crc16`; and
+`weewx.units` for `ValueTuple`, `convert` and `GenWithConvert`. The
+conversion constants come from our own `units.py` rather than being retyped —
+0.0295299875 against 0.02953 is the fourth decimal of every pressure reading,
+and nothing about the number would look wrong.
 
 Three things about it:
 

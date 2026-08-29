@@ -201,6 +201,9 @@ def main() -> int:
     print("\nrain increments, against the real formula where it is here")
     _compare_rain()
 
+    print("\nand every other driver in WeeWX's tree")
+    _every_driver(path.parent)
+
     print("\nwhat the stand-in claims to be")
     from weewx_evo.ingest import weewxnames
     print(f"  {weewxnames.describe()}")
@@ -262,6 +265,90 @@ def _compare_rain() -> None:
     check(f"same answer for all {len(RAIN_CASES)} rain cases",
           same, len(RAIN_CASES))
 
+
+#: Drivers that cannot import here for a reason that is not ours. `ws23xx`
+#: uses `fcntl`, which is POSIX and simply absent on Windows -- counting it
+#: as a miss there would mean the number says which machine ran the test.
+NOT_OURS = {"ws23xx"} if sys.platform == "win32" else set()
+
+
+def _every_driver(folder: Path) -> None:
+    """Each driver in WeeWX's tree, imported against the stand-in.
+
+    fousb is the one this was built for, but the file is not fousb-shaped:
+    what a driver imports is a short list, and the same list serves all of
+    them. Measuring that is what keeps the next name somebody needs from
+    being found by a station that has stopped recording.
+
+    Only the import, not the hardware. A driver that imports is one whose
+    every module-level name resolved -- which is exactly what the stand-in is
+    responsible for, and where it fails it fails on the first line.
+    """
+    found = sorted(p for p in folder.glob("*.py") if p.stem != "__init__")
+    if not found:
+        print(f"  no drivers beside {folder}")
+        return
+
+    worked, broke = [], []
+    for one in found:
+        got = subprocess.run(
+            [sys.executable, "-c", _ONE_DRIVER, str(one), one.stem],
+            capture_output=True, text=True, cwd=str(ROOT), check=False)
+        if got.returncode == 0:
+            worked.append(one.stem)
+        elif one.stem in NOT_OURS:
+            print(f"    {one.stem}: skipped, needs a module this platform "
+                  f"does not have")
+        else:
+            why = (got.stdout.strip()
+                   or (got.stderr.strip().splitlines() or ["?"])[-1])
+            broke.append(one.stem)
+            print(f"    {one.stem}: {why[:70]}")
+
+    print(f"  {', '.join(worked)}")
+    check("every driver imports against the stand-in", len(broke), 0)
+
+
+#: One driver, in a process where weewx cannot be imported and every hardware
+#: library is faked. The libraries are faked because whether pyusb is
+#: installed is a different question from whether the stand-in is complete.
+_ONE_DRIVER = r"""
+import sys, types
+sys.path.insert(0, "src")
+
+class Blocked:
+    def find_spec(self, name, path=None, target=None):
+        if name.split(".")[0] in ("weewx", "weeutil"):
+            raise ImportError(f"{name} is blocked for this test")
+        return None
+
+sys.meta_path.insert(0, Blocked())
+try:
+    import weewx
+except ImportError:
+    pass
+else:
+    raise SystemExit("weewx imported anyway; the block did not work")
+sys.meta_path.pop(0)
+
+for name in ("usb", "usb.core", "usb.util", "usb.backend",
+             "usb.backend.libusb1", "serial", "hid", "ftdi", "pylibftdi"):
+    mod = types.ModuleType(name)
+    mod.__path__ = []
+    for attr in ("TYPE_CLASS", "RECIP_OTHER", "CLASS_HUB", "REQ_CLEAR_FEATURE",
+                 "REQ_SET_FEATURE", "PARITY_NONE", "STOPBITS_ONE", "EIGHTBITS"):
+        setattr(mod, attr, 0)
+    mod.busses = list
+    mod.Serial = type("Serial", (), {"__init__": lambda self, *a, **k: None})
+    mod.SerialException = type("SerialException", (Exception,), {})
+    mod.core = mod
+    mod.util = mod
+    sys.modules.setdefault(name, mod)
+
+from weewx_evo.ingest import weewxnames, weewxshim
+weewxnames.install(force=True)
+weewxshim.import_driver("weewx.drivers." + sys.argv[2], sys.argv[1])
+"""
 
 #: The real `calculate_rain`, in a process where nothing has stood in for it.
 #: Prints its answers as JSON, or exits non-zero if there is no WeeWX.
