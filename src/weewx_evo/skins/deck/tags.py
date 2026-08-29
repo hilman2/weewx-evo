@@ -27,7 +27,6 @@ import calendar
 import datetime
 import json
 import logging
-import os
 import sqlite3
 import time
 
@@ -521,31 +520,6 @@ class GeneralUtil(SearchList):
 
         return base_path + path
 
-    def get_plot_chart(self, context):
-        """The presentation half of a chart. The numbers come from the file.
-
-        Everything about *what* a chart holds -- readings, labels, colours,
-        line or bars, the unit -- is in the file `plots.toml` produced, and
-        `charts.js` reads it there. What is left here is how this skin draws
-        one: the number format and the language its dates are written in.
-
-        Deliberately this thin. The version of this that the plot tiles
-        replace assembled forty fields from the skin's own per-observation
-        configuration, and every one of them was a second opinion about
-        something `plots.toml` had already settled.
-        """
-        return json.dumps({
-            "kind": "line",
-            "locale": self.get_locale(),
-            # A sensible default; the file's own unit decides the label, and
-            # a plot that wants more decimals says so in `plots.toml`.
-            "format": "%.1f",
-            "curve": self.skin_dict["DisplayOptions"]
-            .get("diagrams", {}).get(context, {}).get("curve"),
-            "series": [],
-            "units": [],
-        })
-
     def asset(self, path):
         """The base path plus a file, with a mark that changes when it does.
 
@@ -716,59 +690,6 @@ class GeneralUtil(SearchList):
         except KeyError:
             unit = self.generator.converter.getTargetUnit(obs_type=observation_key)
             return unit[0]
-
-    def get_windrose_enabled(self):
-        """
-        Check if the windrose is enabled.
-
-        Returns:
-            bool: True if the windrose is enabled, False otherwise.
-        """
-        try:
-            windrose_day_enabled = False
-            if "windRose" in self.skin_dict["DisplayOptions"]["diagrams"]["day"]["observations"]:
-                windrose_day_enabled = True
-        except KeyError:
-            windrose_day_enabled = False
-
-        try:
-            windrose_week_enabled = False
-            if "windRose" in self.skin_dict["DisplayOptions"]["diagrams"]["week"]["observations"]:
-                windrose_week_enabled = True
-        except KeyError:
-            windrose_week_enabled = False
-
-        try:
-            windrose_month_enabled = False
-            if "windRose" in self.skin_dict["DisplayOptions"]["diagrams"]["month"]["observations"]:
-                windrose_month_enabled = True
-        except KeyError:
-            windrose_month_enabled = False
-
-        try:
-            windrose_year_enabled = False
-            if "windRose" in self.skin_dict["DisplayOptions"]["diagrams"]["year"]["observations"]:
-                windrose_year_enabled = True
-        except KeyError:
-            windrose_year_enabled = False
-
-        try:
-            windrose_alltime_enabled = False
-            if (
-                "windRose"
-                in self.skin_dict["DisplayOptions"]["diagrams"]["alltime"]["observations"]
-            ):
-                windrose_alltime_enabled = True
-        except KeyError:
-            windrose_alltime_enabled = False
-
-        return (
-            windrose_day_enabled
-            or windrose_week_enabled
-            or windrose_month_enabled
-            or windrose_year_enabled
-            or windrose_alltime_enabled
-        )
 
     def get_icon(
         self, observation, use_diagram_config=False, use_combined_diagram_config=False, context=None
@@ -1183,62 +1104,6 @@ class GeneralUtil(SearchList):
             ordinate_names = default_ordinate_names
 
         return ordinate_names
-
-    def dwd_warning_has_warning(self, region_key):
-        """
-        Check if a given warning is empty.
-
-        Args:
-            region_key (string): The region key
-
-        Returns:
-            bool: True if a warning exists, False otherwise.
-        """
-        if not os.path.exists("dwd/warn-" + region_key + ".json"):
-            return False
-
-        with open("dwd/warn-" + region_key + ".json") as warn_file:
-            data = json.load(warn_file)
-
-        if len(data) == 0:
-            return False
-
-        return True
-
-    def get_dwd_warning_region_name(self, region_key):
-        """
-        Get the name of a given region.
-
-        Args:
-            region_key (string): The region key
-
-        Returns:
-            str: The region name
-        """
-        if not os.path.exists("dwd/warn-" + region_key + ".json"):
-            return ""
-
-        with open("dwd/warn-" + region_key + ".json") as warn_file:
-            data = json.load(warn_file)
-
-            return data[0]["regionName"]
-
-    def get_dwd_warnings(self):
-        """
-        Get the configured warn regions.
-
-        `[DisplayOptions][[dwd]][[[warning]]]`, holding `counties` and
-        `cities` the way the weewx-DWD extension writes them, because the
-        files this reads are that extension's output.
-        """
-        try:
-            dwd_warnings = self.skin_dict["DisplayOptions"]["dwd"]["warning"]
-            return {**dwd_warnings.get("counties", {}), **dwd_warnings.get("cities", {})}
-
-        # todo Log info.
-        except KeyError:
-            return {}
-
 
 class ArchiveUtil(SearchList):
     def __init__(self, generator):

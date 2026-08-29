@@ -7,7 +7,6 @@
 #end if
 #set $partial_obs_key = $partial_obs
 
-#set $diagram_props = $get_diagram_props($partial_obs, $context)
 
 <div class="$diagram_classes">
   <div class="card diagram-tile" data-test="$partial_obs">

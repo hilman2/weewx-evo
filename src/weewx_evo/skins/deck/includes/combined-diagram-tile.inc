@@ -39,7 +39,6 @@
   #end if
 #end for
 
-#set $diagram_props = $get_diagram_props($comb_obs, $context)
 
 <div class="$diagram_classes">
   <div class="card diagram-tile combined" data-test="$combined_obs_string">

@@ -14,9 +14,11 @@
     <div class="row">
       <div>
         <p>
-          $gettext("WeeWX uptime"): $station.uptime.long_form<br />
+          $gettext("Uptime"): $station.uptime.long_form<br />
           $gettext("Server uptime"): $station.os_uptime.long_form<br />
-          $gettext("WeeWX version"): $station.version $gettext("with")
+          ## Whoever is rendering, by name. This read "WeeWX version 0.0.1",
+          ## which is another program's name against this one's version.
+          $gettext("Software"): $station.software $gettext("with")
           $station.hardware<br />
           $gettext("Skin"): $SKIN_NAME $SKIN_VERSION
         </p>

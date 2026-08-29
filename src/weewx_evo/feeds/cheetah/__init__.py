@@ -597,7 +597,8 @@ class CheetahFeed:
                 continue
 
             written = self._one(template, target, (start, stop), name,
-                                relative, encoding, options)
+                                relative, encoding, options,
+                                summarize=summarize)
             if written is not None:
                 made.append(written)
         return made
@@ -702,7 +703,7 @@ class CheetahFeed:
 
     def _one(self, template: Path, target: Path, span: tuple[int, int],
              page: str, relative: Path, encoding: str,
-             options: dict[str, Any]) -> Path | None:
+             options: dict[str, Any], summarize: str = "") -> Path | None:
         try:
             import Cheetah.Template
         except ImportError:
@@ -721,7 +722,8 @@ class CheetahFeed:
             rendered = Cheetah.Template.Template(
                 file=str(template),
                 searchList=self._search_list(span, page, relative,
-                                             encoding)).respond()
+                                             encoding,
+                                             summarize)).respond()
         except Exception as exc:
             # One template, not the site. A skin with one broken page should
             # still publish the other forty.
@@ -755,7 +757,7 @@ class CheetahFeed:
         return target
 
     def _search_list(self, span: tuple[int, int], page: str, relative: Path,
-                     encoding: str) -> list[Any]:
+                     encoding: str, summarize: str = "") -> list[Any]:
         """What `$something` is looked up in, in order.
 
         The tags go last on purpose. Anything before them can answer first,
@@ -778,9 +780,23 @@ class CheetahFeed:
         summaries = {name: list(dates)
                      for name, dates in self.summaries.items()}
         # The span this page is for. A month page's `$month` is that month,
-        # not the current one.
+        # not the current one -- and that took a rewrite to be true.
+        #
+        # `$month` came from the tag layer, where it means "the month we are
+        # in", so every page in a `SummaryByMonth` run printed the same
+        # figures: forty archived months, all showing August, all identical.
+        # The heading said `05/2026` while the numbers beside it were
+        # August's, and nothing on the page could tell.
+        #
+        # So a summary page gets its own span under the name its template
+        # asks for. Only that one name: `$year` on a month page still means
+        # the year, which is what a month page comparing itself to its year
+        # needs.
         here = {"timespan": Span(self.tags, span, page or "current"),
                 "start": span[0], "stop": span[1]}
+        if summarize in SUMMARIES:
+            named = SUMMARIES[summarize][0]
+            here[named] = Span(self.tags, span, named)
         # The skin's own sections, flat. A template says `$observations`
         # rather than `$DisplayOptions.observations`, because WeeWX puts the
         # contents of those sections into the search list directly. Before
@@ -1356,6 +1372,12 @@ def from_settings(settings: Any, reader: Reader,
             # here it is whichever driver the listener is running.
             "hardware": settings.get("driver") or "",
             "version": _version(),
+            # Who is rendering. A skin that prints a version wants to say
+            # whose: deck's footer read "WeeWX version 0.0.1", which is the
+            # name of a different program and a version number that is not
+            # its. A skin running under WeeWX itself gets WeeWX's own value
+            # for this, so the line is right either way.
+            "software": f"weewx-evo {_version()}",
         },
         rain_year_start=int(settings.get("station.rain_year_start") or 1),
     )
