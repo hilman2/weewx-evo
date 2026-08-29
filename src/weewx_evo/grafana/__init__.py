@@ -259,7 +259,10 @@ def provision(out: str | Path, uploads: dict[str, dict], plots: Any,
             f"are unweighted, which is right for a database whose interval "
             f"never changed.")
 
-    out = Path(out)
+    # Absolute, so what is reported is what a compose file has to mount. A
+    # relative path printed here is resolved against whatever directory the
+    # reader happens to be in next.
+    out = Path(out).resolve()
     (out / "datasources").mkdir(parents=True, exist_ok=True)
     (out / "dashboards").mkdir(parents=True, exist_ok=True)
 

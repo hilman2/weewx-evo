@@ -3424,6 +3424,91 @@ def start_feeds(args: argparse.Namespace,
     return runner
 
 
+def _grafana_out(args: argparse.Namespace, cfg: Any) -> Path:
+    """Where the provisioning files go.
+
+    A path typed on the command line counts against the directory it was
+    typed in; the default counts against the configuration file. Same rule as
+    `Settings.get`, and it exists because the two disagreed once already: a
+    relative `archive_db` named one file for the settings page and another
+    for the service.
+    """
+    if getattr(args, "out", None):
+        return Path(args.out)
+    base = getattr(cfg, "_path", None)
+    return (Path(base).parent if base else Path(".")) / "grafana"
+
+
+def _grafana_servers(args: argparse.Namespace, cfg: Any) -> list:
+    from . import grafana, language
+
+    return grafana.servers_from(
+        dict(configured_uploads(args)),
+        language.get(getattr(args, "language", None) or cfg.get("language")))
+
+
+def cmd_grafana_list(args: argparse.Namespace) -> int:
+    """What would be provisioned, without writing anything."""
+    from .grafana import dashboards
+
+    cfg = settings_for(args)
+    install_driver_groups()
+    servers = _grafana_servers(args, cfg)
+    if not servers:
+        print("No InfluxDB upload is configured, so there is nothing to "
+              "point Grafana at.\n"
+              'Add one: [uploads.<name>] with kind = "influx".',
+              file=sys.stderr)
+        return 1
+
+    charts = load_plots(args, cfg)
+    for server in servers:
+        print(f"{server.name}  {server.url}")
+        print(f"  bucket      {server.bucket}"
+              + (f"  org {server.org}" if server.org else ""))
+        print(f"  uploads     {', '.join(server.uploads)}")
+        print(f"  locations   {', '.join(server.locations) or '(none named)'}")
+        print(f"  units       {units.name(server.system)}")
+        for name, board in sorted(dashboards.all_of(server, charts).items()):
+            drawn = [p for p in board["panels"] if p["type"] != "row"]
+            print(f"  {name:28} {board['title']}  ({len(drawn)} panels)")
+    return 0
+
+
+def cmd_grafana_provision(args: argparse.Namespace) -> int:
+    """Write the datasource and the dashboards Grafana reads at start."""
+    from . import grafana, language
+
+    cfg = settings_for(args)
+    # Rendered without a listener, so nothing has configured the drivers --
+    # and a panel for a column only the driver can name would come out
+    # unlabelled and in the wrong unit. Same call, same reason, as `plots run`.
+    install_driver_groups()
+
+    archive = Path(cfg.get("archive_db") or "")
+    report = grafana.provision(
+        _grafana_out(args, cfg),
+        dict(configured_uploads(args)),
+        load_plots(args, cfg),
+        archive=archive if archive and archive.exists() else None,
+        read_token=getattr(args, "read_token", "") or "",
+        language=language.get(getattr(args, "language", None)
+                              or cfg.get("language")))
+
+    for note in report.notes:
+        print(f"note: {note}")
+    if not report.files:
+        return 1
+
+    print(report.summary())
+    for path in report.files:
+        print(f"  {path}")
+    print("\nGrafana reads these at start and rescans the dashboards every "
+          "minute.\nA new datasource needs a restart; changed dashboards do "
+          "not.")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
     live_path = Path(cfg.get("live_db"))
@@ -3800,6 +3885,32 @@ def main(argv: list[str] | None = None) -> int:
                    help="skip the diagnostic page that draws it all")
     q.add_argument("--plots", default=None)
     q.set_defaults(func=cmd_plots_run)
+
+    p = sub.add_parser("grafana", help="dashboards for the InfluxDB uploads")
+    grafana_sub = p.add_subparsers(dest="grafana_command", required=True)
+
+    q = grafana_sub.add_parser("list", help="what would be provisioned")
+    add_common(q)
+    q.add_argument("--plots", default=None, help="a different plots.toml")
+    q.add_argument("--language", default=None,
+                   help="write the dashboards in this language instead of "
+                        "the configured one, so the same station can be "
+                        "published twice")
+    q.set_defaults(func=cmd_grafana_list)
+
+    q = grafana_sub.add_parser(
+        "provision", help="write the datasource and dashboard files")
+    add_common(q)
+    q.add_argument("--out", type=Path, default=None,
+                   help="where to write them (default: grafana/ beside the "
+                        "configuration file). The compose file mounts this "
+                        "into Grafana.")
+    q.add_argument("--read-token", default=None,
+                   help="an InfluxDB token that only reads. Without one the "
+                        "upload's own token is used, which can also write.")
+    q.add_argument("--plots", default=None)
+    q.add_argument("--language", default=None)
+    q.set_defaults(func=cmd_grafana_provision)
 
     p = sub.add_parser("status", help="what is in the two databases")
     add_common(p)

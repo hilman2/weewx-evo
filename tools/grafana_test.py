@@ -31,6 +31,8 @@ renderer here, and a dashboard is read by the same people as the pages.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -460,6 +462,135 @@ def test_a_plot_set_becomes_one_dashboard_per_span() -> None:
           "weewx-evo-charts-day" in names, True)
     check("and one for the year charts",
           "weewx-evo-charts-year" in names, True)
+
+
+# ---------------------------------------------------------------------------
+# The command. Run for real, in a subprocess.
+# ---------------------------------------------------------------------------
+
+CONFIG = """station.name = "Kirchdorf"
+language = "de"
+archive_db = "weewx.sdb"
+
+[uploads.influx-kirchdorf]
+kind = "influx"
+url = "http://influxdb:8086"
+token = "write-token"
+org = "acme"
+bucket = "weewx"
+location = "kirchdorf"
+unit_system = "metricwx"
+
+[uploads.wu]
+kind = "wunderground"
+station = "IBAYERN1"
+password = "secret"
+"""
+
+
+def evo(*arguments: str, where: Path) -> subprocess.CompletedProcess:
+    """`python -m weewx_evo.cli`, the way a person runs it.
+
+    A subprocess and not an import: cli.py is also `__main__`, so importing
+    it and calling in gives a second copy of the module with its own globals
+    -- and the fault that arrangement causes is invisible from inside. Same
+    reason settings_test starts a real one.
+    """
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parent.parent / "src"),
+         environment.get("PYTHONPATH", "")])
+    environment["PYTHONIOENCODING"] = "utf-8"
+    return subprocess.run(
+        [sys.executable, "-m", "weewx_evo.cli", *arguments],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=where, env=environment, check=False)
+
+
+PLOTS_FILE = """labels.outTemp = "Outside"
+
+[[plot]]
+name = "daytemp"
+span = "day"
+time_length = 97200
+[[plot.line]]
+obs = "outTemp"
+"""
+
+
+def a_station(where: Path) -> Path:
+    (where / "evo.toml").write_text(CONFIG, encoding="utf-8")
+    (where / "plots.toml").write_text(PLOTS_FILE, encoding="utf-8")
+    return where / "evo.toml"
+
+
+def test_the_command_writes_what_it_says() -> None:
+    where = Path(tempfile.mkdtemp())
+    a_station(where)
+    done = evo("grafana", "provision", "--config", "evo.toml",
+               "--plots", "plots.toml", "--read-token", "ro", where=where)
+    check("it succeeds", done.returncode, 0)
+
+    # Beside the configuration file, not beside wherever it was started.
+    # A relative path meaning two different directories is a fault this
+    # project has already had once, with archive_db.
+    out = where / "grafana"
+    check("the default output is beside the configuration",
+          out.is_dir(), True)
+    check("a datasource", (out / "datasources" / "weewx-evo.yaml").exists(),
+          True)
+    check("and dashboards",
+          sorted(p.stem for p in (out / "dashboards").glob("*.json"))[:1],
+          ["weewx-evo-charts-day"])
+    printed = [line.strip() for line in done.stdout.splitlines()
+               if line.startswith("  ") and "grafana" in line]
+    # Against what is on disk, not against a number: the test's plot set has
+    # one span, so it gets one charts dashboard rather than four, and a
+    # figure written here would only say that somebody counted once.
+    written = list((where / "grafana").rglob("*.*"))
+    check("it printed every file it wrote", len(printed), len(written))
+    check("every one of them exists",
+          all(Path(x).exists() for x in printed), True)
+    check("and said where, absolutely",
+          all(Path(x).is_absolute() for x in printed), True)
+
+
+def test_the_command_uses_the_configured_language() -> None:
+    """One setting reaches every renderer, this one included."""
+    where = Path(tempfile.mkdtemp())
+    a_station(where)
+    evo("grafana", "provision", "--config", "evo.toml", "--plots",
+        "plots.toml", where=where)
+    board = json.loads((where / "grafana" / "dashboards"
+                        / "weewx-evo-now.json").read_text(encoding="utf-8"))
+    check("the configured language wins", board["title"], "Wetter: Jetzt")
+
+    # And an override publishes the same station twice.
+    evo("grafana", "provision", "--config", "evo.toml", "--plots",
+        "plots.toml", "--language", "en", "--out", "english", where=where)
+    board = json.loads((where / "english" / "dashboards"
+                        / "weewx-evo-now.json").read_text(encoding="utf-8"))
+    check("and --language overrides it", board["title"], "Weather: Now")
+
+
+def test_the_command_says_when_there_is_nothing_to_do() -> None:
+    """A weather service is not a datasource, and silence is not an answer."""
+    where = Path(tempfile.mkdtemp())
+    (where / "evo.toml").write_text(
+        '[uploads.wu]\nkind = "wunderground"\nstation = "X"\n'
+        'password = "y"\n', encoding="utf-8")
+    done = evo("grafana", "list", "--config", "evo.toml", where=where)
+    check("it fails", done.returncode, 1)
+    check("and names what to add", "influx" in done.stderr, True)
+
+
+def test_the_command_does_not_print_the_token() -> None:
+    """`list` is what somebody pastes into an issue."""
+    where = Path(tempfile.mkdtemp())
+    a_station(where)
+    done = evo("grafana", "list", "--config", "evo.toml", "--plots",
+               "plots.toml", where=where)
+    check("no token in the listing", "write-token" in done.stdout, False)
 
 
 def main() -> int:
