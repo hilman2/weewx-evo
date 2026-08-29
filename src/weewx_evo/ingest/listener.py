@@ -547,17 +547,26 @@ class UdpListener:
 
 
 def push(packets: list[Packet], host: str = "127.0.0.1", port: int = 8000,
-         token: str | None = None, timeout: float = 3.0) -> int:
+         token: str | None = None, timeout: float = 3.0,
+         as_driver: str = "json") -> int:
     """Send packets to a listener. This is how a pull driver delivers.
 
     Going over the loopback rather than writing to the database directly is
     deliberate. It costs a millisecond and buys process isolation: a driver
     that wedges on a USB port, or crashes, takes nothing else with it -- and it
     does not have to be written in Python.
+
+    `as_driver` is the endpoint, and it decides what the listener records
+    these packets *as*. The default sends them in as envelopes, which is what
+    an unnamed collector is. A configured one sends its own name, so that
+    `stations.by_identity(driver, source)` has a driver to match on -- two
+    collectors both arriving as `json` would be one driver with two
+    identities, and a station announced for either would claim both.
     """
     import urllib.request
 
-    path = f"/{token}/json/" if token else "/json/"
+    endpoint = (as_driver or "json").strip("/") or "json"
+    path = f"/{token}/{endpoint}/" if token else f"/{endpoint}/"
     body = json.dumps([{
         "dateTime": p.dateTime, "usUnits": p.usUnits, "source": p.source,
         "kind": p.kind, "interval": p.interval, "data": p.data,

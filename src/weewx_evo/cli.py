@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from . import archives as archives_module
+from . import collectors, units, watchdog, weewxconf
 from . import config as config_file
 from . import exports as export_registry
 from . import feedrunner as feed_runner
@@ -45,7 +46,6 @@ from . import options as option_defs
 from . import plots as plot_defs
 from . import settings as settings_state
 from . import stations as stations_module
-from . import units, watchdog, weewxconf
 from . import uploads as upload_registry
 from .admin import Admin, AdminServer
 from .archiver import Archiver
@@ -298,6 +298,15 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
             settings = ", ".join(k for k in options if k != "state")
             log.info("driver %r configured (%s)%s", name, settings or "state only",
                      f", also serving {', '.join(also)}" if also else "")
+
+    # A configured collector gets an endpoint under its own name, so its
+    # packets arrive as that driver rather than as `json`. That pair --
+    # driver and identity -- is what `stations.by_identity` matches on, and
+    # without it two collectors would be the same driver and their consoles
+    # could not be told apart. Registered from the *configuration*: the
+    # collector itself is another process and possibly another machine, and
+    # nothing of it is imported here.
+    collectors.register_names(drivers.DEFAULT, cfg)
 
     install_driver_groups()
 
@@ -1414,6 +1423,28 @@ def cmd_derive(args: argparse.Namespace) -> int:
     return 0
 
 
+def _collector_settings(args: argparse.Namespace) -> dict:
+    """One collector's settings out of the configuration file.
+
+    `--collector shed` instead of six arguments. The point is not brevity: a
+    collector configured in the file has a page on the settings site, and a
+    collector configured in a unit file has whatever somebody typed there
+    once. An argument that is also given still wins -- that is the ordering
+    everything else here follows.
+    """
+    name = getattr(args, "collector", None)
+    if not name:
+        return {}
+    cfg = settings_for(args)
+    found = collectors.settings_for(cfg, name)
+    if not found:
+        known = ", ".join(collectors.configured(cfg)) or "none"
+        raise SystemExit(
+            f"no collector named {name!r} in the configuration "
+            f"(there is: {known})")
+    return found
+
+
 def _shim_config(args: argparse.Namespace) -> dict:
     """The weewx.conf a WeeWX driver is configured by.
 
@@ -1425,10 +1456,42 @@ def _shim_config(args: argparse.Namespace) -> dict:
     """
     from .ingest import weewxshim
 
-    path = args.conf or "/etc/weewx/weewx.conf"
+    # An argument beats the collector's own setting beats the usual place.
+    # Same order as everything else: what somebody just typed wins for this
+    # run, and the file is what the settings page writes.
+    from_file = _collector_settings(args).get("conf")
+    path = args.conf or from_file or "/etc/weewx/weewx.conf"
     if not Path(path).exists():
         raise SystemExit(f"no weewx.conf at {path}. Say where it is with --conf.")
     return weewxshim.read_config(path)
+
+
+def _shim_options(args: argparse.Namespace) -> dict:
+    """What to build the shim with: the collector's settings under arguments.
+
+    Gathered in one place because three commands take them and a collector
+    whose `driver_file` reached `check` but not `run` would look configured
+    and record nothing.
+    """
+    one = _collector_settings(args)
+    name = getattr(args, "collector", None)
+
+    def pick(argument: str, key: str, default=None):
+        given = getattr(args, argument, None)
+        return given if given not in (None, "", 0) else one.get(key, default)
+
+    return {
+        "module_name": pick("driver", "driver") or None,
+        "driver_file": pick("driver_file", "driver_file") or None,
+        "source": pick("source", "source") or None,
+        "catchup_seconds": int(pick("catchup", "catchup", 0) or 0),
+        "batch_seconds": float(pick("batch", "batch", 5.0) or 5.0),
+        # The endpoint, and the reason a collector is named at all. Packets
+        # arriving at `/<token>/shed/` are recorded as driver `shed`, which
+        # is what a station is matched on together with its identity. An
+        # ad-hoc run has no name and goes in as an envelope.
+        "as_driver": name or "json",
+    }
 
 
 def cmd_weewx_driver_list(args: argparse.Namespace) -> int:
@@ -1485,10 +1548,11 @@ def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
     from .ingest import weewxshim
 
     config_dict = _shim_config(args)
+    chosen = _shim_options(args)
     try:
-        found = weewxshim.probe(config_dict, args.driver, count=args.count,
-                                source=args.source,
-                                driver_file=getattr(args, "driver_file", None))
+        found = weewxshim.probe(config_dict, chosen["module_name"],
+                                count=args.count, source=chosen["source"],
+                                driver_file=chosen["driver_file"])
     except Exception as exc:
         print(f"the driver could not be run: {exc}", file=sys.stderr)
         # A driver talks to hardware, and the library for that is the one
@@ -1510,6 +1574,16 @@ def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
     if found["standing_in"]:
         print(f"running against:  a stand-in for "
               f"{', '.join(found['standing_in'])}")
+    if getattr(args, "collector", None):
+        print(f"delivers as:      {args.collector}  "
+              f"(announce a station with driver = {args.collector!r})")
+    # WeeWX asks this as `record_generation`; here it is a fact about the
+    # console rather than a choice, because the archiver builds every record
+    # anyway and takes the console's where there is one.
+    if found.get("logs_its_own"):
+        print("keeps its own log: yes -- `catchup` can fill an outage")
+    else:
+        print("keeps its own log: no -- `catchup` has nothing to fetch")
     print(f"packets:          {found['packets']}")
     print(f"usUnits:          {found['usUnits']}")
     print(f"fields ({len(found['fields'])}): {', '.join(found['fields'])}")
@@ -1559,11 +1633,13 @@ def cmd_weewx_driver_run(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
+    chosen = _shim_options(args)
     shim = weewxshim.Shim(
-        config_dict, args.driver, source=args.source, host=host, port=port,
-        token=token, batch_seconds=args.batch,
-        catchup_seconds=int(args.catchup or 0), dry_run=args.dry_run,
-        driver_file=getattr(args, "driver_file", None))
+        config_dict, chosen["module_name"], source=chosen["source"],
+        host=host, port=port, token=token,
+        batch_seconds=chosen["batch_seconds"],
+        catchup_seconds=chosen["catchup_seconds"], dry_run=args.dry_run,
+        driver_file=chosen["driver_file"], as_driver=chosen["as_driver"])
 
     def bye(_signum, _frame):
         # The generator blocks on the hardware, so the flag is read between
@@ -1961,6 +2037,22 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         schema.groups = tuple(
             replace_group(group, f"uploads.{name}") for group in schema.groups)
         schemas.append(schema)
+
+    # One page per configured collector. A collector is a *process*, not
+    # something this one runs -- it is where the hardware is, possibly on
+    # another machine -- so its page configures it and does not start it.
+    # It is here at all because a collector that lives only in a unit file
+    # has no name anywhere, and the name is what a station is matched on.
+    for name, settings in sorted(
+            collectors.configured(configured).items()):
+        kind = str(settings.get("kind", "")).strip()
+        if kind not in collectors.KINDS:
+            continue
+        schemas.append(option_defs.Schema(
+            name=f"collector:{name}", label=f"Collector: {name} ({kind})",
+            kind="collector", help=collectors.describe(kind),
+            groups=tuple(replace_group(group, f"collectors.{name}")
+                         for group in collectors.options())))
 
     # One page per configured forecast source. Two of them is the ordinary
     # arrangement rather than the exception: a model for the numbers and a
@@ -3326,6 +3418,11 @@ def main(argv: list[str] | None = None) -> int:
 
     def add_shim_common(q):
         add_common(q)
+        q.add_argument("--collector", default=None,
+                       help="a collector named in the configuration file. Its "
+                            "settings are used, and -- the part that matters "
+                            "-- its packets arrive under its own name, so a "
+                            "station can be announced for it.")
         q.add_argument("--conf", default=None,
                        help="the weewx.conf the driver is configured by. "
                             "/etc/weewx/weewx.conf by default.")

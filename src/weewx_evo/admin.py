@@ -155,8 +155,8 @@ NEWLINE = chr(10)
 #: listed. One list, used by both the router and the renderer, because two
 #: lists is how one of them ends up short.
 ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
-             "new-plot", "import-plots", "new-station",
-             "new-archive")
+             "new-collector", "new-plot", "import-plots",
+             "new-station", "new-archive")
 
 #: Pages that are neither a schema nor a form to create one. They render
 #: themselves, the way the chart pages do.
@@ -240,6 +240,70 @@ class Admin:
             if config_file.get(current, f"exports.{name}") is not None:
                 return f"There is already an export called {name!r}."
             config_file.put(current, f"exports.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def add_collector(self, name: str, kind: str) -> str:
+        """Create a collector. Returns an error, or empty if it worked.
+
+        The name is checked against what the listener already answers to, and
+        not only against other collectors. A collector called `ecowitt` would
+        take a real driver's endpoint: the uploads would still arrive, be
+        handed to the envelope parser, fail to parse, and look like a console
+        that had stopped working.
+        """
+        from . import collectors as collector_defs
+
+        if self.read_only:
+            return "This admin page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return ("A name may hold lowercase letters, digits, - and _, and "
+                    "must start with a letter. Its readings arrive under it, "
+                    "so name it for where the console is.")
+        if kind not in collector_defs.KINDS:
+            return (f"{kind!r} is not one of: "
+                    f"{', '.join(collector_defs.KINDS)}")
+
+        taken = collector_defs.reserved()
+        if name in taken:
+            return (f"Something already answers to {name!r} -- it is a "
+                    f"driver or the envelope endpoint. Its readings would be "
+                    f"recorded under the wrong driver. Pick another name.")
+
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"collectors.{name}") is not None:
+                return f"There is already a collector called {name!r}."
+            config_file.put(current, f"collectors.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def remove_collector(self, name: str) -> str:
+        """Take a collector out of the configuration.
+
+        Nothing is stopped by this: the collector is another process, and
+        very likely another machine. What it does is take the endpoint away,
+        so a collector still running arrives as an unknown driver and is
+        refused rather than recorded as something else.
+        """
+        if self.read_only:
+            return "This admin page was started read-only."
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"collectors.{name}") is None:
+                return f"There is no collector called {name!r}."
+            (current.get("collectors") or {}).pop(name, None)
             try:
                 config_file.write(self.path, current, self.schemas)
             except Exception as exc:
@@ -909,6 +973,58 @@ def new_forecast_page(admin: Admin, error: str = "",
 </section>'''
 
 
+def new_collector_page(admin: Admin, error: str = "",
+                       form: dict | None = None) -> str:
+    """A collector: a name and what it runs.
+
+    The name is the field that matters and the page says so, because it is
+    not cosmetic here the way a feed's name is. A collector's packets arrive
+    under it, and a station is matched on the pair (driver, identity) -- so
+    the name typed here is the one to put on the Stations page, and two
+    consoles reporting the same model are told apart by nothing else.
+    """
+    from . import collectors as collector_defs
+
+    form = form or {}
+    chosen = form.get("kind") or "weewx-driver"
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
+        for kind, label in collector_defs.KINDS.items())
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return f'''
+<section class="group">
+  <p class="lede">A collector goes and reads a console, rather than waiting
+     for one to upload. It runs as its own process, where the hardware is --
+     a serial port, a USB device, a radio -- and delivers over the network
+     like any other station. It does not have to be on this machine.</p>
+  <p class="lede">This page configures it and does not start it. Run it with
+     <code>weewx-evo weewx-driver run --collector &lt;name&gt;</code>, or use
+     the unit file in <code>deploy/</code>.</p>
+  {problem}
+  <form method="post" action="./new-collector">
+    <div class="field">
+      <label for="f-name">Name</label>
+      <input type="text" id="f-name" name="name" required
+             value="{html.escape(str(form.get("name", "")))}"
+             placeholder="shed" autocomplete="off" spellcheck="false">
+      <p class="help">Its readings arrive under this name, and a station is
+         announced for it by this name. Two consoles of the same model are
+         told apart by nothing else, so name it for where it is:
+         <code>shed</code>, <code>roof</code>.</p>
+    </div>
+    <div class="field">
+      <label for="f-kind">What it runs</label>
+      <select id="f-kind" name="kind">{options}</select>
+      <ul class="kinds"><li><strong>A WeeWX driver</strong>: any of the
+        hundred-odd drivers written for WeeWX, unchanged. WeeWX itself does
+        not have to be installed -- point at the driver file.</li></ul>
+    </div>
+    <div class="actions"><button type="submit">Create</button></div>
+  </form>
+</section>'''
+
+
 def new_feed_page(admin: Admin, error: str = "",
                   form: dict | None = None) -> str:
     """Two fields: a name and a kind. The rest waits."""
@@ -1110,6 +1226,30 @@ def _addresses() -> list[tuple[str, str]]:
     return found
 
 
+def _collector_nav(admin: Any, active: str) -> list[str]:
+    """The collectors, and the way to add one when there are none.
+
+    The add link is outside the "none configured" branch and not inside it.
+    That mistake has already been made once here -- "Add an upload" sat
+    inside its empty state, so the moment one existed there was no way from
+    this page to a second, which reads as the feature not existing.
+    """
+    found = sorted(s for s in admin.schemas if s.kind == "collector")
+    current = (" aria-current='page'"
+               if active == "new-collector"
+               or active.startswith("collector:") else "")
+    out = []
+    for one in found:
+        here = " aria-current='page'" if one.name == active else ""
+        out.append(f'<a href="./{html.escape(one.name)}"{here}>'
+                   f'{html.escape(one.label.split(": ", 1)[-1].split(" (")[0])}'
+                   f"</a>")
+    if not admin.read_only:
+        out.append(f'<a class="add" href="./new-collector"{current}>'
+                   "+ Add a collector</a>")
+    return out
+
+
 def _driver_nav(admin: Any, active: str) -> list[str]:
     """The drivers, with the ones nobody uses folded away.
 
@@ -1187,6 +1327,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     nav.append('<p class="navhead">Readings in</p>')
     nav.extend(adminstations.nav(admin, active))
     nav.extend(_driver_nav(admin, active))
+    nav.extend(_collector_nav(admin, active))
 
     nav.append('<p class="navhead">Readings out</p>')
     nav.extend(adminpublish.nav(admin, active))
@@ -1238,6 +1379,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     elif adding:
         maker = {"new-feed": new_feed_page, "new-upload": new_upload_page,
                  "new-export": new_export_page,
+                 "new-collector": new_collector_page,
                  "new-forecast": new_forecast_page}[active]
         body = [maker(admin, errors.get("", ""), form)]
     else:
@@ -1400,6 +1542,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         # export" over a form that was nothing of the sort.
         headings = {"new-feed": "Add a feed", "new-export": "Add an export",
                     "new-upload": "Add an upload",
+                    "new-collector": "Add a collector",
                     "new-forecast": "Add a forecast",
                     "new-station": "Add a station", "stations": "Stations",
                     "new-archive": "Add an archive", "overview": "Overview",
@@ -2121,6 +2264,27 @@ class _Handler(BaseHTTPRequestHandler):
 
         # Adding one. Two fields; everything else waits for the page that
         # appears next.
+        if action == "new-collector":
+            error = self.admin.add_collector(form.get("name", ""),
+                                             form.get("kind", ""))
+            if error:
+                self._reply(200, page(self.admin, "new-collector",
+                                      errors={"": error}, form=form))
+                return
+            made = form["name"].strip().lower()
+            self._redirect(f"./collector:{made}")
+            return
+
+        if (action == "remove" and len(parts) >= 2
+                and parts[-2].startswith("collector:")):
+            error = self.admin.remove_collector(parts[-2].split(":", 1)[1])
+            if error:
+                self._reply(200, page(self.admin, parts[-2],
+                                      errors={"": error}))
+                return
+            self._redirect("./new-collector?removed=1")
+            return
+
         if action == "new-feed":
             error = self.admin.add_feed(form.get("name", ""),
                                         form.get("kind", ""))

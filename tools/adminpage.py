@@ -890,6 +890,7 @@ def main() -> int:
         # the very page the redirect goes to. A 500 on the first thing
         # anybody tries -- and the figure that caused it could not be
         # corrected from the page either.
+        from weewx_evo import collectors as collector_defs
         from weewx_evo import exports as export_registry
         from weewx_evo import feeds as feed_registry
         from weewx_evo.admin import upload_kinds
@@ -900,6 +901,7 @@ def main() -> int:
                 # publishes them, so it is not offered here. Checked below.
                 ("upload", sorted(upload_kinds())),
                 ("export", sorted(export_registry.DEFAULT.kinds())),
+                ("collector", sorted(collector_defs.KINDS)),
                 ("feed", sorted(feed_registry.kinds()))):
             for kind in kinds:
                 name = f"t{what[0]}{kind}".replace("-", "").replace("_", "")
@@ -922,6 +924,46 @@ def main() -> int:
                               code, 200)
         failures += not check("and it says what the choices are",
                               "is not one of" in rendered, True)
+
+        # A collector's name is not cosmetic the way a feed's is: it is the
+        # endpoint its packets arrive at, and a station is matched on the
+        # pair (driver, identity). One called `ecowitt` would take a real
+        # driver's endpoint, and its uploads would go to the envelope parser,
+        # fail there, and look like a console that had stopped.
+        print("\na collector cannot take a name something already answers to")
+        code, rendered = post(f"{base}/{TOKEN}/new-collector",
+                              {"name": "json", "kind": "weewx-driver"})
+        failures += not check("a reserved name is refused", code, 200)
+        failures += not check("and it says why",
+                              "already answers to" in rendered, True)
+
+        # And the settings really reach the file, which is the whole point of
+        # the page: `--collector shed` reads them back.
+        print("\nwhat its page saves is what the collector runs with")
+        post(f"{base}/{TOKEN}/new-collector",
+             {"name": "shed", "kind": "weewx-driver"})
+        # The form posts short names -- the page knows from its own path
+        # which section they belong to. Sending `collectors.shed.conf` saved
+        # nothing and looked like the page not working.
+        code, _ = post(f"{base}/{TOKEN}/collector:shed",
+                       {"kind": "weewx-driver",
+                        "conf": "/etc/weewx/shed.conf",
+                        "driver_file": "/opt/fousb.py",
+                        "source": "WH1080 (USB)",
+                        "catchup": "0", "batch": "5"})
+        failures += not check("its settings save", code, 303)
+
+        # `config_file` is imported at the top. Importing it again here
+        # would make the name local to this whole function, and the earlier
+        # uses of it -- three hundred lines up -- would fail on a variable
+        # that is not assigned yet.
+        from weewx_evo import collectors as saved_defs
+
+        written = saved_defs.configured(config_file.read(path))
+        failures += not check("and are in the file", "shed" in written, True)
+        failures += not check("with the driver file it was given",
+                              (written.get("shed") or {}).get("driver_file"),
+                              "/opt/fousb.py")
 
 
         server.stop()

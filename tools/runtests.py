@@ -161,6 +161,8 @@ def tests() -> list[Test]:
         # required. Each finds the driver file it wants or says so and skips,
         # and where WeeWX *is* installed it is used as the thing to compare
         # against rather than as a thing to run on.
+        Test("collector", ["collector_test.py"],
+             "a collector is a station: its own name, its own rules"),
         Test("standin", ["standin_test.py"],
              "a WeeWX driver decodes a record with no WeeWX installed"),
         Test("vantage", ["vantage_test.py"],

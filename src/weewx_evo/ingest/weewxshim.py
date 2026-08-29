@@ -273,10 +273,15 @@ class Shim:
                  port: int = 8000, token: str | None = None,
                  batch_seconds: float = 5.0, catchup_seconds: int = 0,
                  dry_run: bool = False,
-                 driver_file: str | Path | None = None) -> None:
+                 driver_file: str | Path | None = None,
+                 as_driver: str = "json") -> None:
         self.config_dict = config_dict
         self.module_name = module_name or driver_module_name(config_dict)
         self.driver_file = driver_file
+        #: The endpoint these packets go in at, which is the
+        #: driver name they are recorded under. A configured
+        #: collector uses its own; an ad-hoc run is `json`.
+        self.as_driver = as_driver
         self.source = source
         self.host = host
         self.port = port
@@ -423,7 +428,8 @@ class Shim:
         for at in range(0, len(packets), PER_REQUEST):
             chunk = packets[at:at + PER_REQUEST]
             try:
-                push(chunk, self.host, self.port, token=self.token)
+                push(chunk, self.host, self.port, token=self.token,
+                     as_driver=self.as_driver)
             except Exception as exc:
                 log.warning("could not deliver %d packet(s) to %s:%s (%s); "
                             "holding %d", len(chunk), self.host, self.port,
@@ -521,6 +527,27 @@ class Shim:
         self.stopping = True
 
 
+def logs_its_own(console: Any) -> bool:
+    """Whether this console keeps records a collector could fetch.
+
+    Asked of the class rather than by calling anything: `genStartupRecords`
+    on a console that has no log raises, and finding out by provoking it
+    would mean waking the hardware to be told no.
+
+    WeeWX's own base class defines the method and raises NotImplementedError,
+    so its presence proves nothing -- what counts is whether this driver
+    overrode it.
+    """
+    from weewx.drivers import AbstractDevice
+
+    for name in ("genStartupRecords", "genArchiveRecords"):
+        mine = getattr(type(console), name, None)
+        theirs = getattr(AbstractDevice, name, None)
+        if mine is not None and mine is not theirs:
+            return True
+    return False
+
+
 def probe(config_dict: dict[str, Any], module_name: str | None = None,
           count: int = 3, source: str | None = None,
           driver_file: str | Path | None = None) -> dict[str, Any]:
@@ -553,6 +580,18 @@ def probe(config_dict: dict[str, Any], module_name: str | None = None,
             # the stand-in, a missing name is ours to add, and against a real
             # WeeWX it is not.
             **weewxnames.describe(),
+            # Whether this console keeps its own records, which is what
+            # decides if `catchup` can do anything. WeeWX asks this as a
+            # setting -- `record_generation = hardware | software` -- and it
+            # is not a setting here: the archiver builds every record from
+            # the live packets and takes the console's where there is one.
+            # So the question is not which to use but whether there is one,
+            # and that is a property of the hardware rather than a choice.
+            #
+            # Worth reporting because `record_generation = hardware` is in
+            # every weewx.conf ever shipped, including on consoles with no
+            # log at all, and WeeWX falls back to software without a word.
+            "logs_its_own": logs_its_own(shim.console),
             "packets": len(got),
             "fields": sorted(fields),
             "usUnits": got[0].usUnits if got else None,
