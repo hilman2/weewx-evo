@@ -1433,19 +1433,20 @@ def _shim_config(args: argparse.Namespace) -> dict:
 
 def cmd_weewx_driver_list(args: argparse.Namespace) -> int:
     """What this weewx.conf asks for, and whether it can be built."""
-    from .ingest import weewxshim
+    from .ingest import weewxnames, weewxshim
 
-    try:
+    if weewxnames.installed():
         import weewx
-    except ImportError:
-        print("WeeWX is not installed here, so its drivers cannot run.",
-              file=sys.stderr)
-        print("This command needs it; nothing else in weewx-evo does.",
-              file=sys.stderr)
-        return 1
+        version = f"WeeWX {getattr(weewx, '__version__', 'unknown')}"
+    else:
+        # Not an error any more. What a driver imports is a handful of
+        # constants and two exceptions, and `weewxnames` has them -- so the
+        # thing to say is which one it will run against, since that decides
+        # what a later failure means.
+        version = "no WeeWX installed; drivers run against the stand-in"
 
     config_dict = _shim_config(args)
-    print(f"WeeWX {getattr(weewx, '__version__', 'unknown')}")
+    print(version)
     station = (config_dict.get("Station") or {}).get("station_type", "?")
     print(f"station_type: {station}")
     try:
@@ -1462,6 +1463,17 @@ def cmd_weewx_driver_list(args: argparse.Namespace) -> int:
     return 0
 
 
+#: What a driver imports to reach hardware, and what to install for it. The
+#: import name and the package name differ for every one of them, which is
+#: why this table exists rather than a sentence saying to install it.
+_HARDWARE_LIBS = {
+    "usb": "pyusb",            # fousb, te923, ws28xx, wmr300
+    "serial": "pyserial",      # vantage, ws23xx, ultimeter, ws1, cc3000
+    "hid": "hidapi",           # some builds of the HID drivers
+    "ftdi": "pylibftdi",
+}
+
+
 def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
     """Build the driver, take a few packets, deliver nothing.
 
@@ -1475,9 +1487,19 @@ def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
     config_dict = _shim_config(args)
     try:
         found = weewxshim.probe(config_dict, args.driver, count=args.count,
-                                source=args.source)
+                                source=args.source,
+                                driver_file=getattr(args, "driver_file", None))
     except Exception as exc:
         print(f"the driver could not be run: {exc}", file=sys.stderr)
+        # A driver talks to hardware, and the library for that is the one
+        # thing no stand-in can supply. Naming the package is the difference
+        # between a minute and an afternoon, and the module name is not it:
+        # `import usb` is pyusb, and nobody guesses that.
+        wanted = getattr(exc, "name", None)
+        if isinstance(exc, ModuleNotFoundError) and wanted in _HARDWARE_LIBS:
+            print(f"\nThat is the library it uses to reach the hardware. "
+                  f"Install it with:\n\n    pip install "
+                  f"{_HARDWARE_LIBS[wanted]}\n", file=sys.stderr)
         log.debug("driver probe failed", exc_info=True)
         return 1
 
@@ -1485,6 +1507,9 @@ def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
     print(f"source name:      {found['source']}")
     print(f"archive interval: {found['archive_interval']}s")
     print(f"callbacks bound:  {found['callbacks']}")
+    if found["standing_in"]:
+        print(f"running against:  a stand-in for "
+              f"{', '.join(found['standing_in'])}")
     print(f"packets:          {found['packets']}")
     print(f"usUnits:          {found['usUnits']}")
     print(f"fields ({len(found['fields'])}): {', '.join(found['fields'])}")
@@ -1537,7 +1562,8 @@ def cmd_weewx_driver_run(args: argparse.Namespace) -> int:
     shim = weewxshim.Shim(
         config_dict, args.driver, source=args.source, host=host, port=port,
         token=token, batch_seconds=args.batch,
-        catchup_seconds=int(args.catchup or 0), dry_run=args.dry_run)
+        catchup_seconds=int(args.catchup or 0), dry_run=args.dry_run,
+        driver_file=getattr(args, "driver_file", None))
 
     def bye(_signum, _frame):
         # The generator blocks on the hardware, so the flag is read between
@@ -3306,6 +3332,11 @@ def main(argv: list[str] | None = None) -> int:
         q.add_argument("--driver", default=None,
                        help="the driver module, if not the one [Station] "
                             "names. For example weewx.drivers.vantage.")
+        q.add_argument("--driver-file", default=None,
+                       help="load the driver from this file rather than from "
+                            "an installed WeeWX. A driver is one file, and "
+                            "what it imports is stood in for -- so one USB "
+                            "console no longer means installing all of WeeWX.")
         q.add_argument("--source", default=None,
                        help="what to record these readings under. The "
                             "driver's own hardware name by default.")

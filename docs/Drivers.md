@@ -289,6 +289,43 @@ Hardware that keeps its own records can be asked for them at startup with
 `--catchup`, delivered as `kind="archive"`, which the archiver already prefers
 over what it accumulated. That is what turns an outage into a filled gap.
 
+### With no WeeWX installed — `ingest/weewxnames.py`
+
+A driver is one file, and what it imports at the top is nearly nothing.
+Counted across the fourteen drivers in WeeWX's tree:
+
+| | uses it | what it is |
+|---|---|---|
+| `weewx.drivers` | 13 | three base classes, nearly empty |
+| `weewx.WeeWxIOError` | 12 | an exception |
+| `weewx.wxformulas` | 11 | one function of it, twelve lines |
+| `weeutil.weeutil` | 10 | `to_bool`, `to_int`, `timestamp_to_string` |
+| `weewx.METRIC` / `US` | 7 | the numbers 16 and 1, which are ours too |
+
+`weewxnames.py` is all of it, so a driver runs with WeeWX nowhere on the
+machine. Point at the file:
+
+```bash
+weewx-evo weewx-driver check --conf ./fousb.conf \
+    --driver-file ~/weewx/src/weewx/drivers/fousb.py
+```
+
+fousb, WeeWX's Fine Offset USB driver, asks for four names and is the
+lightest of the fourteen. `tools/standin_test.py` runs it in a process where
+`import weewx` raises, decodes a stored record and checks the packet.
+
+Three things about it:
+
+- **Where WeeWX is installed, WeeWX wins.** Same rule as pyephem: whoever has
+  the real one gets its behaviour, edges included. This fills in what is
+  missing rather than replacing what is there.
+- **A name is claimed only if free.** `skinkit.py` puts modules under these
+  same names so a WeeWX *skin* renders, and `sys.modules` is one table per
+  process — whichever ran second would take the other's away.
+- **The hardware library is still needed.** `import usb` is pyusb, `import
+  serial` is pyserial, and no stand-in can supply either: one that did would
+  give a driver that builds and reads nothing. `check` names the package.
+
 ## `parsers.py`
 
 The older, function-based registry: a parser gets bytes and returns packets. It

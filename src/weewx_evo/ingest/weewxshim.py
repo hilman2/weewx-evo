@@ -43,6 +43,7 @@ packet, with nothing anywhere looking wrong.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -141,7 +142,43 @@ def driver_module_name(config_dict: dict[str, Any]) -> str:
     return str(module)
 
 
-def load(module_name: str, config_dict: dict[str, Any]) -> tuple[Any, ShimEngine]:
+def import_driver(module_name: str, path: str | Path | None = None) -> Any:
+    """The driver module, from a package or from one file.
+
+    A path rather than a package because a driver is a *file*. Somebody with
+    one USB console had to install the whole of WeeWX to get at
+    `weewx/drivers/fousb.py`, and with `weewxnames` standing in for the
+    import at the top of it, there is nothing left that the installation was
+    for. The module still goes into `sys.modules` under the name it thinks it
+    has: several of them look themselves up there.
+    """
+    import importlib
+
+    if path is None:
+        return importlib.import_module(module_name)
+
+    import importlib.util
+
+    found = Path(path)
+    if not found.is_file():
+        raise FileNotFoundError(f"no driver file at {found}")
+    spec = importlib.util.spec_from_file_location(module_name, found)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load a driver from {found}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        # A half-executed module left under its name is worse than none: the
+        # next import finds it, believes it, and fails somewhere else.
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
+def load(module_name: str, config_dict: dict[str, Any],
+         path: str | Path | None = None) -> tuple[Any, ShimEngine]:
     """Build the driver the way WeeWX's engine builds it.
 
     Same two lines as `StdEngine.setupStation`: import the module, call its
@@ -149,10 +186,17 @@ def load(module_name: str, config_dict: dict[str, Any]) -> tuple[Any, ShimEngine
     picked out by name, a constructor called directly -- would work for some
     drivers and not for others, and the ones it failed for would be the
     unusual ones nobody here can test.
-    """
-    import importlib
 
-    module = importlib.import_module(module_name)
+    The stand-in goes in first, and only where WeeWX is not installed. It has
+    to be before the import rather than after a failure: `import weewx` at
+    the top of a driver is the first line to run, so catching the error means
+    catching it halfway through somebody else's module.
+    """
+    from . import weewxnames
+
+    weewxnames.install()
+
+    module = import_driver(module_name, path)
     loader = getattr(module, "loader", None)
     if loader is None:
         raise TypeError(f"{module_name} has no loader(); it is not a WeeWX driver")
@@ -218,9 +262,11 @@ class Shim:
                  source: str | None = None, host: str = "127.0.0.1",
                  port: int = 8000, token: str | None = None,
                  batch_seconds: float = 5.0, catchup_seconds: int = 0,
-                 dry_run: bool = False) -> None:
+                 dry_run: bool = False,
+                 driver_file: str | Path | None = None) -> None:
         self.config_dict = config_dict
         self.module_name = module_name or driver_module_name(config_dict)
+        self.driver_file = driver_file
         self.source = source
         self.host = host
         self.port = port
@@ -241,9 +287,13 @@ class Shim:
     # -- the driver ----------------------------------------------------
 
     def open(self) -> None:
+        # `load` first: it installs the stand-in, and without that this
+        # import is the one that fails on a machine with no WeeWX -- before
+        # anything has had the chance to stand in for it.
+        self.console, self.engine = load(self.module_name, self.config_dict,
+                                         self.driver_file)
         import weewx
 
-        self.console, self.engine = load(self.module_name, self.config_dict)
         self.interval = archive_interval_of(self.console, self.config_dict)
         if self.source is None:
             try:
@@ -462,14 +512,18 @@ class Shim:
 
 
 def probe(config_dict: dict[str, Any], module_name: str | None = None,
-          count: int = 3, source: str | None = None) -> dict[str, Any]:
+          count: int = 3, source: str | None = None,
+          driver_file: str | Path | None = None) -> dict[str, Any]:
     """Build the driver, take a few packets, send nothing.
 
     What `weewx-evo weewx-driver check` is: enough to say whether this driver,
     this configuration and this hardware work together, without a listener and
     without writing a reading anywhere.
     """
-    shim = Shim(config_dict, module_name, source=source, dry_run=True)
+    from . import weewxnames
+
+    shim = Shim(config_dict, module_name, source=source, dry_run=True,
+                driver_file=driver_file)
     shim.open()
     try:
         got: list[Packet] = []
@@ -485,6 +539,10 @@ def probe(config_dict: dict[str, Any], module_name: str | None = None,
             "source": shim.source,
             "archive_interval": shim.interval,
             "callbacks": shim.engine.bound() if shim.engine else 0,
+            # Said out loud, because it changes what a failure means: against
+            # the stand-in, a missing name is ours to add, and against a real
+            # WeeWX it is not.
+            **weewxnames.describe(),
             "packets": len(got),
             "fields": sorted(fields),
             "usUnits": got[0].usUnits if got else None,

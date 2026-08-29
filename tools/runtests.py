@@ -157,6 +157,11 @@ def tests() -> list[Test]:
         Test("shim", ["shim_test.py"],
              "a WeeWX driver, run in its own process, delivering to us",
              needs=("weewx",)),
+        # No `needs`: the point of it is that WeeWX is not required. It finds
+        # a fousb.py or says so and skips, and where WeeWX *is* installed it
+        # compares the stand-in's arithmetic against the real one's.
+        Test("standin", ["standin_test.py"],
+             "a WeeWX driver decodes a record with no WeeWX installed"),
         Test("wunderground", ["wunderground_test.py"],
              "the WU protocol, against our own upload of the same protocol"),
 
