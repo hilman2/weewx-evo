@@ -174,6 +174,16 @@ def import_driver(module_name: str, path: str | Path | None = None) -> Any:
         # next import finds it, believes it, and fails somewhere else.
         sys.modules.pop(module_name, None)
         raise
+
+    # And onto the parent package as an attribute. `import_module` does this
+    # and `exec_module` does not, so without it `weewx.drivers.vantage` is in
+    # sys.modules while `weewx.drivers.vantage` as an *expression* raises
+    # AttributeError -- which is how the driver refers to its own logger, and
+    # how its tests reach it.
+    if "." in module_name:
+        parent, child = module_name.rsplit(".", 1)
+        if parent in sys.modules:
+            setattr(sys.modules[parent], child, module)
     return module
 
 

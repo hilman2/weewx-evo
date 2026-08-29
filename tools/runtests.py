@@ -157,11 +157,20 @@ def tests() -> list[Test]:
         Test("shim", ["shim_test.py"],
              "a WeeWX driver, run in its own process, delivering to us",
              needs=("weewx",)),
-        # No `needs`: the point of it is that WeeWX is not required. It finds
-        # a fousb.py or says so and skips, and where WeeWX *is* installed it
-        # compares the stand-in's arithmetic against the real one's.
+        # No `needs` on any of these four: the point is that WeeWX is not
+        # required. Each finds the driver file it wants or says so and skips,
+        # and where WeeWX *is* installed it is used as the thing to compare
+        # against rather than as a thing to run on.
         Test("standin", ["standin_test.py"],
              "a WeeWX driver decodes a record with no WeeWX installed"),
+        Test("vantage", ["vantage_test.py"],
+             "a Davis console, simulated to the serial port and back"),
+        Test("fousb", ["fousb_test.py"],
+             "a Fine Offset console, simulated down to the USB bus"),
+        Test("sdr", ["sdr_test.py"],
+             "weewx-sdr, against an rtl_433 that is a child process"),
+        Test("alldrivers", ["alldrivers_test.py"],
+             "every driver behaves the same on the stand-in as on WeeWX"),
         Test("wunderground", ["wunderground_test.py"],
              "the WU protocol, against our own upload of the same protocol"),
 

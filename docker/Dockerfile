@@ -70,6 +70,23 @@ RUN pip install --no-cache-dir \
         "pytest==8.4.2" \
         "ruff==0.16.4"
 
+# weewx-sdr, one file, for `sdr_test.py`. It is not part of WeeWX and not
+# pip-installable, so it comes down as the file it is -- which is also how
+# somebody installs it. Pinned to a commit for the same reason everything
+# else here is pinned: a test that compares against whatever was on a server
+# this morning compares against a moving thing.
+#
+# Here rather than vendored in the repository because it is 166 KB of
+# somebody else's driver, and the point of `weewxnames.py` is that we do not
+# need a copy of one. The test skips where it is absent.
+ARG SDR_COMMIT=e5f1f9915322fa6d1c25b4ff8e490b804cefeac1
+RUN mkdir -p /opt/weewx-sdr && \
+    python3 -c "import urllib.request as u, sys; \
+      u.urlretrieve('https://raw.githubusercontent.com/matthewwall/\
+weewx-sdr/${SDR_COMMIT}/bin/user/sdr.py', '/opt/weewx-sdr/sdr.py')" && \
+    python3 -c "import ast; ast.parse(open('/opt/weewx-sdr/sdr.py').read())"
+ENV WEEWX_SDR=/opt/weewx-sdr/sdr.py
+
 # WeeWX installs as a package, so it imports without a path. Ours is a
 # checkout, mounted at run time.
 WORKDIR /repo

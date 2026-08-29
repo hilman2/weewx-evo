@@ -336,6 +336,32 @@ Three things about it:
   serial` is pyserial, and no stand-in can supply either: one that did would
   give a driver that builds and reads nothing. `check` names the package.
 
+### How far this is actually tested
+
+An import proves that no name is missing and nothing else — the pieces only
+Vantage uses (`StdService`, `ValueTuple`, `GenWithConvert`) are the ones it
+never touches. So three devices are simulated, each a layer *below* the
+driver:
+
+| | stands in for | |
+|---|---|---|
+| `tools/vantagesim.py` | a serial port | wake-ups, EEPROM with CRC, 99-byte LOOP packets, 267-byte archive pages |
+| `tools/fousbsim.py` | a USB bus | 64 KB of console memory, the address inside a control message, the ring buffer |
+| `tools/sdrsim.py` | a **program** | weewx-sdr reads `rtl_433`'s stdout, so the simulator is a real child process |
+
+The rung that makes the rest evidence: **the same bytes through our stand-in
+and through WeeWX's own code, compared field by field.** Vantage 42 of 42,
+fousb 14 of 14, weewx-sdr 4 of 4. Same method as `unitcheck.py` and
+`difftest.py` — compare against WeeWX, not against a typed expectation.
+
+`tools/alldrivers_test.py` runs all thirteen twice from a seeded byte stream.
+Where a protocol simulator exists they are compared on readings; the rest on
+**how they fail** — different exceptions, the same on both sides. The report
+says which is which, because "all the same" reads stronger than it is.
+
+What no simulator can tell you: timing, a console answering late, an adapter
+dropping a byte, firmware lying about its page count. Those need hardware.
+
 ## `parsers.py`
 
 The older, function-based registry: a parser gets bytes and returns packets. It

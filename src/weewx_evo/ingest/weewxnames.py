@@ -154,6 +154,33 @@ def _weewx_module() -> types.ModuleType:
         return crc
 
     weewx.crc16 = crc16
+
+    # The event types, and `Event` itself. Classes used as tokens, which is
+    # how WeeWX does it -- what matters is that they compare by identity.
+    #
+    # Not found by importing anything: a driver binds these while it is being
+    # *built*, so `import weewx.drivers.vantage` succeeds and `loader()`
+    # raises AttributeError one line into the constructor. `Shim.open()`
+    # dispatches STARTUP, so without these the shim would have failed on
+    # every driver, not only the ones that bind.
+    for event in ("STARTUP", "PRE_LOOP", "NEW_LOOP_PACKET", "CHECK_LOOP",
+                  "END_ARCHIVE_PERIOD", "NEW_ARCHIVE_RECORD", "POST_LOOP",
+                  "SHUTDOWN"):
+        setattr(weewx, event, type(event, (), {}))
+
+    class Event:
+        """One event, with whatever the sender attached to it."""
+
+        def __init__(self, event_type, **kwargs):
+            self.event_type = event_type
+            self.__dict__.update(kwargs)
+
+        def __str__(self):
+            fields = ", ".join(f"{k}: {v}" for k, v in self.__dict__.items()
+                               if k != "event_type")
+            return f"Event {getattr(self.event_type, '__name__', '?')}: {fields}"
+
+    weewx.Event = Event
     return weewx
 
 
