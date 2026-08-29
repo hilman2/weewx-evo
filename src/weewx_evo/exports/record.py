@@ -21,6 +21,11 @@ What is stored is one line of JSON per export, replaced each run:
     {"when": 1787…, "ok": true, "sent": 9, "skipped": 33,
      "bytes": 943210, "seconds": 3.2, "note": "", "error": ""}
 
+A failing one also carries `failures` and `since`: how many runs in a row
+have gone wrong and when the run of them started. One failure is a network
+having a moment and three is a password somebody changed, and nothing can
+tell those apart from a single row saying "the last one failed".
+
 **Not a history.** How the last run went is what somebody wants to see, and a
 growing log of every run in a database meant for a day of packets would be a
 table nobody prunes. The log has the history.
@@ -52,11 +57,23 @@ def write(store: Any, name: str, result: Any = None,
     """
     if store is None:
         return
-    entry = {
-        "when": int(when if when is not None else time.time()),
-        "ok": not error and not (result.failures if result else []),
-        "error": error[:300],
-    }
+    now = int(when if when is not None else time.time())
+    ok = not error and not (result.failures if result else [])
+    entry = {"when": now, "ok": ok, "error": error[:300]}
+
+    # How long it has been going wrong, not just that it is. One failure is a
+    # network having a moment; three in a row is a password somebody changed,
+    # and only the second is worth telling anybody about. Kept here rather
+    # than counted by whoever asks, because this is the row that survives a
+    # restart -- and a restart is exactly when a run of failures gets lost.
+    if not ok:
+        before = read(store, name) or {}
+        if before.get("ok") is False:
+            entry["failures"] = int(before.get("failures") or 1) + 1
+            entry["since"] = int(before.get("since") or before.get("when") or now)
+        else:
+            entry["failures"] = 1
+            entry["since"] = now
     if result is not None:
         entry.update({
             "sent": int(getattr(result, "sent", 0)),

@@ -42,6 +42,7 @@ from . import config as config_file
 from . import exports as export_registry
 from . import feedrunner as feed_runner
 from . import forecast as forecast_registry
+from . import notify as notify_registry
 from . import options as option_defs
 from . import plots as plot_defs
 from . import settings as settings_state
@@ -1330,6 +1331,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     dog = start_watchdog(cfg, live, restart_for,
                          feeds, runner, uploader, forecaster)
+
+    # After the watchdog, because it reads two things only the watchdog
+    # knows: whether this process restarted itself, and whether the archiver
+    # loop is still going round. Its own thread and its own schedule -- the
+    # symptom it exists for is this loop having stopped, and a check that
+    # runs when a record is written cannot report that no record was written.
+    notifier = build_notify_runner(args, cfg, live, announced, dog)
+    if notifier is not None:
+        notifier.start()
+
     last_prune = 0.0
     try:
         while not stopping.is_set():
@@ -1352,7 +1363,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         stopping.set()
                         continue
                     apply_live(args, cfg, web, runner, uploader, forecaster,
-                               feeds)
+                               feeds, notifier)
 
                 if dog is not None:
                     dog.beats()
@@ -1397,6 +1408,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
             runner.stop()
         if uploader is not None:
             uploader.stop()
+        if notifier is not None:
+            notifier.stop()
+            notifier.close()
         if forecaster is not None:
             forecaster.stop()
         if forecast_store is not None:
@@ -2748,7 +2762,8 @@ def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
 
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
                runner: Any, uploader: Any = None,
-               forecaster: Any = None, feeds: Any = None) -> None:
+               forecaster: Any = None, feeds: Any = None,
+               notifier: Any = None) -> None:
     """Apply a changed configuration to a running process.
 
     Everything that can be rebuilt in place, in one function. Scattering
@@ -2758,6 +2773,18 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
     Anything that cannot be rebuilt here belongs marked `restart` in the
     schema, and the loop restarts the process for it.
     """
+    if notifier is not None:
+        # The fifth. A channel added on the settings page has to start
+        # speaking without a restart, and one removed has to stop -- and
+        # `replace` rather than three assignments, for the reason written
+        # down at `exports/runner.replace`.
+        fresh = build_notify_runner(args, cfg, notifier.live,
+                                    notifier.stations, notifier.dog)
+        names = sorted(one.name for one in (fresh.channels if fresh else []))
+        if names != sorted(one.name for one in notifier.channels):
+            notifier.replace(fresh.channels if fresh else [])
+            log.info("%d notification channel(s) running", len(names))
+
     if runner is not None:
         fresh = build_schedule(args, cfg)
         if _differs(fresh, runner):
@@ -3599,6 +3626,169 @@ def _archive_rows(archive: Path, since: int, limit: int = 0) -> list[dict]:
         connection.close()
 
 
+def configured_notify(args: argparse.Namespace) -> dict[str, dict]:
+    """What the configuration file says about notification channels."""
+    cfg = settings_for(args)
+    section = cfg.config.get("notify") or {}
+    return {name: dict(settings) for name, settings in section.items()
+            if isinstance(settings, dict)}
+
+
+def build_channel(name: str, settings: dict) -> object:
+    """One channel from its settings. Raises with a usable message."""
+    kind = str(settings.pop("kind", "")).strip()
+    if not kind:
+        raise ValueError(f"channel {name!r} does not say what kind it is. "
+                         f'Add kind = "email" or one of: '
+                         f"{', '.join(notify_registry.kinds())}.")
+    factory = notify_registry.DEFAULT.factory_for(kind)
+    if factory is None:
+        raise ValueError(f"channel {name!r} is of kind {kind!r}, which is not "
+                         f"one of: {', '.join(notify_registry.kinds())}")
+    schema = option_defs.schema_of(factory, name=kind, label=kind)
+    if schema is not None:
+        parsed, errors = schema.parse(settings, only_present=True)
+        if errors:
+            first = next(iter(errors.values()))
+            raise ValueError(f"channel {name!r}: {first}")
+        settings = parsed
+    return factory(**settings)
+
+
+def build_notify_runner(args: argparse.Namespace, cfg: Settings, live: Any,
+                        stations: Any = None, dog: Any = None) -> Any:
+    """The notification runner, or None where nothing is configured.
+
+    What it watches for failures is the exports and the uploads, because
+    those are the two that write to `live_metadata` when a run goes wrong. A
+    feed is not among them: a feed that fails writes nothing anywhere yet,
+    and claiming to watch it would be worse than not watching it.
+    """
+    from .notify import Timing
+    from .notify import runner as notify_runner
+
+    entries = configured_notify(args)
+    if not entries:
+        return None
+
+    channels = []
+    for name, settings in sorted(entries.items()):
+        settings = dict(settings)
+        after = float(settings.pop("after", None)
+                      or notify_registry.DEFAULT_AFTER)
+        repeat = float(settings.pop("repeat", None)
+                       or notify_registry.DEFAULT_REPEAT)
+        try:
+            channel = build_channel(name, settings)
+        except ValueError as exc:
+            # Said once and skipped. A channel with a typo in it must not
+            # stop the others, and the others are the point.
+            log.warning("notifications: %s", exc)
+            continue
+        channels.append(notify_runner.Channel(
+            name=name, channel=channel,
+            timing=Timing(after=after, repeat=repeat)))
+
+    if not channels:
+        return None
+    senders = sorted(set(configured_uploads(args))
+                     | set(configured_exports(args)))
+    return notify_runner.Runner(
+        channels, live=live, stations=stations, dog=dog, senders=senders,
+        station_name=str(cfg.get("station.name") or ""))
+
+
+def cmd_notify_list(args: argparse.Namespace) -> int:
+    """What is configured, and what could be."""
+    entries = configured_notify(args)
+    print("Available:")
+    for kind in notify_registry.kinds():
+        print(f"  {kind:10} {notify_registry.describe(kind)}")
+    print()
+    if not entries:
+        print("None configured. Nothing will tell you when a station stops.")
+        return 0
+
+    print("Configured:")
+    for name, settings in sorted(entries.items()):
+        print(f"  {name:16} {settings.get('kind', '?')}")
+    if len(entries) < 2:
+        # Said rather than enforced. It is the operator's network and their
+        # judgement, and refusing to run with one channel would be wrong for
+        # the installation that only wants one.
+        print()
+        print("  Only one channel. A message about the network, sent over "
+              "the network,")
+        print("  is the alert most likely to be the one that does not arrive.")
+    return 0
+
+
+def cmd_notify_check(args: argparse.Namespace) -> int:
+    """Send a test message through each channel."""
+    entries = configured_notify(args)
+    if args.name:
+        entries = {k: v for k, v in entries.items() if k == args.name}
+        if not entries:
+            print(f"No channel called {args.name!r}.", file=sys.stderr)
+            return 1
+    if not entries:
+        print("None configured.")
+        return 0
+
+    problems = 0
+    for name, settings in sorted(entries.items()):
+        try:
+            channel = build_channel(name, dict(settings))
+        except ValueError as exc:
+            print(f"  {name}: {exc}")
+            problems += 1
+            continue
+        try:
+            print(f"  {name}: {channel.check()}")
+        finally:
+            closing = getattr(channel, "close", None)
+            if closing is not None:
+                closing()
+    return 1 if problems else 0
+
+
+def cmd_notify_status(args: argparse.Namespace) -> int:
+    """What is wrong right now, whether or not anybody has been told."""
+    cfg = settings_for(args)
+    live_db = Path(cfg.get("live_db") or "data/live.sdb")
+    if not live_db.is_absolute():
+        base = (Path(args.config).parent
+                if getattr(args, "config", None) else Path())
+        live_db = base / live_db
+    if not live_db.exists():
+        print(f"No live database at {live_db}.", file=sys.stderr)
+        return 1
+
+    from .notify import Memory
+    from .notify import rules as notify_rules
+
+    stations, _sightings = read_stations(args, cfg)
+    senders = sorted(set(configured_uploads(args))
+                     | set(configured_exports(args)))
+    with LiveStore(live_db) as live:
+        seen = notify_rules.everything(live, stations, None, senders)
+        memory = Memory(live)
+
+    if not seen:
+        print("Nothing is wrong.")
+        return 0
+
+    now = time.time()
+    for key in sorted(seen):
+        event = seen[key]
+        standing = memory.standing.get(key)
+        held = now - (standing.since if standing else event.since or now)
+        told = "told" if standing and standing.told else "not told yet"
+        print(f"  {event.text}")
+        print(f"    for {held / 60:.0f} min, {told}")
+    return 1
+
+
 def cmd_quality_suggest(args: argparse.Namespace) -> int:
     """Work rules out of what this station has actually recorded.
 
@@ -4206,6 +4396,25 @@ def main(argv: list[str] | None = None) -> int:
                    help="skip the diagnostic page that draws it all")
     q.add_argument("--plots", default=None)
     q.set_defaults(func=cmd_plots_run)
+
+    p = sub.add_parser("notify",
+                       help="who hears about it when something stops")
+    notify_sub = p.add_subparsers(dest="notify_command", required=True)
+
+    q = notify_sub.add_parser("list",
+                              help="what is configured, and what could be")
+    add_common(q)
+    q.set_defaults(func=cmd_notify_list)
+
+    q = notify_sub.add_parser("check", help="send a test message")
+    add_common(q)
+    q.add_argument("name", nargs="?", help="just this one")
+    q.set_defaults(func=cmd_notify_check)
+
+    q = notify_sub.add_parser("status",
+                              help="what is wrong right now, told or not")
+    add_common(q)
+    q.set_defaults(func=cmd_notify_status)
 
     p = sub.add_parser("quality", help="calibration and limits")
     quality_sub = p.add_subparsers(dest="quality_command", required=True)
