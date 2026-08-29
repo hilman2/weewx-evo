@@ -148,6 +148,8 @@ def tests() -> list[Test]:
              slow=True),
         Test("notify", ["notify_test.py"],
              "who hears about it, how often, and when it is over"),
+        Test("import", ["import_test.py"],
+             "a MySQL or Postgres dump, and a CSV, into the archive"),
         Test("quality", ["quality_test.py"],
              "calibration and limits, and where a spike must not reach"),
         Test("influx", ["influx_test.py"],

@@ -1923,6 +1923,124 @@ def cmd_mqtt_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_dump(args: argparse.Namespace) -> int:
+    """Read a MySQL or Postgres dump into the archive.
+
+    `--dry-run` first, always, and the command says so: this writes into the
+    measurement series, and a dump of the wrong table is found out in a
+    second rather than after an hour of inserts.
+    """
+    from . import dumps
+
+    source = Path(args.file)
+    if not source.exists():
+        print(f"There is no file at {source}.", file=sys.stderr)
+        return 1
+
+    cfg = settings_for(args)
+    if args.dry_run:
+        found = dumps.inspect(source, args.dump_table)
+        print(f"{source.name}: {found.dialect}, table {found.table!r}")
+        print(f"  {found.summary()}")
+        if found.skipped:
+            print(f"  {found.skipped} row(s) with no dateTime, which would "
+                  f"be left out")
+        for note in found.notes:
+            print(f"  note: {note}")
+        if found.columns:
+            print(f"  columns: {', '.join(found.columns[:12])}"
+                  + (" ..." if len(found.columns) > 12 else ""))
+        return 0
+
+    registry = read_archives(args, cfg)
+    one = registry.get(getattr(args, "series", None) or registry.default_name())
+    if one is None:
+        print(f"No series called {getattr(args, 'series', '')!r}.",
+              file=sys.stderr)
+        return 2
+    store = open_archive(one, cfg,
+                         Path(args.config).parent
+                         if getattr(args, "config", None) else None)
+    try:
+        seen = [0]
+
+        def say(count: int) -> None:
+            seen[0] = count
+            print(f"  {count} records ...", flush=True)
+
+        found = dumps.into(source, store, args.dump_table,
+                           replace=args.replace, progress=say)
+    finally:
+        store.close()
+
+    print(f"{source.name}: {found.summary()}")
+    for note in found.notes:
+        print(f"  note: {note}")
+    if found.skipped:
+        print(f"  {found.skipped} row(s) had no dateTime and were left out")
+    # Said out loud because it is the trap this command has: the summaries
+    # are a cache of the archive, and one older than its data is wrong in a
+    # way nothing complains about.
+    print("The daily summaries were built as the records went in.")
+    return 0
+
+
+def cmd_import_csv(args: argparse.Namespace) -> int:
+    """Read a CSV of readings into the archive.
+
+    The format every other weather program can produce, and the one somebody
+    falls back on when their own is not supported. Column names are the
+    archive's: this refuses to guess which of `temp`, `temperature` and
+    `outsideTemp` is `outTemp`, because a guess here writes a measurement
+    into the wrong column and no later reading of the file can undo it.
+    """
+    from . import dumpscsv
+
+    source = Path(args.file)
+    if not source.exists():
+        print(f"There is no file at {source}.", file=sys.stderr)
+        return 1
+
+    cfg = settings_for(args)
+    if args.dry_run:
+        found = dumpscsv.inspect(source, delimiter=args.delimiter,
+                                 time_column=args.time_column,
+                                 time_format=args.time_format,
+                                 unit_system=args.units,
+                                 interval=args.csv_interval)
+        print(f"{source.name}: {found.summary()}")
+        for note in found.notes:
+            print(f"  note: {note}")
+        if found.columns:
+            print(f"  readings: {', '.join(found.columns[:12])}"
+                  + (" ..." if len(found.columns) > 12 else ""))
+        return 0
+
+    registry = read_archives(args, cfg)
+    one = registry.get(getattr(args, "series", None) or registry.default_name())
+    if one is None:
+        print(f"No series called {getattr(args, 'series', '')!r}.",
+              file=sys.stderr)
+        return 2
+    store = open_archive(one, cfg,
+                         Path(args.config).parent
+                         if getattr(args, "config", None) else None)
+    try:
+        found = dumpscsv.into(source, store, delimiter=args.delimiter,
+                              time_column=args.time_column,
+                              time_format=args.time_format,
+                              unit_system=args.units, replace=args.replace,
+                              interval=args.csv_interval)
+    finally:
+        store.close()
+
+    print(f"{source.name}: {found.summary()}")
+    for note in found.notes:
+        print(f"  note: {note}")
+    print("The daily summaries were built as the records went in.")
+    return 0
+
+
 def cmd_weewx_driver_run(args: argparse.Namespace) -> int:
     """Run the driver and deliver what it produces to the listener.
 
@@ -4588,6 +4706,59 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--dry-run", action="store_true",
                    help="run the driver and deliver nothing.")
     q.set_defaults(func=cmd_weewx_driver_run)
+
+    p = sub.add_parser("import", help="bring readings in from somewhere else")
+    import_sub = p.add_subparsers(dest="import_command", required=True)
+
+    def add_import_common(q):
+        add_common(q)
+        q.add_argument("file", help="the file to read")
+        q.add_argument("--series", default=None,
+                       help="which measurement series to write into. The "
+                            "default one unless there are several.")
+        q.add_argument("--replace", action="store_true",
+                       help="overwrite a record that is already there. Off "
+                            "by default: an import that silently replaced "
+                            "measurements would be the one operation here "
+                            "that cannot be undone.")
+        q.add_argument("--dry-run", action="store_true",
+                       help="say what is in the file and write nothing")
+
+    q = import_sub.add_parser(
+        "dump", help="a MySQL or Postgres dump, from mysqldump or pg_dump")
+    add_import_common(q)
+    # Not `--table`, which `add_common` already has and which names the
+    # table in *our* archive. This one names the table in somebody else's
+    # dump, and one flag with two meanings holds until the two differ.
+    q.add_argument("--from-table", dest="dump_table", default="archive",
+                   help="the table to read out of the dump. `archive` "
+                        "unless somebody renamed it.")
+    q.set_defaults(func=cmd_import_dump)
+
+    q = import_sub.add_parser("csv", help="a CSV whose columns are readings")
+    add_import_common(q)
+    q.add_argument("--delimiter", default=",",
+                   help="what separates the fields. A semicolon where the "
+                        "file came out of a German spreadsheet.")
+    q.add_argument("--time-column", default=None,
+                   help="which column is the time. Worked out from the "
+                        "usual names otherwise.")
+    q.add_argument("--time-format", default=None,
+                   help="a strptime format, where the times are not epoch "
+                        "seconds or ISO. For example %%d.%%m.%%Y %%H:%%M.")
+    # Not `--interval`, which `add_common` has and which is *this* station's
+    # archive interval. This one is a property of the file being read.
+    q.add_argument("--record-interval", dest="csv_interval", type=float,
+                   default=None,
+                   help="minutes each record in the file covers, where it "
+                        "does not say. Worked out from the gaps between rows "
+                        "otherwise. Every average is weighted by it.")
+    q.add_argument("--units", default="us",
+                   choices=("us", "metric", "metricwx"),
+                   help="what the numbers in the file are in. A CSV states "
+                        "no units, and getting this wrong writes Fahrenheit "
+                        "into a Celsius column.")
+    q.set_defaults(func=cmd_import_csv)
 
     p = sub.add_parser("mqtt", help="subscribe to a broker and deliver what "
                                     "it publishes")
