@@ -789,6 +789,32 @@ def test_provisioning_writes_the_icons() -> None:
           True)
 
 
+def test_the_compose_overlay_mounts_the_icons_where_the_panels_look() -> None:
+    """Two files that have to agree, and nothing makes them.
+
+    `icons.URL` is written into every dashboard, and the compose overlay is
+    what puts the files where that URL resolves. Change one and the forecast
+    table shows broken images -- on a Grafana that started cleanly, from
+    dashboards that parse, with every test here green.
+    """
+    overlay = (Path(__file__).resolve().parent.parent / "deploy"
+               / "compose.grafana.yml")
+    check("the overlay is there", overlay.exists(), True)
+    text = overlay.read_text(encoding="utf-8")
+
+    from weewx_evo.grafana import icons
+
+    # `public/img/weewx-evo` on the URL side, `/usr/share/grafana/public/...`
+    # on the mount side: Grafana serves its own `public/` at the root.
+    wanted = f"/usr/share/grafana/{icons.URL}"
+    check("the mount target matches the URL the panels write",
+          wanted in text, True)
+    check("and it is read-only, because these are generated",
+          f"{wanted}:ro" in text, True)
+    check("from where provision writes them",
+          "/grafana/icons:" in text, True)
+
+
 def main() -> int:
     for name, test in sorted(globals().items()):
         if name.startswith("test_") and callable(test):

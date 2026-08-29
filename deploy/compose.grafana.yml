@@ -25,6 +25,12 @@
 #         --out /data/grafana --read-token "$INFLUX_READ_TOKEN"
 #     docker compose restart grafana
 #
+# Do that before the first `up` with this overlay, or make the
+# directories by hand: compose creates a missing bind mount source as a
+# root-owned directory, and `provision` cannot write into it afterwards.
+#
+#     mkdir -p ../data/grafana/{datasources,dashboards,icons}
+#
 # Grafana reads the provisioning directory at start and rescans the dashboards
 # every minute, so a later `provision` needs no restart -- only a new
 # datasource does.
@@ -101,6 +107,12 @@ services:
       # silently overwritten on the next run.
       - ${WEEWX_EVO_DATA:-../data}/grafana/datasources:/etc/grafana/provisioning/datasources:ro
       - ${WEEWX_EVO_DATA:-../data}/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # The weather icons the forecast table draws. Grafana serves
+      # anything under its own `public/`, and it cannot see into
+      # weewx-evo's container -- so the pictures have to arrive this
+      # way. Without this line the table shows broken images, which is
+      # the failure that says what to fix.
+      - ${WEEWX_EVO_DATA:-../data}/grafana/icons:/usr/share/grafana/public/img/weewx-evo:ro
 
 volumes:
   influxdb-data:
