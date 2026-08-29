@@ -36,6 +36,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import api as api_module
 from . import archives as archives_module
 from . import collectors, maintenance, units, watchdog, weewxconf
 from . import config as config_file
@@ -1262,7 +1263,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if cfg.get("web.enabled"):
         site = site_from(cfg)
         web = WebServer(site, cfg.get("web.host"), cfg.get("web.port"),
-                        access=Access.parse(cfg.get("web.allow")))
+                        access=Access.parse(cfg.get("web.allow")),
+                        api=build_api(args, cfg, announced))
         web.start()
         log.info("serving %d feed(s) on %s:%s%s", len(site.feeds),
                  web.host, web.port,
@@ -3058,7 +3060,12 @@ def cmd_web(args: argparse.Namespace) -> int:
     """
     cfg = settings_for(args)
     site = site_from(cfg)
-    if not site.feeds:
+    api = build_api(args, cfg)
+    # A station with the API switched on and no feed yet has something to
+    # serve: the readings themselves. Refusing to start there would mean the
+    # one endpoint that needs no files is unreachable until somebody
+    # configures a feed that writes some.
+    if not site.feeds and api is None:
         print("Nothing to serve. A feed produces files; until one exists, "
               "point this at a directory:")
         print()
@@ -3073,7 +3080,11 @@ def cmd_web(args: argparse.Namespace) -> int:
         return 1
 
     server = WebServer(site, args.host or cfg.get("web.host"),
-                       args.port or cfg.get("web.port"), access=access)
+                       args.port or cfg.get("web.port"), access=access,
+                       api=api)
+    if api is not None:
+        print(f"Answering questions at /api/{api_module.VERSION}/"
+              + (" (token required)" if api.token else ""))
     print(f"Serving {len(site.feeds)} feed(s):")
     for name in sorted(site.feeds):
         at = "/" if name == site.default else f"/{name}/"
@@ -3653,6 +3664,33 @@ def build_channel(name: str, settings: dict) -> object:
             raise ValueError(f"channel {name!r}: {first}")
         settings = parsed
     return factory(**settings)
+
+
+def build_api(args: argparse.Namespace, cfg: Settings,
+              stations: Any = None) -> Any:
+    """The read-only API, or None where it is switched off.
+
+    Every archive, by name, so a client can ask about any of them -- the same
+    list the dashboards and the feeds work from. Read-only throughout: it
+    holds paths and opens each of them for the length of one request.
+    """
+    if not cfg.get("api.enabled"):
+        return None
+    from .api import Api
+
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    where: dict[str, Path] = {}
+    for archive in read_archives(args, cfg).all():
+        path = Path(archive.file)
+        if not path.is_absolute() and base is not None:
+            path = base / path
+        where[archive.name] = path
+    if not where:
+        return None
+    return Api(where, default=archives_module.DEFAULT,
+               token=str(cfg.get("api.token") or ""),
+               stations=stations,
+               station_name=str(cfg.get("station.name") or ""))
 
 
 def build_notify_runner(args: argparse.Namespace, cfg: Settings, live: Any,

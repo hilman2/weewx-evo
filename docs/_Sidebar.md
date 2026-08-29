@@ -36,6 +36,7 @@
 - [MQTT](MQTT)
 - [Forecast](Forecast)
 - [Web server](Web-Server)
+- [API](API)
 
 **Operation**
 - [Configuration](Configuration)

@@ -41,6 +41,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .netaccess import PRIVATE_ONLY, Access
@@ -251,6 +252,11 @@ class _Handler(BaseHTTPRequestHandler):
     site: Site
     access: Access
     limits: Limits
+    #: The readings as an answer to a question, where one is configured.
+    #: Served from here rather than from its own port because it is the same
+    #: audience and the same data in another shape: what the feeds publish,
+    #: for a client that has a question no plot answers.
+    api: Any = None
 
     def log_message(self, fmt: str, *args: object) -> None:
         log.debug("%s %s", self.address_string(), fmt % args)
@@ -269,7 +275,15 @@ class _Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b"not found")
             return
 
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+
+        # Before the feeds, because a feed called `api` must not shadow it --
+        # and a feed can be called anything somebody types.
+        if self.api is not None and self.api.handles(path):
+            self._api(parsed.query, body)
+            return
+
         parts = [p for p in path.split("/") if p]
 
         # The root: the default feed's index, or the list of feeds.
@@ -294,6 +308,15 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         self._not_found(body)
+
+    def _api(self, query: str, body: bool) -> None:
+        """One API answer. Never cached: it is a question about now."""
+        answer = self.api.answer(
+            urlparse(self.path).path, query,
+            header_token=self.headers.get("X-Token", ""))
+        self._head(answer.status, len(answer.body), answer.kind)
+        if body:
+            self.wfile.write(answer.body)
 
     def _file(self, feed: str, rest: str, body: bool) -> None:
         target = self.site.resolve(feed, rest)
@@ -384,9 +407,9 @@ class WebServer:
 
     def __init__(self, site: Site, host: str = "0.0.0.0", port: int = 8081,
                  access: Access = PRIVATE_ONLY,
-                 limits: Limits | None = None) -> None:
+                 limits: Limits | None = None, api: Any = None) -> None:
         handler = type("SiteHandler", (_Handler,), {
-            "site": site, "access": access,
+            "site": site, "access": access, "api": api,
             # Generous: a page load is a dozen requests for its stylesheet,
             # its fonts and its images, and a limit that gets in the way of
             # that is one that makes the site look broken.

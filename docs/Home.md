@@ -102,6 +102,7 @@ sitting next to it.
 | [Feeds](Feeds) | What gets produced — JSON feed, diagnostic page |
 | [Exports](Exports) | How it gets somewhere else — FTP, rsync |
 | [Web-Server](Web-Server) | Serving the feeds locally |
+| [API](API) | The readings as an answer to a question |
 | [Grafana](Grafana) | Dashboards for more than one console, through InfluxDB |
 | [Notifications](Notifications) | Who hears about it when something stops |
 | [Maintenance](Maintenance) | Backup, integrity, and reclaiming space |

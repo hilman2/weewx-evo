@@ -530,6 +530,19 @@ def website_options() -> list[Group]:
                          help="Off, nothing is served and the exports still "
                               "publish. On, whatever a local export wrote is "
                               "reachable at the addresses below."),
+                  Option("api.enabled", "Answer questions about the data",
+                         kind="bool", default=False, restart=True,
+                         help="An address a script, Home Assistant or a "
+                              "dashboard can ask for a reading over a span, "
+                              "rather than for a file somebody made earlier. "
+                              "Read-only, on the same port as the pages, at "
+                              "/api/v1/."),
+                  Option("api.token", "Require this token", kind="secret",
+                         default="", restart=True, advanced=True,
+                         help="Empty means anybody the pages are served to "
+                              "can ask. Set one where the pages are on the "
+                              "open internet: the API answers about any span "
+                              "rather than only what a feed has published."),
                   Option("web.port", "Port", kind="int", default=8081,
                          minimum=1, maximum=65535, restart=True,
                          help="Its own, separate from the upload port and the "

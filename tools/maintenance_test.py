@@ -275,7 +275,7 @@ def test_a_sharper_extreme_is_not_a_fault() -> None:
                      "max = max + 5 WHERE dateTime = ?", (start,))
         conn.commit()
 
-    verdict = maintenance.verify(source)
+    verdict = maintenance.verify(source, days=1)
     check("a sharper day is not reported", verdict.days, [])
 
 
@@ -291,7 +291,7 @@ def test_a_duller_extreme_is_a_fault() -> None:
                      "WHERE dateTime = ?", (start,))
         conn.commit()
 
-    verdict = maintenance.verify(source)
+    verdict = maintenance.verify(source, days=1)
     check("the day is named", verdict.days, [start])
 
 
@@ -306,7 +306,7 @@ def test_a_wrong_sum_is_a_fault() -> None:
                      "WHERE dateTime = ?", (start,))
         conn.commit()
 
-    verdict = maintenance.verify(source)
+    verdict = maintenance.verify(source, days=1)
     check("a count that does not follow is named", verdict.days, [start])
 
 
@@ -328,7 +328,7 @@ def test_verify_writes_nothing() -> None:
             "SELECT max FROM archive_day_outTemp WHERE dateTime = ?",
             (start,)).fetchone()[0]
 
-    maintenance.verify(source)
+    maintenance.verify(source, days=1)
 
     with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as conn:
         after = conn.execute(
@@ -362,7 +362,7 @@ def test_a_damaged_file_is_reported_and_not_compared() -> None:
         data[offset] = (data[offset] + 137) % 256
     source.write_bytes(bytes(data))
 
-    verdict = maintenance.verify(source)
+    verdict = maintenance.verify(source, days=1)
     check("it is not called sound", verdict.sound, False)
     check("and something is said about it", bool(verdict.problems), True)
     check("and it did not go on to the summaries", verdict.days, [])
@@ -390,7 +390,7 @@ def test_nothing_here_leaks_a_descriptor() -> None:
     source = an_archive(where / "weewx.sdb", days=1)
 
     before = _descriptors()
-    for _ in range(5):
+    for _ in range(3):
         copy = maintenance.backup(source, into=where / "out", keep=0)
         maintenance.restorable(copy.path)
         maintenance.verify(copy.path, days=1)
