@@ -257,6 +257,10 @@ class _Handler(BaseHTTPRequestHandler):
     #: audience and the same data in another shape: what the feeds publish,
     #: for a client that has a question no plot answers.
     api: Any = None
+    #: What the process is doing, for Prometheus. At `/metrics`, because that
+    #: is where every scraper looks by default and a different path is a
+    #: line of configuration on the other machine for nothing.
+    metrics: Any = None
 
     def log_message(self, fmt: str, *args: object) -> None:
         log.debug("%s %s", self.address_string(), fmt % args)
@@ -282,6 +286,10 @@ class _Handler(BaseHTTPRequestHandler):
         # and a feed can be called anything somebody types.
         if self.api is not None and self.api.handles(path):
             self._api(parsed.query, body)
+            return
+
+        if self.metrics is not None and path.rstrip("/") == "/metrics":
+            self._metrics(body)
             return
 
         parts = [p for p in path.split("/") if p]
@@ -317,6 +325,21 @@ class _Handler(BaseHTTPRequestHandler):
         self._head(answer.status, len(answer.body), answer.kind)
         if body:
             self.wfile.write(answer.body)
+
+    def _metrics(self, body: bool) -> None:
+        """One scrape. Never cached: it is a question about this second."""
+        try:
+            text = self.metrics.render().encode("utf-8")
+        except Exception:
+            log.exception("could not render the metrics")
+            # 500 rather than an empty 200: a scraper reading zero samples
+            # cannot tell "nothing is wrong" from "nothing was measured".
+            self._head(500, 0, "text/plain; charset=utf-8")
+            return
+        self._head(200, len(text),
+                   "text/plain; version=0.0.4; charset=utf-8")
+        if body:
+            self.wfile.write(text)
 
     def _file(self, feed: str, rest: str, body: bool) -> None:
         target = self.site.resolve(feed, rest)
@@ -407,9 +430,10 @@ class WebServer:
 
     def __init__(self, site: Site, host: str = "0.0.0.0", port: int = 8081,
                  access: Access = PRIVATE_ONLY,
-                 limits: Limits | None = None, api: Any = None) -> None:
+                 limits: Limits | None = None, api: Any = None,
+                 metrics: Any = None) -> None:
         handler = type("SiteHandler", (_Handler,), {
-            "site": site, "access": access, "api": api,
+            "site": site, "access": access, "api": api, "metrics": metrics,
             # Generous: a page load is a dozen requests for its stylesheet,
             # its fonts and its images, and a limit that gets in the way of
             # that is one that makes the site look broken.

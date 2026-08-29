@@ -543,6 +543,13 @@ def website_options() -> list[Group]:
                               "can ask. Set one where the pages are on the "
                               "open internet: the API answers about any span "
                               "rather than only what a feed has published."),
+                  Option("metrics.enabled", "Publish what the process is "
+                         "doing", kind="bool", default=False, restart=True,
+                         help="A /metrics endpoint for Prometheus: "
+                              "descriptors, threads, how long ago each "
+                              "station was heard, whether the exports are "
+                              "working. The weather is not in it -- that is "
+                              "what the archive and Grafana are for."),
                   Option("web.port", "Port", kind="int", default=8081,
                          minimum=1, maximum=65535, restart=True,
                          help="Its own, separate from the upload port and the "

@@ -1262,9 +1262,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     web = None
     if cfg.get("web.enabled"):
         site = site_from(cfg)
+        metrics = build_metrics(args, cfg, live=live)
         web = WebServer(site, cfg.get("web.host"), cfg.get("web.port"),
                         access=Access.parse(cfg.get("web.allow")),
-                        api=build_api(args, cfg, announced))
+                        api=build_api(args, cfg, announced),
+                        metrics=metrics)
         web.start()
         log.info("serving %d feed(s) on %s:%s%s", len(site.feeds),
                  web.host, web.port,
@@ -1339,6 +1341,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # loop is still going round. Its own thread and its own schedule -- the
     # symptom it exists for is this loop having stopped, and a check that
     # runs when a record is written cannot report that no record was written.
+    if metrics is not None:
+        # Made before the watchdog because the web server starts first, and
+        # given it here: the thread and heartbeat figures are the watchdog's.
+        metrics.dog = dog
     notifier = build_notify_runner(args, cfg, live, announced, dog)
     if notifier is not None:
         notifier.start()
@@ -3065,7 +3071,8 @@ def cmd_web(args: argparse.Namespace) -> int:
     # serve: the readings themselves. Refusing to start there would mean the
     # one endpoint that needs no files is unreachable until somebody
     # configures a feed that writes some.
-    if not site.feeds and api is None:
+    metrics = build_metrics(args, cfg)
+    if not site.feeds and api is None and metrics is None:
         print("Nothing to serve. A feed produces files; until one exists, "
               "point this at a directory:")
         print()
@@ -3081,7 +3088,7 @@ def cmd_web(args: argparse.Namespace) -> int:
 
     server = WebServer(site, args.host or cfg.get("web.host"),
                        args.port or cfg.get("web.port"), access=access,
-                       api=api)
+                       api=api, metrics=metrics)
     if api is not None:
         print(f"Answering questions at /api/{api_module.VERSION}/"
               + (" (token required)" if api.token else ""))
@@ -3664,6 +3671,31 @@ def build_channel(name: str, settings: dict) -> object:
             raise ValueError(f"channel {name!r}: {first}")
         settings = parsed
     return factory(**settings)
+
+
+def build_metrics(args: argparse.Namespace, cfg: Settings, dog: Any = None,
+                  live: Any = None) -> Any:
+    """What the process is doing, or None where it is switched off."""
+    if not cfg.get("metrics.enabled"):
+        return None
+    from .metrics import Metrics
+
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    where: dict[str, Path] = {}
+    for archive in read_archives(args, cfg).all():
+        path = Path(archive.file)
+        if not path.is_absolute() and base is not None:
+            path = base / path
+        where[archive.name] = path
+
+    live_db = Path(cfg.get("live_db") or "data/live.sdb")
+    if not live_db.is_absolute() and base is not None:
+        live_db = base / live_db
+
+    return Metrics(live=live_db, archives=where, dog=dog,
+                   senders=sorted(set(configured_uploads(args))
+                                  | set(configured_exports(args))),
+                   station_name=str(cfg.get("station.name") or ""))
 
 
 def build_api(args: argparse.Namespace, cfg: Settings,

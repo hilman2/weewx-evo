@@ -139,6 +139,8 @@ def tests() -> list[Test]:
              "Weather Underground and the rest, against WeeWX's own strings"),
         Test("mqtt", ["mqtt_test.py"],
              "the MQTT client, against a broker started for the test"),
+        Test("metrics", ["metrics_test.py"],
+             "what the process publishes about itself, and what it must not"),
         Test("api", ["api_test.py"],
              "every answer against the reader it is a shell over"),
         Test("maintenance", ["maintenance_test.py"],
