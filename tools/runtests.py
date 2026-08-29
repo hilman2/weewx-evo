@@ -152,6 +152,13 @@ def tests() -> list[Test]:
              "the overview says what is wrong, and only when something is"),
         Test("archives", ["archives_test.py"],
              "two places, two series, and neither one is the other's"),
+        # Slow on purpose: a real serve, a simulator uploading
+        # throughout, and two archive intervals to wait for. It
+        # covers the half archives_test does not -- feeds,
+        # exports, and what a page can see.
+        Test("archives-e2e", ["archives_e2e.py"],
+             "two archives, from the console to the published file",
+             slow=True),
         Test("stations", ["stations_test.py"],
              "announced consoles, strangers noticed, neither guessed at"),
         Test("shim", ["shim_test.py"],

@@ -451,6 +451,7 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
           records: Callable[[int, int], list[dict]],
           packets: Callable[[int, int], list[dict]] | None = None,
           by_archive: dict[str, Callable[[int, int], list[dict]]] | None = None,
+          consoles: dict[str, list[str]] | None = None,
           ) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
@@ -473,5 +474,18 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
             continue
         wanted = str(settings.get("archive") or "").strip()
         source = (by_archive or {}).get(wanted, records) if wanted else records
-        ready.append(Scheduled(name, upload, progress, source, packets))
+
+        # And the live packets, through this site's consoles. One live table
+        # serves the whole installation, so an upload for one series has to
+        # be told which sources are its own -- otherwise it publishes
+        # whichever console reported last, from any site.
+        #
+        # `for_sources` only where the reader has it: a split deployment
+        # passes something else here, and an upload publishing everything is
+        # what it did before and is not worse than not publishing.
+        mine = packets
+        named = (consoles or {}).get(wanted) if wanted else None
+        if named and hasattr(packets, "for_sources"):
+            mine = packets.for_sources(named)
+        ready.append(Scheduled(name, upload, progress, source, mine))
     return ready

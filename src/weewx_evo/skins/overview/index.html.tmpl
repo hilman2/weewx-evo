@@ -1,0 +1,104 @@
+## The overview: every measurement series on one page.
+##
+## `$archives` is what makes this possible, and it is the only thing here
+## that a one-site skin does not have. Everything else -- `$day.outTemp.max`,
+## `$current.outTemp` -- is the ordinary tag layer, asked of a different
+## series.
+##
+## `$archives.names()` rather than a list typed into the skin: an archive
+## added on the settings page appears here without anybody editing a
+## template, which is the whole reason the names come from the register.
+#encoding UTF-8
+#errorCatcher Echo
+<!DOCTYPE html>
+<html lang="$lang">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$station.location &mdash; Übersicht</title>
+  <link rel="stylesheet" href="overview.css">
+</head>
+<body>
+<header>
+  <h1>Übersicht</h1>
+  <p class="when">Stand: $current.dateTime.format("%d.%m.%Y %H:%M")</p>
+</header>
+
+<main>
+#if $archives and len($archives)
+  <div class="sites">
+  #for $name in $archives.names()
+  #set $site = $archives[$name]
+    <section class="site">
+      <h2>$site.station.location</h2>
+      <p class="place">
+        $site.station.latitude.format("%.4f")&deg; N,
+        $site.station.longitude.format("%.4f")&deg; E,
+        $site.station.altitude
+      </p>
+
+      <p class="now">
+        <span class="figure">$site.current.outTemp</span>
+        <span class="label">jetzt</span>
+      </p>
+
+      <table class="readings">
+        <tr>
+          <th>Feuchte</th>
+          <td>$site.current.outHumidity</td>
+        </tr>
+        <tr>
+          <th>Luftdruck</th>
+          <td>$site.current.barometer</td>
+        </tr>
+        <tr>
+          <th>Wind</th>
+          <td>$site.current.windSpeed</td>
+        </tr>
+      </table>
+
+      <table class="today">
+        <caption>Heute</caption>
+        <tr>
+          <th>Höchst</th>
+          <td>$site.day.outTemp.max</td>
+          <td class="at">$site.day.outTemp.maxtime.format("%H:%M")</td>
+        </tr>
+        <tr>
+          <th>Tiefst</th>
+          <td>$site.day.outTemp.min</td>
+          <td class="at">$site.day.outTemp.mintime.format("%H:%M")</td>
+        </tr>
+        <tr>
+          <th>Mittel</th>
+          <td>$site.day.outTemp.avg</td>
+          <td class="at"></td>
+        </tr>
+        <tr>
+          <th>Regen</th>
+          <td>$site.day.rain.sum</td>
+          <td class="at"></td>
+        </tr>
+      </table>
+
+      <p class="sun">
+        Sonne $site.almanac.sunrise &ndash; $site.almanac.sunset
+      </p>
+
+      <p class="more"><a href="../$name/">Diese Station im Detail</a></p>
+    </section>
+  #end for
+  </div>
+#else
+  <p class="one">
+    Diese Anlage führt eine Messreihe. Eine Übersicht über mehrere entsteht,
+    sobald unter <em>Archive</em> ein zweiter Ort angelegt ist.
+  </p>
+#end if
+</main>
+
+<footer>
+  <p>$station.software</p>
+</footer>
+</body>
+</html>

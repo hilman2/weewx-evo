@@ -1331,7 +1331,8 @@ def _encode(text: str, encoding: str) -> bytes:
 
 def from_settings(settings: Any, reader: Reader,
                   plots: Any = (), prefix: str = "feeds.cheetah",
-                  extra_groups: dict[str, str] | None = None) -> CheetahFeed:
+                  extra_groups: dict[str, str] | None = None,
+                  archives: dict[str, Any] | None = None) -> CheetahFeed:
     """Build the feed, and the tag layer it renders through.
 
     The tags are built here rather than handed in because they carry the
@@ -1383,6 +1384,54 @@ def from_settings(settings: Any, reader: Reader,
     )
     tags.plots = plots
     tags.language = spoken.code
+
+    # How this page reaches another series, for `$archives.<name>`. Handed
+    # in rather than worked out here: which files there are is the runner's
+    # knowledge, and a tag layer that opened databases would be one that can
+    # open the wrong one.
+    #
+    # Opened on demand and kept, so a page that never names a second series
+    # costs nothing and one that names it in fifty places opens it once.
+    if archives:
+        # {name: path} or {name: (path, settings)}. The second form is what
+        # an installation with two places sends: each series' own settings,
+        # so each keeps its own coordinates.
+        paths, mine = {}, {}
+        for name, value in archives.items():
+            if isinstance(value, tuple):
+                paths[name], mine[name] = value
+            else:
+                paths[name] = value
+        made: dict[str, Any] = {}
+
+        def reach(name: str) -> Any:
+            if name in made:
+                return made[name]
+            path = paths.get(name)
+            if path is None:
+                return None
+            try:
+                import sqlite3
+
+                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                other = Reader(conn)
+            except Exception:
+                log.exception("could not open the %r series at %s", name, path)
+                return None
+            # Each series' own settings, so each brings its own place:
+            # `$archives.nordfeld`'s sunrise is the north field's. The
+            # caller hands them in already wrapped in `archives.Placed`,
+            # which is the same wrapper the archiver and every feed get --
+            # given this page's settings instead, the readings would be
+            # right and the sun would be wrong by minutes.
+            theirs = from_settings(
+                mine.get(name) or settings, other,
+                plots=plots, prefix=prefix, extra_groups=extra_groups)
+            made[name] = theirs.tags
+            return theirs.tags
+
+        tags.open_archive = reach
+        tags.archive_names = tuple(sorted(paths))
     tags.moon_phases = spoken.moon_phases()
     _install_forecast(tags, settings, spoken)
 

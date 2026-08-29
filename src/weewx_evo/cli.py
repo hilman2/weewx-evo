@@ -2289,6 +2289,15 @@ def build_upload(name: str, settings: dict) -> object:
             first = next(iter(errors.values()))
             raise ValueError(f"upload {name!r}: {first}")
         settings = parsed
+    # Settings *about* an upload rather than *for* it. `archive` says which
+    # series it reads and is the runner's to act on; no upload takes it, and
+    # every one of the eight raises TypeError when handed it.
+    #
+    # Which means the setting was on every upload's page and unusable on all
+    # of them: filling it in got "unexpected keyword argument 'archive'" and
+    # the upload was skipped, said once at warning and never again.
+    for elsewhere in ("archive",):
+        settings.pop(elsewhere, None)
     return factory(**settings)
 
 
@@ -2300,7 +2309,7 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     cost nothing and a catch-up possible at all.
     """
     configured = dict(configured_uploads(args))
-    configured.update(live_readings_locally(cfg, configured))
+    configured.update(live_readings_locally(cfg, configured, args))
     if not configured:
         return []
     base = Path(getattr(args, "config", None) or ".").parent
@@ -2390,12 +2399,25 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
                 for one in (str(w).strip() for w in written) if one]
         return build_upload(name, settings)
 
+    # Which consoles belong to which series, so a live upload for one site
+    # publishes that site's readings. The live table holds the whole
+    # installation; only the archive is per series.
+    consoles: dict[str, list[str]] = {}
+    if registry.several():
+        register, _sightings = read_stations(args, cfg)
+        for one in registry.all():
+            consoles[one.name] = sorted(
+                station.name for station in register.for_archive(one.name))
+
     return upload_runner.build(configured, with_station, progress, records,
-                               packets, by_archive=by_archive)
+                               packets, by_archive=by_archive,
+                               consoles=consoles)
 
 
 def live_readings_locally(cfg: Settings,
-                          configured: dict[str, dict]) -> dict[str, dict]:
+                          configured: dict[str, dict],
+                          args: argparse.Namespace | None = None
+                          ) -> dict[str, dict]:
     """The live upload an export has already asked for, with nothing to fill in.
 
     An export saying "live readings" has said everything there is to say. A
@@ -2427,40 +2449,71 @@ def live_readings_locally(cfg: Settings,
         return {}
 
     section = cfg.config.get("exports") or {}
-    grouped: dict[str, list[str]] = {}
-    posted: dict[str, str] = {}
+    # Which series each export publishes, by way of the feed it sends. An
+    # export moves a feed's directory, and the feed names the archive it
+    # reads -- so that is the site those pages are of, and the site whose
+    # consoles their live readings should come from.
+    #
+    # Without this both sites were handed one document taken from whichever
+    # console reported last: a north-field page showing the south field's
+    # temperature beside its own archive's, and nothing able to notice.
+    per_feed = feed_schedule(args) if args is not None else {}
+
+    def series_of(export: dict) -> str:
+        feed = str(export.get("source") or "").strip()
+        return str((per_feed.get(feed) or {}).get("archive")
+                   or archives_module.DEFAULT)
+
+    grouped: dict[tuple[str, str], list[str]] = {}
+    posted: dict[tuple[str, str], str] = {}
     for _name, export in sorted(section.items()):
         if not isinstance(export, dict) or not export.get("live_push", True):
             continue
         system = livepush.rendered_units(cfg, export)
+        where_from = (system, series_of(export))
         if export.get("kind") == "local":
             where = str(export.get("directory") or "").strip()
             if where:
-                grouped.setdefault(system, []).append(where)
+                grouped.setdefault(where_from, []).append(where)
             continue
         # Anything else publishes to a host, and only with an address on it.
         address = str(export.get("live_push_url") or "").strip()
         if address:
-            posted.setdefault(system, livepush.url_for(address))
+            posted.setdefault(where_from, livepush.url_for(address))
 
     if not grouped and not posted:
         return {}
 
-    made: dict[str, dict] = {}
-    for system in sorted(set(grouped) | set(posted)):
+    made: dict[tuple[str, str], dict] = {}
+    for key in sorted(set(grouped) | set(posted)):
+        system, series = key
         settings: dict = {"kind": "webpush", "unit_system": system,
-                          "_inferred": True}
-        if grouped.get(system):
-            settings["directories"] = grouped[system]
-        if posted.get(system):
-            settings["url"] = posted[system]
-        made[system] = settings
+                          "archive": series, "_inferred": True}
+        if grouped.get(key):
+            settings["directories"] = grouped[key]
+        if posted.get(key):
+            settings["url"] = posted[key]
+        made[key] = settings
     if len(made) == 1:
         return {"live": next(iter(made.values()))}
-    # More than one set of units, so more than one document. Named after the
-    # units rather than numbered: "live-us" says which one it is.
-    return {f"live-{system.lower() or 'stored'}": settings
-            for system, settings in made.items()}
+
+    # More than one document, so each is named for what makes it different --
+    # and only for that. An installation with one archive and two sets of
+    # units keeps the names it had (`live-us`), because the series is not
+    # what distinguishes them and putting it in would rename a file nobody
+    # asked to be renamed.
+    systems = {system for system, _ in made}
+    several = len({series for _, series in made}) > 1
+
+    def named(system: str, series: str) -> str:
+        if not several:
+            return f"live-{system.lower() or 'stored'}"
+        if len(systems) == 1:
+            return f"live-{series}"
+        return f"live-{series}-{system.lower() or 'stored'}"
+
+    return {named(system, series): settings
+            for (system, series), settings in made.items()}
 
 
 def configured_forecasts(args: argparse.Namespace) -> dict[str, dict]:
@@ -3014,10 +3067,32 @@ def _image_feed(cfg: Settings, name: str, args: argparse.Namespace):
 
 
 def _cheetah_feed(cfg: Settings, name: str, args: argparse.Namespace):
+    """One skin, and the other series it may name.
+
+    A page reads one archive -- its own -- and that is the whole point of
+    archives being separate. `$archives.<name>` is the deliberate way past
+    it, for an overview page showing several sites at once, and this is what
+    puts the other files within reach.
+
+    Each comes with its own settings, wrapped in `archives.Placed`, so
+    `$archives.nordfeld` has the north field's coordinates. Given this
+    page's, its readings would be right and its sunrise wrong by minutes.
+    """
     from .feeds import cheetah
 
+    registry = read_archives(args, cfg)
+    others: dict[str, Any] = {}
+    if registry.several():
+        base = Path(args.config).parent if getattr(args, "config", None) else None
+        for one in registry.all():
+            where = Path(one.file)
+            if not where.is_absolute() and base is not None:
+                where = base / where
+            others[one.name] = (where, archives_module.placed(cfg, one))
+
     return lambda reader: cheetah.from_settings(
-        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}")
+        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
+        archives=others)
 
 
 def _diagnostic_feed(cfg: Settings, name: str, reads: Path):
@@ -3274,7 +3349,13 @@ def start_feeds(args: argparse.Namespace,
                  "Bring some over with `weewx-evo plots import`.",
                  plots_path(args, cfg))
         return None
-    if cfg.get("feeds.json.enabled") is False:
+    # `feeds.json.enabled` is from when there was exactly one feed and it was
+    # called `json`. It still turns off a feed of that name, and it must not
+    # decide anything for an installation whose feeds are called something
+    # else -- two archives means two JSON feeds with two names, and neither
+    # of them is this one.
+    if (configured_feeds(args).get("json") or {}) and \
+            cfg.get("feeds.json.enabled") is False:
         log.info("the JSON feed is switched off, so no feeds are running")
         return None
 
@@ -3292,9 +3373,16 @@ def start_feeds(args: argparse.Namespace,
                                 schedule=feed_schedule(args),
                                 archives=paths)
     runner.start()
+    # Every feed's directory, not `where["json"]`. That indexed a feed by
+    # name on the assumption there was one called `json`, so an installation
+    # with two of them -- which is what two archives look like -- raised
+    # KeyError here and the service did not start at all. The line is a log
+    # message; it took the whole process with it.
     where = feed_dirs(cfg, args)
+    written = ", ".join(f"{name} -> {path}"
+                        for name, path in sorted(where.items())) or "nowhere"
     log.info("%d chart(s) from %s, written to %s", len(charts),
-             plots_path(args, cfg), where["json"])
+             plots_path(args, cfg), written)
     return runner
 
 

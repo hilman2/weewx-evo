@@ -169,9 +169,28 @@ class Live:
     quietly take that apart.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path,
+                 sources: list[str] | None = None) -> None:
         self.path = Path(path)
+        #: Whose readings to publish. There is one live table for the whole
+        #: installation -- only the archive is per series -- so an upload
+        #: that belongs to one site has to say which consoles are its own.
+        #:
+        #: Without it a station with two sites published the same live
+        #: readings to both, taken from whichever console reported last: a
+        #: north-field page showing 21 C beside its own archive's 8 C, with
+        #: nothing on the page able to notice. The archiver has always
+        #: filtered here (`live.packets(..., sources=...)`); this is the
+        #: same filter on the other reader of the same table.
+        #:
+        #: None means every console, which is what one archive wants and
+        #: what every installation had before there were two.
+        self.sources = list(sources) if sources else None
         self._local = threading.local()
+
+    def for_sources(self, sources: list[str] | None) -> Live:
+        """The same table, seen through one site's consoles."""
+        return Live(self.path, sources)
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -193,15 +212,26 @@ class Live:
         now, which is worse than having published nothing.
         """
         conn = self._conn()
+        # The consoles this upload speaks for, as a WHERE clause. Built from
+        # a list this process holds rather than interpolated from anything
+        # that arrived over the network -- the names come from
+        # `stations.toml`, and they are placeholders either way.
+        mine, names = "", []
+        if self.sources:
+            mine = f" AND source IN ({','.join('?' * len(self.sources))})"
+            names = list(self.sources)
+
         if not ts:
             rows = conn.execute(
                 "SELECT dateTime, usUnits, interval, data FROM packet "
-                "ORDER BY dateTime DESC, seq DESC LIMIT 1").fetchall()
+                f"WHERE 1=1{mine} "
+                "ORDER BY dateTime DESC, seq DESC LIMIT 1", names).fetchall()
         else:
             rows = conn.execute(
                 "SELECT dateTime, usUnits, interval, data FROM packet "
-                "WHERE dateTime > ? ORDER BY dateTime ASC, seq ASC LIMIT ?",
-                (ts, limit)).fetchall()
+                f"WHERE dateTime > ?{mine} "
+                "ORDER BY dateTime ASC, seq ASC LIMIT ?",
+                [ts, *names, limit]).fetchall()
         found = []
         for when, units, interval, data in rows:
             try:

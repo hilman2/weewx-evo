@@ -79,7 +79,11 @@ class Runner:
         #: packet does not also produce the feeds waiting on the archive.
         self.live = threading.Event()
         self.stopping = threading.Event()
-        self._wrote = ""
+        #: Which series wrote since the feeds last ran. A set, because the
+        #: archiver reports each of them before this thread wakes -- see
+        #: `record_written`.
+        self._wrote: set[str] = set()
+        self._lock = threading.Lock()
         self._wants_packets = any(
             one.get("trigger") == "packet" for one in self.schedule.values())
         self.thread: threading.Thread | None = None
@@ -89,14 +93,25 @@ class Runner:
         self.last_run: float | None = None
 
     def record_written(self, archive: str = "") -> None:
-        """Called by the archiver. Sets a flag and returns.
+        """Called by the archiver. Notes which series, and returns.
 
         `archive` is which series wrote. A feed reading another one is not
         produced for it: with two sites, the north field writing a record is
         no reason to rebuild the south field's page, and doing so would
         publish the same files twice as often for no new data.
+
+        **A set, and not the last one.** The archiver walks its series in a
+        loop and calls this once per series that wrote, all before the feed
+        thread gets a turn -- so a single name was overwritten by the next
+        one and only the last series' feeds ran. With two archives that is
+        the first one's pages never being rebuilt at all: they are written
+        once at startup and then go stale, while everything logs success.
+
+        Same shape as the mistake `pending` had in the live table, keyed on
+        the interval alone: whoever came second decided for everybody.
         """
-        self._wrote = archive or DEFAULT_ARCHIVE
+        with self._lock:
+            self._wrote.add(archive or DEFAULT_ARCHIVE)
         self.due.set()
 
     def packet_stored(self) -> None:
@@ -220,7 +235,7 @@ class Runner:
                 return False
             # Which series wrote. Empty means nobody said, which is every
             # caller that predates there being more than one.
-            return not self._wrote or self._wrote == self.archive_for(name)
+            return not self._wrote or self.archive_for(name) in self._wrote
         now = now or time.time()
         if name not in self._next:
             self._plan(name, now)
@@ -249,6 +264,15 @@ class Runner:
             if self.due_now(name, because):
                 wanted.setdefault(self.path_for(name), []).append(
                     (name, build, into))
+
+        # Taken now, once the decisions are made, so a record arriving while
+        # the feeds are producing is not thrown away with the batch it came
+        # after. Cleared rather than left to accumulate: a name that stayed
+        # in here would make its feeds due on every later pass, including the
+        # ones woken by a reading.
+        if because == "record":
+            with self._lock:
+                self._wrote = set()
         if not wanted:
             return ""
 

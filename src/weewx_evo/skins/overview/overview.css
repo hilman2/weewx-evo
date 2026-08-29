@@ -1,0 +1,88 @@
+/* The overview page. Small on purpose: what it shows is one tag working,
+   and a station that wants a designed page starts here and takes it
+   wherever it likes. */
+
+:root {
+  --ink: #1b1f23;
+  --quiet: #6a737d;
+  --line: #e1e4e8;
+  --card: #ffffff;
+  --ground: #f6f8fa;
+  --accent: #137ac3;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6edf3;
+    --quiet: #8b949e;
+    --line: #30363d;
+    --card: #161b22;
+    --ground: #0d1117;
+    --accent: #58a6ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 2rem 1rem 3rem;
+  background: var(--ground);
+  color: var(--ink);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header, main, footer { max-width: 62rem; margin: 0 auto; }
+
+h1 { margin: 0 0 .25rem; font-size: 1.6rem; letter-spacing: -.01em; }
+.when { margin: 0 0 2rem; color: var(--quiet); font-size: .9rem; }
+
+/* One column on a phone, two side by side once there is room. No
+   breakpoint to keep in step with the font size. */
+.sites {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+}
+
+.site {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.25rem 1.25rem 1rem;
+}
+
+.site h2 { margin: 0; font-size: 1.15rem; }
+.place { margin: .2rem 0 1rem; color: var(--quiet); font-size: .8rem; }
+
+.now { margin: 0 0 1rem; display: flex; align-items: baseline; gap: .5rem; }
+.figure { font-size: 2.6rem; font-weight: 600; letter-spacing: -.02em; }
+.label { color: var(--quiet); font-size: .85rem; }
+
+table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+caption {
+  text-align: left;
+  color: var(--quiet);
+  font-size: .8rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding-bottom: .35rem;
+}
+th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--quiet);
+  padding: .3rem 0;
+  font-size: .9rem;
+}
+td { text-align: right; padding: .3rem 0; font-variant-numeric: tabular-nums; }
+td.at { width: 4rem; color: var(--quiet); font-size: .85rem; }
+
+.sun { margin: 0 0 .75rem; color: var(--quiet); font-size: .85rem; }
+.more { margin: 0; font-size: .9rem; }
+.more a { color: var(--accent); text-decoration: none; }
+.more a:hover { text-decoration: underline; }
+
+.one { color: var(--quiet); }
+
+footer { margin-top: 2.5rem; color: var(--quiet); font-size: .8rem; }
