@@ -31,6 +31,7 @@
 - [Exports](Exports)
 - [Uploads](Uploads)
 - [Grafana](Grafana)
+- [Notifications](Notifications)
 - [MQTT](MQTT)
 - [Forecast](Forecast)
 - [Web server](Web-Server)

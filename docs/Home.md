@@ -103,6 +103,7 @@ sitting next to it.
 | [Exports](Exports) | How it gets somewhere else — FTP, rsync |
 | [Web-Server](Web-Server) | Serving the feeds locally |
 | [Grafana](Grafana) | Dashboards for more than one console, through InfluxDB |
+| [Notifications](Notifications) | Who hears about it when something stops |
 
 ### Operation
 
