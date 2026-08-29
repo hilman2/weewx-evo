@@ -747,9 +747,11 @@ def main() -> int:
         after = config_file.read(path).get("feeds") or {}
         # The two that ship were running unnamed. Adding a third has to
         # write them down first, or it silently turns them off.
+        from weewx_evo import starter
+
         failures += not check("the shipped ones were written down",
-                              sorted(after), ["diagnostic", "json",
-                                              "metric"])
+                              sorted(after),
+                              sorted([*starter.FEEDS, "metric"]))
 
         post(f"{base}/{TOKEN}/new-feed", {"name": "imperial",
                                           "kind": "json"})
@@ -772,8 +774,8 @@ def main() -> int:
         admin.refresh()
         pages = [s.name for s in admin.schemas if s.kind == "feed"]
         failures += not check("a page each", sorted(pages),
-                              ["feed:diagnostic", "feed:imperial",
-                               "feed:json", "feed:metric"])
+                              sorted(f"feed:{one}" for one in
+                                     [*starter.FEEDS, "imperial", "metric"]))
 
         one = next(s for s in admin.schemas if s.name == "feed:metric")
         errors = admin.save(one, {"units": "METRICWX", "rounding": "2",
@@ -794,7 +796,7 @@ def main() -> int:
         failures += not check("removing one", code, 303)
         failures += not check("leaves the rest",
                               sorted(config_file.read(path)["feeds"]),
-                              ["diagnostic", "json", "metric"])
+                              sorted([*starter.FEEDS, "metric"]))
         print("\na choice that offers 'none' can be set back to it")
         # Every dropdown with an empty entry was one way: an empty value
         # parsed to the option's default, so the old choice stayed. Nobody

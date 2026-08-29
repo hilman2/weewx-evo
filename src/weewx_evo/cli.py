@@ -2921,16 +2921,42 @@ def plots_path(args: argparse.Namespace, cfg: Settings) -> Path:
 
 
 def load_plots(args: argparse.Namespace, cfg: Settings) -> plot_defs.PlotSet:
-    return plot_defs.load(plots_path(args, cfg))
+    """The charts, laying the starter set down on a first run.
+
+    A station with no charts has no feed with anything to draw, so the whole
+    publishing half of this program sits there doing nothing while every
+    page reports success. The starter set is what WeeWX's Seasons skin
+    draws, and a chart for a sensor this station does not have is skipped
+    when the feeds run.
+
+    Only when the file is absent. A file that exists and is empty is an
+    answer somebody gave, and putting a hundred charts back into it would be
+    this function arguing with them.
+    """
+    where = plots_path(args, cfg)
+    if not where.exists():
+        from . import starter
+
+        said = starter.install_plots(where)
+        if said:
+            log.info("%s", said)
+    return plot_defs.load(where)
 
 
 #: What a station gets when nothing has been configured. Named the same as
 #: their kinds, so an existing file that says `feeds.json.units` keeps
 #: meaning what it meant.
-DEFAULT_FEEDS = {
-    "json": {"kind": "json"},
-    "diagnostic": {"kind": "diagnostic", "source": "json"},
-}
+#: `deck` rather than `diagnostic`. The diagnostic page draws what is on the
+#: disk and is for working out why something is missing; the first thing a
+#: new station should have is a website, and being handed a troubleshooting
+#: page instead reads as though something is already wrong.
+def _default_feeds() -> dict[str, dict]:
+    from . import starter
+
+    return {name: dict(one) for name, one in starter.FEEDS.items()}
+
+
+DEFAULT_FEEDS = _default_feeds()
 
 
 def configured_feeds(args: argparse.Namespace) -> dict[str, dict]:

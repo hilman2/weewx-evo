@@ -86,6 +86,11 @@ def tests() -> list[Test]:
         Test("derive", ["derive_test.py", db],
              "the derived readings against what WeeWX wrote",
              needs_reference=True),
+        # The one rule, in the direction the others do not go: a database
+        # *we* wrote, opened and written into by WeeWX itself.
+        Test("stillweewx", ["stillweewx_test.py"],
+             "a database written here is one WeeWX can carry on using",
+             needs=("weewx",)),
 
         # -- the transcriptions, against WeeWX itself --------------------
         Test("units", ["unitcheck.py"],

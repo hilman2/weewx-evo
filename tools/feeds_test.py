@@ -172,8 +172,14 @@ feeds.theme.encoding = "utf8"
         settings_state.forget_running()
         plain = configured_feeds(argparse.Namespace(config=bare,
                                                     weewx_conf=None))
-        failures += not check("the two that ship", sorted(plain),
-                              ["diagnostic", "json"])
+        # Asked of `starter.FEEDS` rather than typed out: this is what a
+        # fresh installation gets, and it changed once already (from a
+        # diagnostic page to a website) with this line left saying the old
+        # answer. One list, in the module that ships it.
+        from weewx_evo import starter
+
+        failures += not check("the ones that ship", sorted(plain),
+                              sorted(starter.FEEDS))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

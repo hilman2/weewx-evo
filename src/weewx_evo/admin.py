@@ -31,7 +31,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import adminarchives, adminhome, adminplots, adminpublish, adminsearch, adminstations
+from . import (
+    adminarchives,
+    adminhome,
+    adminplots,
+    adminpublish,
+    adminsearch,
+    adminsetup,
+    adminstations,
+)
 from . import archives as archive_defs
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
@@ -160,8 +168,11 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 
 #: Pages that are neither a schema nor a form to create one. They render
 #: themselves, the way the chart pages do.
+#: Pages that render themselves. `setup` is the wizard, and it is
+#: here rather than in ADD_PAGES because it is not adding one thing:
+#: it is the path from an empty directory to a station recording.
 OWN_PAGES = ("overview", "stations", "archives", "publishing",
-             "charts", "search")
+             "charts", "search", "setup")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -1363,6 +1374,14 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                                     admin.columns(), errors, form)]
     elif active == "search":
         body = [adminsearch.results(admin, (form or {}).get("q", ""))]
+    elif active == "setup" or active.startswith("setup/"):
+        # The wizard, which renders its own step. `setup/place` and the rest
+        # are one page with a step in the path rather than five pages: the
+        # progress bar has to know where it is, and a page that does not
+        # know cannot draw one.
+        step = active.split("/", 1)[1] if "/" in active else ""
+        body = [adminsetup.page(admin, step, errors.get("", ""), form,
+                                said=message)]
     elif standing:
         pages = {"overview": adminhome, "archives": adminarchives,
                  "stations": adminstations, "publishing": adminpublish,

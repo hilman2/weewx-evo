@@ -84,7 +84,22 @@ def path_for(admin: Any) -> Path:
 
 
 def load(admin: Any) -> plot_defs.PlotSet:
-    return plot_defs.load(path_for(admin))
+    """The charts, laying the starter set down on a first run.
+
+    Here as well as in `cli.load_plots`, because these are the two ways a
+    station first has charts and neither one goes through the other: `serve`
+    reads them to run the feeds, and this page reads them to show them. A
+    fresh installation that had only ever opened the settings page saw an
+    empty Charts page and a website with nothing on it.
+    """
+    where = path_for(admin)
+    if not where.exists() and not getattr(admin, "read_only", False):
+        from . import starter
+
+        said = starter.install_plots(where)
+        if said:
+            log.info("%s", said)
+    return plot_defs.load(where)
 
 
 def store(admin: Any, charts: plot_defs.PlotSet, note: str = "") -> str:
@@ -275,6 +290,16 @@ def bring_over(admin: Any, source: str, replace: bool,
                                            plot_defs.labels_from(conf))
     if not len(found.plots):
         return "", f"Nothing that looked like a chart in {where}."
+
+    # An untouched starter set is replaced whether or not the box is
+    # ticked. Those charts are not a decision anybody made -- they were
+    # here on arrival -- and half of them share names with what a WeeWX
+    # skin brings, so an import that "added" to them added nothing and
+    # said so cheerfully.
+    from . import starter
+
+    if not replace and starter.is_starter(path_for(admin)):
+        replace = True
 
     charts = found.plots if replace else load(admin)
     added = kept = 0
