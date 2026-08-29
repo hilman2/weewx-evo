@@ -19,6 +19,7 @@
 - [Archive database](Database-Archive)
 - [Daily summaries](Daily-Summaries)
 - [Derived readings](Derived-Readings)
+- [Quality control](Quality)
 
 **Output**
 - [Series](Series)

@@ -89,6 +89,7 @@ sitting next to it.
 | [Database-Archive](Database-Archive) | The WeeWX database, reading and writing |
 | [Daily-Summaries](Daily-Summaries) | `archive_day_*` as a derivable cache |
 | [Derived-Readings](Derived-Readings) | Dewpoint, wind chill, rain delta |
+| [Quality](Quality) | Calibration and limits, before a reading reaches the archive |
 
 ### Output
 
