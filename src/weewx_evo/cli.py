@@ -754,7 +754,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
     forecaster = forecast_store = None
     if configured_forecasts(args):
         forecast_store = ForecastStore(forecast_db(args, cfg))
-        scheduled_forecasts = build_forecast_schedule(args, cfg, forecast_store)
+        scheduled_forecasts = build_forecast_schedule(
+            args, cfg, forecast_store, uploader)
         if scheduled_forecasts:
             forecaster = forecast_runner.Runner(scheduled_forecasts,
                                                 forecast_store)
@@ -1311,7 +1312,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     forecaster = forecast_store = None
     if configured_forecasts(args):
         forecast_store = ForecastStore(forecast_db(args, cfg))
-        scheduled_forecasts = build_forecast_schedule(args, cfg, forecast_store)
+        scheduled_forecasts = build_forecast_schedule(
+            args, cfg, forecast_store, uploader)
         if scheduled_forecasts:
             forecaster = forecast_runner.Runner(scheduled_forecasts,
                                                 forecast_store)
@@ -2778,14 +2780,44 @@ def build_forecast_source(name: str, settings: dict) -> object:
     return factory(**settings)
 
 
+def mirror_forecast(uploader: Any, store: Any) -> Callable[[str], None]:
+    """A callback that copies a fresh forecast into every InfluxDB upload.
+
+    Only InfluxDB. Every other upload in that package sends readings to a
+    weather service that has its own forecast and no interest in ours; this
+    one writes to a database the operator runs, and a Grafana panel showing
+    the next three days beside the last three is the reason it exists.
+
+    On the forecast thread rather than a new one. That thread is asleep for
+    an hour at a time, and a database that stops answering holds up one
+    source's next fetch and nothing else.
+    """
+    def send(name: str) -> None:
+        if uploader is None or store is None:
+            return
+        for scheduled in getattr(uploader, "uploads", []):
+            upload = getattr(scheduled, "upload", None)
+            if not hasattr(upload, "post_forecast"):
+                continue
+            try:
+                points = upload.post_forecast(store, (name,))
+                log.info("forecast %s: %d point(s) to upload %s",
+                         name, points, scheduled.name)
+            except Exception as exc:
+                log.warning("forecast %s could not reach upload %s: %s",
+                            name, scheduled.name, exc)
+    return send
+
+
 def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
-                            store: Any) -> list:
+                            store: Any, uploader: Any = None) -> list:
     """What the forecast sources are, right now."""
     configured = configured_forecasts(args)
     if not configured:
         return []
     return forecast_runner.build(configured, build_forecast_source,
-                                 forecast_place(cfg), store)
+                                 forecast_place(cfg), store,
+                                 mirror_forecast(uploader, store))
 
 
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
@@ -2843,7 +2875,7 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             log.info("%d upload(s) running", len(fresh))
 
     if forecaster is not None:
-        fresh = build_forecast_schedule(args, cfg, forecaster.store)
+        fresh = build_forecast_schedule(args, cfg, forecaster.store, uploader)
         before = [(s.name, type(s.source).__name__, s.every)
                   for s in forecaster.sources]
         after = [(s.name, type(s.source).__name__, s.every) for s in fresh]

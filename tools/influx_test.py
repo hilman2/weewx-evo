@@ -697,6 +697,212 @@ def test_no_resend_leaves_the_marks_alone() -> None:
           Progress(where / "uploads.json").through("influx"), start + 10_000)
 
 
+# ---------------------------------------------------------------------------
+# The forecast.
+# ---------------------------------------------------------------------------
+
+def a_store(tmp: Path, name: str = "forecast") -> object:
+    """A forecast store with one run of hours and days in it."""
+    from weewx_evo.forecast import Day, Moment, Reading
+    from weewx_evo.forecast.store import ForecastStore
+
+    base = 1756308600
+    reading = Reading(
+        source="openmeteo", issued=base,
+        hours=[Moment(dateTime=base + 3600 * n, usUnits=units.METRICWX,
+                        outTemp=10.0 + n, outHumidity=60.0,
+                        windSpeed=3.0, code=61 if n % 2 else 0)
+                 for n in range(6)],
+        days=[Day(dateTime=base + 86400 * n, usUnits=units.METRICWX,
+                  tempMax=18.0 + n, tempMin=6.0 + n, rain=1.5,
+                  sunrise=base + 86400 * n + 21600,
+                  sunset=base + 86400 * n + 72000, code=3)
+              for n in range(3)])
+    store = ForecastStore(tmp / f"{name}.sdb")
+    store.store(reading, base)
+    return store
+
+
+def test_the_forecast_is_its_own_measurement(tmp: Path) -> None:
+    """A predicted `outTemp` and a measured one are two different things.
+
+    In one measurement they are one series: a panel could not draw them
+    apart, and nothing would stop an average being taken over the pair.
+    """
+    store = a_store(tmp)
+    lines = upload(location="kirchdorf").forecast_lines(store)
+    check("every hour and every day is a point", len(lines), 9)
+
+    names = {parse(line)[0] for line in lines}
+    check("all under one name", names, {"weather_forecast"})
+
+    kinds = [parse(line)[1].get("kind") for line in lines]
+    check("six hours", kinds.count("hour"), 6)
+    check("three days", kinds.count("day"), 3)
+    check("the source is a tag",
+          {parse(line)[1].get("source") for line in lines}, {"openmeteo"})
+    check("and the location comes along",
+          {parse(line)[1].get("location") for line in lines}, {"kirchdorf"})
+    store.close()
+
+
+def test_a_forecast_point_carries_the_hour_it_describes(tmp: Path) -> None:
+    """Not the hour it was downloaded.
+
+    A forecast stamped with its fetch time is a line that ends at "now",
+    which is the one thing a forecast is not.
+    """
+    store = a_store(tmp)
+    lines = [line for line in upload().forecast_lines(store)
+             if parse(line)[1].get("kind") == "hour"]
+    stamps = sorted(parse(line)[3] for line in lines)
+    check("the hours run forward from the first",
+          stamps, [1756308600 + 3600 * n for n in range(6)])
+    check("an hour apart", stamps[1] - stamps[0], 3600)
+    store.close()
+
+
+def test_a_forecast_is_converted_like_a_record(tmp: Path) -> None:
+    """Same arithmetic, not a second copy of it.
+
+    A source producing metric and a bucket set to US is the same problem as a
+    Fahrenheit console and a Celsius page, and it has one answer here.
+    """
+    store = a_store(tmp)
+    line = next(line for line in upload(unit_system="us").forecast_lines(store)
+                if parse(line)[1].get("kind") == "hour")
+    _m, _t, fields, _s = parse(line)
+    wanted = units.convert(10.0, units.unit_of("outTemp", units.METRICWX)[0],
+                           units.unit_of("outTemp", units.US)[0])
+    close_to("the first hour, in Fahrenheit", fields.get("outTemp"),
+             float(wanted), tol=1e-6)
+    store.close()
+
+
+def test_the_code_goes_too_so_an_icon_can_hang_on_it(tmp: Path) -> None:
+    """The WMO code is what a panel turns into a picture.
+
+    Written as a number like everything else: a field's type is fixed on
+    first write, and a code arriving once as an integer refuses every later
+    batch that has it as a float.
+    """
+    store = a_store(tmp)
+    lines = [line for line in upload().forecast_lines(store)
+             if parse(line)[1].get("kind") == "hour"]
+    codes = [parse(line)[2].get("code") for line in lines]
+    check("every hour has one", [c for c in codes if c is None], [])
+    check("and they are the source's own", sorted(set(codes)), [0.0, 61.0])
+
+    body = lines[0].split(" ")[1]
+    for part in body.split(","):
+        name, value = part.split("=")
+        check(f"{name} is a float", "." in value or "e" in value, True)
+    store.close()
+
+
+def test_one_source_at_a_time(tmp: Path) -> None:
+    """Two sources configured at once must not double every point."""
+    from weewx_evo.forecast import Moment, Reading
+
+    store = a_store(tmp, "two")
+    base = 1756308600
+    store.store(Reading(source="dwd", issued=base,
+                        hours=[Moment(dateTime=base, usUnits=units.METRICWX,
+                                        outTemp=9.0)]), base)
+    check("both are in the store", sorted(store.sources()),
+          ["dwd", "openmeteo"])
+
+    one = upload().forecast_lines(store, ("dwd",))
+    check("asked for one, one comes back",
+          {parse(line)[1].get("source") for line in one}, {"dwd"})
+    check("and that is the whole of that source", len(one), 1)
+    store.close()
+
+
+def test_a_fetch_reaches_the_upload(url: str, tmp: Path) -> None:
+    """The wiring, end to end: a source stores a run and points arrive.
+
+    The fault this is here for has no symptom. `mirror_forecast` builds the
+    callback and `build` hands it to every source, and a source that fetched
+    without one looks exactly like a source that fetched with one -- right up
+    until somebody asks Grafana for tomorrow and the panel is empty. That is
+    the same hole the six push protocols sat in: every test checked as far as
+    the file, none checked that the thing downstream ever saw it.
+    """
+    from weewx_evo import cli
+    from weewx_evo.forecast import Moment, Reading
+    from weewx_evo.forecast.runner import Scheduled
+    from weewx_evo.forecast.store import ForecastStore
+
+    base = 1756308600
+
+    class Source:
+        every = 3600
+
+        def fetch(self, _place):
+            return Reading(source="test", issued=base,
+                           hours=[Moment(dateTime=base,
+                                           usUnits=units.METRICWX,
+                                           outTemp=11.0, code=3)])
+
+    class Holder:
+        uploads: ClassVar[list] = [
+            type("S", (), {"name": "influx",
+                           "upload": upload(url=url,
+                                            location="kirchdorf")})()]
+
+    Fake.status, Fake.message, Fake.seen = 204, "", []
+    store = ForecastStore(tmp / "wired.sdb")
+    source = Scheduled("test", Source(), None, store,
+                       cli.mirror_forecast(Holder(), store))
+    source.run()
+    check("the run was stored", len(store.hours("test")), 1)
+    check("and it reached the database", len(Fake.seen), 1)
+    check("as a forecast point",
+          "weather_forecast" in Fake.seen[0][2], True)
+    store.close()
+
+
+def test_an_unreachable_database_does_not_stop_the_forecast(tmp: Path) -> None:
+    """A source that fetched has done its job.
+
+    The alternative is a forecast that stops updating because a database
+    somewhere is down, which is a failure to avoid rather than one to add.
+    """
+    from weewx_evo import cli
+    from weewx_evo.forecast import Moment, Reading
+    from weewx_evo.forecast.runner import Scheduled
+    from weewx_evo.forecast.store import ForecastStore
+
+    base = 1756308600
+
+    def refuse(*_a: object, **_k: object) -> int:
+        raise OSError("connection refused")
+
+    class Source:
+        every = 3600
+
+        def fetch(self, _place):
+            return Reading(source="dead", issued=base,
+                           hours=[Moment(dateTime=base,
+                                           usUnits=units.METRICWX,
+                                           outTemp=11.0)])
+
+    class Broken:
+        uploads: ClassVar[list] = [type("S", (), {
+            "name": "influx",
+            "upload": type("U", (), {"post_forecast": refuse})()})()]
+
+    store = ForecastStore(tmp / "dead.sdb")
+    source = Scheduled("dead", Source(), None, store,
+                       cli.mirror_forecast(Broken(), store))
+    source.run()
+    check("the forecast was stored anyway", len(store.hours("dead")), 1)
+    check("the source is not blocked", source.blocked, "")
+    check("nor counted as a failure", source.failures, 0)
+    store.close()
+
+
 def main() -> int:
     test_readings_are_converted()
     test_every_value_is_a_float()
@@ -711,6 +917,15 @@ def main() -> int:
     test_a_rebuild_winds_back_the_copy_and_not_the_services()
     test_no_resend_leaves_the_marks_alone()
 
+    with tempfile.TemporaryDirectory() as raw:
+        tmp = Path(raw)
+        test_the_forecast_is_its_own_measurement(tmp)
+        test_a_forecast_point_carries_the_hour_it_describes(tmp)
+        test_a_forecast_is_converted_like_a_record(tmp)
+        test_the_code_goes_too_so_an_icon_can_hang_on_it(tmp)
+        test_one_source_at_a_time(tmp)
+        test_an_unreachable_database_does_not_stop_the_forecast(tmp)
+
     server, url = serving()
     try:
         test_answers(url)
@@ -720,6 +935,8 @@ def main() -> int:
         test_counting_reads_the_annotated_csv(url)
         test_counting_with_a_write_token_says_so(url)
         test_counting_without_a_location_asks_for_all(url)
+        with tempfile.TemporaryDirectory() as raw:
+            test_a_fetch_reaches_the_upload(url, Path(raw))
     finally:
         server.shutdown()
         server.server_close()

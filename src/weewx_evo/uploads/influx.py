@@ -39,6 +39,20 @@ here, like any other absent reading.
 ordinary `location`, and a space is what separates the tags from the fields
 in line protocol. Escaping is not decoration; see `_tag`.
 
+**The forecast goes too, and into its own measurement.** A predicted
+`outTemp` and a measured one are the same field name for two different
+things, and in one measurement they are one series: a panel could not draw
+them apart, and an average over the pair is meaningless. So `weather` and
+`weather_forecast`, side by side in the bucket, joined on a Grafana panel
+rather than in the database.
+
+Timestamped by the hour they describe, not by the hour they arrived. A
+forecast stamped with its download time is a line that ends at "now", which
+is the one thing a forecast is not. And no run number in the tags: the store
+one storey down replaces a source's previous run rather than accumulating,
+and a run tag here would undo that -- every model run its own series, none of
+them the answer to "what is the weather going to do".
+
 **Units are not in the database, here no more than in SQLite.** A console
 reporting Fahrenheit writes 68.2 and a Grafana axis says degrees Celsius --
 the same fault that reached a published page twice through the live push. So
@@ -49,6 +63,7 @@ that nothing downstream can see.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import logging
 import math
@@ -81,6 +96,10 @@ NOT_A_READING = ("dateTime", "usUnits")
 #: 1.6 million of them, and one POST of that size is a memory figure rather
 #: than a request. Five thousand is a few hundred kilobytes.
 BATCH = 5000
+
+#: Line protocol separates points with a newline. Named because it goes
+#: inside f-strings, where a backslash is a syntax error before Python 3.12.
+NEWLINE = chr(10)
 
 
 def _escape(text: str, also: str = "") -> str:
@@ -398,6 +417,73 @@ class InfluxUpload(BaseUpload):
         return {"url": self.url, "api": self.api, "bucket": self.bucket,
                 "measurement": self.measurement, "location": self.location,
                 "units": units.name(self.system)}
+
+    # -- the forecast -----------------------------------------------------
+
+    def forecast_lines(self, store: Any, sources: tuple[str, ...] = ()
+                       ) -> list[str]:
+        """The hours and the days of every configured source, as lines.
+
+        Written under `<measurement>_forecast` with `kind=hour` or `kind=day`
+        and the source as a tag, so a panel can ask for one source and a
+        second one configured beside it does not double every point.
+        """
+        lines: list[str] = []
+        for source in (sources or tuple(store.sources())):
+            for kind, rows in (("hour", store.hours(source)),
+                               ("day", store.days(source))):
+                for row in rows:
+                    line = self._forecast_line(row, source, kind)
+                    if line:
+                        lines.append(line)
+        return lines
+
+    def _forecast_line(self, row: Any, source: str, kind: str) -> str | None:
+        """One hour or one day. `None` where it holds no readings.
+
+        A forecast row is a dict of archive field names carrying the system
+        its source produced, which is what an archive record is -- so it goes
+        through `Readings` like one, and a US source converts by the same
+        arithmetic rather than by a second copy of it.
+        """
+        # `dataclasses.fields` rather than `vars`: these carry `__slots__`,
+        # so there is no `__dict__` to read.
+        row = {f.name: getattr(row, f.name) for f in dataclasses.fields(row)}
+        readings = Readings(row)
+        if not readings.ts:
+            return None
+
+        fields: list[str] = []
+        for name, raw in sorted(row.items()):
+            if name in NOT_A_READING or raw is None or isinstance(raw, str):
+                continue
+            wanted, _group = units.unit_of(name, self.system)
+            value = readings.get(name, wanted)
+            if value is None or not math.isfinite(value):
+                continue
+            fields.append(f"{_tag(name)}={float(value)}")
+
+        if not fields:
+            return None
+        tags = f",kind={_tag(kind)},source={_tag(source)}"
+        if self.location:
+            tags += f",location={_tag(self.location)}"
+        # Seconds, like the record path: `precision=s` is in the write URL,
+        # and a nanosecond figure sent under it lands 50 years out.
+        return (f"{_measurement(self.measurement + '_forecast')}{tags} "
+                f"{','.join(fields)} {readings.ts}")
+
+    def post_forecast(self, store: Any, sources: tuple[str, ...] = ()) -> int:
+        """Send the current forecast. Returns how many points went.
+
+        Called after a source has fetched rather than on every record: the
+        points would be identical, and identical points are a write the far
+        end still has to do.
+        """
+        lines = self.forecast_lines(store, sources)
+        for start in range(0, len(lines), BATCH):
+            self._post(NEWLINE.join(lines[start:start + BATCH]))
+        return len(lines)
 
     @staticmethod
     def options() -> list:

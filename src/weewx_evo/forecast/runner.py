@@ -52,6 +52,7 @@ class Scheduled:
         "_slot",
         "blocked",
         "failures",
+        "fetched",
         "issued",
         "last",
         "last_summary",
@@ -63,11 +64,16 @@ class Scheduled:
         "store",
     )
 
-    def __init__(self, name: str, source: Any, place: Place, store: Any) -> None:
+    def __init__(self, name: str, source: Any, place: Place, store: Any,
+                 fetched: Callable[[str], None] | None = None) -> None:
         self.name = name
         self.source = source
         self.place = place
         self.store = store
+        #: Called with this source's name after a run has been stored. The
+        #: forecast is a second store's worth of data like the archive is,
+        #: and whoever mirrors it needs to know when there is a new one.
+        self.fetched = fetched
         self.last: float = 0.0
         #: The wall-clock moment this is next due on. None until the first
         #: turn, which fetches at once.
@@ -116,6 +122,7 @@ class Scheduled:
             self.issued = reading.issued
             self.last_summary = reading.summary()
             log.info("forecast %s: %s", self.name, self.last_summary)
+            self._tell(self.name)
         except ForecastError as exc:
             self.failures += 1
             self.last_summary = str(exc)
@@ -134,6 +141,22 @@ class Scheduled:
             log.warning("forecast %s failed: %s", self.name, exc)
         finally:
             self.running = False
+
+    def _tell(self, name: str) -> None:
+        """Say a new run has landed, without letting the listener stop this.
+
+        The one listener today is the InfluxDB upload, and it reaches over
+        the network. A source that fetched successfully has done its job
+        whatever happens next, and the alternative is a forecast that stops
+        updating because a database somewhere is down.
+        """
+        if self.fetched is None:
+            return
+        try:
+            self.fetched(name)
+        except Exception:
+            log.warning("forecast %s: could not pass the new run on",
+                        name, exc_info=True)
 
 
 class Runner:
@@ -222,7 +245,8 @@ class Runner:
 
 
 def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
-          place: Place, store: Any) -> list[Scheduled]:
+          place: Place, store: Any,
+          fetched: Callable[[str], None] | None = None) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
     Anything that cannot be built is reported and left out. A misconfigured
@@ -237,5 +261,5 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         except Exception as exc:
             log.warning("forecast source %s is not usable: %s", name, exc)
             continue
-        ready.append(Scheduled(name, source, place, store))
+        ready.append(Scheduled(name, source, place, store, fetched))
     return ready
