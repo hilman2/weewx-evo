@@ -115,8 +115,12 @@ def tests() -> list[Test]:
         # -- the parts that stand on their own ---------------------------
         Test("settings", ["settings_test.py"],
              "the five places a setting comes from, in order"),
+        Test("setup", ["setup_test.py"],
+             "an empty directory to a configured station, by forms alone"),
         Test("admin", ["adminpage.py"],
              "the settings page: every form, and what a partial POST does"),
+        Test("resilience", ["resilience_test.py"],
+             "a failure inside a handler is answered, not dropped"),
         Test("netaccess", ["netaccess_test.py"],
              "who gets an answer and who gets a 404"),
         Test("ratelimit", ["ratelimit_test.py"],

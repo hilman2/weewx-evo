@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -227,6 +228,70 @@ class Admin:
         return config_file.values_for(self.config(), schema)
 
     # -- adding and removing ---------------------------------------------
+
+    def write_settings(self, values: dict[str, Any], note: str = "") -> str:
+        """Put several settings at once. Returns an error, or empty.
+
+        For the wizard, which answers three or four at a time and would
+        otherwise write the file once per field -- four rewrites where one
+        will do, and four chances for the fourth to fail after the third
+        succeeded.
+
+        Dotted names, the same ones `--explain` prints. Nothing is validated
+        here beyond being writable: the caller has already parsed what it
+        asked for, and a second opinion in this method would be a second
+        place for the rules to live.
+        """
+        if self.read_only:
+            return "This settings page was started read-only."
+        if not values:
+            return ""
+        with self._lock:
+            current = self.config()
+            for dotted, value in values.items():
+                config_file.put(current, dotted, value)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        log.info("%d setting(s) written%s", len(values),
+                 f" -- {note}" if note else "")
+        self.refresh()
+        return ""
+
+    def add_export_settings(self, name: str, settings: dict[str, Any]) -> str:
+        """Create an export with everything it needs, in one write.
+
+        `add_export` takes a name and a kind and leaves the rest to the page
+        that follows, which is right when a person is filling it in. The
+        wizard and the weewx.conf import already hold every answer, and
+        making them post the form afterwards would be theatre.
+
+        A name that is taken is left alone rather than overwritten. Somebody
+        who has already set up an export called `site` has said more about it
+        than an import can know.
+        """
+        if self.read_only:
+            return "This settings page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return f"{name!r} cannot be an export's name."
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"exports.{name}") is not None:
+                return f"There is already an export called {name!r}."
+            for key, value in settings.items():
+                if value in (None, ""):
+                    continue
+                config_file.put(current, f"exports.{name}.{key}", value)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
 
     def add_export(self, name: str, kind: str) -> str:
         """Create an export. Returns an error, or empty if it worked.
@@ -2157,6 +2222,38 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         log.debug("%s %s", self.address_string(), fmt % args)
 
+    def handle_one_request(self) -> None:
+        """Every request, with a net under it.
+
+        Without this an unhandled exception anywhere in a handler drops the
+        connection: the browser says the connection was reset, the log has a
+        traceback nobody is looking at, and whoever was uploading fifteen
+        years of readings has no idea whether any of it arrived.
+
+        A page that cannot be built is a 500 with the reason in it. That is
+        worth more than a tidy stack trace on a terminal somebody closed --
+        and it is the same rule the listener follows for a console, where
+        answering anything beats going quiet.
+
+        Only for what was not already answered: `_reply` marks the response
+        as sent, so a handler that failed *after* replying does not get a
+        second set of headers written over the first.
+        """
+        self._answered = False
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            # The other end left. Ordinary, and nothing to report: a browser
+            # that navigates away mid-request does this every time.
+            self.close_connection = True
+        except Exception as exc:
+            log.exception("a request to the settings page failed")
+            if not self._answered:
+                try:
+                    self._reply(500, _oops(exc), "text/html; charset=utf-8")
+                except Exception:
+                    self.close_connection = True
+
     def _authorised(self, path: str) -> bool:
         peer = self.client_address[0] if self.client_address else ""
         if self.admin.token in path.strip("/").split("/"):
@@ -2188,6 +2285,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _reply(self, code: int, body: bytes, ctype: str = "text/html; charset=utf-8",
                headers: dict[str, str] | None = None) -> None:
+        self._answered = True
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -2217,6 +2315,13 @@ class _Handler(BaseHTTPRequestHandler):
             # list being short. `new-upload` and `new-forecast` were both
             # missing exactly that way.
             if part in names or part in ADD_PAGES or part in OWN_PAGES:
+                # The wizard is one page with a step in the path, so the
+                # step has to survive being routed. Without this every
+                # `setup/<step>` came back as `setup` and rendered the first
+                # one -- a progress bar you could click and that took you
+                # nowhere.
+                if part == "setup" and parts[-1] != "setup":
+                    return f"setup/{parts[-1]}"
                 return part
             if part.startswith("plot:"):
                 return part
@@ -2267,6 +2372,15 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             length = 0
 
+        # An archive goes another way entirely, and has to branch before
+        # both of the lines below it. `MAX_FORM` is a quarter of a megabyte
+        # and a real archive is hundreds; `_form` decodes the body as text
+        # and an archive is a SQLite file. So it is streamed to disk and
+        # never becomes a `form` at all.
+        if self._parts(parsed.path)[-2:] == ["setup", "upload-archive"]:
+            self._take_archive(length)
+            return
+
         # Refused, not truncated. Reading the first quarter of a megabyte of
         # an uploaded skin and importing whatever plots happened to fit is
         # the worst of the three possible outcomes.
@@ -2280,6 +2394,14 @@ class _Handler(BaseHTTPRequestHandler):
 
         parts = self._parts(parsed.path)
         action = parts[-1] if parts else ""
+
+        # The wizard. Its steps are `setup/<name>`, so the step is the last
+        # segment and the one before it says which page we are on -- routed
+        # here rather than in the big table below because every one of them
+        # comes back to the wizard rather than to a settings page.
+        if len(parts) >= 2 and parts[-2] == "setup":
+            self._setup_step(action, form)
+            return
 
         # Adding one. Two fields; everything else waits for the page that
         # appears next.
@@ -2549,8 +2671,416 @@ class _Handler(BaseHTTPRequestHandler):
     def _redirect(self, where: str) -> None:
         self._reply(303, b"", "text/plain", {"Location": where})
 
+    # -- the wizard -------------------------------------------------------
+
+    def _take_archive(self, length: int) -> None:
+        """An uploaded archive, written to disk as it arrives.
+
+        Not through `_form`, and that is the whole of why this exists. A
+        multipart body is read into memory there and decoded as text; an
+        archive is a SQLite file of tens or hundreds of megabytes, so doing
+        it that way would mean holding all of it twice and then throwing
+        away every byte above 0x7F.
+
+        So the body is read in blocks and the file part is written straight
+        through. The boundary is found by reading the first header block --
+        the parts of multipart a station's own upload path never needs, and
+        the reason this is fifty lines rather than three.
+
+        **Nothing is written over.** The archive lands beside the settings
+        under a `.part` name and is renamed only once it has been opened and
+        found to be a real WeeWX archive. A truncated upload leaves a
+        `.part` file and no archive, which is the right outcome: the failure
+        is visible and nothing has replaced anything.
+        """
+        try:
+            self._take_archive_inner(length)
+        except Exception as exc:
+            log.exception("an archive upload failed")
+            self._reply(200, page(
+                self.admin, "setup/readings",
+                errors={"": f"That upload failed: "
+                            f"{type(exc).__name__}: {exc}"}))
+
+    def _take_archive_inner(self, length: int) -> None:
+        from . import adopt
+        from . import config as config_file
+
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.lower().startswith("multipart/form-data"):
+            self._reply(400, b"send the file as a form upload", "text/plain")
+            return
+        boundary = ""
+        for bit in ctype.split(";"):
+            key, _, value = bit.strip().partition("=")
+            if key.strip().lower() == "boundary":
+                boundary = value.strip().strip('"')
+        if not boundary:
+            self._reply(400, b"no boundary in that upload", "text/plain")
+            return
+
+        where = config_file.resolved_path(
+            self.admin.config(), "archive_db", Path(self.admin.path).parent,
+            "data/weewx.sdb")
+        if where.exists():
+            self._reply(200, page(
+                self.admin, "setup/readings",
+                errors={"": (f"There is already an archive at {where}. Move "
+                             f"it aside first -- nothing here writes over "
+                             f"readings that are already stored.")}))
+            return
+
+        where.parent.mkdir(parents=True, exist_ok=True)
+        staging = where.with_suffix(where.suffix + ".part")
+        # An earlier attempt's journals describe a file that is gone, and
+        # SQLite refuses to open the new one because of them -- which reads
+        # as "that is not an archive" and is nothing of the sort.
+        self._clear_sqlite_files(staging)
+        try:
+            written = self._stream_part(length, boundary, staging)
+        except Exception as exc:
+            log.exception("an uploaded archive could not be written")
+            staging.unlink(missing_ok=True)
+            self._reply(200, page(self.admin, "setup/readings",
+                                  errors={"": f"That upload failed: {exc}"}))
+            return
+
+        if not written:
+            staging.unlink(missing_ok=True)
+            self._reply(200, page(self.admin, "setup/readings",
+                                  errors={"": "Nothing arrived. Choose a "
+                                              "file before sending it."}))
+            return
+
+        # Opened and asked, not trusted. A file named weewx.sdb that is not
+        # one has to fail here rather than three steps later, with the whole
+        # station configured around it.
+        if not adopt.is_archive(staging):
+            log.warning("an uploaded archive was refused: %d bytes at %s",
+                        written, staging)
+            self._clear_sqlite_files(staging)
+            self._reply(200, page(
+                self.admin, "setup/readings",
+                errors={"": (
+                    f"That is not a WeeWX archive: {written} bytes arrived, "
+                    f"and there is no `archive` table with dateTime, usUnits "
+                    f"and interval in it. If the station it came from is "
+                    f"still running, the file may be almost empty: SQLite "
+                    f"keeps recent readings in a `-wal` file beside it until "
+                    f"a checkpoint. Stop WeeWX and copy it again, or give "
+                    f"the path in the other form -- that route reads through "
+                    f"the WAL.")}))
+            return
+
+        staging.replace(where)
+        # SQLite leaves `-wal` and `-shm` beside a file it has opened, and
+        # `is_archive` opens this one. Renaming the database and leaving
+        # those two behind gives the next reader a journal that belongs to a
+        # file that is no longer there.
+        for extra in ("-wal", "-shm"):
+            staging.with_name(staging.name + extra).unlink(missing_ok=True)
+        first, last = adopt.span_of(where)
+        when = ""
+        if first and last:
+            when = (f", {time.strftime('%Y-%m-%d', time.localtime(first))} "
+                    f"to {time.strftime('%Y-%m-%d', time.localtime(last))}")
+        from urllib.parse import quote
+
+        said = (f"{adopt.count_records(where)} records carried over{when}. "
+                f"The file WeeWX has is untouched -- this is a copy.")
+        self._redirect(f"../setup/publish?said={quote(said)}")
+
+    @staticmethod
+    def _clear_sqlite_files(where: Path) -> None:
+        """A rejected upload, and the journals SQLite left beside it."""
+        for name in (where.name, where.name + "-wal", where.name + "-shm"):
+            where.with_name(name).unlink(missing_ok=True)
+
+    def _stream_part(self, length: int, boundary: str, into: Path) -> int:
+        """Write the first file part of a multipart body to `into`.
+
+        Blocks rather than lines: a SQLite file has no newlines to speak of,
+        and `readline` on one is a single read of the whole thing.
+
+        The trailing CRLF before the closing boundary belongs to the
+        boundary and not to the file. Getting that wrong adds two bytes to
+        every upload, which SQLite notices and nothing else does.
+        """
+        marker = f"--{boundary}".encode()
+        end = b"\r\n" + marker
+        block = 1 << 20
+
+        left = length
+        buffer = b""
+        # Skip to the part's own headers, then past the blank line after
+        # them. Only the first file part is taken: the wizard's form has one.
+        while b"\r\n\r\n" not in buffer and left > 0:
+            chunk = self.rfile.read(min(block, left))
+            if not chunk:
+                break
+            left -= len(chunk)
+            buffer += chunk
+        _headers, _, buffer = buffer.partition(b"\r\n\r\n")
+
+        written = 0
+        with into.open("wb") as handle:
+            while True:
+                found = buffer.find(end)
+                if found >= 0:
+                    handle.write(buffer[:found])
+                    written += found
+                    break
+                # Keep back as much as the boundary could straddle, so a
+                # boundary split across two reads is still found.
+                keep = len(end)
+                if len(buffer) > keep:
+                    handle.write(buffer[:-keep])
+                    written += len(buffer) - keep
+                    buffer = buffer[-keep:]
+                if left <= 0:
+                    handle.write(buffer)
+                    written += len(buffer)
+                    break
+                chunk = self.rfile.read(min(block, left))
+                if not chunk:
+                    handle.write(buffer)
+                    written += len(buffer)
+                    break
+                left -= len(chunk)
+                buffer += chunk
+        return written
+
+    def _setup_step(self, step: str, form: dict) -> None:
+        """One step of the wizard. Every one of them comes back to it.
+
+        A step that fails re-renders its own page with the message rather
+        than redirecting: the answer somebody typed is still in the form,
+        and a redirect would lose it. A step that works redirects to the
+        next one, so a reload does not repeat it.
+        """
+        handler = {
+            "place": self._setup_place,
+            "adopt": self._setup_adopt,
+            "charts": self._setup_charts,
+            "archive": self._setup_archive,
+            "publish": self._setup_publish,
+        }.get(step)
+        if handler is None:
+            self._redirect("../setup")
+            return
+
+        try:
+            said, error, goto = handler(form)
+        except Exception as exc:
+            log.exception("the wizard step %r failed", step)
+            said, error, goto = "", f"That did not work: {exc}", ""
+
+        if error:
+            self._reply(200, page(self.admin, f"setup/{step}",
+                                  errors={"": error}, form=form))
+            return
+        where = goto or "done"
+        # The message travels in the URL rather than in the session, because
+        # there is no session: this page holds nothing between requests, and
+        # a redirect that arrives with nothing to say looks like a step that
+        # did nothing.
+        from urllib.parse import quote
+
+        tail = f"?said={quote(said)}" if said else ""
+        self._redirect(f"../setup/{where}{tail}")
+
+    def _setup_place(self, form: dict) -> tuple[str, str, str]:
+        """Name and coordinates, and a forecast if it was asked for."""
+        name = (form.get("name") or "").strip()
+        if not name:
+            return "", ("A station needs a name. It goes at the top of "
+                        "every page."), ""
+
+        values: dict[str, object] = {"station.name": name}
+        for field, label in (("latitude", "Latitude"),
+                             ("longitude", "Longitude"),
+                             ("altitude", "Altitude")):
+            raw = (form.get(field) or "").strip()
+            if not raw:
+                if field == "altitude":
+                    continue
+                return "", (f"{label} is needed: sunrise, sunset and every "
+                            f"twilight band on a chart come from it."), ""
+            try:
+                values[f"station.{field}"] = float(raw.replace(",", "."))
+            except ValueError:
+                return "", (f"{label} has to be a number in degrees, like "
+                            f"48.3858. {raw!r} is not one."), ""
+
+        error = self.admin.write_settings(values, "the setup wizard")
+        if error:
+            return "", error, ""
+
+        said = f"{name} it is."
+        if form.get("forecast"):
+            # `open-meteo`, with the hyphen: the name comes from the
+            # registry and not from memory, and getting it wrong here
+            # produced a wizard that said it had set up a forecast and had
+            # not -- the error came back as a string nobody read.
+            made = self.admin.add_forecast("ahead", "open-meteo")
+            said += (" A forecast is being fetched for it."
+                     if not made else f" (the forecast: {made})")
+        return said, "", "readings"
+
+    def _setup_adopt(self, form: dict) -> tuple[str, str, str]:
+        """A weewx.conf, uploaded or named, read into these settings.
+
+        Nothing of WeeWX's is written to. What comes over is its answers --
+        where the station is, how often it archives, which skins it renders
+        and where it uploads -- and the uploads arrive switched off.
+        """
+        from . import adopt
+
+        text = form.get("upload") or ""
+        named = (form.get("conf") or "").strip()
+        if not text and not named:
+            return "", ("Send a weewx.conf or say where one is. Everything "
+                        "this step does comes out of that one file."), ""
+
+        found = adopt.read(named, text=text)
+        if not found.usable:
+            why = found.problems[0] if found.problems else "nothing in it"
+            return "", f"That did not read as a weewx.conf: {why}", ""
+
+        # `import.*` are notes about where its skins and pages were, not
+        # settings of ours. Kept out of the file rather than written and
+        # ignored.
+        #
+        # And `archive_db` is left out on purpose, which is the whole of
+        # being non-invasive. A weewx.conf says where *WeeWX's* database is,
+        # and writing that here would point this station at the file WeeWX
+        # is recording into -- two programs writing one SQLite file, which
+        # loses it. The path is offered as something to copy *from*, on the
+        # next step, and never as somewhere to write.
+        skipped = {"archive_db"}
+        values = {k: v for k, v in found.settings.items()
+                  if not k.startswith("import.") and k not in skipped}
+        error = self.admin.write_settings(values, "read from a weewx.conf")
+        if error:
+            return "", error, ""
+
+        said = [f"{len(values)} setting(s) taken"]
+        if found.exports:
+            for name, settings in found.exports.items():
+                made = self.admin.add_export_settings(name, settings)
+                if not made:
+                    said.append(f"its {settings.get('kind')} account as "
+                                f"{name!r}, switched off")
+        if found.skins:
+            said.append(", ".join(skin for _r, skin, _h in found.skins)
+                        + " is what it renders")
+        if found.archive is not None:
+            said.append(f"its archive is at {found.archive} -- copy it on "
+                        f"the next step; this station will not write to it")
+        elif found.elsewhere:
+            said.append(f"its readings are in {found.elsewhere}")
+        return "; ".join(said), "", "readings"
+
+    def _setup_charts(self, form: dict) -> tuple[str, str, str]:
+        """A skin.conf, through the importer that already exists."""
+        uploaded, pasted = form.get("upload", ""), form.get("pasted", "")
+        said, error = adminplots.bring_over(
+            self.admin, form.get("source", ""),
+            replace=bool(form.get("replace")),
+            text=uploaded or pasted or "",
+            origin="the uploaded file" if uploaded else "the pasted text")
+        return said, error, "readings"
+
+    def _setup_archive(self, form: dict) -> tuple[str, str, str]:
+        """An existing archive, copied into place.
+
+        By path here. The upload is a different route entirely -- an archive
+        is tens or hundreds of megabytes and cannot go through a form that
+        decodes its body as text -- and lives in `_setup_upload`.
+        """
+        from . import adopt
+        from . import config as config_file
+
+        source = (form.get("source") or "").strip()
+        if not source:
+            return "", ("Say where the archive is, or send the file with the "
+                        "other form."), ""
+
+        where = config_file.resolved_path(
+            self.admin.config(), "archive_db", Path(self.admin.path).parent,
+            "data/weewx.sdb")
+        try:
+            said = adopt.adopt_archive(source, where)
+        except ValueError as exc:
+            return "", str(exc), ""
+        except OSError as exc:
+            return "", f"Could not copy it: {exc}", ""
+        return (f"Carried over: {said}. WeeWX still has its own copy -- this "
+                f"one is a copy, so nothing of its is touched."), "", "publish"
+
+    def _setup_publish(self, form: dict) -> tuple[str, str, str]:
+        """An FTP account, and the address its pages are served at."""
+        host = (form.get("host") or "").strip()
+        if not host:
+            return "Nothing published from here yet.", "", "done"
+
+        settings = {
+            "kind": "ftp",
+            "host": host,
+            "user": (form.get("user") or "").strip(),
+            "password": form.get("password") or "",
+            "directory": (form.get("directory") or "/").strip(),
+            # The pages, and the charts they draw from, in one export: a page
+            # that arrives before its charts is the half-published site the
+            # `feed` trigger exists to prevent.
+            "source": "site",
+            "also": ["json -> data/json"],
+        }
+        address = (form.get("live_push_url") or "").strip()
+        if address:
+            settings["live_push_url"] = address
+        error = self.admin.add_export_settings("site", settings)
+        if error:
+            return "", error, ""
+        said = f"Publishing to {host}."
+        if address:
+            said += (" The pages will show live readings: a small PHP file "
+                     "goes up with them and this station posts to it.")
+        return said, "", "done"
+
     def do_HEAD(self) -> None:
         self.do_GET()
+
+
+def _oops(exc: Exception) -> bytes:
+    """What a request that failed answers with.
+
+    The message, not the traceback. Somebody looking at this page is not
+    reading Python, and the line that matters -- what they were doing and
+    what went wrong -- is the first line of it. The traceback is in the log
+    for whoever wants it.
+
+    No stylesheet and no template: this is what is left when the thing that
+    builds pages is the thing that failed.
+    """
+    said = html.escape(f"{type(exc).__name__}: {exc}")
+    return (f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>That did not work</title>
+<style>
+  body {{ font: 15px/1.6 system-ui, sans-serif; max-width: 40rem;
+          margin: 4rem auto; padding: 0 1.25rem; }}
+  code {{ background: #f4f4f5; padding: .15rem .35rem; border-radius: .2rem; }}
+  p.said {{ background: #fff4f4; border-left: 3px solid #c33;
+            padding: .75rem 1rem; }}
+</style></head><body>
+<h1>That did not work</h1>
+<p class="said"><code>{said}</code></p>
+<p>Nothing was changed by the request that failed. The settings page is
+   still running &mdash; go back and try again, or take another route to
+   the same thing.</p>
+<p>The full traceback is in the log, which is where it is useful.</p>
+</body></html>""").encode()
 
 
 def _describe(admin: Admin) -> dict:

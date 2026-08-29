@@ -1,0 +1,2146 @@
+# The charts weewx-evo produces.
+#
+# Each [[plot]] is one chart; each [[plot.line]] is one reading in it.
+# 'span' groups plots for the manifest and for the admin page;
+# 'time_length' is what actually decides how far back it reaches
+# (a number of seconds, or 27h, 7d, and so on).
+#
+# Leave 'aggregate' out for the archive records themselves. Set it to
+# min, max, avg or sum with an 'interval' of 'day' for the coarser
+# plots -- a year of five-minute readings is not a chart, it is a
+# hundred thousand points drawn on top of each other.
+#
+# What a station gets before anybody has defined a chart.
+# 
+# These are the Seasons skin's, read out of its [ImageGenerator] with
+# `weewx-evo plots import` and written here. Not invented: it is the set
+# WeeWX has drawn since 2010, so somebody arriving from WeeWX sees the charts
+# they already know, and somebody arriving from nowhere gets a set that fifteen
+# years of stations have found sufficient.
+# 
+# A chart whose readings this station does not have is skipped when the feeds
+# run -- the JSON feed says how many. So a soil-moisture chart on a station
+# with no probe costs a line in this file and nothing else.
+# 
+# Copied when the settings page or `serve` finds no plots.toml. Editing this
+# file changes nothing on an installation that already has one.
+# 
+# From weewx-data/skins/Seasons/skin.conf, GPL v3, the WeeWX contributors.
+
+[[plot]]
+name = "daybarometer"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "barometer"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daytempdew"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outTemp"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "dewpoint"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daytempfeel"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windchill"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatindex"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayhum"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outHumidity"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daytempin"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inTemp"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayhumin"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inHumidity"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daytempext"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp1"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp2"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp3"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp4"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daytempext2"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp5"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp6"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp7"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp8"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayhumext"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid1"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid2"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid3"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid4"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayhumext2"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid5"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid6"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid7"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid8"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daytempleaf"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafTemp1"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafTemp2"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daywetleaf"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafWet1"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafWet2"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daytempsoil"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilTemp1"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp2"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp3"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp4"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daymoistsoil"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilMoist1"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist2"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist3"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist4"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daypm"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "pm1_0"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm2_5"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm10_0"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daylightning"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 1.0
+
+  [[plot.line]]
+  obs = "lightning_strike_count"
+  label = "Lightning (hourly total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayrain"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "rain"
+  label = "Rain (hourly total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daywind"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windSpeed"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "windGust"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daywinddir"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 360.0
+ystep = 45.0
+
+  [[plot.line]]
+  obs = "windDir"
+  marker = "box"
+  width = 1.0
+  marker_size = 2
+  gap_fraction = 0.05
+
+[[plot]]
+name = "daywindvec"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windvec"
+  kind = "vector"
+  width = 1.0
+  gap_fraction = 0.05
+  rotate = 90.0
+
+[[plot]]
+name = "dayET"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "ET"
+  label = "Evapotranspiration (hourly total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayUV"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "UV"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayradiation"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "radiation"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayrx"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 100.0
+ystep = 25.0
+
+  [[plot.line]]
+  obs = "rxCheckPercent"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "dayvolt"
+span = "day"
+time_length = "27h"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "consBatteryVoltage"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatingVoltage"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "supplyVoltage"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "referenceVoltage"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekbarometer"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "barometer"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weektempdew"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outTemp"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "dewpoint"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weektempfeel"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windchill"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatindex"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weektempin"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inTemp"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weektempext"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp1"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp2"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp3"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp4"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weektempext2"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp5"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp6"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp7"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp8"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekhum"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outHumidity"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekhumin"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inHumidity"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekhumext"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid1"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid2"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid3"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid4"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekhumext2"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid5"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid6"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid7"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid8"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weektempleaf"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafTemp1"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafTemp2"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekwetleaf"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafWet1"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafWet2"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weektempsoil"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilTemp1"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp2"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp3"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp4"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekmoistsoil"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilMoist1"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist2"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist3"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist4"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekpm"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "pm1_0"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm2_5"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm10_0"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weeklightning"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 1.0
+
+  [[plot.line]]
+  obs = "lightning_strike_count"
+  label = "Lightning (daily total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekrain"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "rain"
+  label = "Rain (daily total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekwind"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windSpeed"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "windGust"
+  aggregate = "max"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekwinddir"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 360.0
+ystep = 45.0
+
+  [[plot.line]]
+  obs = "wind"
+  aggregate = "vecdir"
+  marker = "box"
+  interval = "hour"
+  width = 1.0
+  marker_size = 2
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekwindvec"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windvec"
+  kind = "vector"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+  rotate = 90.0
+
+[[plot]]
+name = "weekET"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "ET"
+  label = "Evapotranspiration (daily total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekUV"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "UV"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekradiation"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "radiation"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekrx"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 100.0
+ystep = 25.0
+
+  [[plot.line]]
+  obs = "rxCheckPercent"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "weekvolt"
+span = "week"
+time_length = "7d"
+show_daynight = true
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "consBatteryVoltage"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatingVoltage"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "supplyVoltage"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "referenceVoltage"
+  aggregate = "avg"
+  interval = "hour"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthbarometer"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "barometer"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthtempdew"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outTemp"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "dewpoint"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthtempfeel"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windchill"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatindex"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthtempin"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inTemp"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthtempext"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp1"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp2"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp3"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp4"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthtempext2"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp5"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp6"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp7"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp8"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthhum"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outHumidity"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthhumin"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inHumidity"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthhumext"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid1"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid2"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid3"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid4"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthhumext2"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid5"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid6"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid7"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid8"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthtempleaf"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafTemp1"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafTemp2"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthwetleaf"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafWet1"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafWet2"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthtempsoil"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilTemp1"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp2"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp3"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp4"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthmoistsoil"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilMoist1"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist2"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist3"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist4"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthpm"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "pm1_0"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm2_5"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm10_0"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthlightning"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+ystep = 1.0
+
+  [[plot.line]]
+  obs = "lightning_strike_count"
+  label = "Lightning (daily total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthrain"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "rain"
+  label = "Rain (daily total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthwind"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windSpeed"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "windGust"
+  aggregate = "max"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthwinddir"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 360.0
+ystep = 45.0
+
+  [[plot.line]]
+  obs = "wind"
+  aggregate = "vecdir"
+  marker = "box"
+  interval = 10800
+  width = 1.0
+  marker_size = 2
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthwindvec"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windvec"
+  kind = "vector"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+  rotate = 90.0
+
+[[plot]]
+name = "monthET"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "ET"
+  label = "Evapotranspiration (daily total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthUV"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "UV"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthradiation"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "radiation"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthrx"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 100.0
+ystep = 25.0
+
+  [[plot.line]]
+  obs = "rxCheckPercent"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "monthvolt"
+span = "month"
+time_length = "30d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "consBatteryVoltage"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatingVoltage"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "supplyVoltage"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "referenceVoltage"
+  aggregate = "avg"
+  interval = 10800
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearbarometer"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "barometer"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yeartempdew"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outTemp"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "dewpoint"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yeartempfeel"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windchill"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatindex"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yeartempin"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inTemp"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yeartempext"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp1"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp2"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp3"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp4"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yeartempext2"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+ystep = 0.5
+
+  [[plot.line]]
+  obs = "extraTemp5"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp6"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp7"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraTemp8"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearhum"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "outHumidity"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearhumin"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "inHumidity"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearhumext"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid1"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid2"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid3"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid4"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearhumext2"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "extraHumid5"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid6"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid7"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "extraHumid8"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yeartempleaf"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafTemp1"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafTemp2"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearwetleaf"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "leafWet1"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "leafWet2"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yeartempsoil"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilTemp1"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp2"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp3"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilTemp4"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearmoistsoil"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "soilMoist1"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist2"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist3"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "soilMoist4"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearpm"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "pm1_0"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm2_5"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "pm10_0"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearlightning"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+ystep = 1.0
+
+  [[plot.line]]
+  obs = "lightning_strike_count"
+  label = "Lightning (weekly total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "week"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearrain"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "rain"
+  label = "Rain (weekly total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "week"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearwind"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windSpeed"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "windGust"
+  aggregate = "max"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearwinddir"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 360.0
+ystep = 45.0
+
+  [[plot.line]]
+  obs = "wind"
+  aggregate = "vecdir"
+  marker = "box"
+  interval = "day"
+  width = 1.0
+  marker_size = 2
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearwindvec"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "windvec"
+  kind = "vector"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+  rotate = 90.0
+
+[[plot]]
+name = "yearET"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+ystep = 0.02
+
+  [[plot.line]]
+  obs = "ET"
+  label = "Evapotranspiration (weekly total)"
+  kind = "bar"
+  aggregate = "sum"
+  interval = "week"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearUV"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "UV"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearradiation"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "radiation"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearrx"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+ymin = 0.0
+ymax = 100.0
+ystep = 25.0
+
+  [[plot.line]]
+  obs = "rxCheckPercent"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+[[plot]]
+name = "yearvolt"
+span = "year"
+time_length = "365d"
+skip_if_empty = "year"
+
+  [[plot.line]]
+  obs = "consBatteryVoltage"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "heatingVoltage"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "supplyVoltage"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05
+
+  [[plot.line]]
+  obs = "referenceVoltage"
+  aggregate = "avg"
+  interval = "day"
+  width = 1.0
+  gap_fraction = 0.05

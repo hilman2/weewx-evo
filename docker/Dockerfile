@@ -35,8 +35,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # not one of them was real.
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
+# git is here to answer one question no other test can: what does a fresh
+# clone actually get? `starter/plots.toml` was ignored by a pattern written for
+# the installation's own file, and on a machine that has the file the wizard
+# works perfectly. Only the index knows the difference.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core \
+        git \
         php-cli \
         rsync \
         tzdata \

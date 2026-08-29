@@ -191,6 +191,24 @@ class Ingest:
             # the next measurement is worth more than the tidy status code.
             return 0, "unreadable", response
 
+        try:
+            stored = self._store(packets, driver, name, peer, body)
+        except Exception as exc:
+            with self._lock:
+                self.rejected += 1
+            log.exception("could not record an upload from %s via %s", peer, name)
+            # Same rule as the driver above, one step further down: a full
+            # disk, a locked database or a rule file somebody mistyped is our
+            # problem, and none of it is a reason for the console to stop.
+            # It measures every few seconds and forgets; this end is where a
+            # reading can be recovered from, and only while uploads keep
+            # arriving.
+            return 0, f"could not store: {type(exc).__name__}: {exc}", response
+        return stored, "ok", response
+
+    def _store(self, packets: list, driver: object, name: str, peer: str,
+               body: bytes) -> int:
+        """Put the parsed packets in the table. Everything that can fail."""
         # Keep the upload beside the packet for a while. What a driver could
         # not place is by definition not in the packet, so the parsed version
         # is the one thing that cannot show it -- and getting hold of a raw
@@ -225,7 +243,7 @@ class Ingest:
                 # A feed that cannot be woken must not cost the reading that
                 # was being stored when it happened.
                 log.exception("could not hand the reading on to the feeds")
-        return stored, "ok", response
+        return stored
 
     def _named(self, packet: Packet, driver: str, peer: str) -> Packet:
         """Record the packet under its station's name, or note a stranger.
@@ -353,6 +371,42 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         log.debug("%s %s", self.address_string(), fmt % args)
 
+    def handle_one_request(self) -> None:
+        """Every request, with a net under it.
+
+        `submit` guards the two places a failure is expected -- the driver
+        reading a body, and the table taking the result. This catches the
+        rest: a header that will not parse, a status page whose data is
+        missing, a bug nobody has met yet.
+
+        200 rather than 500, and that is the whole reason this exists. A
+        console has no operator and no retry queue: an error is often the
+        last thing it does before going quiet, and the fault is at this end
+        anyway. The measurement it was carrying is lost either way; the
+        thousand after it need not be.
+
+        The log gets the traceback, and the status page counts the upload as
+        rejected, so a failure that only ever answers 200 is still visible
+        somewhere a person looks.
+        """
+        self._answered = False
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            # A console that hung up. Common on cheap hardware, and there is
+            # nothing to say about it.
+            self.close_connection = True
+        except Exception:
+            log.exception("a request to the listener failed")
+            with self.ingest._lock:
+                self.ingest.rejected += 1
+            if not self._answered:
+                try:
+                    self._reply(200, drivers.DEFAULT_RESPONSE[0],
+                                drivers.DEFAULT_RESPONSE[1])
+                except Exception:
+                    self.close_connection = True
+
     def _has_token(self, path: str) -> bool:
         """Check the token and count a wrong one, in one place.
 
@@ -395,6 +449,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _reply(self, code: int, body: bytes, content_type: str = "text/plain",
                headers: dict[str, str] | None = None) -> None:
+        self._answered = True
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))

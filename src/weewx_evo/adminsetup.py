@@ -183,9 +183,8 @@ def _start(admin: Any, now: dict, form: dict) -> str:
       <p><strong>A WeeWX installation is on this machine.</strong>
          <code>{html.escape(str(weewx))}</code></p>
       <p class="help">Its station, coordinates, archive interval, skins and
-         upload accounts can be read straight out of it. Nothing of WeeWX's
-         is changed: the archive is copied, not moved, so it goes on
-         recording while this is set up.</p>
+         upload accounts are read straight out of it. Read, not written: the
+         file is opened for reading and closed again.</p>
       <form method="post" action="./setup/adopt">
         <input type="hidden" name="conf" value="{html.escape(str(weewx))}">
         <button type="submit">Read this installation</button>
@@ -194,6 +193,26 @@ def _start(admin: Any, now: dict, form: dict) -> str:
 
     return f"""
   <p class="lede">Two ways in. Neither of them asks for anything twice.</p>
+
+  <div class="field notice">
+    <h4>Nothing of WeeWX's is written to</h4>
+    <p class="help">Everything here <strong>copies</strong>. Its
+       <code>weewx.conf</code> is read and never written; its archive is
+       copied to a file of this station's own; its FTP account is brought
+       over switched off. WeeWX carries on recording throughout, and if this
+       turns out not to be for you, deleting this directory is the whole of
+       undoing it.</p>
+    <p class="help"><strong>Run one of them, not both.</strong> Two programs
+       writing one SQLite file lose it, and two publishing into one directory
+       give a site made of halves. So: set this up beside WeeWX, look at what
+       it produces, and stop WeeWX when you are ready to swap -- not before,
+       and not after.</p>
+    <p class="help">The database stays WeeWX's. Not "exported to" or
+       "migrated from": the same tables, the same meaning, and WeeWX 5 can
+       carry on using it afterwards -- so going back is starting WeeWX again.
+       There is a test that does exactly that, in both directions
+       (<code>tools/stillweewx_test.py</code>).</p>
+  </div>
   {found}
 
   <div class="field">
@@ -344,11 +363,14 @@ def _archive_form(admin: Any, now: dict) -> str:
       </label>
       <div class="actions"><button type="submit">Copy it here</button></div>
     </form>
-    <form method="post" action="./setup/archive"
+    <form method="post" action="./setup/upload-archive"
           enctype="multipart/form-data" class="upload">
       <label>or send the file
         <input type="file" name="upload" accept=".sdb,.db,.sqlite">
       </label>
+      <p class="help">Its own route, not the form above: an archive is tens
+         or hundreds of megabytes, so it is written to disk as it arrives
+         rather than held in memory and decoded as text.</p>
       <div class="actions"><button type="submit">Upload it</button></div>
     </form>"""
 

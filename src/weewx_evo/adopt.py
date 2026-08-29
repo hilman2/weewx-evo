@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -79,7 +78,15 @@ class Found:
 
     @property
     def usable(self) -> bool:
-        return self.conf is not None and bool(self.settings)
+        """Whether anything came out of it.
+
+        The settings, not the path. A file that arrived by upload has no
+        path at all -- which is the ordinary case, since nobody installs
+        this on the machine recording their weather -- and requiring one
+        made every upload report "that did not read as a weewx.conf" while
+        holding nine settings out of it.
+        """
+        return bool(self.settings)
 
     def records(self) -> int:
         """How many archive records its database holds. 0 if unreadable."""
@@ -207,6 +214,37 @@ def _locate_skins(found: Found, conf: dict[str, Any]) -> None:
             return
 
 
+def _clear(where: Path) -> None:
+    """A database and the journals SQLite leaves beside it.
+
+    All three, because two of them outlive the first. A `-wal` left from an
+    earlier attempt describes a file that is not there any more, and SQLite
+    refuses to open the new one -- which reads as "that is not an archive"
+    and is nothing of the sort. That happened here.
+    """
+    for name in (where.name, where.name + "-wal", where.name + "-shm"):
+        where.with_name(name).unlink(missing_ok=True)
+
+
+def _backup(source: Path, into: Path) -> None:
+    """A consistent copy of a database somebody else may be writing to.
+
+    Read-only on the source: this must not be the thing that creates a
+    journal beside WeeWX's file, or checkpoints one, or takes a write lock
+    on a station that is recording.
+    """
+    reader = sqlite3.connect(f"file:{source.as_posix()}?mode=ro", uri=True,
+                             timeout=30)
+    try:
+        writer = sqlite3.connect(into)
+        try:
+            reader.backup(writer)
+        finally:
+            writer.close()
+    finally:
+        reader.close()
+
+
 def is_archive(path: str | Path) -> bool:
     """Whether that file is a WeeWX archive we can read.
 
@@ -276,6 +314,21 @@ def adopt_archive(source: str | Path, into: str | Path,
     this: the original stays exactly where WeeWX is still writing it. Two
     programs writing one SQLite file is the way to lose both.
 
+    **Through SQLite's own backup, not `shutil.copyfile`.** A running
+    station's database is in WAL mode -- ours sets it, and the mode is
+    stored in the file, so a database this program has ever opened stays in
+    it. In WAL mode the committed rows live in the `-wal` sidecar until a
+    checkpoint folds them back, and a file copy takes only the main file.
+
+    Measured, and worse than losing the last few readings: a database with
+    150 rows written and not yet checkpointed copies as a 4 KB header, and
+    the copy answers `no such table: archive`. The backup API reads through
+    the WAL and produced all 150.
+
+    It also does the right thing while the other program is writing, which
+    `copyfile` cannot promise at all: SQLite takes the copy transaction by
+    transaction and starts over if the source moves under it.
+
     Returns what happened, or raises with a usable message.
     """
     source, into = Path(source), Path(into)
@@ -291,8 +344,14 @@ def adopt_archive(source: str | Path, into: str | Path,
         # Beside the target and renamed, so a copy interrupted half way
         # leaves nothing that looks like an archive.
         staging = into.with_suffix(into.suffix + ".part")
-        shutil.copyfile(source, staging)
+        _clear(staging)
+        _backup(source, staging)
+        # The journals belong to the name they were made under. Renaming the
+        # database and leaving them gives the next reader a WAL that
+        # describes a file which is no longer there.
         staging.replace(into)
+        for extra in ("-wal", "-shm"):
+            staging.with_name(staging.name + extra).unlink(missing_ok=True)
     else:
         Path(source).replace(into)
 
