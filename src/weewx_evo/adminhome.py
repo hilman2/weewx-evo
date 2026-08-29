@@ -713,10 +713,11 @@ def _two_main_stations(admin: Any) -> list[str]:
         clashing = roles.too_many_main(group)
         if clashing:
             said.append(
-                f"{len(clashing)} stations write into {name!r} as the main "
-                f"one: {', '.join(clashing)}. One is the station and the "
-                "rest are extra sensors, or they write into each other's "
-                "columns. Set the others to 'extra sensor'.")
+                f"{len(clashing)} stations write into {name!r} as "
+                f"main: {', '.join(clashing)}. One console is the station; "
+                "the others are extra sensors, or they write into each "
+                "other's columns. Set the rest to extra on the Stations "
+                "page.")
     return said
 
 

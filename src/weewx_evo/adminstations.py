@@ -813,13 +813,27 @@ def _role_note(one: Any) -> str:
 
     if getattr(one, "role", role_defs.MAIN) != role_defs.EXTRA:
         return ""
-    return (f'<br><span class="note">extra, channel {one.channel}: its '
-            f"temperature and humidity go to extraTemp{one.channel} and "
-            f"extraHumid{one.channel}; its wind, rain and pressure have "
-            "nowhere and are dropped</span>")
+    return (f'<br><span class="note">channel {one.channel}: temperature and '
+            f"humidity go to extraTemp{one.channel} and "
+            f"extraHumid{one.channel}. Wind, rain and pressure have nowhere "
+            "to go and are dropped: the schema has no extra columns "
+            "for them. Live readings come from the main console unless the "
+            "upload says otherwise.</span>")
 
 
 def _role_choice(one: Any) -> str:
+    """The role, in the words the rest of the system uses.
+
+    It read "Its readings are [its own | from an extra sensor]", which is
+    not a sentence anybody says -- and the first option said nothing at all:
+    every station's readings are its own. Worse, neither word was `main` or
+    `extra`, which is what `stations.toml` holds, what the log prints, what
+    `roles.py` is about and what the overview page says when two stations
+    collide. Four places using two vocabularies for one thing.
+
+    So: the words are the settings' words, and the label is the half of the
+    sentence that does not change.
+    """
     from . import roles as role_defs
 
     extra = getattr(one, "role", role_defs.MAIN) == role_defs.EXTRA
@@ -827,13 +841,15 @@ def _role_choice(one: Any) -> str:
     # one name send two values when the box is ticked, and which one arrives
     # depends on the parser -- so the box would be impossible to tick, or
     # impossible to untick, and which of the two only shows up in use.
-    title = ("An extra station's readings are moved out of the main "
-             "station's columns")
-    return (f'<select name="role" title="{title}">'
+    title = ("main: its readings go in their own columns. "
+             "extra: they are moved into extraTemp and extraHumid, so two "
+             "consoles cannot take turns in one column")
+    return (f'<select name="role" title="{html.escape(title)}">'
             f'<option value="{role_defs.MAIN}"'
-            f'{"" if extra else " selected"}>its own</option>'
+            f'{"" if extra else " selected"}>main: the station</option>'
             f'<option value="{role_defs.EXTRA}"'
-            f'{" selected" if extra else ""}>from an extra sensor</option>'
+            f'{" selected" if extra else ""}>'
+            "extra: a second sensor</option>"
             "</select>")
 
 
@@ -904,7 +920,7 @@ def _properties(admin: Any, station: Any) -> str:
         <input type="checkbox" name="indoor" value="1"
                {"checked" if station.indoor else ""}> indoor
       </label>
-      <label class="tick">Its readings are
+      <label class="tick">Role
         {_role_choice(station)}
       </label>
       <button type="submit" class="quiet">Save</button>

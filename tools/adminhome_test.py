@@ -224,8 +224,12 @@ def two_stations_claiming_one_archive() -> None:
         (work / "stations.toml").write_text(both, encoding="utf-8")
 
         state = adminhome.read(admin)
+        # The words the settings use: `main` and `extra` are what
+        # stations.toml holds, what the log prints and what the Stations page
+        # offers, so the overview says them too rather than inventing a
+        # third vocabulary.
         check("it is reported",
-              any("as the main one" in one for one in state.concerns), True)
+              any("as main" in one for one in state.concerns), True)
         check("naming both",
               any("garten, kirchdorf" in one for one in state.concerns), True)
 
@@ -234,7 +238,7 @@ def two_stations_claiming_one_archive() -> None:
             both + 'role = "extra"\nchannel = 1\n', encoding="utf-8")
         state = adminhome.read(admin)
         check("with a role set, nothing is said",
-              [one for one in state.concerns if "main one" in one], [])
+              [one for one in state.concerns if "as main" in one], [])
 
         # And two archives are two places, so two main stations are right.
         (work / "archives.toml").write_text(
