@@ -385,7 +385,7 @@ class Registry:
             except Exception:
                 log.exception("could not load the upload %r; carrying on", entry.name)
 
-        from . import ambient, cwop, mqtt, weathercloud, webpush, windy
+        from . import ambient, cwop, influx, mqtt, weathercloud, webpush, windy
 
         # Three services, one protocol. Weather Underground defined it, the
         # other two copied it down to the parameter names -- so they are one
@@ -398,6 +398,10 @@ class Registry:
         self.register_factory("cwop", cwop.CwopUpload)
         self.register_factory("mqtt", mqtt.MqttUpload)
         self.register_factory("webpush", webpush.WebPushUpload)
+        # Not a weather service: the operator's own database, so that
+        # Grafana can be asked a question no rendered page answers --
+        # several archives on one axis.
+        self.register_factory("influx", influx.InfluxUpload)
 
 
 #: The registry the CLI and the admin page use.
@@ -421,7 +425,8 @@ def describe(kind: str) -> str:
 
 
 def when_options(trigger: str = "record", every: int = 900,
-                 catch_up: int = 12, live: bool = False) -> list:
+                 catch_up: int = 12, live: bool = False,
+                 catch_up_max: int = 288) -> list:
     """The "when it runs" group, which every upload has the same.
 
     One copy, because four services with four subtly different wordings for
@@ -463,12 +468,15 @@ def when_options(trigger: str = "record", every: int = 900,
                         + (" A live upload runs far more often than that, so "
                            "this one goes down to seconds." if live else "")),
             Option("catch_up", "Send up to this many missed records",
-                   kind="int", default=catch_up, minimum=0, maximum=288,
+                   kind="int", default=catch_up, minimum=0,
+                   maximum=catch_up_max,
                    advanced=True,
                    help="After a connection was down. Zero means send only "
                         "the newest. The limit exists so that a station "
                         "offline for a week does not come back and fire two "
-                        "thousand requests at a free service."),
+                        "thousand requests at a free service -- which is why "
+                        "an upload writing to the operator's own database "
+                        "raises it."),
             Option("archive", "Sends readings from", kind="choice",
                    default=DEFAULT_ARCHIVE, choices_from=_archive_names,
                    advanced=True,
