@@ -49,6 +49,7 @@ that nothing downstream can see.
 
 from __future__ import annotations
 
+import datetime
 import logging
 import math
 import time
@@ -59,6 +60,16 @@ from .. import units
 from . import BaseUpload, Posted, Readings, Rejected, request, when_options
 
 log = logging.getLogger(__name__)
+
+
+def _epoch(stamp: str) -> int:
+    """An RFC 3339 timestamp as seconds. InfluxDB answers in nanoseconds.
+
+    `fromisoformat` handles the nine-digit fraction from Python 3.11 on, and
+    the trailing Z from 3.11 as well; both are older than this project.
+    """
+    return int(datetime.datetime.fromisoformat(stamp).timestamp())
+
 
 #: Columns that describe the record rather than the weather. `interval` is
 #: deliberately *not* here: an average weighted by it is what this project
@@ -305,6 +316,78 @@ class InfluxUpload(BaseUpload):
         where = "database" if self.api == "v1" else "bucket"
         return (f"InfluxDB accepted the credentials and the {where} "
                 f"{self.bucket!r}.")
+
+    # -- counting what is there -------------------------------------------
+
+    def counts(self, start: int, stop: int, every: int = 86400,
+               token: str = "") -> dict[int, int]:
+        """How many points this bucket holds per window, oldest first.
+
+        The other half of "a second store is a second truth". Trusting that
+        every write landed is how the two drift, and a drift nobody measured
+        shows up as a Grafana chart that disagrees with the station's own
+        page -- with no way to tell which one is wrong.
+
+        Counted on `interval`, because that field is in every archive record
+        this program writes. Counting on `outTemp` would count the records a
+        thermometer was working for.
+
+        Reading needs a token that reads. The upload's own is a write token
+        if the operator followed the advice on the page, so `token` is here
+        and a 401 says which one is missing rather than looking like an
+        outage.
+        """
+        window = f"{max(60, int(every))}s"
+        flux = "\n".join([
+            f'from(bucket: "{self.bucket}")',
+            f"  |> range(start: {int(start)}, stop: {int(stop)})",
+            f'  |> filter(fn: (r) => r._measurement == "{self.measurement}")',
+            '  |> filter(fn: (r) => r._field == "interval")',
+            *([f'  |> filter(fn: (r) => r.location == "{self.location}")']
+              if self.location else []),
+            # timeSrc "_start" rather than the default: aggregateWindow
+            # stamps a window with its *end*, and subtracting the width back
+            # off is wrong for the last one, which the range cuts short.
+            (f"  |> aggregateWindow(every: {window}, fn: count, "
+             f'createEmpty: true, timeSrc: "_start")'),
+            '  |> keep(columns: ["_time", "_value"])',
+        ])
+
+        path = f"{self.prefix}/api/v2/query"
+        if self.org:
+            path += f"?org={urllib.parse.quote(self.org)}"
+        headers = {"Content-Type": "application/vnd.flux",
+                   "Accept": "application/csv",
+                   "Authorization": f"Token {token or self.token}"}
+        status, text = request(self.host, path, method="POST",
+                               body=flux.encode("utf-8"), headers=headers,
+                               tls=self.tls, port=self.port,
+                               timeout=self.timeout)
+        if status in (401, 403):
+            raise Rejected(
+                "InfluxDB refused the token for reading. A write-only token "
+                "cannot count; pass one that reads.", permanent=True)
+        if status != 200:
+            raise Rejected(f"InfluxDB answered {status}: {text[:200]}")
+
+        found: dict[int, int] = {}
+        header: list[str] = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            cells = line.split(",")
+            if len(cells) > 1 and cells[1] == "result":
+                header = cells
+                continue
+            if not header:
+                continue
+            row = dict(zip(header, cells, strict=False))
+            when, value = row.get("_time"), row.get("_value")
+            if not when or value in (None, ""):
+                continue
+            stamp = _epoch(when)
+            found[stamp] = found.get(stamp, 0) + int(float(value))
+        return dict(sorted(found.items()))
 
     def status(self) -> dict[str, Any]:
         # No token, no password. Everything here is safe to print on a page.

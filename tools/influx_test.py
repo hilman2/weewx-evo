@@ -31,6 +31,7 @@ from __future__ import annotations
 import http.server
 import math
 import sys
+import tempfile
 import threading
 import urllib.parse
 from pathlib import Path
@@ -297,10 +298,21 @@ class Fake(http.server.BaseHTTPRequestHandler):
     message = ""
     seen: ClassVar[list[tuple[str, str, str]]] = []
 
+    #: What a query answers with. InfluxDB returns annotated CSV, and the
+    #: annotation lines are what a naive parser trips over.
+    csv = ""
+
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length).decode("utf-8")
         Fake.seen.append((self.path, self.headers.get("Authorization", ""), body))
+        if "/query" in self.path and Fake.status in (200, 204):
+            payload = Fake.csv.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         payload = Fake.message.encode()
         self.send_response(Fake.status)
         self.send_header("Content-Length", str(len(payload)))
@@ -412,6 +424,129 @@ def test_a_permanent_refusal_stops_the_rest(url: str) -> None:
     check("it stopped at the first batch", len(Fake.seen), 1)
 
 
+# ---------------------------------------------------------------------------
+# Counting both ends.
+# ---------------------------------------------------------------------------
+
+#: What InfluxDB actually sends back, annotation lines and all. Written out
+#: rather than shortened: the datatype and group rows above the header are
+#: exactly what a parser that splits on commas and takes row two gets wrong.
+COUNTS_CSV = """#datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,dateTime:RFC3339,long
+#group,false,false,true,true,false,false
+#default,_result,,,,,
+,result,table,_start,_stop,_time,_value
+,_result,0,2026-08-20T00:00:00Z,2026-08-23T00:00:00Z,2026-08-20T00:00:00Z,288
+,_result,0,2026-08-20T00:00:00Z,2026-08-23T00:00:00Z,2026-08-21T00:00:00Z,287
+,_result,0,2026-08-20T00:00:00Z,2026-08-23T00:00:00Z,2026-08-22T00:00:00Z,0
+"""
+
+
+def test_counting_reads_the_annotated_csv(url: str) -> None:
+    Fake.status, Fake.csv, Fake.seen = 200, COUNTS_CSV, []
+    got = upload(url=url, location="kirchdorf").counts(
+        1755648000, 1755907200, 86400, token="read-only")
+
+    check("three windows", len(got), 3)
+    check("the counts", sorted(got.values()), [0, 287, 288])
+    check("an empty window is kept, not dropped",
+          0 in got.values(), True)
+    check("the keys are seconds, not nanoseconds",
+          all(1_000_000_000 < k < 3_000_000_000 for k in got), True)
+    check("oldest first", list(got) == sorted(got), True)
+
+    path, authorization, flux = Fake.seen[0]
+    check("it asked the query endpoint", "/api/v2/query" in path, True)
+    check("with the token it was given", authorization, "Token read-only")
+    check("counting the field every record has",
+          '_field == "interval"' in flux, True)
+    check("for this location only",
+          'r.location == "kirchdorf"' in flux, True)
+    check("stamped with the window start, not its end",
+          'timeSrc: "_start"' in flux, True)
+    check("and empty windows are asked for",
+          "createEmpty: true" in flux, True)
+
+
+def test_counting_with_a_write_token_says_so(url: str) -> None:
+    """A 401 here is a missing permission, not an outage.
+
+    The page tells the operator to give Grafana a read-only token, so the one
+    in the configuration is a write token, and a write token cannot count.
+    "InfluxDB answered 401" would send somebody to look at the network.
+    """
+    Fake.status, Fake.message = 401, "unauthorized"
+    try:
+        upload(url=url).counts(0, 86400)
+    except Rejected as exc:
+        check("it says a token that reads is needed",
+              "cannot count" in str(exc), True)
+        check("and does not retry it", exc.permanent, True)
+    else:
+        check("a write token is refused", False, True)
+
+
+def test_counting_without_a_location_asks_for_all(url: str) -> None:
+    Fake.status, Fake.csv, Fake.seen = 200, COUNTS_CSV, []
+    upload(url=url, location="").counts(0, 86400)
+    check("no location filter", "r.location" in Fake.seen[0][2], False)
+
+
+def test_both_sides_cut_the_windows_in_the_same_place() -> None:
+    """The comparison is worthless if the two group differently.
+
+    A day grouped on local midnight against a window cut from the epoch
+    compares one day with parts of two, and reports a drift on a database
+    where nothing is wrong. Both sides do plain epoch arithmetic, and this
+    checks it by giving them the same records.
+    """
+    import sqlite3
+
+    from weewx_evo.cli import _archive_counts
+
+    where = Path(tempfile.mkdtemp()) / "weewx.sdb"
+    conn = sqlite3.connect(where)
+    conn.execute("CREATE TABLE archive (dateTime INTEGER PRIMARY KEY, "
+                 "usUnits INTEGER, interval INTEGER, outTemp REAL)")
+    # Three days, one record an hour, and a gap on the middle day.
+    day = 86400
+    start = 1755648000            # a multiple of a day, so a window starts here
+    stamps = []
+    for offset in range(0, 3 * day, 3600):
+        if day <= offset < 2 * day and (offset // 3600) % 2:
+            continue              # every other hour of day two is missing
+        stamps.append(start + offset)
+    conn.executemany("INSERT INTO archive VALUES (?, 16, 60, 20.0)",
+                     [(t,) for t in stamps])
+    conn.commit()
+    conn.close()
+
+    got = _archive_counts(where, start, start + 3 * day, day)
+    check("three windows", len(got), 3)
+    check("the first day is whole", got[start], 24)
+    check("the second is half", got[start + day], 12)
+    check("the third is whole", got[start + 2 * day], 24)
+    check("and the keys are window starts",
+          all(k % day == 0 for k in got), True)
+
+    # The other side has to cut on the same boundaries. Not the same figures:
+    # the fixture and the recorded CSV are from different weeks, and it is
+    # the *grid* they have to agree on. A day grouped on local midnight would
+    # land on 1:00 or 2:00 here and every window would be off by one.
+    server, url = serving()
+    Fake.status, Fake.csv, Fake.seen = 200, COUNTS_CSV, []
+    try:
+        theirs = upload(url=url).counts(start, start + 3 * day, day)
+    finally:
+        server.shutdown()
+        server.server_close()
+    check("InfluxDB cuts on the same grid",
+          all(k % day == 0 for k in theirs), True)
+    check("and both are counting in the same width",
+          {b - a for a, b in zip(sorted(theirs), sorted(theirs)[1:],
+                                 strict=False)},
+          {b - a for a, b in zip(sorted(got), sorted(got)[1:], strict=False)})
+
+
 def main() -> int:
     test_readings_are_converted()
     test_every_value_is_a_float()
@@ -421,6 +556,7 @@ def main() -> int:
     test_interval_is_written()
     test_the_two_apis_write_to_different_paths()
     test_a_bad_address_is_refused_at_setup()
+    test_both_sides_cut_the_windows_in_the_same_place()
 
     server, url = serving()
     try:
@@ -428,6 +564,9 @@ def main() -> int:
         test_check_writes_nothing(url)
         test_a_backfill_is_batched(url)
         test_a_permanent_refusal_stops_the_rest(url)
+        test_counting_reads_the_annotated_csv(url)
+        test_counting_with_a_write_token_says_so(url)
+        test_counting_without_a_location_asks_for_all(url)
     finally:
         server.shutdown()
         server.server_close()

@@ -854,6 +854,85 @@ def cmd_upload_check(args: argparse.Namespace) -> int:
     return 1 if problems else 0
 
 
+def _archive_counts(archive: Path, start: int, stop: int,
+                    every: int) -> dict[int, int]:
+    """Records per window, keyed the same way InfluxDB keys them.
+
+    Plain epoch arithmetic, not calendar days: `aggregateWindow` cuts on
+    multiples of the width from the epoch, so grouping the archive by local
+    midnight here would compare one day with a piece of two.
+    """
+    import sqlite3
+
+    connection = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)
+    try:
+        rows = connection.execute(
+            "SELECT dateTime / ? * ?, COUNT(*) FROM archive "
+            "WHERE dateTime >= ? AND dateTime < ? GROUP BY 1 ORDER BY 1",
+            (every, every, start, stop)).fetchall()
+    finally:
+        connection.close()
+    return {int(when): int(count) for when, count in rows}
+
+
+def cmd_upload_compare(args: argparse.Namespace) -> int:
+    """Count both ends, and say where they differ.
+
+    A second store is a second truth. Trusting that every write landed is how
+    the two drift apart, and a drift nobody measured shows up as a Grafana
+    chart that disagrees with the station's own page -- with nothing to say
+    which of them is right.
+    """
+    cfg = settings_for(args)
+    archive = Path(cfg.get("archive_db") or "")
+    if not archive.exists():
+        print(f"No archive at {archive}.", file=sys.stderr)
+        return 1
+
+    entries = {name: settings for name, settings in configured_uploads(args).items()
+               if str(settings.get("kind", "")) == "influx"
+               and (not args.name or name == args.name)}
+    if not entries:
+        print("No InfluxDB upload is configured; there is nothing to compare.",
+              file=sys.stderr)
+        return 1
+
+    every = int(args.window)
+    stop = int(time.time())
+    start = stop - int(args.days) * 86400
+    here = _archive_counts(archive, start, stop, every)
+
+    problems = 0
+    for name, settings in sorted(entries.items()):
+        try:
+            upload = build_upload(name, dict(settings))
+            there = upload.counts(start, stop, every,
+                                  token=args.read_token or "")
+        except Exception as exc:
+            print(f"  {name}: {exc}")
+            problems += 1
+            continue
+
+        windows = sorted(set(here) | set(there))
+        missing = [(w, here.get(w, 0), there.get(w, 0)) for w in windows
+                   if here.get(w, 0) != there.get(w, 0)]
+        print(f"  {name}: archive {sum(here.values())}, "
+              f"InfluxDB {sum(there.values())}")
+        if not missing:
+            print("    every window agrees")
+            continue
+        problems += 1
+        for when, mine, theirs in missing[:12]:
+            stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(when))
+            print(f"    {stamp}  archive {mine:5}  InfluxDB {theirs:5}  "
+                  f"{theirs - mine:+}")
+        if len(missing) > 12:
+            print(f"    and {len(missing) - 12} more window(s)")
+        print(f"    To fill them: weewx-evo upload run {name} --since "
+              f"{time.strftime('%Y-%m-%d', time.localtime(missing[0][0]))}")
+    return 1 if problems else 0
+
+
 def cmd_upload_run(args: argparse.Namespace) -> int:
     """Send now, whatever the trigger says."""
     entries = configured_uploads(args)
@@ -3807,6 +3886,20 @@ def main(argv: list[str] | None = None) -> int:
     add_common(q)
     q.add_argument("name", nargs="?", help="just this one")
     q.set_defaults(func=cmd_upload_check)
+
+    q = upload_sub.add_parser(
+        "compare", help="count the archive against an InfluxDB upload")
+    add_common(q)
+    q.add_argument("name", nargs="?", help="just this one")
+    q.add_argument("--days", type=int, default=30,
+                   help="how far back to look (default: 30)")
+    q.add_argument("--window", type=int, default=86400,
+                   help="the window to count in, in seconds (default: a day)")
+    q.add_argument("--read-token", default=None,
+                   help="a token that reads. The upload's own is a write "
+                        "token where the advice on the page was followed, "
+                        "and a write token cannot count.")
+    q.set_defaults(func=cmd_upload_compare)
 
     q = upload_sub.add_parser("run", help="send now")
     add_common(q)
