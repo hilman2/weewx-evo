@@ -408,6 +408,146 @@ def test_no_policy_costs_nothing() -> None:
     check("and a record all the same", "outTemp" in built.record, True)
 
 
+# ---------------------------------------------------------------------------
+# Suggesting rules, and the commands.
+# ---------------------------------------------------------------------------
+
+def a_year(readings: list[tuple[str, list[float]]],
+           system: int = units.METRICWX) -> list[dict]:
+    """Records in time order, five minutes apart."""
+    rows = []
+    length = max(len(values) for _obs, values in readings)
+    for index in range(length):
+        row: dict = {"dateTime": START + index * 300, "usUnits": system,
+                     "interval": 5}
+        for obs, values in readings:
+            if index < len(values):
+                row[obs] = values[index]
+        rows.append(row)
+    return rows
+
+
+def test_a_suggestion_stays_inside_physics() -> None:
+    """Four years of data still put the floor for wind speed at -2.
+
+    Room added below the lowest reading is right for a temperature and wrong
+    for anything that cannot go negative, and the suggestion only knows what
+    it has seen.
+    """
+    rows = a_year([("windSpeed", [0.0, 1.0, 2.0, 3.0, 0.5] * 4),
+                   ("outHumidity", [88.0, 92.0, 96.0, 99.0, 94.0] * 4),
+                   ("windDir", [10.0, 350.0, 5.0, 180.0, 90.0] * 4)])
+    seen = quality.watch(rows)
+
+    check("wind speed cannot be negative",
+          seen["windSpeed"].rule().minimum, 0.0)
+    check("humidity cannot pass 100",
+          seen["outHumidity"].rule().maximum, 100.0)
+    check("a direction is a full circle",
+          (seen["windDir"].rule().minimum, seen["windDir"].rule().maximum),
+          (0.0, 360.0))
+
+
+def test_a_suggestion_has_room_in_it() -> None:
+    """A ceiling at the highest reading on record refuses the next hot day."""
+    rows = a_year([("outTemp", [10.0, 15.0, 20.0, 25.0, 12.0] * 4)])
+    rule = quality.watch(rows)["outTemp"].rule()
+    check("the ceiling is above what was seen", rule.maximum > 25.0, True)
+    check("and the floor below it", rule.minimum < 10.0, True)
+
+
+def test_no_spike_rule_for_a_counter_or_a_circle() -> None:
+    """Rain steps, and the wind passing north is not a jump of 358 degrees."""
+    rows = a_year([("rain", [0.0, 0.0, 12.0, 0.0, 0.0] * 4),
+                   ("windDir", [350.0, 10.0, 350.0, 10.0, 350.0] * 4),
+                   ("outTemp", [10.0, 11.0, 10.5, 12.0, 11.5] * 4)])
+    seen = quality.watch(rows)
+    check("none for rain", seen["rain"].rule().spike, None)
+    check("none for a direction", seen["windDir"].rule().spike, None)
+    check("but one for a temperature", seen["outTemp"].rule().spike is not None,
+          True)
+    check("and no stuck rule for rain either", seen["rain"].rule().stuck, None)
+
+
+def test_a_suggestion_is_written_in_the_wanted_units() -> None:
+    """A Fahrenheit console with a file written in Celsius.
+
+    Taking the figures as they are recorded gives a floor of 38 and a ceiling
+    of 86 -- plausible-looking numbers, and the wrong ones the moment they
+    are read back as Celsius.
+    """
+    rows = a_year([("outTemp", [50.0, 60.0, 70.0, 80.0, 55.0] * 4)],
+                  system=units.US)
+    rule = quality.watch(rows, system=units.METRICWX)["outTemp"].rule()
+    check("the ceiling is Celsius", 26 < rule.maximum < 34, True)
+    check("and the floor too", 4 < rule.minimum < 10, True)
+
+
+def test_the_measured_rules_pass_their_own_data() -> None:
+    """The round trip that matters: suggest, then check, and refuse nothing.
+
+    A suggestion that refuses the readings it was worked out from is one
+    nobody can use, and the way to find that out is to run it.
+    """
+    rows = a_year([("outTemp", [10.0, 15.0, 20.0, 25.0, 12.0] * 8),
+                   ("outHumidity", [60.0, 70.0, 80.0, 90.0, 65.0] * 8),
+                   ("windSpeed", [0.0, 2.0, 4.0, 1.0, 3.0] * 8)])
+    seen = quality.watch(rows)
+    policy_out = quality.Policy(
+        limits={obs: entry.rule() for obs, entry in seen.items()})
+
+    checker = quality.Check(policy_out)
+    for row in rows:
+        checker.check(row, row["dateTime"])
+    check("its own history passes", checker.dropped, {})
+
+
+def test_the_suggest_command_writes_readable_toml() -> None:
+    """What it prints has to parse, or the next step is retyping it."""
+    import subprocess
+    import tomllib
+
+    where = Path(tempfile.mkdtemp())
+    (where / "evo.toml").write_text('archive_db = "weewx.sdb"\n',
+                                    encoding="utf-8")
+
+    store = ArchiveStore(where / "weewx.sdb")
+    try:
+        for row in a_year([("outTemp", [10.0, 15.0, 20.0, 25.0, 12.0] * 8),
+                           ("outHumidity", [60.0, 70.0, 88.0, 90.0, 65.0] * 8)]):
+            store.add_record(row)
+        store.conn.commit()
+    finally:
+        store.close()
+
+    import os
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parent.parent / "src"),
+         environment.get("PYTHONPATH", "")])
+    environment["PYTHONIOENCODING"] = "utf-8"
+    done = subprocess.run(
+        [sys.executable, "-m", "weewx_evo.cli", "quality", "suggest",
+         "--config", "evo.toml", "--days", "36500"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=where, env=environment, check=False)
+    check("it succeeds", done.returncode, 0)
+
+    parsed = tomllib.loads(done.stdout)
+    check("it names the system its figures are in",
+          parsed.get("unit_system"), "metricwx")
+    check("and it suggested the readings that are there",
+          sorted(parsed.get("limits", {})), ["outHumidity", "outTemp"])
+    check("humidity is never suggested above what physics allows",
+          parsed["limits"]["outHumidity"]["maximum"] <= 100, True)
+
+    # And what it wrote is loadable by the thing that reads it.
+    (where / "quality.toml").write_text(done.stdout, encoding="utf-8")
+    loaded = quality.load(where / "quality.toml")
+    check("the file it printed loads", sorted(loaded.limits),
+          ["outHumidity", "outTemp"])
+
+
 FILE = """unit_system = "metricwx"
 
 [limits.outTemp]

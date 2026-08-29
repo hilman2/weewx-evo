@@ -84,6 +84,12 @@ log = logging.getLogger(__name__)
 #: file behaving differently on two stations.
 DEFAULT_SYSTEM = "metricwx"
 
+#: Readings that wrap. The difference between 359 and 1 is two degrees, not
+#: 358, and a rule that subtracts them reports a gale every time the wind
+#: passes north. Same property that stops a wind direction being drawn as a
+#: line in `grafana/style.py`.
+CIRCULAR = ("group_direction",)
+
 #: Fields that accumulate rather than measure. A spike rule on one of these
 #: throws away real weather: a cloudburst is a step change and so is a gauge
 #: being emptied, and the two look the same from here.
@@ -223,6 +229,22 @@ def from_dict(raw: dict[str, Any]) -> Policy:
     return Policy(limits=limits, calibration=calibration, system=system)
 
 
+def _circular(obs: str) -> float | None:
+    """The wrap point for a reading that has one, or None."""
+    if units.group_of(obs) in CIRCULAR:
+        return 360.0
+    return None
+
+
+def _apart(value: float, was: float, wrap: float | None) -> float:
+    """How far two readings are apart, the short way round where that
+    applies."""
+    change = abs(value - was)
+    if wrap:
+        change = min(change, wrap - change)
+    return change
+
+
 def _number(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -338,10 +360,11 @@ class Check:
                 if 0 < minutes <= 60:
                     most = _in_system(rule.spike, obs, self.policy.system,
                                       system, difference=True)
-                    if most is not None and abs(value - was) > most * minutes:
+                    change = _apart(value, was, _circular(obs))
+                    if most is not None and change > most * minutes:
                         return Verdict(
                             obs, value, "spike",
-                            f"jumped {abs(value - was):g} from {was:g} in "
+                            f"jumped {change:g} from {was:g} in "
                             f"{minutes:g} min", int(when), station)
 
         if rule.stuck is not None and self._same.get(obs, 0) >= rule.stuck:
@@ -411,6 +434,221 @@ class Check:
             return ""
         worst = sorted(self.dropped.items(), key=lambda x: -x[1])
         return ", ".join(f"{obs} x{count}" for obs, count in worst[:6])
+
+
+# ---------------------------------------------------------------------------
+# Working rules out of what a station has actually recorded.
+# ---------------------------------------------------------------------------
+
+#: How far outside what has been seen a limit is put. A ceiling at exactly
+#: the highest reading ever recorded refuses the next hot afternoon.
+HEADROOM = 0.25
+
+#: And a floor under that, so a reading that barely moves does not get a
+#: limit a millimetre away from it. In the unit of the reading.
+LEAST_HEADROOM = 2.0
+
+#: The most of a reading's whole range its resolution is allowed to be.
+#:
+#: The resolution is measured as the smallest change ever seen between two
+#: readings, which is right for a real sensor and wrong for a coarse record:
+#: a wind speed going 0, 2, 4, 1, 3 has a smallest change of 2, and taking
+#: that as the resolution makes every ordinary step count as "unchanged". The
+#: stuck rule then fires on data it was worked out from. A real sensor's
+#: resolution is a small fraction of its range; anything larger was not a
+#: resolution, it was just the coarsest thing on record.
+FINEST = 0.01
+
+#: The fastest change ever seen, times this. A spike rule at exactly the
+#: largest jump on record refuses the next storm front.
+SPIKE_ALLOWANCE = 2.0
+
+#: What physics allows, whatever the readings say. A suggestion worked out
+#: from four years of data still put the floor for wind speed at -2 and the
+#: ceiling for humidity at 114, because it only knew what it had seen and
+#: added room in both directions.
+#:
+#: By unit group, so a driver's own fields are covered: `units.contribute`
+#: tells us a soil probe reports a percentage, and a percentage runs 0 to
+#: 100 on every station.
+PHYSICAL = {
+    "group_percent": (0.0, 100.0),
+    "group_humidity": (0.0, 100.0),
+    "group_speed": (0.0, None),
+    "group_rain": (0.0, None),
+    "group_rainrate": (0.0, None),
+    "group_direction": (0.0, 360.0),
+    "group_radiation": (0.0, None),
+    "group_uv": (0.0, None),
+    "group_distance": (0.0, None),
+    "group_interval": (0.0, None),
+    "group_count": (0.0, None),
+}
+
+
+@dataclass
+class Seen:
+    """What one reading has actually done. The basis for a suggestion."""
+
+    obs: str
+    count: int = 0
+    lowest: float = math.inf
+    highest: float = -math.inf
+    #: The fastest change per minute between consecutive readings.
+    fastest: float = 0.0
+    #: The longest run of readings that did not move, and by how little.
+    longest_still: int = 0
+    #: The smallest non-zero step between consecutive readings -- the
+    #: sensor's resolution, measured rather than looked up.
+    step: float = math.inf
+
+    def rule(self) -> Rule:
+        """A rule with room in it, inside what physics allows.
+
+        Never tighter than what has been seen, and never wider than what can
+        happen: the room added below the lowest reading would otherwise put
+        the floor for wind speed at -2.
+        """
+        span = max(self.highest - self.lowest, 0.0)
+        room = max(span * HEADROOM, LEAST_HEADROOM)
+        floor, ceiling = PHYSICAL.get(units.group_of(self.obs) or "",
+                                      (None, None))
+
+        low = self.lowest - room
+        if floor is not None:
+            low = max(low, floor)
+        high = self.highest + room
+        if ceiling is not None:
+            high = min(high, ceiling)
+
+        counter = self.obs in COUNTERS
+        return Rule(
+            minimum=round(low, 3),
+            maximum=round(high, 3),
+            # No spike rule for a counter, and none for a reading that
+            # wraps: the wind passing north is not a jump of 358 degrees.
+            spike=(round(self.fastest * SPIKE_ALLOWANCE, 3)
+                   if self.fastest > 0 and not counter
+                   and not _circular(self.obs) else None),
+            # Twice the longest quiet spell on record, and never fewer than
+            # ten: a rule at the observed figure fires on the first calm
+            # night that is calmer than the ones measured.
+            #
+            # Never for a counter. Rain sits at zero for a fortnight in
+            # August, and that is the weather rather than a dead gauge.
+            stuck=(max(10, self.longest_still * 2)
+                   if self.longest_still and not counter else None),
+            resolution=self.resolution())
+
+    def resolution(self) -> float:
+        """The smallest step this sensor makes, as far as can be told."""
+        if not math.isfinite(self.step):
+            return 0.0
+        span = max(self.highest - self.lowest, 0.0)
+        finest = span * FINEST if span else self.step
+        return round(min(self.step, finest), 4)
+
+    def as_toml(self) -> str:
+        rule = self.rule()
+        lines = [f"[limits.{self.obs}]",
+                 f"minimum = {rule.minimum:g}",
+                 f"maximum = {rule.maximum:g}"]
+        if rule.spike is not None:
+            lines.append(f"spike = {rule.spike:g}      "
+                         f"# per minute; fastest seen {self.fastest:g}")
+        if rule.stuck is not None:
+            lines.append(f"stuck = {rule.stuck}        "
+                         f"# longest still spell seen: {self.longest_still}")
+        if rule.resolution:
+            lines.append(f"resolution = {rule.resolution:g}   "
+                         f"# smallest step seen: {self.step:g}")
+        return "\n".join(lines)
+
+
+def watch(rows: Any, fields: Any = None,
+          system: int = units.METRICWX) -> dict[str, Seen]:
+    """Measure what each reading has done, over records in time order.
+
+    Fed the archive for the limits and the live table for the rest. Both,
+    because they answer different questions: the archive has years and knows
+    how cold it gets, and only the live table has the packet-to-packet steps
+    a spike rule and a resolution are about. Suggesting a spike rule from
+    five-minute records would produce one several times too tight, because
+    the weather has five minutes to move between them.
+    """
+    seen: dict[str, Seen] = {}
+    last: dict[str, tuple[float, float]] = {}
+    still: dict[str, int] = {}
+
+    for row in rows:
+        when = float(row.get("dateTime") or 0)
+        # Converted into the system the file is written in. Without this a
+        # station whose console reports Fahrenheit gets a floor of 38 and a
+        # ceiling of 86, which look like plausible figures and are the wrong
+        # ones the moment they are read back as Celsius.
+        was = units.system_from(row.get("usUnits"), default=system)
+        for obs, value in row.items():
+            if obs in ("dateTime", "usUnits", "interval"):
+                continue
+            if fields is not None and obs not in fields:
+                continue
+            number = _number(value)
+            if number is None or not math.isfinite(number):
+                continue
+            if was != system:
+                converted = _in_system(number, obs, was, system)
+                if converted is None:
+                    continue
+                number = converted
+
+            entry = seen.get(obs)
+            if entry is None:
+                entry = seen[obs] = Seen(obs)
+            entry.count += 1
+            entry.lowest = min(entry.lowest, number)
+            entry.highest = max(entry.highest, number)
+
+            previous = last.get(obs)
+            if previous is not None:
+                # Not `was`: that holds the row's unit system, and shadowing
+                # it here made every field after the first convert as though
+                # the previous *reading* were a system number. One field per
+                # record hid it completely; two showed it at once.
+                before, then = previous
+                minutes = (when - then) / 60.0
+                change = _apart(number, before, _circular(obs))
+                if 0 < minutes <= 60:
+                    entry.fastest = max(entry.fastest, change / minutes)
+                if change == 0:
+                    still[obs] = still.get(obs, 1) + 1
+                    entry.longest_still = max(entry.longest_still, still[obs])
+                else:
+                    still[obs] = 1
+                    entry.step = min(entry.step, change)
+            last[obs] = (number, when)
+
+    return {obs: entry for obs, entry in seen.items() if entry.count > 1}
+
+
+def merge(limits: dict[str, Seen], rates: dict[str, Seen]) -> dict[str, Seen]:
+    """The floors and ceilings from one measurement, the rest from another.
+
+    The archive knows how cold it gets; the live table knows how fast the
+    weather moves between two packets. Neither knows both.
+    """
+    out: dict[str, Seen] = {}
+    for obs, wide in limits.items():
+        close = rates.get(obs)
+        out[obs] = Seen(
+            obs=obs, count=wide.count,
+            lowest=wide.lowest, highest=wide.highest,
+            fastest=close.fastest if close else wide.fastest,
+            longest_still=close.longest_still if close else 0,
+            step=close.step if close else math.inf)
+    for obs, close in rates.items():
+        if obs not in out:
+            out[obs] = close
+    return out
 
 
 # ---------------------------------------------------------------------------

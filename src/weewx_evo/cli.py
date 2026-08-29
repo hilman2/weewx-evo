@@ -3584,6 +3584,148 @@ def start_feeds(args: argparse.Namespace,
     return runner
 
 
+def _archive_rows(archive: Path, since: int, limit: int = 0) -> list[dict]:
+    """Records out of the archive, oldest first."""
+    import sqlite3
+
+    connection = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        sql = "SELECT * FROM archive WHERE dateTime >= ? ORDER BY dateTime"
+        if limit:
+            sql += f" LIMIT {int(limit)}"
+        return [dict(row) for row in connection.execute(sql, (since,))]
+    finally:
+        connection.close()
+
+
+def cmd_quality_suggest(args: argparse.Namespace) -> int:
+    """Work rules out of what this station has actually recorded.
+
+    Nobody can type a plausible ceiling for `soilMoist3` out of their head,
+    and a guessed limit throws away readings. So the figures come off the
+    station: the archive for the floors and ceilings, because it has years and
+    knows how cold it gets, and the live table for the spike and stuck rules,
+    because only it has the packet-to-packet steps those are about. Suggesting
+    a spike rule from five-minute records gives one several times too tight --
+    the weather has five minutes to move between them.
+    """
+    from . import quality as quality_module
+
+    cfg = settings_for(args)
+    install_driver_groups()
+    archive = Path(cfg.get("archive_db") or "")
+    if not archive.exists():
+        print(f"No archive at {archive}.", file=sys.stderr)
+        return 1
+
+    since = int(time.time()) - int(args.days) * 86400
+    rows = _archive_rows(archive, since)
+    if not rows:
+        print(f"No records in the last {args.days} days.", file=sys.stderr)
+        return 1
+
+    system = units.system_from(args.units or "metricwx", default=units.METRICWX)
+    wide = quality_module.watch(rows, system=system)
+
+    close: dict[str, Any] = {}
+    live_db = Path(cfg.get("live_db") or "")
+    if live_db.exists():
+        with LiveStore(live_db) as live:
+            first, last = live.span()
+            if first and last:
+                packets = [p.record() for p in live.packets(first - 1, last)]
+                close = quality_module.watch(packets, system=system)
+    if not close:
+        print("# No live packets. The spike figures below therefore come from "
+              "archive\n# records and are several times too tight, and there "
+              "are no stuck rules\n# at all: neither can be worked out from "
+              "five-minute records.",
+              file=sys.stderr)
+
+    seen = quality_module.merge(wide, close)
+    wanted = set(args.fields.split(",")) if args.fields else None
+
+    print(f'# Written by `weewx-evo quality suggest` from {len(rows)} '
+          f'record(s)')
+    print(f"# over {args.days} days, and {len(close)} reading(s) of live "
+          f"packets.")
+    print("#")
+    print("# Read it, then keep the lines you agree with. Every figure has "
+          "room in")
+    print("# it, but a station that has not seen a cold winter yet has not "
+          "seen its")
+    print("# own floor either.")
+    print()
+    print(f'unit_system = "{units.name(system).lower()}"')
+    for obs in sorted(seen):
+        if wanted is not None and obs not in wanted:
+            continue
+        print()
+        print(seen[obs].as_toml())
+    return 0
+
+
+def cmd_quality_check(args: argparse.Namespace) -> int:
+    """Run the configured rules over what is stored, and change nothing.
+
+    The answer to "what would this cost me". A limit set too tightly is the
+    expensive mistake here, and the only way to see it before it happens is
+    to run it over readings that are already known to be good.
+    """
+    from . import quality as quality_module
+
+    cfg = settings_for(args)
+    install_driver_groups()
+    policy = read_quality(args, cfg)
+    if not policy:
+        print("No rules are configured. See `weewx-evo quality suggest`.",
+              file=sys.stderr)
+        return 1
+
+    archive = Path(cfg.get("archive_db") or "")
+    since = int(time.time()) - int(args.days) * 86400
+    rows = _archive_rows(archive, since) if archive.exists() else []
+    if not rows:
+        print(f"No records in the last {args.days} days.", file=sys.stderr)
+        return 1
+
+    checker = quality_module.Check(policy)
+    verdicts: list[Any] = []
+    for row in rows:
+        when = float(row.get("dateTime") or 0)
+        system = units.system_from(row.get("usUnits"), default=units.METRICWX)
+        corrected = checker.calibrate(row, "", system)
+        _kept, said = checker.check(corrected, when, "", system)
+        verdicts.extend(said)
+
+    print(f"{len(rows)} record(s) over {args.days} days.")
+    if not verdicts:
+        print("  Nothing would be refused.")
+        return 0
+
+    print(f"  {len(verdicts)} reading(s) would be refused:")
+    for obs, count in sorted(checker.dropped.items(), key=lambda x: -x[1]):
+        share = 100.0 * count / len(rows)
+        print(f"    {obs:22} {count:6}  ({share:.1f}% of records)")
+
+    print()
+    print("  The first few, in full:")
+    for verdict in verdicts[:8]:
+        stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(verdict.when))
+        print(f"    {stamp}  {verdict}")
+
+    # A rule refusing a large share of a station's own history is a rule
+    # about the rule, not about the sensor.
+    worst = max(checker.dropped.values())
+    if worst > len(rows) * 0.05:
+        print()
+        print("  More than one record in twenty is refused. That is usually "
+              "a limit set\n  too tightly rather than a sensor at fault.")
+        return 1
+    return 0
+
+
 def _grafana_out(args: argparse.Namespace, cfg: Any) -> Path:
     """Where the provisioning files go.
 
@@ -4064,6 +4206,28 @@ def main(argv: list[str] | None = None) -> int:
                    help="skip the diagnostic page that draws it all")
     q.add_argument("--plots", default=None)
     q.set_defaults(func=cmd_plots_run)
+
+    p = sub.add_parser("quality", help="calibration and limits")
+    quality_sub = p.add_subparsers(dest="quality_command", required=True)
+
+    q = quality_sub.add_parser(
+        "suggest", help="rules worked out from what this station recorded")
+    add_common(q)
+    q.add_argument("--days", type=int, default=365,
+                   help="how much history to look at (default: a year)")
+    q.add_argument("--units", default=None,
+                   help="what system to write the figures in "
+                        "(metricwx, metric, us; default: metricwx)")
+    q.add_argument("--fields", default=None,
+                   help="only these readings, comma separated")
+    q.set_defaults(func=cmd_quality_suggest)
+
+    q = quality_sub.add_parser(
+        "check", help="what the configured rules would refuse")
+    add_common(q)
+    q.add_argument("--days", type=int, default=30,
+                   help="how much history to run them over (default: 30)")
+    q.set_defaults(func=cmd_quality_check)
 
     p = sub.add_parser("grafana", help="dashboards for the InfluxDB uploads")
     grafana_sub = p.add_subparsers(dest="grafana_command", required=True)
