@@ -23,9 +23,16 @@ caching, `get_raw_data` walking the ring backwards -- runs only against a
 device. Those are also the parts where the stand-in's `WeeWxIOError` gets
 raised and caught.
 
-**What it cannot tell you.** A console that stops answering mid-block, a hub
-that re-enumerates, the firmware bug where the pointer jumps. Those need
-hardware.
+**What this is and is not asking.** Not whether the driver reads a WH1080:
+that is WeeWX's code and pyusb's, both unchanged, and a hub that
+re-enumerates or a console that stops answering mid-block does the same
+thing to WeeWX. The question is whether the driver behaves *differently*
+against our stand-in, and both sides see this same memory.
+
+What stays out of reach is `sync()`, and for a reason worth naming: it waits
+for the console to write its *next* reading in order to date the last one.
+Simulating that means simulating the passage of time, and a test built on
+faked time reports the fake.
 
 Used by `tools/fousb_test.py`.
 """

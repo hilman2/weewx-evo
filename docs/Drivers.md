@@ -359,8 +359,22 @@ Where a protocol simulator exists they are compared on readings; the rest on
 **how they fail** — different exceptions, the same on both sides. The report
 says which is which, because "all the same" reads stronger than it is.
 
-What no simulator can tell you: timing, a console answering late, an adapter
-dropping a byte, firmware lying about its page count. Those need hardware.
+**What this is and is not asking.** Not whether a driver reads its hardware
+correctly — that is WeeWX's code and pyusb's or pyserial's, all unchanged, so
+a console answering late or an adapter dropping a byte does the same thing
+under WeeWX. The question is whether a driver behaves *differently* against
+the stand-in than against a real WeeWX, and that one has no hardware in it:
+both sides see the same device.
+
+What stays open is coverage, not equipment — a branch neither run reaches
+that calls something transcribed. The largest of those is `weewx.units`,
+which is the one piece written out rather than handed through, so
+`standin_test.py` converts every field of the schema between all three unit
+systems and compares with WeeWX's own `to_std_system`. Two differences are
+known and named there: `vaporPressure` and `satVaporPressure`, which WeeWX
+gives no group at all and we place in `group_pressure` — correctly, since
+`derive.py` converts them to the record's own unit — and no driver sends
+either.
 
 ## `parsers.py`
 

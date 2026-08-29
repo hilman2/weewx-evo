@@ -23,9 +23,12 @@ contain a space. That rules the test out on a stock Windows Python, whose
 executable lives under "Program Files" -- `runnable()` says so and the test
 skips rather than reporting a failure that is about the path.
 
-**What it cannot tell you.** Whether rtl_433 is installed, whether the dongle
-is tuned, whether a sensor two gardens away is being read as yours. Those
-need a radio.
+**What this is and is not asking.** Not whether weewx-sdr reads a radio:
+whether rtl_433 is installed, whether the dongle is tuned, whether the sensor
+it hears is two gardens away -- all of that is the same under WeeWX, because
+it is the same driver reading the same program. The question is whether it
+behaves *differently* on our stand-in, and both sides run this same child
+process.
 
 Used by `tools/sdr_test.py`.
 """

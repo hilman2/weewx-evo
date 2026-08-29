@@ -19,9 +19,18 @@ The bytes come from the driver's own decoding tables rather than from a
 recording, so what this measures is the round trip: encode with the table,
 have the driver decode it, and get the number back.
 
-**What it cannot tell you.** Timing, a console that answers slowly, a serial
-adapter that drops a byte, firmware that lies about its page count. Those need
-hardware, and no simulator is honest about them.
+**What this is and is not asking.** Not whether the driver works: that is
+WeeWX's code, unchanged, and fifteen years of stations have answered it.
+Timing, a console that answers late, an adapter that drops a byte, firmware
+that lies about its page count -- all of those behave the same under WeeWX,
+because the driver and pyserial are the same driver and the same pyserial.
+
+The question is whether the driver behaves *differently* against our stand-in
+than against a real WeeWX, and that one has no hardware in it: both sides see
+the same device. What is left open is coverage, not equipment -- a branch
+neither run reaches, in a driver's error handling, that calls something we
+transcribed. `standin_test.py` closes the largest of those by comparing every
+field of `weewx.units` against WeeWX's own.
 
 Used by `tools/vantage_test.py`.
 """

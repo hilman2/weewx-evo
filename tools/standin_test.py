@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import subprocess
 import sys
 import types
@@ -204,6 +205,9 @@ def main() -> int:
     print("\nand every other driver in WeeWX's tree")
     _every_driver(path.parent)
 
+    print("\nweewx.units, which is transcribed rather than handed through")
+    _compare_units()
+
     print("\nwhat the stand-in claims to be")
     from weewx_evo.ingest import weewxnames
     print(f"  {weewxnames.describe()}")
@@ -266,6 +270,31 @@ def _compare_rain() -> None:
           same, len(RAIN_CASES))
 
 
+#: Fields where our answer and WeeWX's differ on purpose. Same idea as the
+#: `KNOWN` list in `unitcheck.py`: the point is that our drift is *their*
+#: drift, not that there is none, and a difference nobody wrote down is
+#: indistinguishable from a mistake.
+#:
+#: Both of these are outside a driver's reach -- no driver in WeeWX's tree
+#: sends either field -- so they cannot change a reading that came off a
+#: console. They are here because they showed up in the comparison and are
+#: worth a name.
+KNOWN_UNIT_DIFFERENCES = {
+    # WeeWX has no group for these at all (`obs_group_dict` returns None), so
+    # it leaves them as they are. We put them in `group_pressure`, and that
+    # is right: `derive.py` computes them and converts to the record's own
+    # unit on the way out (`* from_mbar`), so a US record really does hold
+    # inHg. WeeWX simply never gave the two fields a group.
+    "vaporPressure",
+    "satVaporPressure",
+}
+
+#: And one where the *exception* differs. WeeWX's conversion table has no
+#: `km_per_hour2 -> mile_per_hour2`, so it raises KeyError from the missing
+#: key; ours raises ValueError naming the pair. Nothing sends a squared
+#: speed, but a caller catching one and not the other would notice.
+KNOWN_ERROR_DIFFERENCE = "km_per_hour2"
+
 #: Drivers that cannot import here for a reason that is not ours. `ws23xx`
 #: uses `fcntl`, which is POSIX and simply absent on Windows -- counting it
 #: as a miss there would mean the number says which machine ran the test.
@@ -307,6 +336,93 @@ def _every_driver(folder: Path) -> None:
 
     print(f"  {', '.join(worked)}")
     check("every driver imports against the stand-in", len(broke), 0)
+
+
+def _compare_units() -> None:
+    """`to_std_system` on every field of the schema, against WeeWX's own.
+
+    The rest of the stand-in hands something through or is three lines long.
+    This one walks a record and converts every field in it, which makes it
+    the piece where a difference can hide -- and the one a driver reaches
+    through `GenWithConvert`.
+
+    Every field the schema knows a group for, in every direction between the
+    three unit systems. Values that are not round: 0.0 and 1.0 survive
+    several wrong conversions unchanged.
+    """
+    from weewx_evo import units as ours
+
+    fields = sorted(ours.GROUPS)
+    systems = [1, 16, 17]
+
+    def record(system):
+        rec = {"dateTime": 1778742000, "usUnits": system}
+        for index, field in enumerate(fields):
+            rec[field] = 3.7 + index * 0.13
+        return rec
+
+    cases = [(record(s), t) for s in systems for t in systems]
+    got = subprocess.run(
+        [sys.executable, "-c", _UNITS_SCRIPT, json.dumps(cases)],
+        capture_output=True, text=True, cwd=str(ROOT), check=False)
+    if got.returncode != 0:
+        print("  WeeWX is not installed here, so there is nothing to compare "
+              "against")
+        return
+
+    theirs = json.loads(got.stdout)
+    from weewx_evo.ingest.weewxnames import _units_module
+
+    mine_mod = _units_module()
+    unexpected = []
+    for (rec, target), want in zip(cases, theirs, strict=True):
+        try:
+            mine = mine_mod.to_std_system(dict(rec), target)
+            mine = {k: (round(v, 8) if isinstance(v, float) else v)
+                    for k, v in mine.items()}
+        except Exception as exc:
+            mine = {"__error__": f"{type(exc).__name__}: {exc}"}
+        for field in sorted(set(mine) | set(want)):
+            if mine.get(field) == want.get(field):
+                continue
+            if field in KNOWN_UNIT_DIFFERENCES:
+                continue
+            if field == "__error__" and KNOWN_ERROR_DIFFERENCE in str(
+                    want.get(field, "")) + str(mine.get(field, "")):
+                continue
+            unexpected.append(
+                f"{field} ({rec['usUnits']}->{target}): "
+                f"ours {mine.get(field)!r}, WeeWX {want.get(field)!r}")
+
+    for one in unexpected[:6]:
+        print(f"    {one}")
+    print(f"  {len(fields)} fields over {len(cases)} system pairs, "
+          f"{len(KNOWN_UNIT_DIFFERENCES)} known difference(s) allowed")
+    check("nothing else converts differently", len(unexpected), 0)
+
+
+#: WeeWX's own `to_std_system`, in a process with nothing standing in.
+_UNITS_SCRIPT = r"""
+import json, sys
+try:
+    import weewx.units as u
+except ImportError as exc:
+    print(exc)
+    raise SystemExit(1)
+if getattr(u, "__file__", None) is None:
+    print("that weewx.units is a stand-in, not the real one")
+    raise SystemExit(1)
+
+out = []
+for rec, target in json.loads(sys.argv[1]):
+    try:
+        got = u.to_std_system(dict(rec), target)
+        out.append({k: (round(v, 8) if isinstance(v, float) else v)
+                    for k, v in got.items()})
+    except Exception as exc:
+        out.append({"__error__": f"{type(exc).__name__}: {exc}"})
+print(json.dumps(out))
+"""
 
 
 #: One driver, in a process where weewx cannot be imported and every hardware
