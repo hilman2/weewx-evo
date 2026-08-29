@@ -31,6 +31,8 @@ from .series import AGGREGATES
 
 log = logging.getLogger(__name__)
 
+NEWLINE = "\n"
+
 NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 #: What a line can be drawn as, and what that means.
@@ -82,7 +84,22 @@ def path_for(admin: Any) -> Path:
 
 
 def load(admin: Any) -> plot_defs.PlotSet:
-    return plot_defs.load(path_for(admin))
+    """The charts, laying the starter set down on a first run.
+
+    Here as well as in `cli.load_plots`, because these are the two ways a
+    station first has charts and neither one goes through the other: `serve`
+    reads them to run the feeds, and this page reads them to show them. A
+    fresh installation that had only ever opened the settings page saw an
+    empty Charts page and a website with nothing on it.
+    """
+    where = path_for(admin)
+    if not where.exists() and not getattr(admin, "read_only", False):
+        from . import starter
+
+        said = starter.install_plots(where)
+        if said:
+            log.info("%s", said)
+    return plot_defs.load(where)
 
 
 def store(admin: Any, charts: plot_defs.PlotSet, note: str = "") -> str:
@@ -274,6 +291,16 @@ def bring_over(admin: Any, source: str, replace: bool,
     if not len(found.plots):
         return "", f"Nothing that looked like a chart in {where}."
 
+    # An untouched starter set is replaced whether or not the box is
+    # ticked. Those charts are not a decision anybody made -- they were
+    # here on arrival -- and half of them share names with what a WeeWX
+    # skin brings, so an import that "added" to them added nothing and
+    # said so cheerfully.
+    from . import starter
+
+    if not replace and starter.is_starter(path_for(admin)):
+        replace = True
+
     charts = found.plots if replace else load(admin)
     added = kept = 0
     if not replace:
@@ -304,38 +331,89 @@ def bring_over(admin: Any, source: str, replace: bool,
 # -- rendering -------------------------------------------------------------
 
 def nav(admin: Any, active: str) -> list[str]:
-    """The charts, in the sidebar, grouped the way they are grouped."""
+    """One entry. The charts themselves are on its page.
+
+    They used to be four collapsed groups plus two "add" links, which was
+    already the tidied version of a hundred flat entries. One line is the
+    version that does not grow at all -- and a hundred charts want a page
+    with room for their spans and their lines, not a sidebar.
+    """
     charts = load(admin)
-    out = ['<p class="navhead">Charts</p>']
+    here = (active in ("charts", "new-plot", "import-plots")
+            or active.startswith("plot:"))
+    current = " aria-current='page'" if here else ""
+    return [(f'<a href="./charts"{current}>Charts'
+             f'<span class="count">{len(charts)}</span></a>')]
+
+
+def overview(admin: Any, message: str = "", error: str = "") -> str:
+    """Every chart, grouped by the span it covers.
+
+    A hundred charts was four collapsed groups in the sidebar, which was the
+    tidied version of a hundred flat links. Neither had room to say what a
+    chart draws -- and "outTemp, dewpoint" beside the name is the difference
+    between finding one and opening six.
+    """
+    charts = load(admin)
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    # The banner above the page says it. Printing it a second time in the
+    # body was two "Saved." one under the other, which reads as two things
+    # having happened.
+    said = ""
+
+    add = ""
+    if not admin.read_only:
+        add = ('<div class="actions">'
+               '<a class="button" href="./new-plot">Add a chart</a>'
+               '<a class="button quiet" href="./import-plots">'
+               "Import from a skin</a></div>")
+
     if not len(charts):
-        out.append('<p class="navempty">None yet. Add one, or bring a whole '
-                   'set over from an existing WeeWX skin.</p>')
+        return f'''
+<h2>Charts</h2>
+{problem}{said}
+<p class="lede">A chart is a definition, not a picture: the feeds draw it,
+   each in their own way. One set serves the PNGs, the JSON and every skin.</p>
+{add}
+<p class="navempty">None yet. Add one, or bring a whole set over from an
+   existing WeeWX skin -- the importer reads a skin.conf and reports what it
+   could not take.</p>
+'''
 
     groups = charts.by_span()
-    # An imported Seasons skin is a hundred charts. Flat, that is a sidebar
-    # nobody can find anything in; collapsed, it is four lines. The group
-    # holding the chart being edited opens itself, so following a link never
-    # loses your place.
+    # The same strip the long forms have. Ninety-two charts in four blocks
+    # is a page somebody scrolls past three times to reach the fourth.
+    jump = "".join(
+        f'<a href="#span-{html.escape(span)}">{html.escape(span)}'
+        f'<span class="count">{len(groups[span])}</span></a>'
+        for span in sorted(groups))
+    blocks = [f'<nav class="jump" aria-label="Spans">{jump}</nav>']
     for span in sorted(groups):
-        group = groups[span]
-        holding = any(f"plot:{p.name}" == active for p in group)
-        out.append(f'<details class="navgroup"{" open" if holding else ""}>')
-        out.append(f'<summary>{html.escape(span)}'
-                   f'<span class="count">{len(group)}</span></summary>')
-        for plot in group:
-            key = f"plot:{plot.name}"
-            current = " aria-current='page'" if key == active else ""
-            out.append(f'<a class="sub" href="./{html.escape(key)}"{current}>'
-                       f"{html.escape(plot.name)}</a>")
-        out.append("</details>")
+        rows = []
+        for plot in groups[span]:
+            drawn = ", ".join(line.obs for line in plot.lines[:4])
+            if len(plot.lines) > 4:
+                drawn += f", and {len(plot.lines) - 4} more"
+            rows.append(f'''
+      <li>
+        <a href="./plot:{html.escape(plot.name)}">{html.escape(plot.name)}</a>
+        <span class="note">{html.escape(drawn)}</span>
+      </li>''')
+        blocks.append(f'''
+  <section class="flow" id="span-{html.escape(span)}">
+    <div class="made"><span class="title">{html.escape(span)}</span>
+      <span class="note aside">{len(groups[span])} chart(s)</span></div>
+    <ul class="sends plain">{NEWLINE.join(rows)}</ul>
+  </section>''')
 
-    if not admin.read_only:
-        current = " aria-current='page'" if active == "new-plot" else ""
-        out.append(f'<a class="add" href="./new-plot"{current}>+ Add a chart</a>')
-        current = " aria-current='page'" if active == "import-plots" else ""
-        out.append(f'<a class="add" href="./import-plots"{current}>'
-                   "+ Import from a skin</a>")
-    return out
+    return f'''
+<h2>Charts</h2>
+{problem}{said}
+<p class="lede">A chart is a definition, not a picture: the feeds draw it,
+   each in their own way. One set serves the PNGs, the JSON and every skin.</p>
+{add}
+{NEWLINE.join(blocks)}
+'''
 
 
 def _select(name: str, options: tuple, value: Any, extra: str = "") -> str:
@@ -514,7 +592,6 @@ def new(admin: Any, columns: set[str], error: str = "",
                   for s, v in plot_defs.SPANS.items())
     return f'''
 <section class="group">
-  <h3>Add a chart</h3>
   <p class="lede">A name, how far back, and one reading. Everything else is on
      the page that appears next -- asking for twelve settings before there is
      anything to save them in is how a form loses what somebody typed.</p>
@@ -562,7 +639,6 @@ def importer(admin: Any, message: str = "", error: str = "",
      same charts. Everything about drawing a picture is left behind, and it
      says what it left. Nothing is overwritten unless you ask.</p>
   {f'<p class="err">{html.escape(error)}</p>' if error else ""}
-  {f'<p class="ok">{html.escape(message)}</p>' if message else ""}
 
   <form method="post" action="./import-plots" enctype="multipart/form-data">
     <fieldset class="line">

@@ -135,7 +135,19 @@ def with_forecast(database: Path, into: Path, language: str = "de") -> tuple:
     shutil.copy(database, archive)
 
     now = int(time.time())
-    midnight = now - (now % 86400)
+    # Local midnight, not UTC. `now - now % 86400` is midnight in UTC, which
+    # is 02:00 here in summer -- so between midnight and two in the morning
+    # the first of the seven days was already in the past, `days()` dropped
+    # it, and this failed with "6 day card(s), wanted 7". A test that is red
+    # for two hours a night and green the rest of the time reads as a flaky
+    # forecast rather than as its own arithmetic.
+    #
+    # It is also what the source does: Open-Meteo stamps a day at local
+    # midnight, and days are days here for the same reason `archive_day_*`
+    # is keyed that way.
+    stamp = time.localtime(now)
+    midnight = int(time.mktime((stamp.tm_year, stamp.tm_mon, stamp.tm_mday,
+                                0, 0, 0, 0, 0, -1)))
     store = ForecastStore(beside / "forecast.sdb")
     store.store(Reading(
         source="open-meteo", issued=now - 3600,

@@ -29,6 +29,7 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from .. import roles
 from ..db.live import LiveStore, Packet
 from ..netaccess import PRIVATE_ONLY, Access
 from ..ratelimit import Limits
@@ -52,11 +53,25 @@ class Ingest:
                  default_driver: str = "ecowitt",
                  registry: drivers.Registry | None = None,
                  access: Access = PRIVATE_ONLY,
-                 limits: Limits | None = None) -> None:
+                 limits: Limits | None = None,
+                 stations: object | None = None,
+                 sightings: object | None = None) -> None:
         self.store = store
         self.token = token
         self.default_driver = default_driver
         self.registry = registry or drivers.DEFAULT
+        #: Which consoles are announced, and what to call them. None means
+        #: nothing is announced, which is every installation that has not been
+        #: through the settings page yet -- so packets keep the identity their
+        #: driver gave them and nothing changes.
+        self.stations = stations
+        #: Where uploads from anything unannounced are noted.
+        self.sightings = sightings
+        #: Called after packets are stored, for feeds that want every reading
+        #: rather than every record. A callback rather than a reference to the
+        #: feed runner: the listener has no business knowing feeds exist, and
+        #: the two are wired together where both are already in scope.
+        self.on_packets: object | None = None
         # Bound to everything, answering only what is on a private network. A
         # console is on the same wifi, and a reverse proxy connects from
         # loopback. Anything further away is a decision somebody makes.
@@ -72,35 +87,81 @@ class Ingest:
         self.last_packet: float | None = None
         self._lock = threading.Lock()
 
-    def authorised(self, path: str) -> bool:
-        """Whether a request path carries the token.
+    def authorised(self, path: str, query: str = "") -> bool:
+        """Whether a request carries the token.
 
         The token is a path segment rather than a header because consoles
         cannot send headers. It is the only thing between the open internet and
         the measurement series, so a listener configured without one says so
         loudly at startup.
+
+        `query` is the second place it may sit, and only for one reason:
+        Weather Underground protocol consoles have no path field. Host and
+        port are all most of them offer, and the path is fixed in firmware --
+        so for those the token goes in `PASSWORD`, which every one of them
+        has, was always meant to hold a shared secret, and is where an
+        operator looks for one. `ID` is accepted too, because a few validate
+        the shape of the password field.
+
+        Nothing is weakened by it: the token is a path segment on every other
+        upload and lands in the same access logs either way. What would weaken
+        it is the alternative people reach for otherwise, which is running the
+        listener with no token at all because their console cannot send one.
         """
         if self.token is None:
             return True
-        return self.token in path.strip("/").split("/")
+        if self.token in path.strip("/").split("/"):
+            return True
+        if not query:
+            return False
+        from urllib.parse import parse_qsl
+        for name, value in parse_qsl(query, keep_blank_values=True):
+            if name in ("PASSWORD", "ID") and value == self.token:
+                return True
+        return False
 
-    def driver_for(self, path: str) -> str:
-        """Pick a driver from the path, e.g. /<token>/json/ or /<token>/ecowitt/."""
+    def driver_for(self, path: str, body: bytes = b"") -> str:
+        """Which driver reads this upload.
+
+        The path first, because a console that can be told one has said what
+        it is: `/<token>/ecowitt/`. Nothing to guess at, and it costs a string
+        comparison.
+
+        Where the path says nothing, the drivers are asked. That happens more
+        often than it sounds: an Ambient WS-2902 has no server-path field at
+        all and is reached by pointing DNS at us, so the path is whatever its
+        firmware burned in; several firmwares refuse to upload with an empty
+        path, so people type `index.php?` to get past it. And a path typed
+        wrongly is the same situation with worse symptoms -- without this the
+        upload goes to the default driver, gets about half its fields placed,
+        and looks like a station with dead sensors.
+
+        The core still knows no weather protocol: it asks and compares
+        numbers. Which byte in a body means Ecowitt is the Ecowitt driver's
+        business, and a driver added later brings its own answer with it.
+        """
         for segment in path.strip("/").split("/"):
             if self.registry.known(segment):
                 return segment
+        if body:
+            claimed = self.registry.claimant(body, {"path": path})
+            if claimed:
+                return claimed
         return self.default_driver
 
-    def submit(self, body: bytes, path: str = "/",
-               peer: str = "?") -> tuple[int, str, drivers.Response]:
+    def submit(self, body: bytes, path: str = "/", peer: str = "?",
+               query: str = "") -> tuple[int, str, drivers.Response]:
         """Take one upload. Returns (packets stored, reason, what to answer with).
 
         The response comes from the driver. What a device needs to hear is part
         of its protocol -- an Ecowitt gateway wants a particular JSON object and
         backs off for an hour if it does not get it -- so the core repeats what
         the driver says rather than deciding for itself.
+
+        `query` is only for consoles that cannot put the token in the path;
+        see `authorised`.
         """
-        if not self.authorised(path):
+        if not self.authorised(path, query):
             with self._lock:
                 self.rejected += 1
             # Count the guess before reporting it. An address that keeps
@@ -110,7 +171,7 @@ class Ingest:
             return 0, "unauthorised", drivers.DEFAULT_RESPONSE
         self.limits.succeeded(peer)
 
-        name = self.driver_for(path)
+        name = self.driver_for(path, body)
         driver = self.registry.get(name)
         if driver is None:
             log.warning("no driver named %r; known: %s",
@@ -130,6 +191,24 @@ class Ingest:
             # the next measurement is worth more than the tidy status code.
             return 0, "unreadable", response
 
+        try:
+            stored = self._store(packets, driver, name, peer, body)
+        except Exception as exc:
+            with self._lock:
+                self.rejected += 1
+            log.exception("could not record an upload from %s via %s", peer, name)
+            # Same rule as the driver above, one step further down: a full
+            # disk, a locked database or a rule file somebody mistyped is our
+            # problem, and none of it is a reason for the console to stop.
+            # It measures every few seconds and forgets; this end is where a
+            # reading can be recovered from, and only while uploads keep
+            # arriving.
+            return 0, f"could not store: {type(exc).__name__}: {exc}", response
+        return stored, "ok", response
+
+    def _store(self, packets: list, driver: object, name: str, peer: str,
+               body: bytes) -> int:
+        """Put the parsed packets in the table. Everything that can fail."""
         # Keep the upload beside the packet for a while. What a driver could
         # not place is by definition not in the packet, so the parsed version
         # is the one thing that cannot show it -- and getting hold of a raw
@@ -139,7 +218,12 @@ class Ingest:
             raw = self._redacted(driver, body)
 
         stored = 0
-        for packet in packets:
+        for one in packets:
+            packet = self._named(one, name, peer)
+            if packet is None:
+                # An extra station that sent nothing this archive has room
+                # for. Said once by `roles.apply`, not once per upload.
+                continue
             if raw is not None and packet.raw is None:
                 packet = replace(packet, raw=raw)
             if self.store.add(packet):
@@ -152,7 +236,82 @@ class Ingest:
             self.accepted += stored
             if stored:
                 self.last_packet = time.time()
-        return stored, "ok", response
+        if stored and self.on_packets is not None:
+            try:
+                self.on_packets()
+            except Exception:
+                # A feed that cannot be woken must not cost the reading that
+                # was being stored when it happened.
+                log.exception("could not hand the reading on to the feeds")
+        return stored
+
+    def _named(self, packet: Packet, driver: str, peer: str) -> Packet:
+        """Record the packet under its station's name, or note a stranger.
+
+        The identity a driver puts on a packet is the hardware's: an Ecowitt
+        PASSKEY, a Weather Underground ID, a serial. The name is the
+        operator's, and it is what `sources.toml` writes its rules against, so
+        renaming a station must not mean rewriting those rules. Hence the
+        translation here rather than in each driver.
+
+        **Nothing is refused.** An upload from something not announced is
+        stored exactly as it arrived and noted on the settings page. Turning
+        that into a refusal is a separate decision with a separate cost, and
+        making it here would mean an upgrade quietly stops recording a station
+        that has been working for a year.
+        """
+        if self.stations is None:
+            return packet
+        # The settings page writes that file and this is a different process.
+        # Without re-reading it, a console adopted on the page keeps arriving
+        # as a stranger until somebody restarts the service -- and restarting
+        # a listener to register a station is what people do not do, after
+        # which the page looks broken.
+        refresh = getattr(self.stations, "refresh", None)
+        if refresh is not None:
+            refresh()
+        station = self.stations.by_identity(driver, packet.source)
+        if station is not None:
+            return self._as_configured(packet, station)
+        if self.sightings is not None:
+            self.sightings.saw(driver, packet.source, peer,
+                               fields=sorted(packet.data)[:12])
+        return packet
+
+    @staticmethod
+    def _as_configured(packet: Packet, station: object) -> Packet:
+        """The packet under its station's name, with what it asked for left out.
+
+        Applied here rather than in each driver, because it is not a question
+        about a protocol. Whether the room a console stands in is worth
+        recording is a fact about that console: one in a living room measures
+        a living room, one in a shed on the same station measures a shed, and
+        only one of them is worth a column. It used to be a setting on the
+        Weather Underground driver and absent from the Ecowitt one, which was
+        the same question answered twice and once not at all.
+        """
+        data = packet.data
+        if not getattr(station, "indoor", True):
+            dropped = {name: value for name, value in data.items()
+                       if name not in ("inTemp", "inHumidity", "inDewpoint")}
+            if len(dropped) != len(data):
+                data = dropped
+
+        # And out of the main station's way, where this is not it. Two
+        # stations of one archive both sending `outTemp` would otherwise take
+        # turns writing it every few seconds, and the column would hold a
+        # mixture nothing afterwards can separate. See roles.py, and note
+        # that a `main` station -- which is every station until somebody says
+        # otherwise -- passes through this untouched.
+        role = getattr(station, "role", roles.MAIN)
+        if role != roles.MAIN:
+            data = roles.apply(data, role, getattr(station, "channel", 0),
+                               station.name)
+            if not data:
+                return None
+        if station.name == packet.source and data is packet.data:
+            return packet
+        return replace(packet, source=station.name, data=data)
 
     def _redacted(self, driver: object, body: bytes) -> str | None:
         """The upload as it arrived, with whatever the driver calls secret gone.
@@ -212,6 +371,42 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         log.debug("%s %s", self.address_string(), fmt % args)
 
+    def handle_one_request(self) -> None:
+        """Every request, with a net under it.
+
+        `submit` guards the two places a failure is expected -- the driver
+        reading a body, and the table taking the result. This catches the
+        rest: a header that will not parse, a status page whose data is
+        missing, a bug nobody has met yet.
+
+        200 rather than 500, and that is the whole reason this exists. A
+        console has no operator and no retry queue: an error is often the
+        last thing it does before going quiet, and the fault is at this end
+        anyway. The measurement it was carrying is lost either way; the
+        thousand after it need not be.
+
+        The log gets the traceback, and the status page counts the upload as
+        rejected, so a failure that only ever answers 200 is still visible
+        somewhere a person looks.
+        """
+        self._answered = False
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            # A console that hung up. Common on cheap hardware, and there is
+            # nothing to say about it.
+            self.close_connection = True
+        except Exception:
+            log.exception("a request to the listener failed")
+            with self.ingest._lock:
+                self.ingest.rejected += 1
+            if not self._answered:
+                try:
+                    self._reply(200, drivers.DEFAULT_RESPONSE[0],
+                                drivers.DEFAULT_RESPONSE[1])
+                except Exception:
+                    self.close_connection = True
+
     def _has_token(self, path: str) -> bool:
         """Check the token and count a wrong one, in one place.
 
@@ -254,6 +449,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _reply(self, code: int, body: bytes, content_type: str = "text/plain",
                headers: dict[str, str] | None = None) -> None:
+        self._answered = True
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
@@ -303,7 +499,8 @@ class _Handler(BaseHTTPRequestHandler):
         # readings in the query string.
         if parsed.query:
             _stored, reason, response = self.ingest.submit(
-                parsed.query.encode(), parsed.path, self.client_address[0])
+                parsed.query.encode(), parsed.path, self.client_address[0],
+                query=parsed.query)
             if reason == "unauthorised":
                 self._reply(404, b"not found")
                 return
@@ -405,17 +602,26 @@ class UdpListener:
 
 
 def push(packets: list[Packet], host: str = "127.0.0.1", port: int = 8000,
-         token: str | None = None, timeout: float = 3.0) -> int:
+         token: str | None = None, timeout: float = 3.0,
+         as_driver: str = "json") -> int:
     """Send packets to a listener. This is how a pull driver delivers.
 
     Going over the loopback rather than writing to the database directly is
     deliberate. It costs a millisecond and buys process isolation: a driver
     that wedges on a USB port, or crashes, takes nothing else with it -- and it
     does not have to be written in Python.
+
+    `as_driver` is the endpoint, and it decides what the listener records
+    these packets *as*. The default sends them in as envelopes, which is what
+    an unnamed collector is. A configured one sends its own name, so that
+    `stations.by_identity(driver, source)` has a driver to match on -- two
+    collectors both arriving as `json` would be one driver with two
+    identities, and a station announced for either would claim both.
     """
     import urllib.request
 
-    path = f"/{token}/json/" if token else "/json/"
+    endpoint = (as_driver or "json").strip("/") or "json"
+    path = f"/{token}/{endpoint}/" if token else f"/{endpoint}/"
     body = json.dumps([{
         "dateTime": p.dateTime, "usUnits": p.usUnits, "source": p.source,
         "kind": p.kind, "interval": p.interval, "data": p.data,

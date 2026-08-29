@@ -374,19 +374,6 @@
     }
   }
 
-  /* ------------------------------------------------------- current page */
-
-  function markCurrent() {
-    var here = location.pathname.split("/").pop() || "index.html";
-    document.querySelectorAll(".sidenav a").forEach(function (a) {
-      var target = a.getAttribute("href");
-      if (!target) return;
-      if ((target.split("/").pop() || "index.html") === here) {
-        a.setAttribute("aria-current", "page");
-      }
-    });
-  }
-
   /* --------------------------------------------------------------- go */
 
   function start() {
@@ -397,7 +384,6 @@
     wireTabs();
     wireSorting();
     wireDialogs();
-    markCurrent();
     tintTemperature();
   }
 

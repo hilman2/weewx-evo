@@ -47,7 +47,7 @@ import datetime
 import logging
 import math
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from . import planets, units
@@ -1207,6 +1207,14 @@ class Tags:
         #: The charts there are, for `$getobs`. A template names one and asks
         #: which readings it draws.
         self.plots: Any = ()
+        #: How to reach another measurement series, for `$archives.<name>`.
+        #: Set by whoever built these tags and knows where the files are --
+        #: the tag layer has one reader and no business opening databases.
+        #: None means one series, which is every installation until somebody
+        #: adds a second.
+        self.open_archive: Callable[[str], Any] | None = None
+        #: What those series are called, for a page that lists them.
+        self.archive_names: tuple[str, ...] = ()
         #: What degree days are counted from. A skin may move them, and two
         #: skins in one process may disagree, so they live here rather than
         #: on the reader they share.
@@ -1585,6 +1593,21 @@ class Tags:
 
     # -- everything else a template names --------------------------------
 
+    @property
+    def archives(self) -> Any:
+        """The other measurement series, by name. `$archives.nordfeld`.
+
+        A property rather than something built in `__init__`: a page that
+        never mentions it should not pay for it, and on the ordinary
+        installation with one series there is nothing to build.
+        """
+        if self.open_archive is None:
+            # One series. Answering with an empty mapping rather than
+            # declining, so `#if $archives` is False and a skin can be
+            # written once for both cases.
+            return Archives(self, lambda _name: None)
+        return Archives(self, self.open_archive)
+
     def __getattr__(self, name: str) -> Any:
         """Anything not defined above. Counted, and then declined.
 
@@ -1607,6 +1630,93 @@ class Tags:
             raise AttributeError(name)
         self.missed(name)
         raise AttributeError(name)
+
+
+class Archives:
+    """The other measurement series, by name. `$archives.nordfeld.day...`
+
+    What an overview page is made of. Everything else in this layer is built
+    on one `Reader` and answers for one series, which is right: a page of the
+    north field must not accidentally print the south field's readings, and
+    the surest way to guarantee that is for it to have no way to reach them.
+
+    So reaching them is a separate name, and one that says what it is. A
+    template that writes `$archives.nordfeld.day.outTemp.max` has said out
+    loud which series it means -- there is no ambiguity to get wrong, and a
+    page that does not mention `$archives` cannot see a second series at all.
+
+    WeeWX's own answer to this is `$current($data_binding='...')`, which is
+    accepted here and returns the same series unchanged. That is deliberate
+    and stays: a skin written for WeeWX passes a binding name from a
+    configuration this program does not have, and quietly switching series
+    underneath it would be worse than ignoring it.
+
+    **Each series brings its own place.** The tags built here get that
+    archive's latitude, longitude and altitude, so `$archives.nordfeld`'s
+    sunrise is the north field's sunrise. Sharing the page's own would be
+    wrong by minutes and look entirely correct.
+    """
+
+    __slots__ = ("_built", "_open", "_owner")
+
+    def __init__(self, owner: Tags,
+                 opener: Callable[[str], Tags | None]) -> None:
+        self._owner = owner
+        #: Called with a name, returns a `Tags` for that series or None.
+        #: A callable rather than a dict of readers, because building one
+        #: costs a database connection and most pages name none of them.
+        self._open = opener
+        self._built: dict[str, Any] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return self[name]
+
+    def __getitem__(self, name: str) -> Any:
+        # `__getitem__` as well as `__getattr__` because Cheetah's NameMapper
+        # tries `obj[name]` first. Something that looks like a mapping has to
+        # be one -- the trap `$obs.label` fell into, where a class with
+        # `__getitem__` returned the string "label".
+        #
+        # And for the same reason this class's own methods have to survive
+        # it: `$archives.names()` arrives here as `self["names"]`, and
+        # answering with an archive nobody has called `names` gave back an
+        # `Unknown` that the template then tried to loop over. A series
+        # cannot be called `names` for exactly this reason, which costs one
+        # word out of the namespace and is worth saying in the error.
+        name = str(name)
+        mine = getattr(type(self), name, None)
+        if mine is not None:
+            return getattr(self, name)
+        if name not in self._built:
+            made = self._open(name)
+            if made is None:
+                # Named, so the message says which series and not just that
+                # something is missing. Counted like any other unanswered
+                # tag: an overview page naming an archive somebody removed
+                # should say so rather than print nothing.
+                self._owner.missed(f"archives.{name}")
+                self._built[name] = Unknown(f"archives.{name}")
+            else:
+                self._built[name] = made
+        return self._built[name]
+
+    def __contains__(self, name: str) -> bool:
+        return self._open(str(name)) is not None
+
+    def __iter__(self):
+        return iter(self.names())
+
+    def names(self) -> list[str]:
+        """Which series there are, for a page that lists them."""
+        return list(getattr(self._owner, "archive_names", ()) or ())
+
+    def __len__(self) -> int:
+        return len(self.names())
+
+    def __str__(self) -> str:
+        return ", ".join(self.names())
 
 
 class Trend:

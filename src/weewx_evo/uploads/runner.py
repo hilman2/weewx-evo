@@ -40,6 +40,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from .. import schedule
 from . import Rejected
 from .progress import Progress
 
@@ -50,11 +51,28 @@ log = logging.getLogger(__name__)
 #: reading, not two weeks of history nobody is waiting for.
 CATCH_UP_HORIZON = 6 * 3600
 
+#: How long one upload may go without a line of its own. Anything slower than
+#: this is logged run by run as it always was; anything faster is collected
+#: and reported once.
+QUIETLY = 60.0
+
+
+def _spell(seconds: float) -> str:
+    """A window, in the roundest words that stay true."""
+    if seconds < 90:
+        return f"{seconds:.0f}s"
+    return f"{seconds / 60:.0f} min"
+
 
 class Scheduled:
     """One upload, and when it is next due."""
 
     __slots__ = (
+        "_logged_at",
+        "_refused_since",
+        "_runs_since",
+        "_sent_since",
+        "_slot",
         "blocked",
         "failures",
         "last",
@@ -100,6 +118,20 @@ class Scheduled:
         #: year is how an account gets blocked, and the log line that says so
         #: is the useful output.
         self.blocked = ""
+        #: When a refusal that claims to be permanent was first seen. A
+        #: sequence, not a state: see `_settled`.
+        self._refused_since = 0.0
+        #: When this last wrote a line, and what has happened since. See
+        #: `_say`: the live upload runs six times a minute and used to write
+        #: a line for each.
+        # -1, not 0: `monotonic()` can legitimately be 0.0, and tested
+        # against falsiness the first run counted as "never logged" -- so the
+        # second one printed its own line as well.
+        #: The wall-clock moment this is next due on, for `interval`.
+        self._slot: float | None = None
+        self._logged_at = -1.0
+        self._runs_since = 0
+        self._sent_since = 0
 
     @property
     def trigger(self) -> str:
@@ -118,7 +150,40 @@ class Scheduled:
             return False
         if self.trigger == "record":
             return fired == "record"
-        return now - self.last >= self.every
+        # On the hour's grid, not counted from whenever the service started:
+        # a ten-minute upload goes at :00, :10, :20 and stays there across a
+        # restart. See schedule.py.
+        wall = time.time()
+        if self._slot is None:
+            self._slot = schedule.next_slot(wall, self.every)
+            return True
+        if wall < self._slot:
+            return False
+        self._slot = schedule.next_slot(wall, self.every)
+        return True
+
+    def next_run(self) -> float:
+        """When this is next due on the wall clock, for the loop to wait.
+
+        Worked out rather than read where nothing has set it. The live
+        trigger never calls `due` -- the clock is the whole of its decision
+        and the query returns nothing when no packet has arrived -- so this
+        answered "now", the loop waited its floor of half a second, and a
+        ten-second upload asked the database a hundred and twenty times a
+        minute instead of six.
+
+        Nothing is stored here. The slot belongs to `due`, and a `next_run`
+        that moved it would make the loop skip the run it just waited for.
+        """
+        if self._slot is not None:
+            return self._slot
+        if self.trigger == "live":
+            # This one never reaches `due`, so nothing will ever set the
+            # slot: it has to be worked out every time round.
+            return schedule.next_slot(time.time(), self.every)
+        # The first turn of anything else runs at once rather than waiting
+        # out an interval, and `due` takes it from there.
+        return time.time()
 
     def pending(self) -> list[dict]:
         """The records this upload still owes, oldest first.
@@ -170,13 +235,13 @@ class Scheduled:
                 self.failures += 1
                 log.warning("upload %s: %s", self.name, result.summary())
             elif result.sent:
-                log.info("upload %s: %s", self.name, result.summary())
+                self._say(result)
             else:
                 log.debug("upload %s: %s", self.name, result.summary())
         except Rejected as exc:
             self.failures += 1
             self.last_summary = str(exc)
-            if exc.permanent:
+            if exc.permanent and self._settled(exc):
                 # Said once, loudly, and then not again. The alternative is
                 # the same line every five minutes forever, which is how a
                 # log stops being read.
@@ -194,6 +259,65 @@ class Scheduled:
             log.warning("upload %s failed: %s", self.name, exc)
         finally:
             self.running = False
+
+
+    def _say(self, result: Any) -> None:
+        """One line at a time, but never more than one a minute.
+
+        The live upload runs every ten seconds, so it wrote three hundred and
+        sixty identical lines an hour -- `upload live: 1 sent, 0.1s`, over and
+        over. A log at that rate is one nobody reads, which costs the lines
+        that matter.
+
+        Collected instead, and reported with the two things worth knowing:
+        how many times it went, and how far apart. A slower upload is
+        unaffected -- more than a minute since the last line means this one
+        is printed at once, which is what a five-minute upload has always
+        done.
+
+        Only the ordinary case is held back. A refusal or a failed file is
+        logged as it happens: something wrong should not wait for a summary.
+        """
+        now = time.monotonic()
+        self._runs_since += 1
+        self._sent_since += int(getattr(result, "sent", 0))
+        if self._logged_at >= 0 and now - self._logged_at < QUIETLY:
+            return
+        window = now - self._logged_at if self._logged_at >= 0 else 0.0
+        if self._runs_since > 1 and window > 0:
+            log.info("upload %s: %d runs in %s, one every %.1fs, %d sent",
+                     self.name, self._runs_since, _spell(window),
+                     window / self._runs_since, self._sent_since)
+        else:
+            log.info("upload %s: %s", self.name, result.summary())
+        self._logged_at = now
+        self._runs_since = 0
+        self._sent_since = 0
+
+    def _settled(self, exc: Rejected) -> bool:
+        """Whether a refusal has lasted long enough to be believed.
+
+        Most of them are believed at once: a 401 means one thing and no
+        amount of waiting changes it. `live.php` answering 404 is the
+        exception, because the file is carried up by an export -- so the
+        first answer after a new export is configured is a 404 that means
+        "not yet", and the file appears a few seconds later.
+
+        Waiting separates the two without having to ask anybody: a wrong
+        token answers 404 for ever, and a missing file stops as soon as the
+        export that carries it has run once.
+        """
+        if not exc.after:
+            self._refused_since = 0.0
+            return True
+        now = time.monotonic()
+        if not self._refused_since:
+            self._refused_since = now
+            log.warning("upload %s: %s. Waiting -- a new export carries "
+                        "live.php up with it, so this is the expected answer "
+                        "until it has run once.", self.name, exc)
+            return False
+        return now - self._refused_since >= exc.after
 
 
 class Runner:
@@ -287,7 +411,8 @@ class Runner:
                 event.clear()
                 fired = "record"
             else:
-                self._stopping.wait(timeout=min(30, max(1, scheduled.every)))
+                self._stopping.wait(timeout=max(0.5, schedule.wait_for(
+                    time.time(), scheduled.next_run())))
                 if self._stopping.is_set():
                     return
                 fired = ""
@@ -324,12 +449,22 @@ class Runner:
 def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
           progress: Progress,
           records: Callable[[int, int], list[dict]],
-          packets: Callable[[int, int], list[dict]] | None = None) -> list[Scheduled]:
+          packets: Callable[[int, int], list[dict]] | None = None,
+          by_archive: dict[str, Callable[[int, int], list[dict]]] | None = None,
+          consoles: dict[str, list[str]] | None = None,
+          main_consoles: dict[str, list[str]] | None = None,
+          ) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
     Anything that cannot be built is reported and left out. A misconfigured
     upload must not stop the others, and it certainly must not stop the
     station: the readings are what matters, and an upload is a copy of them.
+
+    `by_archive` is one reader per measurement series, for an installation
+    that has more than one. `records` is the one everything else uses, and it
+    stays the answer for an upload that names a series nobody defined --
+    posting the default site's readings beats posting nothing while somebody
+    works out why the name is wrong.
     """
     ready = []
     for name, settings in sorted(configured.items()):
@@ -338,5 +473,27 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         except Exception as exc:
             log.warning("upload %s is not usable: %s", name, exc)
             continue
-        ready.append(Scheduled(name, upload, progress, records, packets))
+        wanted = str(settings.get("archive") or "").strip()
+        source = (by_archive or {}).get(wanted, records) if wanted else records
+
+        # And the live packets, through this site's consoles. One live table
+        # serves the whole installation, so an upload for one series has to
+        # be told which sources are its own -- otherwise it publishes
+        # whichever console reported last, from any site.
+        #
+        # `for_sources` only where the reader has it: a split deployment
+        # passes something else here, and an upload publishing everything is
+        # what it did before and is not worse than not publishing.
+        # And which of that site's consoles a live reading is taken from.
+        # An archive record is worked out from all of them together; a live
+        # reading is one packet, so something has to say which -- and
+        # "whichever reported last" makes a page flicker between a garden
+        # and a shed.
+        mine = packets
+        named = (consoles or {}).get(wanted) if wanted else None
+        main = (main_consoles or {}).get(wanted or "") or []
+        pick = str(settings.get("live_source") or "main")
+        if (named or main) and hasattr(packets, "for_sources"):
+            mine = packets.for_sources(named, pick, main)
+        ready.append(Scheduled(name, upload, progress, source, mine))
     return ready

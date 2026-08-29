@@ -597,7 +597,8 @@ class CheetahFeed:
                 continue
 
             written = self._one(template, target, (start, stop), name,
-                                relative, encoding, options)
+                                relative, encoding, options,
+                                summarize=summarize)
             if written is not None:
                 made.append(written)
         return made
@@ -702,7 +703,7 @@ class CheetahFeed:
 
     def _one(self, template: Path, target: Path, span: tuple[int, int],
              page: str, relative: Path, encoding: str,
-             options: dict[str, Any]) -> Path | None:
+             options: dict[str, Any], summarize: str = "") -> Path | None:
         try:
             import Cheetah.Template
         except ImportError:
@@ -721,7 +722,8 @@ class CheetahFeed:
             rendered = Cheetah.Template.Template(
                 file=str(template),
                 searchList=self._search_list(span, page, relative,
-                                             encoding)).respond()
+                                             encoding,
+                                             summarize)).respond()
         except Exception as exc:
             # One template, not the site. A skin with one broken page should
             # still publish the other forty.
@@ -755,7 +757,7 @@ class CheetahFeed:
         return target
 
     def _search_list(self, span: tuple[int, int], page: str, relative: Path,
-                     encoding: str) -> list[Any]:
+                     encoding: str, summarize: str = "") -> list[Any]:
         """What `$something` is looked up in, in order.
 
         The tags go last on purpose. Anything before them can answer first,
@@ -778,9 +780,23 @@ class CheetahFeed:
         summaries = {name: list(dates)
                      for name, dates in self.summaries.items()}
         # The span this page is for. A month page's `$month` is that month,
-        # not the current one.
+        # not the current one -- and that took a rewrite to be true.
+        #
+        # `$month` came from the tag layer, where it means "the month we are
+        # in", so every page in a `SummaryByMonth` run printed the same
+        # figures: forty archived months, all showing August, all identical.
+        # The heading said `05/2026` while the numbers beside it were
+        # August's, and nothing on the page could tell.
+        #
+        # So a summary page gets its own span under the name its template
+        # asks for. Only that one name: `$year` on a month page still means
+        # the year, which is what a month page comparing itself to its year
+        # needs.
         here = {"timespan": Span(self.tags, span, page or "current"),
                 "start": span[0], "stop": span[1]}
+        if summarize in SUMMARIES:
+            named = SUMMARIES[summarize][0]
+            here[named] = Span(self.tags, span, named)
         # The skin's own sections, flat. A template says `$observations`
         # rather than `$DisplayOptions.observations`, because WeeWX puts the
         # contents of those sections into the search list directly. Before
@@ -1083,9 +1099,20 @@ def _settings_block(value: Any) -> dict[str, Any]:
         return dict(value)
     if not value:
         return {}
+    # A list too, because the option declares `kind="list"` and that is what
+    # a hand-written file naturally holds:
+    #
+    #     extras = ["base_path = /wdc/", "charts_path = /wdc/json/"]
+    #
+    # Without this it went through `str()`, so the one "line" was the repr of
+    # the list and every setting in it was silently dropped -- pages asking
+    # for /assets/deck.css while being served under /wdc/, with the skin
+    # rendering perfectly and looking unstyled.
+    lines = value if isinstance(value, (list, tuple)) \
+        else str(value).splitlines()
     out: dict[str, Any] = {}
-    for line in str(value).splitlines():
-        key, sep, said = line.partition("=")
+    for line in lines:
+        key, sep, said = str(line).partition("=")
         if sep and key.strip():
             out[key.strip()] = said.strip()
     return out
@@ -1315,7 +1342,8 @@ def _encode(text: str, encoding: str) -> bytes:
 
 def from_settings(settings: Any, reader: Reader,
                   plots: Any = (), prefix: str = "feeds.cheetah",
-                  extra_groups: dict[str, str] | None = None) -> CheetahFeed:
+                  extra_groups: dict[str, str] | None = None,
+                  archives: dict[str, Any] | None = None) -> CheetahFeed:
     """Build the feed, and the tag layer it renders through.
 
     The tags are built here rather than handed in because they carry the
@@ -1356,11 +1384,65 @@ def from_settings(settings: Any, reader: Reader,
             # here it is whichever driver the listener is running.
             "hardware": settings.get("driver") or "",
             "version": _version(),
+            # Who is rendering. A skin that prints a version wants to say
+            # whose: deck's footer read "WeeWX version 0.0.1", which is the
+            # name of a different program and a version number that is not
+            # its. A skin running under WeeWX itself gets WeeWX's own value
+            # for this, so the line is right either way.
+            "software": f"weewx-evo {_version()}",
         },
         rain_year_start=int(settings.get("station.rain_year_start") or 1),
     )
     tags.plots = plots
     tags.language = spoken.code
+
+    # How this page reaches another series, for `$archives.<name>`. Handed
+    # in rather than worked out here: which files there are is the runner's
+    # knowledge, and a tag layer that opened databases would be one that can
+    # open the wrong one.
+    #
+    # Opened on demand and kept, so a page that never names a second series
+    # costs nothing and one that names it in fifty places opens it once.
+    if archives:
+        # {name: path} or {name: (path, settings)}. The second form is what
+        # an installation with two places sends: each series' own settings,
+        # so each keeps its own coordinates.
+        paths, mine = {}, {}
+        for name, value in archives.items():
+            if isinstance(value, tuple):
+                paths[name], mine[name] = value
+            else:
+                paths[name] = value
+        made: dict[str, Any] = {}
+
+        def reach(name: str) -> Any:
+            if name in made:
+                return made[name]
+            path = paths.get(name)
+            if path is None:
+                return None
+            try:
+                import sqlite3
+
+                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+                other = Reader(conn)
+            except Exception:
+                log.exception("could not open the %r series at %s", name, path)
+                return None
+            # Each series' own settings, so each brings its own place:
+            # `$archives.nordfeld`'s sunrise is the north field's. The
+            # caller hands them in already wrapped in `archives.Placed`,
+            # which is the same wrapper the archiver and every feed get --
+            # given this page's settings instead, the readings would be
+            # right and the sun would be wrong by minutes.
+            theirs = from_settings(
+                mine.get(name) or settings, other,
+                plots=plots, prefix=prefix, extra_groups=extra_groups)
+            made[name] = theirs.tags
+            return theirs.tags
+
+        tags.open_archive = reach
+        tags.archive_names = tuple(sorted(paths))
     tags.moon_phases = spoken.moon_phases()
     _install_forecast(tags, settings, spoken)
 

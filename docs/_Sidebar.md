@@ -26,6 +26,7 @@
 - [Sun](Sun)
 - [Plots](Plots)
 - [Feeds](Feeds)
+- [Deck](Deck)
 - [Exports](Exports)
 - [Uploads](Uploads)
 - [MQTT](MQTT)

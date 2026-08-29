@@ -30,6 +30,7 @@ import logging
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Any, ClassVar
 
 from ..aggregate import start_of_archive_day
 
@@ -169,9 +170,65 @@ class Live:
     quietly take that apart.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    #: Which console a live reading comes from, when a site has more than
+    #: one. There is one live table and several consoles writing into it, so
+    #: "the newest packet" is not an answer -- it is whichever of them
+    #: happened to report last, and a page built on it flickers between a
+    #: garden and a shed.
+    #:
+    #: `main` is the default and is what a station means by "the readings":
+    #: the console whose measurements go in their own columns. The rest
+    #: exist because a real installation has reasons for each -- a main
+    #: console that drops out at night, two sensors worth averaging, a shed
+    #: that is the only thing measuring what somebody wants to see.
+    PICKS: ClassVar[dict[str, str]] = {
+        "main": "The main console. Its readings are the station's.",
+        "main-or-extra": "The main console, or an extra one when it is "
+                         "silent.",
+        "newest": "Whichever console reported last.",
+        "average": "The average of every console that reported.",
+        "extra": "The extra consoles only.",
+    }
+    DEFAULT_PICK = "main"
+
+    #: How stale the main console's last reading may be before
+    #: `main-or-extra` falls back to another. Two archive intervals at the
+    #: usual five minutes: long enough that one missed upload is not a
+    #: switch, short enough that a console off since last night is.
+    STALE = 600.0
+
+    def __init__(self, path: str | Path,
+                 sources: list[str] | None = None,
+                 pick: str = DEFAULT_PICK,
+                 main: list[str] | None = None) -> None:
         self.path = Path(path)
+        #: Whose readings to publish. There is one live table for the whole
+        #: installation -- only the archive is per series -- so an upload
+        #: that belongs to one site has to say which consoles are its own.
+        #:
+        #: Without it a station with two sites published the same live
+        #: readings to both, taken from whichever console reported last: a
+        #: north-field page showing 21 C beside its own archive's 8 C, with
+        #: nothing on the page able to notice. The archiver has always
+        #: filtered here (`live.packets(..., sources=...)`); this is the
+        #: same filter on the other reader of the same table.
+        #:
+        #: None means every console, which is what one archive wants and
+        #: what every installation had before there were two.
+        self.sources = list(sources) if sources else None
+        #: Which of them a reading is taken from. See `PICKS`.
+        self.pick = str(pick or self.DEFAULT_PICK)
+        #: The consoles that call themselves the main one -- normally one.
+        #: Empty means nobody said, and then every pick behaves as `newest`,
+        #: which is what an installation without announced stations had.
+        self.main = list(main) if main else []
         self._local = threading.local()
+
+    def for_sources(self, sources: list[str] | None,
+                    pick: str = "", main: list[str] | None = None) -> Live:
+        """The same table, seen through one site's consoles."""
+        return Live(self.path, sources, pick or self.pick,
+                    main if main is not None else self.main)
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -193,15 +250,35 @@ class Live:
         now, which is worse than having published nothing.
         """
         conn = self._conn()
+        # The consoles this upload speaks for, as a WHERE clause. Built from
+        # a list this process holds rather than interpolated from anything
+        # that arrived over the network -- the names come from
+        # `stations.toml`, and they are placeholders either way.
+        wanted = self._chosen()
+        mine, names = "", []
+        if wanted:
+            mine = f" AND source IN ({','.join('?' * len(wanted))})"
+            names = list(wanted)
+
+        # The average of several consoles is not a row in the table, so it is
+        # worked out rather than selected. Only for the current reading:
+        # averaging a backlog would invent records that never existed.
+        if self.pick == "average" and not ts:
+            averaged = self._averaged(conn, wanted)
+            if averaged is not None:
+                return [averaged]
+
         if not ts:
             rows = conn.execute(
                 "SELECT dateTime, usUnits, interval, data FROM packet "
-                "ORDER BY dateTime DESC, seq DESC LIMIT 1").fetchall()
+                f"WHERE 1=1{mine} "
+                "ORDER BY dateTime DESC, seq DESC LIMIT 1", names).fetchall()
         else:
             rows = conn.execute(
                 "SELECT dateTime, usUnits, interval, data FROM packet "
-                "WHERE dateTime > ? ORDER BY dateTime ASC, seq ASC LIMIT ?",
-                (ts, limit)).fetchall()
+                f"WHERE dateTime > ?{mine} "
+                "ORDER BY dateTime ASC, seq ASC LIMIT ?",
+                [ts, *names, limit]).fetchall()
         found = []
         for when, units, interval, data in rows:
             try:
@@ -214,6 +291,121 @@ class Live:
                 record["interval"] = interval
             found.append({k: v for k, v in record.items() if v is not None})
         return found
+
+    # -- which console ---------------------------------------------------
+
+    def _chosen(self) -> list[str]:
+        """The consoles to read from, after applying `pick`.
+
+        Empty means every console, which is the answer for an installation
+        that has announced none: there is nothing to pick between, and the
+        newest packet is the reading.
+        """
+        mine = self.sources
+        main = [one for one in self.main if not mine or one in mine]
+        if not main:
+            # Nobody said which is the main one. Every pick collapses to
+            # "the newest of what there is" -- not a fallback being clever,
+            # but what this did before there was a choice.
+            return list(mine or [])
+
+        if self.pick in ("newest", "average"):
+            return list(mine or [])
+        if self.pick == "extra":
+            # The extras only. Falling back to the main one rather than to
+            # nothing: a site whose extras have all been removed should show
+            # a reading, not an empty page.
+            return [one for one in (mine or []) if one not in main] or list(main)
+        if self.pick == "main-or-extra":
+            # The main console unless it has gone quiet. Measured against
+            # the newest packet in this table rather than against the clock:
+            # a site that has been off for a week must not read as "the main
+            # console is stale", and a container whose clock is adrift must
+            # not decide it either.
+            if self._quiet_for() > self.STALE:
+                return list(mine or [])
+            return main
+        return main
+
+    def _quiet_for(self) -> float:
+        """Seconds between the main console's last packet and any console's.
+
+        Both facts come out of the same file, so a site switched off
+        entirely compares as "not stale": there is nothing newer to compare
+        against, and switching away from the main console because the whole
+        site is quiet would be noise.
+        """
+        conn = self._conn()
+        main = [one for one in self.main
+                if not self.sources or one in self.sources]
+        if not main:
+            return 0.0
+        theirs = conn.execute(
+            "SELECT MAX(dateTime) FROM packet WHERE source IN "
+            f"({','.join('?' * len(main))})", main).fetchone()[0]
+        if theirs is None:
+            return float("inf")      # it has never reported
+        if self.sources:
+            newest = conn.execute(
+                "SELECT MAX(dateTime) FROM packet WHERE source IN "
+                f"({','.join('?' * len(self.sources))})",
+                list(self.sources)).fetchone()[0]
+        else:
+            newest = conn.execute(
+                "SELECT MAX(dateTime) FROM packet").fetchone()[0]
+        return float((newest or theirs) - theirs)
+
+    def _averaged(self, conn: sqlite3.Connection,
+                  wanted: list[str]) -> dict | None:
+        """One reading per console, averaged field by field.
+
+        Each console's *newest* packet, not every packet in a window: two
+        sensors are being combined, not a time series smoothed. A field only
+        one of them reports comes through as that one's value, which is
+        right -- the average of one number is that number.
+
+        Directions are taken from the newest console rather than averaged.
+        350 and 10 average to 180, which is the opposite direction.
+        """
+        mine, names = "", []
+        if wanted:
+            mine = f" WHERE source IN ({','.join('?' * len(wanted))})"
+            names = list(wanted)
+        rows = conn.execute(
+            "SELECT source, MAX(dateTime), usUnits, interval, data "
+            f"FROM packet{mine} GROUP BY source", names).fetchall()
+        if not rows:
+            return None
+
+        latest: dict[str, Any] = {}
+        sums: dict[str, list[float]] = {}
+        when, units, interval = 0, None, None
+        for _source, stamp, unit, gap, data in sorted(rows,
+                                                      key=lambda r: r[1]):
+            try:
+                record = dict(json.loads(data))
+            except (TypeError, ValueError):
+                continue
+            if stamp >= when:
+                when, units, interval = int(stamp), unit, gap
+            for field, value in record.items():
+                if value is None:
+                    continue
+                if (isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or field.endswith("Dir")):
+                    latest[field] = value
+                    continue
+                sums.setdefault(field, []).append(float(value))
+
+        out: dict[str, Any] = dict(latest)
+        for field, values in sums.items():
+            out[field] = sum(values) / len(values)
+        out["dateTime"] = when
+        out["usUnits"] = units
+        if interval is not None:
+            out["interval"] = interval
+        return {k: v for k, v in out.items() if v is not None}
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)

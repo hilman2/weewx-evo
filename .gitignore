@@ -41,3 +41,18 @@ evo.toml
 plots.toml
 *.bak
 *.part
+
+# A pattern without a slash matches at every level, and one of those levels
+# is the source tree: `plots.toml` above was written for the running
+# installation's file and quietly took the starter set with it. A fresh
+# clone had no charts, and nothing said so -- `is_starter()` answers True
+# for a file that is not there, which is right for an installation and
+# indistinguishable from this.
+!src/weewx_evo/starter/plots.toml
+
+# Screenshots taken while working on the settings page. Two have gone in
+# by accident; the page is checked by looking at it, and what is looked at
+# is not what is kept.
+*.png
+!src/**/*.png
+!.charts/*.png

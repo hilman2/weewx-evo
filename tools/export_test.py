@@ -454,6 +454,279 @@ def feed_to_export(check) -> int:
     return failures
 
 
+def two_feeds_one_export(check) -> int:
+    """A skin and the charts it draws from, published together.
+
+    A skin is its pages *and* its diagrams, and those are two feeds writing
+    two directories. Publishing one of them puts up a site whose charts are
+    empty. Two exports to the same account move the files, but nothing holds
+    the second until the first has finished -- so the pages can arrive before
+    the charts they point at, which is the half-published site the `feed`
+    trigger exists to prevent.
+
+    So: one export, several feeds, each with where it lands, and it waits for
+    all of them.
+    """
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from weewx_evo.exports import runner as export_runner
+    from weewx_evo.exports.local import LocalExport
+
+    failures = 0
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        work = Path(raw)
+        pages, charts, target = work / "deck", work / "json", work / "site"
+        pages.mkdir()
+        charts.mkdir()
+        (pages / "index.html").write_text("<p>21.4</p>", encoding="utf-8")
+        (charts / "outTemp.json").write_text("[1,2,3]", encoding="utf-8")
+
+        export = LocalExport(directory=str(target), delete=True,
+                             live_push=False)
+        made = export_runner.build(
+            {"site": {"source": "deck", "also": ["json -> data/json"],
+                      "trigger": "feed"}},
+            lambda name, settings: export,
+            lambda settings: pages,
+            feeds={"deck": pages, "json": charts})
+        failures += not check("one export", len(made), 1)
+        one = made[0]
+        failures += not check("waiting for both", list(one.feeds),
+                              ["deck", "json"])
+
+        now = time.monotonic()
+        failures += not check("the skin alone is not enough",
+                              one.due(now, "deck"), False)
+        failures += not check("with the charts it goes",
+                              one.due(now, "json"), True)
+
+        one.run()
+        landed = sorted(f.relative_to(target).as_posix()
+                        for f in target.rglob("*") if f.is_file())
+        failures += not check("both, each where it belongs", landed,
+                              ["data/json/outTemp.json", "index.html"])
+
+        # The failure this arrangement invites: one source walking the
+        # destination and deleting what the other put there. Each keeps its
+        # own record, so neither can see the other's files as gone.
+        one.due(time.monotonic(), "deck")
+        one.due(time.monotonic(), "json")
+        one.run()
+        still = sorted(f.relative_to(target).as_posix()
+                       for f in target.rglob("*") if f.is_file())
+        failures += not check("and a second run keeps both", still, landed)
+
+        # Built the way the service builds it, not through a stand-in. The
+        # stand-in is what let this through: every setting under an export's
+        # name is handed to its constructor, `also` included, and none of
+        # the three took it -- so configuring a second feed on the settings
+        # page did not add one, it switched the whole export off with
+        # "FtpExport.__init__() got an unexpected keyword argument 'also'".
+        from weewx_evo.cli import build_export
+
+        for kind, extra in (("ftp", {"host": "h"}),
+                            ("rsync", {"host": "h", "directory": "/x"}),
+                            ("local", {"directory": str(target)})):
+            # `json` because build_export checks the name against the feeds
+            # that exist, and this test has no deck.
+            settings = {"kind": kind, "source": "json",
+                        "also": ["diagnostic -> data/site"], **extra}
+            try:
+                build_export(kind, settings)
+                made = ""
+            except Exception as exc:
+                made = str(exc)
+            failures += not check(f"a {kind} export with a second feed "
+                                  "still builds", made, "")
+
+        # A feed nobody configured is left out rather than waited for: an
+        # export that waits for a name in an old line never runs again.
+        stray = export_runner.build(
+            {"site": {"source": "deck", "also": ["ghost -> x"],
+                      "trigger": "feed"}},
+            lambda name, settings: export,
+            lambda settings: pages,
+            feeds={"deck": pages})
+        failures += not check("an unknown feed is not waited for",
+                              list(stray[0].feeds), ["deck"])
+
+        # And rsync, which deletes by comparing the far end with the source
+        # rather than from a record -- so the other feed's path has to be
+        # named to it, or the first source of every run removes it.
+        from weewx_evo.exports.rsync import RsyncExport
+
+        pushed = RsyncExport(host="h", directory="/var/www", delete=True,
+                             live_push=False)
+        line = pushed._command(pages, None, into="", protect=("data/json",))
+        failures += not check("rsync is told to protect it",
+                              "--filter=P /data/json/" in line, True)
+        second = pushed._command(charts, None, into="data/json")
+        failures += not check("and the second source lands under it",
+                              second[-1].endswith(":/var/www/data/json"), True)
+    return failures
+
+
+def what_it_last_did(check) -> int:
+    """The settings page is a different process, so the runner writes it down.
+
+    A local export can be dated by looking at its directory. An FTP one
+    publishes somewhere this process cannot look, so the page said "not
+    recorded here" -- honest, and no use at all to somebody asking whether
+    their upload is working. Now the runner notes each run in the live table,
+    which is already the one channel between the parts of this program.
+    """
+    import tempfile
+    import time
+    from pathlib import Path
+
+    from weewx_evo.db.live import LiveStore
+    from weewx_evo.exports import Sent
+    from weewx_evo.exports import record as export_record
+    from weewx_evo.exports import runner as export_runner
+
+    failures = 0
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        work = Path(raw)
+        source = work / "site"
+        source.mkdir()
+        (source / "index.html").write_text("<p>21.4</p>", encoding="utf-8")
+        live = LiveStore(work / "live.sdb", interval_seconds=300)
+        try:
+            class Fine:
+                trigger = "manual"
+
+                def send(self, where, files=None, **kw):
+                    return Sent(sent=9, skipped=33, bytes=943210, seconds=3.2)
+
+            class Refused:
+                trigger = "manual"
+
+                def send(self, where, files=None, **kw):
+                    raise RuntimeError("530 login incorrect")
+
+            def note(name, result, error):
+                export_record.write(live, name, result, error)
+
+            good = export_runner.Scheduled("evoftp", Fine(), source)
+            bad = export_runner.Scheduled("other", Refused(), source)
+            export_runner.Runner([good, bad], note=note)
+
+            failures += not check("nothing recorded before the first run",
+                                  export_record.read(live, "evoftp"), None)
+            good.run()
+            bad.run()
+
+            entry = export_record.read(live, "evoftp") or {}
+            failures += not check("what it did", export_record.summary(entry),
+                                  "9 sent, 33 unchanged")
+            failures += not check("and that it worked", entry.get("ok"), True)
+            failures += not check("dated to now",
+                                  abs(time.time() - entry.get("when", 0)) < 30,
+                                  True)
+
+            hurt = export_record.read(live, "other") or {}
+            failures += not check("a refusal is kept too",
+                                  export_record.summary(hurt),
+                                  "530 login incorrect")
+            failures += not check("and marked as one", hurt.get("ok"), False)
+
+            # A failed file is not a failed run, and the difference is what
+            # somebody acts on.
+            partial = Sent(sent=8, skipped=1,
+                           failures=[("charts/x.png", "permission denied")])
+            export_record.write(live, "evoftp", partial)
+            mixed = export_record.read(live, "evoftp") or {}
+            failures += not check("a bad file is counted",
+                                  export_record.summary(mixed),
+                                  "8 sent, 1 unchanged, 1 failed")
+            failures += not check("and the run is not ok", mixed.get("ok"),
+                                  False)
+        finally:
+            live.close()
+    return failures
+
+
+def a_replaced_set_keeps_running(check) -> int:
+    """An export added while the service runs must actually run.
+
+    The watchdog found this in the field, half an hour after the reload path
+    started working: "the export-evoftp, export-json, export-seasonspics,
+    export-wdc thread(s) have died". Every one of them, seconds after the
+    line saying four exports were running.
+
+    `apply_live` did stop(), assigned the new list, and called start(). The
+    stop flag was still set from the line above, so each new thread checked
+    it and returned -- and nothing ever published again. The upload runner
+    has had a `replace` for exactly this since it was written, with the
+    reason in its docstring; the exports never got one.
+    """
+    import tempfile
+    import threading
+    import time
+    from pathlib import Path
+
+    from weewx_evo.exports import Sent
+    from weewx_evo.exports import runner as export_runner
+
+    failures = 0
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        source = Path(raw) / "site"
+        source.mkdir()
+        (source / "index.html").write_text("x", encoding="utf-8")
+
+        sent: list[str] = []
+
+        class Counting:
+            trigger = "record"
+
+            def __init__(self, name):
+                self.name = name
+
+            def send(self, where, files=None, **kw):
+                sent.append(self.name)
+                return Sent(sent=1)
+
+        def one(name):
+            return export_runner.Scheduled(name, Counting(name), source)
+
+        noted: list[str] = []
+        runner = export_runner.Runner(
+            [one("first")], note=lambda n, r, e: noted.append(n))
+        runner.start()
+        try:
+            alive = [t for t in runner._threads if t.is_alive()]
+            failures += not check("it starts", len(alive), 1)
+
+            # The same thing apply_live does when the file gains an export.
+            runner.replace([one("first"), one("second")])
+            time.sleep(0.2)
+            alive = [t.name for t in runner._threads if t.is_alive()]
+            failures += not check("both threads are alive after a replace",
+                                  sorted(alive),
+                                  ["export-first", "export-second"])
+
+            runner.record_written()
+            deadline = time.monotonic() + 5
+            while len(sent) < 2 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            failures += not check("and both actually send", sorted(sent),
+                                  ["first", "second"])
+            # The record keeps working across the swap: an export added while
+            # running stopped noting what it did, so the settings page had
+            # nothing to show for exactly the export somebody just made.
+            failures += not check("and both are noted", sorted(set(noted)),
+                                  ["first", "second"])
+        finally:
+            runner.stop()
+
+        left = [t for t in threading.enumerate()
+                if t.name.startswith("export-") and t.is_alive()]
+        failures += not check("and stop really stops them", left, [])
+    return failures
+
+
 def main() -> int:
     failures = 0
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-export-"))
@@ -515,6 +788,9 @@ def main() -> int:
 
     failures += local_export(check)
     failures += feed_to_export(check)
+    failures += two_feeds_one_export(check)
+    failures += what_it_last_did(check)
+    failures += a_replaced_set_keeps_running(check)
 
 
     print("\n" + ("FAIL" if failures else "PASS") + f" ({failures} failure(s))")

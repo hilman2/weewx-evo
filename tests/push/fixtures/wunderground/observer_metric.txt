@@ -1,0 +1,1 @@
+ID=XXXX&PASSWORD=PASSWORD&intemp=22.8&outtemp=1.4&dewpoint=1.1&windchill=1.4&inhumi=36&outhumi=98&windspeed=0.0&windgust=0.0&winddir=193&absbaro=1009.5&relbaro=1033.4&rainrate=0.0&dailyrain=0.0&weeklyrain=10.5&monthlyrain=10.5&yearlyrain=10.5&light=1724.9&UV=38&dateutc=2016-4-19%204:42:35&softwaretype=HP1001%20V2.2.2&action=updateraw&realtime=1&rtfreq=5

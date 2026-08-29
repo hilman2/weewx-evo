@@ -199,6 +199,42 @@ class ArchiveStore:
         """Fields dropped for want of a column, and how often, since startup."""
         return dict(self._homeless)
 
+    def occupied(self) -> dict[str, tuple[int, int | None]]:
+        """{column: (how many readings, when the last one was)}, for the
+        columns that hold anything at all.
+
+        This is what stands between placing a field and ruining a series. If
+        a column already has history, that history came from some other
+        sensor, and putting a second one there mixes two measurements that
+        nothing afterwards can separate. The count is the only thing that can
+        say so before the decision is made -- a log line saying "tf_ch3 is
+        not being written" cannot.
+
+        One pass over the table. `COUNT(x)` skips NULLs, so this is one query
+        rather than one per column, and on a decade of records it is a
+        moment rather than a minute.
+        """
+        columns = [name for name in self.schema.columns
+                   if name not in ("dateTime", "usUnits", "interval")]
+        if not columns:
+            return {}
+        # The names come from the table's own schema, never from a request.
+        counted = ", ".join(
+            f"COUNT({name}), MAX(CASE WHEN {name} IS NOT NULL THEN dateTime END)"
+            for name in columns)
+        try:
+            row = self.conn.execute(
+                f"SELECT {counted} FROM {self.table_name}").fetchone()
+        except sqlite3.Error:
+            log.debug("could not measure what the columns hold", exc_info=True)
+            return {}
+        found = {}
+        for index, name in enumerate(columns):
+            count, last = row[index * 2], row[index * 2 + 1]
+            if count:
+                found[name] = (int(count), last)
+        return found
+
     def add_column(self, name: str, sql_type: str = "REAL") -> bool:
         """Give a reading somewhere to live. Returns False if it already has one.
 

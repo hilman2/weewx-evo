@@ -33,10 +33,16 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - WEEWX_EVO_LIVE=/data/live.sdb
       - WEEWX_EVO_ARCHIVE=/data/weewx.sdb
-      # Seconds. Match the WeeWX instance if you are running both against
-      # the same station, so the two archives compare record for record.
-      - WEEWX_EVO_INTERVAL=${WEEWX_EVO_INTERVAL:-300}
-      - WEEWX_EVO_DRIVER=${WEEWX_EVO_DRIVER:-ecowitt}
+      # Empty unless somebody sets them, and that is the whole point. The
+      # environment beats the configuration file, so a default here is a
+      # value nobody chose that silently outranks one somebody did: set the
+      # archive interval on the settings page and nothing happens, with no
+      # error anywhere. Same trap as a default in argparse, one layer up.
+      #
+      # An empty variable is skipped rather than parsed, so the file wins
+      # again. Set either of these in .env to pin it for this deployment.
+      - WEEWX_EVO_INTERVAL=${WEEWX_EVO_INTERVAL:-}
+      - WEEWX_EVO_DRIVER=${WEEWX_EVO_DRIVER:-}
       # What `weewx-evo url` should print. Behind a reverse proxy the outside
       # address is not something the container can work out.
       - WEEWX_EVO_PUBLIC_URL=${WEEWX_EVO_PUBLIC_URL:-}
@@ -46,8 +52,9 @@ services:
       # puts the files somewhere anybody reads them.
       - WEEWX_EVO_FEEDS_DIR=/data/feeds
       # How long every packet is kept, not just every archive record. This
-      # is what makes a statistic repairable after the fact.
-      - WEEWX_EVO_RETENTION_DAYS=${WEEWX_EVO_RETENTION_DAYS:-7}
+      # is what makes a statistic repairable after the fact. Undefaulted for
+      # the reason above.
+      - WEEWX_EVO_RETENTION_DAYS=${WEEWX_EVO_RETENTION_DAYS:-}
       # The token is the only thing between the open internet and the
       # measurement series. It lives in .env, which is not in the repo.
       - WEEWX_EVO_TOKEN=${WEEWX_EVO_TOKEN:?set WEEWX_EVO_TOKEN in .env}

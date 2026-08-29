@@ -1,0 +1,74 @@
+# A WeeWX driver, running as its own service, delivering to the listener.
+#
+#   cp deploy/weewx-driver.service /etc/systemd/system/
+#   systemctl enable --now weewx-driver
+#
+# On the host rather than in a container, because this is the one part that
+# has to touch hardware: a serial port, a USB device, a radio. Giving the
+# listener's container that access would hand it to every driver in there,
+# which is the arrangement `split.yml` exists to avoid.
+#
+# It talks to the listener over HTTP like any other collector, so the two do
+# not have to be on the same machine at all. A Raspberry Pi in the shed with
+# the console cabled to it, weewx-evo somewhere else, and this in between.
+#
+# WeeWX does *not* have to be installed here any more. A driver is one file,
+# and what it imports -- a handful of constants and two exceptions -- is
+# stood in for (`ingest/weewxnames.py`). Point `driver_file` at the file and
+# install only the library it uses to reach the hardware: pyusb, pyserial.
+#
+# Install WeeWX anyway if you would rather: where it is present it is used,
+# the same rule pyephem gets in sun.py.
+
+[Unit]
+Description=WeeWX driver, delivering to weewx-evo
+Documentation=https://github.com/hilman2/weewx-evo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=weewx
+Group=dialout
+
+# --conf points at the weewx.conf the driver is already configured by: its
+# serial port, its model, its sensor map. Those settings were working before
+# this file existed and are not copied anywhere.
+#
+# --catchup asks a console that keeps its own records for the last day of
+# them at startup. That is what turns an outage into a filled gap instead of
+# a lost one; drop it for hardware that logs nothing.
+# --collector names a collector in weewx-evo's own configuration, and that
+# name is the point of it: its packets arrive under it, so a station can be
+# announced for this console on the Stations page. Two consoles reporting the
+# same model are told apart by nothing else.
+#
+# Everything else about it -- which weewx.conf, which driver file, how much
+# of the console's own log to fetch at startup -- is on its settings page
+# rather than an argument somebody typed here once.
+ExecStart=/usr/bin/weewx-evo weewx-driver run \
+    --config /etc/weewx-evo/evo.toml \
+    --collector shed \
+    --host 127.0.0.1 --port 8000
+
+# The driver is expected to fail: hardware goes away. It handles that itself
+# with a backoff and only exits when something is wrong beyond retrying --
+# so a restart here is the second line, not the first.
+Restart=always
+RestartSec=30
+
+# It reads one device and writes to one socket. Nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/weewx
+
+# The token is a path segment on every request, so it must not be an
+# argument: /proc/<pid>/cmdline is world-readable and `ps` would print it.
+# The file is root-owned and readable by this user only.
+#   echo 'WEEWX_EVO_TOKEN=...' > /etc/weewx-evo/driver.env
+EnvironmentFile=/etc/weewx-evo/driver.env
+
+[Install]
+WantedBy=multi-user.target

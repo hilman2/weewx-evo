@@ -40,21 +40,40 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from .. import schedule
+
 log = logging.getLogger(__name__)
+
+
+def _add(into: Any, more: Any) -> None:
+    """Fold a second source's result into the first.
+
+    One line per export in the log, however many feeds it carried: what the
+    operator wants to know is whether the site went up.
+    """
+    into.sent += more.sent
+    into.skipped += more.skipped
+    into.deleted += more.deleted
+    into.bytes += more.bytes
+    into.failures.extend(more.failures)
 
 
 class Scheduled:
     """One export, and when it is next due."""
 
     __slots__ = (
+        "_slot",
         "caught_up",
         "changed",
         "export",
+        "extra",
         "failures",
         "feed",
+        "finished",
         "last",
         "last_summary",
         "name",
+        "note",
         "running",
         "runs",
         "skipped",
@@ -62,7 +81,8 @@ class Scheduled:
     )
 
     def __init__(self, name: str, export: Any, source: Path,
-                 feed: str = "") -> None:
+                 feed: str = "",
+                 extra: tuple[tuple[str, Path, str], ...] = ()) -> None:
         self.name = name
         self.export = export
         self.source = source
@@ -70,6 +90,23 @@ class Scheduled:
         # feed and no other: two feeds writing two sites must not each
         # trigger both uploads.
         self.feed = feed
+        #: Further feeds this export carries, each as (feed, directory,
+        #: sub-path). A skin is pages and the charts they draw from, and the
+        #: charts are a different feed writing a different directory -- so
+        #: publishing the skin alone publishes a site whose diagrams are
+        #: empty. Two exports to one account would do it, but nothing would
+        #: hold the second until the first had finished.
+        self.extra = tuple(extra)
+        #: Where to note how a run went, set by the runner. A callable
+        #: rather than a database: this module has never opened one and
+        #: should not start -- the parts of this program talk through the
+        #: live table, and which table that is belongs to whoever built the
+        #: runner.
+        self.note: Any = None
+        #: Which of them have finished since this last ran. An export that
+        #: sends two feeds waits for both: fired by the first, it would
+        #: upload pages that refer to charts still being written.
+        self.finished: set[str] = set()
         # What the feed said it wrote, if it said. Used as a guarantee that a
         # file written a second ago is included, not as the whole list: an
         # export only ever given the changed files can never send one that
@@ -80,11 +117,26 @@ class Scheduled:
         # Set once the first run has been through the whole directory.
         self.caught_up = False
         self.last: float = 0.0
+        #: The wall-clock moment this is next due on, for `interval`. None
+        #: until the first turn.
+        self._slot: float | None = None
         self.running = False
         self.skipped = 0
         self.runs = 0
         self.failures = 0
         self.last_summary = ""
+
+    def _noted(self, result: Any = None, error: str = "") -> None:
+        if self.note is None:
+            return
+        try:
+            self.note(self.name, result, error)
+        except Exception:
+            # A note about an upload is not a reason to stop uploading.
+            log.debug("could not record how %s went", self.name, exc_info=True)
+
+    def _sub_paths(self) -> tuple[str, ...]:
+        return tuple(into for _f, _d, into in self.extra if into)
 
     @property
     def trigger(self) -> str:
@@ -94,15 +146,56 @@ class Scheduled:
     def every(self) -> int:
         return int(getattr(self.export, "every", 900))
 
+    @property
+    def feeds(self) -> tuple[str, ...]:
+        """Every feed this export waits for, the main one first."""
+        names = [self.feed] if self.feed else []
+        return tuple(names + [f for f, _d, _i in self.extra])
+
     def due(self, now: float, fired: str) -> bool:
         """`fired` is what just happened: "record", a feed name, or ""."""
         if self.trigger == "manual":
             return False
         if self.trigger == "feed":
-            return bool(self.feed) and fired == self.feed
+            wanted = self.feeds
+            if not wanted:
+                return False
+            if fired and fired in wanted:
+                self.finished.add(fired)
+            if not self.finished.issuperset(wanted):
+                return False
+            # Only what was waited for is taken out. Clearing the set would
+            # throw away a feed that finished while this was deciding, and
+            # the next round would wait for it all over again.
+            self.finished.difference_update(wanted)
+            return True
         if self.trigger == "record":
             return fired == "record"
-        return now - self.last >= self.every
+        # On the hour's grid rather than counted from whenever this started.
+        # A five-minute export runs at :00, :05, :10, and goes on doing so
+        # across a restart -- see schedule.py.
+        wall = time.time()
+        if self._slot is None:
+            # The first turn publishes at once rather than waiting up to an
+            # interval: an export added to a running station should show
+            # something, and a service that has just come back should not
+            # leave the site as it was for five minutes.
+            self._slot = schedule.next_slot(wall, self.every)
+            return True
+        if wall < self._slot:
+            return False
+        self._slot = schedule.next_slot(wall, self.every)
+        return True
+
+    def next_run(self) -> float:
+        """When this is next due on the wall clock, for the loop to wait.
+
+        Now, until the first turn has been through `due`. A service that has
+        just come back should not leave the published site as it was for a
+        quarter of an hour, and an export somebody adds should show something
+        rather than nothing.
+        """
+        return time.time() if self._slot is None else self._slot
 
     def run(self) -> None:
         """Send, and remember what happened. Never raises."""
@@ -116,9 +209,21 @@ class Scheduled:
             changed = None
             self.caught_up = True
         try:
-            result = self.export.send(self.source, changed)
+            # Passed only when there is something to protect, so an export
+            # that carries one feed is called exactly as it always was --
+            # including one from outside this repository, written against the
+            # older signature.
+            guard = self._sub_paths()
+            result = (self.export.send(self.source, changed, protect=guard)
+                      if guard else self.export.send(self.source, changed))
+            for _feed, where, into in self.extra:
+                # Each on its own: a different directory, a different place
+                # at the far end, and a record of its own so that neither
+                # sees the other's files as ones its feed stopped writing.
+                _add(result, self.export.send(where, None, into=into))
             self.runs += 1
             self.last_summary = result.summary()
+            self._noted(result=result)
             if result.failures:
                 self.failures += 1
                 log.warning("export %s: %s", self.name, result.summary())
@@ -129,6 +234,10 @@ class Scheduled:
         except Exception as exc:
             self.failures += 1
             self.last_summary = str(exc)
+            # Written down as well. A host that refuses the login says so in
+            # the log, which nobody is tailing; the settings page is where
+            # somebody goes to ask whether their upload is working.
+            self._noted(error=str(exc))
             # One export failing is not the others' problem, and certainly not
             # the archiver's. A host that is down comes back.
             log.warning("export %s failed: %s", self.name, exc)
@@ -139,15 +248,55 @@ class Scheduled:
 class Runner:
     """Keeps the exports going, one thread each."""
 
-    def __init__(self, exports: list[Scheduled]) -> None:
+    def __init__(self, exports: list[Scheduled], note: Any = None) -> None:
         self.exports = exports
+        #: Kept, so a replaced set is noted the same way. Without it an
+        #: export added while running stopped recording what it did, and the
+        #: settings page had nothing to show for the one just made.
+        self._note = note
+        for one in exports:
+            one.note = note
         self._stopping = threading.Event()
         # One event per export rather than one shared: an export coupled to
         # the "website" feed must not wake when "csv" finishes.
         self._wake = {s.name: threading.Event() for s in exports}
         self._threads: list[threading.Thread] = []
 
+    def replace(self, exports: list[Scheduled]) -> None:
+        """Swap in a new set, after the configuration changed.
+
+        A method rather than three assignments at the call site -- the same
+        one the upload runner has, and for the same reason, which was written
+        down there and then not done here: the events, the stop flag and the
+        thread list all have to be rebuilt with the list, and a caller that
+        remembers two of the three gets a runner whose threads never wake.
+
+        That is exactly what happened. `apply_live` called stop(), assigned
+        `exports` and called start(); the stop flag was still set from the
+        line above, so every new thread checked it and returned at once.
+        The watchdog was right: "the export-evoftp, export-json,
+        export-seasonspics, export-wdc thread(s) have died."
+
+        It stayed hidden because nothing reached this path. `reload()` only
+        answered about the *core* settings, and adding an export changes none
+        of those -- so the whole of apply_live ran for the first time on the
+        day that was fixed.
+        """
+        self.stop()
+        self.exports = exports
+        for one in exports:
+            one.note = self._note
+        self._stopping = threading.Event()
+        self._wake = {s.name: threading.Event() for s in exports}
+        self._threads = []
+        self.start()
+
     def start(self) -> None:
+        # Safe to call after a stop, whoever does it: a flag left set would
+        # end every thread it starts, in the same tick, silently.
+        if self._stopping.is_set():
+            self._stopping = threading.Event()
+            self._threads = []
         for scheduled in self.exports:
             if scheduled.trigger == "manual":
                 log.info("export %s runs only when asked", scheduled.name)
@@ -184,10 +333,20 @@ class Runner:
         broken template and is impossible to reproduce.
         """
         for scheduled in self.exports:
-            if scheduled.trigger == "feed" and scheduled.feed == feed:
-                if files is not None:
-                    scheduled.changed = list(files)
-                self._wake[scheduled.name].set()
+            if scheduled.trigger != "feed" or feed not in scheduled.feeds:
+                continue
+            # Noted here rather than passed through the event, which carries
+            # nothing: an export waiting on two feeds has to know which of
+            # them this was.
+            scheduled.finished.add(feed)
+            if files is not None and feed == scheduled.feed:
+                # Only for the main source. The changed files of another feed
+                # are relative to *its* directory, and handed to the main one
+                # they would be the only files it looked at -- so a skin
+                # would publish whichever three charts had just been drawn
+                # and nothing else.
+                scheduled.changed = list(files)
+            self._wake[scheduled.name].set()
 
     def stop(self) -> None:
         self._stopping.set()
@@ -211,9 +370,12 @@ class Runner:
                 # Cleared here rather than by whoever set it, so something
                 # arriving while this export is running is not lost.
                 event.clear()
-                fired = scheduled.feed if scheduled.trigger == "feed" else "record"
+                fired = "" if scheduled.trigger == "feed" else "record"
             else:
-                self._stopping.wait(timeout=min(30, max(1, scheduled.every)))
+                # Long enough to land on the slot rather than up to half a
+                # minute after it, short enough to notice a stop.
+                self._stopping.wait(timeout=max(0.5, schedule.wait_for(
+                    time.time(), scheduled.next_run())))
                 if self._stopping.is_set():
                     return
                 fired = ""
@@ -248,8 +410,69 @@ class Runner:
         } for s in self.exports]
 
 
+def named(settings: dict) -> list[tuple[str, str]]:
+    """The further feeds an export names, as (feed, sub-path).
+
+    Written one per line, because that is how every list here is written:
+
+        json -> data/json
+        images -> charts
+
+    A line with no arrow puts that feed at the destination itself, which is
+    what somebody means who has two feeds and one site. The arrow is the
+    ordinary case: a skin's charts belong under the skin, not mixed into it.
+
+    Only the reading. Whether the feed exists is `also`'s question, because
+    the settings page wants the name somebody typed even when it is wrong --
+    that page is where they find out.
+    """
+    out = []
+    for line in settings.get("also") or []:
+        text = str(line).strip()
+        if not text:
+            continue
+        for arrow in ("->", "→", "=", ":"):
+            if arrow in text:
+                feed, into = text.split(arrow, 1)
+                break
+        else:
+            feed, into = text, ""
+        feed = feed.strip()
+        if feed:
+            out.append((feed, into.strip().strip("/")))
+    return out
+
+
+def also(settings: dict, feeds: dict[str, Path],
+         name: str = "") -> tuple[tuple[str, Path, str], ...]:
+    """The ones that exist, as (feed, directory, sub-path).
+
+    A feed nobody has configured is named and left out rather than waited
+    for. Waiting for it would be an export that never runs again, and the
+    reason would be a line in a file somebody edited a month ago.
+    """
+    out = []
+    seen = set()
+    for feed, into in named(settings):
+        if feed in seen:
+            log.warning("export %s names the feed %r twice; using the first",
+                        name or "?", feed)
+            continue
+        where = feeds.get(feed)
+        if where is None:
+            log.warning("export %s also sends the feed %r, and no feed of "
+                        "that name is configured. It is left out -- waiting "
+                        "for it would stop the export altogether.",
+                        name or "?", feed)
+            continue
+        seen.add(feed)
+        out.append((feed, Path(where), into))
+    return tuple(out)
+
+
 def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
-          source_of: Callable[[dict], Path | None]) -> list[Scheduled]:
+          source_of: Callable[[dict], Path | None],
+          feeds: dict[str, Path] | None = None) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
     Anything that cannot be built is reported and left out. A misconfigured
@@ -269,6 +492,7 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
                         "running it", name)
             continue
         feed = str(settings.get("source") or "").strip()
+        extra = also(settings, feeds or {}, name)
         if getattr(export, "trigger", "") == "feed" and not feed:
             # Coupled to a feed but pointed at a directory. Nothing would ever
             # wake it, and a silent export is worse than a wrong one.
@@ -276,5 +500,10 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
                         "it is pointed at a directory rather than a feed. It "
                         "will not run; choose another trigger.", name)
             continue
-        ready.append(Scheduled(name, export, Path(source), feed=feed))
+        made = Scheduled(name, export, Path(source), feed=feed, extra=extra)
+        if extra:
+            log.info("export %s carries %s", name, ", ".join(
+                f"{f} into {i or 'the destination itself'}"
+                for f, _d, i in extra))
+        ready.append(made)
     return ready

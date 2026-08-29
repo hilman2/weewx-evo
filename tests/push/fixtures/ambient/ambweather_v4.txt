@@ -1,0 +1,1 @@
+stationtype=AMBWeatherV4.0.2&PASSKEY=DUMMYDATADUMMYDATADUMMYDATADATAD&dateutc=2018-06-20+13:39:00&winddir=169&windspeedmph=1.8&windgustmph=2.2&maxdailygust=3.4&tempf=69.1&hourlyrainin=0.00&eventrainin=0.00&dailyrainin=0.00&weeklyrainin=0.87&monthlyrainin=0.87&totalrainin=0.87&baromrelin=29.89&baromabsin=29.48&humidity=61&tempinf=73.4&humidityin=51&uv=3&solarradiation=299.23

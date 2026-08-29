@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from . import BaseExport, ExportError, Sent, live_push_options
+from . import BaseExport, ExportError, Sent, also_option, live_push_options
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +60,13 @@ class RsyncExport(BaseExport):
                  delete: bool = False, compress: bool = True,
                  timeout: int = TIMEOUT, extra: str = "",
                  rsync: str = "rsync", directory_source: str = "",
-                 trigger: str = "feed", every: int = 900) -> None:
+                 trigger: str = "feed", every: int = 900,
+                 # Belongs to the runner, not here: which further feeds
+                 # this export carries is about when it runs and what it
+                 # walks, and the export itself only ever sends one
+                 # directory at a time. Taken and ignored, because every
+                 # setting under an export's name is handed to it.
+                 also: Any = None) -> None:
         self.host = host.strip()
         # `live.php` and its token, sent with the pages. See
         # `exports.livepush` for what it is and why it is derived.
@@ -88,7 +94,8 @@ class RsyncExport(BaseExport):
 
     # -- the export interface --------------------------------------------
 
-    def send(self, source: Path, files: list[Path] | None = None) -> Sent:
+    def send(self, source: Path, files: list[Path] | None = None,
+             into: str = "", protect: tuple[str, ...] = ()) -> Sent:
         source = Path(source)
         if not self.host or not self.directory:
             raise ExportError("a host and a directory are both needed")
@@ -106,7 +113,7 @@ class RsyncExport(BaseExport):
         self.prepare(source)
 
         started = time.monotonic()
-        command = self._command(source, files)
+        command = self._command(source, files, into=into, protect=protect)
         log.debug("running %s", " ".join(command))
         try:
             finished = subprocess.run(command, capture_output=True, text=True,
@@ -169,12 +176,19 @@ class RsyncExport(BaseExport):
 
     # -- building the command --------------------------------------------
 
-    def _target(self) -> str:
+    def _target(self, into: str = "") -> str:
         who = f"{self.user}@" if self.user else ""
-        return f"{who}{self.host}:{self.directory}"
+        where = self.directory
+        trimmed = (into or "").strip("/")
+        if trimmed:
+            # A second feed of the same export, under the first. rsync makes
+            # the directory itself, so nothing has to be created first.
+            where = f"{where.rstrip('/')}/{trimmed}"
+        return f"{who}{self.host}:{where}"
 
     def _command(self, source: Path, files: list[Path] | None,
-                 dry_run: bool = False) -> list[str]:
+                 dry_run: bool = False, into: str = "",
+                 protect: tuple[str, ...] = ()) -> list[str]:
         """The argument list. Nothing goes through a shell."""
         command = [self.rsync, "--archive", "--itemize-changes",
                    "--out-format=%i %n"]
@@ -182,6 +196,16 @@ class RsyncExport(BaseExport):
             command.append("--compress")
         if self.delete:
             command.append("--delete")
+            # Where a second feed of this export writes. `--delete` removes
+            # everything at the far end that is not in the source, and the
+            # charts a skin draws from are not in the skin's directory --
+            # so without this the first source of every run deleted the
+            # second one's output, and the second put it back. `P` is
+            # rsync's own word for it: protect, do not delete.
+            for path in protect:
+                trimmed = (path or "").strip("/")
+                if trimmed:
+                    command.append(f"--filter=P /{trimmed}/")
         if dry_run:
             command.append("--dry-run")
 
@@ -208,7 +232,7 @@ class RsyncExport(BaseExport):
         # and copying its contents. Getting it wrong nests the site inside
         # itself, once, and then everybody remembers.
         command.append(f"{source}/")
-        command.append(self._target())
+        command.append(self._target(into))
         return command
 
     def _read(self, output: str) -> Sent:
@@ -261,6 +285,7 @@ class RsyncExport(BaseExport):
                        help="An export moves what a feed made. The list is the "
                             "feeds that exist; there are none yet, so choose "
                             "the directory below instead."),
+                also_option(),
                 Option("directory_source", "Or a directory", kind="path",
                        placeholder="data/public_html",
                        help="Used when no feed is chosen. Everything under it "

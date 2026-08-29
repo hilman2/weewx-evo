@@ -35,8 +35,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # not one of them was real.
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
+# git is here to answer one question no other test can: what does a fresh
+# clone actually get? `starter/plots.toml` was ignored by a pattern written for
+# the installation's own file, and on a machine that has the file the wizard
+# works perfectly. Only the index knows the difference.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core \
+        git \
         php-cli \
         rsync \
         tzdata \
@@ -56,13 +61,36 @@ ENV NODE_PATH=/usr/local/lib/node_modules
 #
 # Pinned, all of it. A comparison against a moving target tells you the target
 # moved, on a morning when you were changing something else.
+#
+# Pinned is not the same as forgotten. This sat on 5.1.0 from the day the
+# container was written while WeeWX went to 5.5, and the gap showed up by
+# accident: the CWOP packet type compared clean in here and did not in a venv
+# with the current release. Raise it deliberately, read what turns red, and
+# decide about each one -- that is the whole value of comparing at all.
 RUN pip install --no-cache-dir \
-        "weewx==5.1.0" \
+        "weewx==5.5.0" \
         "Pillow==12.3.0" \
         "ephem==4.2" \
         "pyftpdlib==2.0.1" \
         "pytest==8.4.2" \
         "ruff==0.16.4"
+
+# weewx-sdr, one file, for `sdr_test.py`. It is not part of WeeWX and not
+# pip-installable, so it comes down as the file it is -- which is also how
+# somebody installs it. Pinned to a commit for the same reason everything
+# else here is pinned: a test that compares against whatever was on a server
+# this morning compares against a moving thing.
+#
+# Here rather than vendored in the repository because it is 166 KB of
+# somebody else's driver, and the point of `weewxnames.py` is that we do not
+# need a copy of one. The test skips where it is absent.
+ARG SDR_COMMIT=e5f1f9915322fa6d1c25b4ff8e490b804cefeac1
+RUN mkdir -p /opt/weewx-sdr && \
+    python3 -c "import urllib.request as u, sys; \
+      u.urlretrieve('https://raw.githubusercontent.com/matthewwall/\
+weewx-sdr/${SDR_COMMIT}/bin/user/sdr.py', '/opt/weewx-sdr/sdr.py')" && \
+    python3 -c "import ast; ast.parse(open('/opt/weewx-sdr/sdr.py').read())"
+ENV WEEWX_SDR=/opt/weewx-sdr/sdr.py
 
 # WeeWX installs as a package, so it imports without a path. Ours is a
 # checkout, mounted at run time.

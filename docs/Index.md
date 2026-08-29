@@ -52,6 +52,7 @@ python tools/docsindex.py --accept <page>.md
 | ⚠️ | [Configuration](Configuration) | 4 | 2026-08-27 11:29 | 2026-08-27 11:07 |
 | ✅ | [Contributing](Contributing) | 4 | 2026-08-26 23:59 | 2026-08-27 11:07 |
 | ✅ | [Daily summaries](Daily-Summaries) | 1 | 2026-08-26 23:56 | 2026-08-27 11:03 |
+| ✅ | [Deck](Deck) | 1 | 2026-08-29 02:30 | 2026-08-29 02:30 |
 | ✅ | [Deployment](Deployment) | 3 | 2026-08-26 20:40 | 2026-08-27 11:08 |
 | ✅ | [Derived readings](Derived-Readings) | 2 | 2026-08-27 10:33 | 2026-08-27 11:03 |
 | ✅ | [Driver: Ecowitt](Driver-Ecowitt) | 18 | 2026-08-26 23:43 | 2026-08-27 11:14 |

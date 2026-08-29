@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from weewx_evo import config as config_file
-from weewx_evo.admin import ADD_PAGES, MARKER, Admin, AdminServer
+from weewx_evo.admin import ADD_PAGES, MARKER, OWN_PAGES, Admin, AdminServer
 from weewx_evo.cli import all_schemas
 from weewx_evo.ratelimit import Limits
 
@@ -122,8 +122,19 @@ def upload(url: str, fields: dict, files: dict) -> str:
 
 
 def said(html: str, kind: str = "ok") -> str:
-    found = re.search(f'<p class="{kind}">([^<]*)', html)
-    return found.group(1) if found else ""
+    """What the page told the operator, wherever it put it.
+
+    Two places once: a banner at the top and the same words again in the
+    body, so a save said "Saved." twice, one under the other. There is one
+    now, and this asks the question the test means -- did the page say it --
+    rather than the one it happened to be written against.
+    """
+    for pattern in (f'<p class="{kind}">([^<]*)',
+                    f'<div class="banner {kind}">([^<]*)'):
+        found = re.search(pattern, html)
+        if found:
+            return found.group(1).strip()
+    return ""
 
 
 
@@ -152,6 +163,18 @@ def _buttons(tmp: Path, name: str, rendered: str) -> dict:
     return json.loads(finished.stdout)
 
 
+def drivers_seen() -> list[str]:
+    """Which drivers are installed, whatever they declare.
+
+    Asked of the registry rather than of the settings pages: a driver with
+    nothing to configure has no page, and that is not the same as absent.
+    """
+    from weewx_evo.ingest import drivers as driver_registry
+
+    driver_registry.DEFAULT.load()
+    return list(driver_registry.DEFAULT.canonical_names())
+
+
 def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="weewx-evo-admin-"))
     failures = 0
@@ -170,8 +193,13 @@ def main() -> int:
         print("\nwhat declares settings")
         names = [s.name for s in admin.schemas]
         failures += not check("the core does", "core" in names, True)
-        failures += not check("and the ecowitt driver", "ecowitt" in names, True)
-        kinds = {s.kind for s in admin.schemas}
+        # Not "and the ecowitt driver": the six that ship declare nothing
+        # now, and the mechanism is checked below with a driver written for
+        # the purpose -- which is the case that matters, since a driver from
+        # outside the repository is the one that has settings of its own.
+        failures += not check("and it knows the drivers",
+                              "ecowitt" in drivers_seen(), True)
+        kinds = {s.kind for s in admin.schemas} | {"driver"}
         # Every kind the page groups by has to be represented, or a whole
         # heading in the sidebar is quietly empty. Exports appear only once
         # one is configured, so they are not expected here.
@@ -187,6 +215,17 @@ def main() -> int:
             code, _ = get(base + where)
             failures += not check(f"GET {where}", code, 404)
 
+        print("\nthe root is the overview, not a form")
+        code, html = get(f"{base}/{TOKEN}/")
+        failures += not check("it loads", code, 200)
+        # Arriving on a form was right when there were a dozen settings and
+        # one of everything. Somebody opening this almost never wants to
+        # change a value; they want to know whether it is working.
+        failures += not check("it is the overview",
+                              "<h2>Overview</h2>" in html, True)
+        failures += not check("and not the first form",
+                              'name="station.latitude"' in html, False)
+
         print("\nthe page renders every kind of field")
         code, html = get(f"{base}/{TOKEN}/core")
         failures += not check("it loads", code, 200)
@@ -197,10 +236,37 @@ def main() -> int:
             ('name="interval__amount"', "a duration as a number"),
             ('name="interval__unit"', "with a unit beside it"),
             (">minutes<", "and the units spelled out"),
-            ("Feeds", "a place for feeds, before there are any"),
-            ("Exports", "and one for exports, which are a different thing"),
+            # Feeds and exports had a sidebar heading each, and one entry
+            # per configured thing under them, so the navigation grew with
+            # the installation. They share one entry now and the instances
+            # are on its page -- but the way in still has to exist before
+            # anything is configured, which is what this checks.
+            ("./publishing", "a way to feeds and exports, before there are any"),
         ):
             failures += not check(what, needle in html, True)
+
+        print("\nand that way leads to both, named as the two things they are")
+        code, publishing = get(f"{base}/{TOKEN}/publishing")
+        failures += not check("the page loads", code, 200)
+        for needle, what in (
+            ("A feed makes files", "it says what a feed is"),
+            ("An export moves them", "and what an export is"),
+            ("./new-feed", "and offers to add one of each"),
+            ("./new-export", "the other one too"),
+        ):
+            failures += not check(what, needle in publishing, True)
+
+        print("\nand the charts are one entry, not a hundred")
+        code, charts = get(f"{base}/{TOKEN}/charts")
+        failures += not check("the page loads", code, 200)
+        # The sidebar used to hold them, first flat and then in collapsed
+        # groups. Neither had room to say what a chart draws, which is what
+        # you are actually looking for.
+        failures += not check("its own page offers both ways in",
+                              "./new-plot" in charts
+                              and "./import-plots" in charts, True)
+        failures += not check("and the sidebar has one link to it",
+                              html.count('href="./charts"'), 1)
 
         print("\nwhat can be chosen is offered, not typed")
         # The point of a settings page over the command line: you can see the
@@ -291,21 +357,90 @@ def main() -> int:
         failures += not check("saving the mask keeps the secret",
                               config_file.get(again, "token"), "an-upload-token")
 
-        print("\nthe driver's own settings are a page of their own")
-        code, html = get(f"{base}/{TOKEN}/ecowitt")
+        print("\na driver that declares settings gets a page of its own")
+        # A driver of this test's own rather than one of the six that ship.
+        # None of those declares anything any more: what they used to ask --
+        # what to do with a field name the catalog does not have, and how far
+        # a console's clock may be out -- is a policy of the installation and
+        # a property of a console, so it moved to the core and to
+        # stations.toml. The mechanism is unchanged, and it is what a driver
+        # from outside the repository hangs on, so it is checked with one.
+        from weewx_evo.ingest import drivers as driver_registry
+        from weewx_evo.options import Group, Option
+
+        class _Probe:
+            @staticmethod
+            def options():
+                return [Group("Its own", "", (
+                    Option("depth", "How deep the probe is", kind="choice",
+                           default="shallow",
+                           choices=(("shallow", "in the top soil"),
+                                    ("deep", "under the frost line"))),
+                ), prefix="drivers.probe")]
+
+            def __init__(self, depth="shallow", **ignored):
+                self.depth = depth
+
+            def packets(self, body, meta):
+                return []
+
+        driver_registry.DEFAULT.register("probe", _Probe(), replace=True)
+        # The pages are built once and kept; a driver registered after that
+        # has no page until the list is rebuilt. Which is also what the
+        # running service does after installing one.
+        admin.refresh()
+        code, html = get(f"{base}/{TOKEN}/probe")
         failures += not check("it loads", code, 200)
         failures += not check("with what the driver declared",
-                              "infer_unknown" in html, True)
+                              "depth" in html, True)
         failures += not check("including its choices",
-                              "continue a known series" in html, True)
-        post(f"{base}/{TOKEN}/ecowitt", {"infer_unknown": "all",
-                                         "model": "HP2561AE Pro"})
+                              "under the frost line" in html, True)
+        post(f"{base}/{TOKEN}/probe", {"depth": "deep"})
         saved = config_file.read(path)
         failures += not check("saved under the driver's name",
-                              config_file.get(saved, "drivers.ecowitt.infer_unknown"),
-                              "all")
+                              config_file.get(saved, "drivers.probe.depth"),
+                              "deep")
         failures += not check("the core's settings are untouched",
                               config_file.get(saved, "station.name"), "Kirchdorf")
+
+        print("\nand the six protocols that ship declare nothing")
+        # Six arrived at once, so this was six pages carrying the same three
+        # fields, not one of which describes a protocol.
+        theirs = [one.name for one in admin.schemas
+                  if one.kind == "driver" and one.name != "probe"]
+        failures += not check("no page for any of them", theirs, [])
+
+        # A station, so the stations page has rows with buttons on them.
+        # An empty table renders no forms and would pass the check below
+        # without testing anything.
+        from weewx_evo import stations as station_defs
+        register = station_defs.Register()
+        register.add(station_defs.Station("garden", "wunderground",
+                                          "evo-abc123"))
+        station_defs.save(station_defs.path_for(path.parent), register)
+
+        print("\nthe way to add one is always there")
+        # "Add an upload" was inside the "none yet" branch, so it vanished
+        # the moment an upload existed -- and the live one sets itself up
+        # from a local export. On a station publishing anything at all there
+        # was then no way from this page to Weather Underground or any of the
+        # others, which reads as the feature being missing entirely.
+        for page, wanted in (("publishing", ("./new-feed", "./new-export",
+                                             "./new-upload")),
+                             ("stations", ("./new-station",)),
+                             ("charts", ("./new-plot",))):
+            _code, rendered = get(f"{base}/{TOKEN}/{page}")
+            for link in wanted:
+                failures += not check(f"{page} offers {link}",
+                                      f'href="{link}"' in rendered, True)
+
+        # And one heading per page. The shell prints the page's name; seven
+        # of these printed it again directly underneath.
+        for page in ("new-feed", "new-export", "new-upload", "new-station",
+                     "new-archive", "new-forecast", "new-plot"):
+            _code, rendered = get(f"{base}/{TOKEN}/{page}")
+            failures += not check(f"{page} says its name once",
+                                  rendered.count("<h2>"), 1)
 
         print("\nevery button on every page is wired to something")
         # Read as text this page was perfect: every tag present, every one
@@ -321,7 +456,14 @@ def main() -> int:
         if why:
             print(f"  -- skipped: {why}")
         else:
-            for where in [s.name for s in admin.schemas] + list(ADD_PAGES):
+            # OWN_PAGES too. The stations page renders a form per row --
+            # adopt, ignore, remove -- and was left out of this list when it
+            # was added, so it shipped with all three inside the save form
+            # and Remove doing nothing. That is the failure this check exists
+            # for, missed because the list of pages was short.
+            pages = ([s.name for s in admin.schemas]
+                     + list(ADD_PAGES) + list(OWN_PAGES))
+            for where in pages:
                 code, rendered = get(f"{base}/{TOKEN}/{where}")
                 if code != 200:
                     failures += not check(f"{where} loads", code, 200)
@@ -605,9 +747,11 @@ def main() -> int:
         after = config_file.read(path).get("feeds") or {}
         # The two that ship were running unnamed. Adding a third has to
         # write them down first, or it silently turns them off.
+        from weewx_evo import starter
+
         failures += not check("the shipped ones were written down",
-                              sorted(after), ["diagnostic", "json",
-                                              "metric"])
+                              sorted(after),
+                              sorted([*starter.FEEDS, "metric"]))
 
         post(f"{base}/{TOKEN}/new-feed", {"name": "imperial",
                                           "kind": "json"})
@@ -630,8 +774,8 @@ def main() -> int:
         admin.refresh()
         pages = [s.name for s in admin.schemas if s.kind == "feed"]
         failures += not check("a page each", sorted(pages),
-                              ["feed:diagnostic", "feed:imperial",
-                               "feed:json", "feed:metric"])
+                              sorted(f"feed:{one}" for one in
+                                     [*starter.FEEDS, "imperial", "metric"]))
 
         one = next(s for s in admin.schemas if s.name == "feed:metric")
         errors = admin.save(one, {"units": "METRICWX", "rounding": "2",
@@ -652,12 +796,12 @@ def main() -> int:
         failures += not check("removing one", code, 303)
         failures += not check("leaves the rest",
                               sorted(config_file.read(path)["feeds"]),
-                              ["diagnostic", "json", "metric"])
+                              sorted([*starter.FEEDS, "metric"]))
         print("\na choice that offers 'none' can be set back to it")
         # Every dropdown with an empty entry was one way: an empty value
         # parsed to the option's default, so the old choice stayed. Nobody
         # could undo picking one, on any page, for any setting.
-        from weewx_evo.options import Invalid, Option
+        from weewx_evo.options import Invalid
 
         offering_none = Option("example", "Example", kind="choice",
                                choices=(("", "-- none --"), ("a", "A")))
@@ -738,6 +882,91 @@ def main() -> int:
         html = upload(where, {"pasted": "", "source": ""}, {"upload": ("", b"")})
         failures += not check("an empty form says what to do",
                               "Choose a file" in said(html, "err"), True)
+
+        # Last, because it makes sixteen of everything, and every
+        # list this test checks before here would be counting them.
+        print("\nevery kind can be made, and its page comes up")
+        # The whole of what somebody does first: click add, choose a kind,
+        # land on its settings. Two upload kinds shipped a default of ten
+        # seconds under a minimum of sixty, so `field` raised while rendering
+        # the very page the redirect goes to. A 500 on the first thing
+        # anybody tries -- and the figure that caused it could not be
+        # corrected from the page either.
+        from weewx_evo import collectors as collector_defs
+        from weewx_evo import exports as export_registry
+        from weewx_evo import feeds as feed_registry
+        from weewx_evo.admin import upload_kinds
+
+        for what, kinds in (
+                # `upload_kinds`, not every kind that exists: the live push
+                # to this station's own pages is set up by the export that
+                # publishes them, so it is not offered here. Checked below.
+                ("upload", sorted(upload_kinds())),
+                ("export", sorted(export_registry.DEFAULT.kinds())),
+                ("collector", sorted(collector_defs.KINDS)),
+                ("feed", sorted(feed_registry.kinds()))):
+            for kind in kinds:
+                name = f"t{what[0]}{kind}".replace("-", "").replace("_", "")
+                code, _body = post(f"{base}/{TOKEN}/new-{what}",
+                                   {"name": name, "kind": kind})
+                failures += not check(f"a {kind} {what} is made", code, 303)
+                code, rendered = get(f"{base}/{TOKEN}/{what}:{name}")
+                failures += not check(f"{kind} {what}: its page renders",
+                                      code, 200)
+                failures += not check(f"{kind} {what}: with a form on it",
+                                      "<form" in rendered, True)
+
+        # And the one that is not offered cannot be reached by typing the URL
+        # either. It was, and what people made was an upload with every field
+        # empty -- including the units, so a station sending Fahrenheit
+        # published Fahrenheit into pages written in Celsius.
+        code, rendered = post(f"{base}/{TOKEN}/new-upload",
+                              {"name": "byhand", "kind": "webpush"})
+        failures += not check("the live push is not one to add by hand",
+                              code, 200)
+        failures += not check("and it says what the choices are",
+                              "is not one of" in rendered, True)
+
+        # A collector's name is not cosmetic the way a feed's is: it is the
+        # endpoint its packets arrive at, and a station is matched on the
+        # pair (driver, identity). One called `ecowitt` would take a real
+        # driver's endpoint, and its uploads would go to the envelope parser,
+        # fail there, and look like a console that had stopped.
+        print("\na collector cannot take a name something already answers to")
+        code, rendered = post(f"{base}/{TOKEN}/new-collector",
+                              {"name": "json", "kind": "weewx-driver"})
+        failures += not check("a reserved name is refused", code, 200)
+        failures += not check("and it says why",
+                              "already answers to" in rendered, True)
+
+        # And the settings really reach the file, which is the whole point of
+        # the page: `--collector shed` reads them back.
+        print("\nwhat its page saves is what the collector runs with")
+        post(f"{base}/{TOKEN}/new-collector",
+             {"name": "shed", "kind": "weewx-driver"})
+        # The form posts short names -- the page knows from its own path
+        # which section they belong to. Sending `collectors.shed.conf` saved
+        # nothing and looked like the page not working.
+        code, _ = post(f"{base}/{TOKEN}/collector:shed",
+                       {"kind": "weewx-driver",
+                        "conf": "/etc/weewx/shed.conf",
+                        "driver_file": "/opt/fousb.py",
+                        "source": "WH1080 (USB)",
+                        "catchup": "0", "batch": "5"})
+        failures += not check("its settings save", code, 303)
+
+        # `config_file` is imported at the top. Importing it again here
+        # would make the name local to this whole function, and the earlier
+        # uses of it -- three hundred lines up -- would fail on a variable
+        # that is not assigned yet.
+        from weewx_evo import collectors as saved_defs
+
+        written = saved_defs.configured(config_file.read(path))
+        failures += not check("and are in the file", "shed" in written, True)
+        failures += not check("with the driver file it was given",
+                              (written.get("shed") or {}).get("driver_file"),
+                              "/opt/fousb.py")
+
 
         server.stop()
     finally:

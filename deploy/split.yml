@@ -52,8 +52,11 @@ services:
       - TZ=Europe/Berlin
       - WEEWX_EVO_LIVE=/data/live/live.sdb
       - WEEWX_EVO_ARCHIVE=/data/weewx.sdb
-      - WEEWX_EVO_INTERVAL=60
-      - WEEWX_EVO_RETENTION_DAYS=7
+      # Not set here. The paths above are container layout and belong in
+      # this file; the interval and the retention are settings, and a value
+      # here would outrank the one on the settings page without saying so.
+      - WEEWX_EVO_INTERVAL=${WEEWX_EVO_INTERVAL:-}
+      - WEEWX_EVO_RETENTION_DAYS=${WEEWX_EVO_RETENTION_DAYS:-}
     # No ports. Nothing reaches this from outside, and it reaches nothing.
     security_opt:
       - no-new-privileges:true

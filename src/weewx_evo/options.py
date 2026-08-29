@@ -689,6 +689,39 @@ def core_options() -> list[Group]:
                         "port itself is the access control."),
         )),
 
+        Group("Reading an upload",
+              "What every pushing console has in common.", (
+            Option("infer_unknown", "Fields the catalog does not know",
+                   kind="choice", default="series",
+                   choices=(("off", "Drop them"),
+                            ("series", ("Take them when they continue a "
+                                        "known series, report the rest")),
+                            ("all", "Take whatever can be named")),
+                   help="Hardware ships sensors faster than any catalog is "
+                        "updated. 'series' is the sensible default: a channel "
+                        "the hardware gains needs no release, and anything "
+                        "merely recognisable by its name is reported rather "
+                        "than guessed at -- a reading put in the wrong column "
+                        "cannot be separated out afterwards. This is a policy "
+                        "rather than a property of any one protocol, so it is "
+                        "asked once and every driver that can use it gets it."),
+            Option("max_behind", "Accept timestamps up to this old",
+                   # upstream's own figures. Changing one here would change
+                   # how uploads are treated without anybody asking for it.
+                   kind="duration", default=3600.0, minimum=0, advanced=True,
+                   help="A console on the internet keeps its clock by NTP, so "
+                        "a stamp a few minutes old means a delayed upload "
+                        "rather than a wrong clock. Past this the arrival "
+                        "time is used instead. A console whose clock is "
+                        "genuinely bad can be given its own figure on the "
+                        "stations page."),
+            Option("max_ahead", "And this far into the future",
+                   kind="duration", default=60.0, minimum=0, advanced=True,
+                   help="There is no such thing as a reading from the future, "
+                        "so this only covers drift between two clocks that "
+                        "are both roughly right."),
+        )),
+
         Group("Who is answered",
               "Bound to every interface; this decides who gets a reply.", (
             Option("allow", "Answer", default="private", restart=True,
@@ -763,5 +796,19 @@ def core_options() -> list[Group]:
                    help="Settings both systems share -- latitude, altitude, "
                         "the archive interval -- can go on living there. Read, "
                         "never written. Anything set here wins over it."),
+            Option("watchdog", "Restart if this process becomes unwell",
+                   kind="bool", default=True,
+                   help="Watches for a descriptor leak, a runner thread that "
+                        "has died, and an archiver loop that has stopped -- "
+                        "the things a fresh process fixes. It stops; the "
+                        "supervisor starts it again. Needs 'restart: "
+                        "unless-stopped' in compose or 'Restart=always' in a "
+                        "unit file, which the shipped ones have."),
+            Option("watchdog_cooldown", "and not again for", kind="duration",
+                   default=3600, minimum=300, maximum=86400, advanced=True,
+                   help="The floor between two self-restarts. It is written "
+                        "to the live database, so it survives the restart it "
+                        "is limiting. Below this, the symptom is logged every "
+                        "pass and nothing else happens."),
         )),
     ]

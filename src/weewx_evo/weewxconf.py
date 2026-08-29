@@ -250,6 +250,14 @@ class Import:
         self.ignored: list[tuple[str, str]] = []
         #: Things that looked important and could not be translated.
         self.warnings: list[str] = []
+        #: The skins this installation renders: (report name, skin, html_root).
+        #: Not settings, because which of them to run here is a decision --
+        #: but without the list nobody can make it, and the charts live in
+        #: those skins.
+        self.skins: list[tuple[str, str, str]] = []
+        #: FTP and rsync, as exports. Written switched off: two programs
+        #: publishing into one directory is how a site ends up half of each.
+        self.exports: dict[str, dict[str, Any]] = {}
 
     def take(self, dotted: str, value: Any, note: str) -> None:
         if value is None or value == "":
@@ -283,8 +291,103 @@ def convert(conf: dict[str, Any], driver_names: set[str] | None = None) -> Impor
     _databases(conf, result)
     _driver(conf, station, driver_names, result)
     _accumulators(conf, result)
+    _reports(conf, result)
     _not_ours(conf, result)
     return result
+
+
+#: WeeWX's two upload reports, and what each calls its settings. They are
+#: reports rather than uploads over there -- publishing a directory is "just
+#: another report" -- so they arrive here looking like skins and have to be
+#: recognised by name.
+UPLOADERS = {
+    "FTP": ("ftp", {"server": "host", "user": "user", "password": "password",
+                    "path": "directory", "secure_ftp": "tls",
+                    "passive": "passive", "port": "port"}),
+    "RSYNC": ("rsync", {"server": "host", "user": "user", "path": "directory",
+                        "port": "port", "ssh_options": "ssh_options",
+                        "delete": "delete"}),
+}
+
+
+def _reports(conf: dict[str, Any], result: Import) -> None:
+    """What this installation publishes: which skins, and to where.
+
+    The part an import cannot do without and could not do before. A station
+    moving over has a website it has been looking at for years, and that
+    website is a skin plus somewhere it is sent -- neither of which is in
+    the settings this file used to take.
+
+    **The charts are not here.** They live in the skin's own `[ImageGenerator]`
+    (`skins/Seasons/skin.conf`), and `weewx.conf` may override parts of it
+    under the report's own section. So this records where each skin is and
+    leaves reading it to `plots import`, which already knows how.
+    """
+    reports = conf.get("StdReport")
+    if not isinstance(reports, dict):
+        return
+
+    root = str(reports.get("SKIN_ROOT") or "skins").strip()
+    where = str(reports.get("HTML_ROOT") or "public_html").strip()
+    result.take("import.skin_root", root, "[StdReport] SKIN_ROOT")
+    result.take("import.html_root", where, "[StdReport] HTML_ROOT")
+
+    for name, section in sorted(reports.items()):
+        if not isinstance(section, dict):
+            continue
+        enabled = _truth(section.get("enable"))
+        skin = str(section.get("skin") or "").strip()
+
+        uploader = UPLOADERS.get(name) or UPLOADERS.get(skin.upper())
+        if uploader is not None:
+            _uploader(name, section, uploader, enabled, result)
+            continue
+
+        if not skin:
+            continue
+        if enabled is False:
+            result.ignored.append(
+                (f"[StdReport] [[{name}]]",
+                 f"the {skin} skin, switched off there"))
+            continue
+        # Recorded rather than turned into a feed here: which skins are
+        # wanted is a decision, and this file's job is to report what is in
+        # a weewx.conf rather than to configure this station from it.
+        result.skins.append((name, skin,
+                             str(section.get("HTML_ROOT") or "").strip()))
+        result.taken.append(
+            f"[StdReport] [[{name}]] -> the {skin} skin is running")
+
+
+def _uploader(name: str, section: dict[str, Any],
+              uploader: tuple[str, dict[str, str]],
+              enabled: bool | None, result: Import) -> None:
+    """One FTP or rsync report, as an export.
+
+    Left switched off in what is written, whatever weewx.conf said. Two
+    programs uploading to one directory is how a site ends up half of each,
+    and the moment to start is when somebody has looked at the settings --
+    not the moment they ran an import.
+    """
+    kind, fields = uploader
+    settings: dict[str, Any] = {"kind": kind, "enabled": False}
+    for theirs, ours in fields.items():
+        value = section.get(theirs)
+        if value in (None, "", "replace_me"):
+            continue
+        settings[ours] = value
+    if not settings.get("host"):
+        result.ignored.append(
+            (f"[StdReport] [[{name}]]",
+             "no server is set in it, so there is nothing to copy"))
+        return
+
+    result.exports[name.lower()] = settings
+    said = "on" if enabled else "off"
+    result.taken.append(
+        f"[StdReport] [[{name}]] -> a {kind} export to "
+        f"{settings.get('user', '?')}@{settings['host']} "
+        f"({said} in weewx.conf; written switched off)")
 
 
 def _databases(conf: dict[str, Any], result: Import) -> None:

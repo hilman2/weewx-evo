@@ -25,16 +25,26 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import adminplots
+from . import (
+    adminarchives,
+    adminhome,
+    adminplots,
+    adminpublish,
+    adminsearch,
+    adminsetup,
+    adminstations,
+)
+from . import archives as archive_defs
 from . import config as config_file
 from .netaccess import PRIVATE_ONLY, Access
-from .options import UNITS, Group, Option, Schema, split_duration
+from .options import UNITS, Group, Invalid, Option, Schema, split_duration
 from .ratelimit import Limits
 
 log = logging.getLogger(__name__)
@@ -78,11 +88,30 @@ def export_kind_choices() -> list[tuple[str, str, str]]:
                     getattr(factory, "summary", "")))
     return out
 
+#: Set up from an export rather than chosen here. The live readings for this
+#: station's own pages are not a service somebody signs up to: the address,
+#: the token, the directories and the units all come from the export that
+#: publishes those pages, so there is nothing to fill in and nothing to
+#: choose. Offered here it was a form of eight empty fields, and the empty
+#: one that mattered was the units -- a station sending Fahrenheit published
+#: Fahrenheit into pages written in Celsius.
+#:
+#: A second web host, or the same readings in another unit system, is a line
+#: in the file, which stays editable by hand.
+NOT_CHOSEN = frozenset({"webpush"})
+
+
 def upload_kinds() -> list[str]:
-    """The kinds of upload that can be added. Asked, not listed."""
+    """The kinds of upload that can be added. Asked, not listed.
+
+    Not every kind that exists: see NOT_CHOSEN. The check on the way in uses
+    this too, so the one left out cannot be reached by typing the URL either.
+    """
     from . import uploads
 
-    return uploads.kinds()
+    return [k for k in uploads.kinds() if k not in NOT_CHOSEN]
+
+
 
 
 def upload_kind_choices() -> list[tuple[str, str, str]]:
@@ -95,6 +124,8 @@ def upload_kind_choices() -> list[tuple[str, str, str]]:
 
     out = []
     for kind in uploads.kinds():
+        if kind in NOT_CHOSEN:
+            continue
         factory = uploads.DEFAULT.factory_for(kind)
         out.append((kind, getattr(factory, "label", kind),
                     getattr(factory, "summary", "")))
@@ -133,7 +164,16 @@ NEWLINE = chr(10)
 #: listed. One list, used by both the router and the renderer, because two
 #: lists is how one of them ends up short.
 ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
-             "new-plot", "import-plots")
+             "new-collector", "new-plot", "import-plots",
+             "new-station", "new-archive")
+
+#: Pages that are neither a schema nor a form to create one. They render
+#: themselves, the way the chart pages do.
+#: Pages that render themselves. `setup` is the wizard, and it is
+#: here rather than in ADD_PAGES because it is not adding one thing:
+#: it is the path from an empty directory to a station recording.
+OWN_PAGES = ("overview", "stations", "archives", "publishing",
+             "charts", "search", "setup")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -189,6 +229,70 @@ class Admin:
 
     # -- adding and removing ---------------------------------------------
 
+    def write_settings(self, values: dict[str, Any], note: str = "") -> str:
+        """Put several settings at once. Returns an error, or empty.
+
+        For the wizard, which answers three or four at a time and would
+        otherwise write the file once per field -- four rewrites where one
+        will do, and four chances for the fourth to fail after the third
+        succeeded.
+
+        Dotted names, the same ones `--explain` prints. Nothing is validated
+        here beyond being writable: the caller has already parsed what it
+        asked for, and a second opinion in this method would be a second
+        place for the rules to live.
+        """
+        if self.read_only:
+            return "This settings page was started read-only."
+        if not values:
+            return ""
+        with self._lock:
+            current = self.config()
+            for dotted, value in values.items():
+                config_file.put(current, dotted, value)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        log.info("%d setting(s) written%s", len(values),
+                 f" -- {note}" if note else "")
+        self.refresh()
+        return ""
+
+    def add_export_settings(self, name: str, settings: dict[str, Any]) -> str:
+        """Create an export with everything it needs, in one write.
+
+        `add_export` takes a name and a kind and leaves the rest to the page
+        that follows, which is right when a person is filling it in. The
+        wizard and the weewx.conf import already hold every answer, and
+        making them post the form afterwards would be theatre.
+
+        A name that is taken is left alone rather than overwritten. Somebody
+        who has already set up an export called `site` has said more about it
+        than an import can know.
+        """
+        if self.read_only:
+            return "This settings page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return f"{name!r} cannot be an export's name."
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"exports.{name}") is not None:
+                return f"There is already an export called {name!r}."
+            for key, value in settings.items():
+                if value in (None, ""):
+                    continue
+                config_file.put(current, f"exports.{name}.{key}", value)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
     def add_export(self, name: str, kind: str) -> str:
         """Create an export. Returns an error, or empty if it worked.
 
@@ -212,6 +316,70 @@ class Admin:
             if config_file.get(current, f"exports.{name}") is not None:
                 return f"There is already an export called {name!r}."
             config_file.put(current, f"exports.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def add_collector(self, name: str, kind: str) -> str:
+        """Create a collector. Returns an error, or empty if it worked.
+
+        The name is checked against what the listener already answers to, and
+        not only against other collectors. A collector called `ecowitt` would
+        take a real driver's endpoint: the uploads would still arrive, be
+        handed to the envelope parser, fail to parse, and look like a console
+        that had stopped working.
+        """
+        from . import collectors as collector_defs
+
+        if self.read_only:
+            return "This admin page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return ("A name may hold lowercase letters, digits, - and _, and "
+                    "must start with a letter. Its readings arrive under it, "
+                    "so name it for where the console is.")
+        if kind not in collector_defs.KINDS:
+            return (f"{kind!r} is not one of: "
+                    f"{', '.join(collector_defs.KINDS)}")
+
+        taken = collector_defs.reserved()
+        if name in taken:
+            return (f"Something already answers to {name!r} -- it is a "
+                    f"driver or the envelope endpoint. Its readings would be "
+                    f"recorded under the wrong driver. Pick another name.")
+
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"collectors.{name}") is not None:
+                return f"There is already a collector called {name!r}."
+            config_file.put(current, f"collectors.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def remove_collector(self, name: str) -> str:
+        """Take a collector out of the configuration.
+
+        Nothing is stopped by this: the collector is another process, and
+        very likely another machine. What it does is take the endpoint away,
+        so a collector still running arrives as an unknown driver and is
+        refused rather than recorded as something else.
+        """
+        if self.read_only:
+            return "This admin page was started read-only."
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"collectors.{name}") is None:
+                return f"There is no collector called {name!r}."
+            (current.get("collectors") or {}).pop(name, None)
             try:
                 config_file.write(self.path, current, self.schemas)
             except Exception as exc:
@@ -546,8 +714,41 @@ class Admin:
 
 # -- rendering -----------------------------------------------------------
 
-def field(option: Option, value: Any, error: str = "") -> str:
-    """One setting as a form field."""
+def overridden(option: Option) -> str:
+    """The environment variable outranking this setting, if there is one.
+
+    The order is argument, environment, file, weewx.conf, default, and this
+    page writes the file. So a variable set in the deployment wins, and the
+    page would otherwise accept a value, store it, and change nothing: no
+    error, no warning, and a field that keeps showing what was typed while
+    the process goes on using something else.
+
+    Read straight from the environment rather than through a Settings
+    instance. The page edits a file it is given the path to and holds no
+    resolved settings, and building some here would answer for this process
+    rather than for the one doing the archiving.
+    """
+    import os
+
+    from .settings import ENV_ALIASES
+
+    primary = "WEEWX_EVO_" + option.name.replace(".", "_").upper()
+    for env_name in [primary, *[n for n, _ in ENV_ALIASES.get(option.name, ())]]:
+        if os.environ.get(env_name):
+            return env_name
+    return ""
+
+
+def field(option: Option, value: Any, error: str = "",
+          moved: str = "") -> str:
+    """One setting as a form field.
+
+    `moved` names the file that has taken this setting over, if one has.
+    Today that is only `archives.toml`: adding a second series moves the
+    station name, the coordinates and the altitude onto the archive, and a
+    field that keeps accepting a value nothing reads is the same failure as
+    an environment variable quietly winning.
+    """
     name = html.escape(option.name)
     shown = option.render(value)
     label = html.escape(option.label)
@@ -567,7 +768,21 @@ def field(option: Option, value: Any, error: str = "") -> str:
         # A number and a unit, not a string somebody has to know the syntax
         # for. "300" in a box labelled "interval" is a question about units
         # that a form should not be asking.
-        amount, unit = split_duration(option.parse(value) if value else option.default)
+        #
+        # Parsed inside a try, because a page has to be able to show a value
+        # it disagrees with. Two options shipped a default below their own
+        # minimum, `parse` raised while rendering the field, and the whole
+        # settings page answered 500 -- so the figure that caused it could
+        # not be corrected from the page either. Whatever is in the file is
+        # what somebody has to see in order to change it.
+        try:
+            seconds = option.parse(value) if value else option.default
+        except Invalid:
+            log.warning("%s holds %r, which it will not accept. Showing it "
+                        "as it stands so it can be corrected.",
+                        option.name, value or option.default)
+            seconds = value if isinstance(value, (int, float)) else 0
+        amount, unit = split_duration(seconds)
         units = "".join(
             f'<option value="{code}"{" selected" if code == unit else ""}>'
             f"{word}</option>" for code, word in UNITS)
@@ -584,6 +799,11 @@ def field(option: Option, value: Any, error: str = "") -> str:
                        'placeholder="nothing installed to choose from">')
         else:
             out.append(f'<select id="f-{name}" name="{name}">')
+            # Everything through `str`. A choice is usually a word, but MQTT
+            # offers quality-of-service as 0, 1 and 2, and `html.escape` on an
+            # int raises -- which took the settings page of any MQTT upload
+            # with it, and with it the whole connection.
+            available = [(str(choice), str(text)) for choice, text in available]
             known = {choice for choice, _ in available}
             if shown and str(shown) not in known:
                 # A value naming something no longer installed. Kept and
@@ -629,29 +849,54 @@ def field(option: Option, value: Any, error: str = "") -> str:
     if option.kind == "choice" and option.options():
         # What else could go here. A dropdown shows one thing at a time, and
         # knowing the alternatives without opening it is worth a line.
-        others = ", ".join(c for c, _ in option.options() if c and c != str(shown))
+        # `str` again, and for the same reason as above: a choice is not
+        # always a word. MQTT's quality of service is 0, 1 and 2.
+        others = ", ".join(str(c) for c, _ in option.options()
+                           if c not in ("", None) and str(c) != str(shown))
         if others:
             out.append(f'<p class="alt">or: {html.escape(others)}</p>')
     if error:
         out.append(f'<p class="err">{html.escape(error)}</p>')
     if option.help:
         out.append(f'<p class="help">{html.escape(option.help)}</p>')
+    beaten = overridden(option)
+    if beaten:
+        out.append(
+            f'<p class="err">Saving this changes nothing while '
+            f'<code>{html.escape(beaten)}</code> is set in the environment: '
+            f'that outranks the configuration file. Unset it, or change it '
+            f'where it is set.</p>')
+    if moved:
+        out.append(
+            f'<p class="err">This moved to the archive when the second one '
+            f'was added. It is now set per series in '
+            f'<code>{html.escape(moved)}</code>, on the '
+            f'<a href="./archives">Archives</a> page, and nothing reads it '
+            f'here.</p>')
     if option.restart:
         out.append('<p class="note">Restarts the service when saved.</p>')
     out.append("</div>")
     return "\n".join(out)
 
 
+def anchor(label: str) -> str:
+    """A fragment name from a group label. Stable, because it is a link."""
+    return "g-" + re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
+
+
 def group_html(group: Group, values: dict[str, Any],
-               errors: dict[str, str]) -> str:
+               errors: dict[str, str], moved: str = "",
+               moved_names: frozenset[str] = frozenset()) -> str:
     plain = [o for o in group.options if not o.advanced]
     advanced = [o for o in group.options if o.advanced]
-    out = ['<section class="group">']
+    out = [f'<section class="group" id="{html.escape(anchor(group.label))}">']
     out.append(f"<h3>{html.escape(group.label)}</h3>")
     if group.help:
         out.append(f'<p class="lede">{html.escape(group.help)}</p>')
     for option in plain:
-        out.append(field(option, values.get(option.name), errors.get(option.name)))
+        out.append(field(option, values.get(option.name),
+                         errors.get(option.name),
+                         moved if option.name in moved_names else ""))
     if advanced:
         # Hidden, not omitted: a setting nobody can find is one that gets
         # found by reading the source, which is worse than a longer page.
@@ -660,7 +905,8 @@ def group_html(group: Group, values: dict[str, Any],
         out.append(f"<summary>{len(advanced)} more, rarely needed</summary>")
         for option in advanced:
             out.append(field(option, values.get(option.name),
-                             errors.get(option.name)))
+                             errors.get(option.name),
+                             moved if option.name in moved_names else ""))
         out.append("</details>")
     out.append("</section>")
     return "\n".join(out)
@@ -686,7 +932,6 @@ def new_export_page(admin: Admin, error: str = "", form: dict | None = None) -> 
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add an export</h3>
   <p class="lede">A feed writes into its own working directory. An export is
      what puts those files somewhere anybody can read them. Give it a name
      and a destination; the rest is on the page that appears next.</p>
@@ -731,7 +976,6 @@ def new_upload_page(admin: Admin, error: str = "",
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add an upload</h3>
   <p class="lede">An export moves the files a feed produced. An upload sends
      the readings themselves to a weather service, so they appear on its map
      alongside everybody else\'s. Give it a name and a service; the account
@@ -777,7 +1021,6 @@ def new_forecast_page(admin: Admin, error: str = "",
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add a forecast</h3>
   <p class="lede">The station measures what is happening. A forecast is the
      other half of what people look at a weather page for. Two sources is the
      usual arrangement rather than the exception: one for the numbers and one
@@ -806,6 +1049,58 @@ def new_forecast_page(admin: Admin, error: str = "",
 </section>'''
 
 
+def new_collector_page(admin: Admin, error: str = "",
+                       form: dict | None = None) -> str:
+    """A collector: a name and what it runs.
+
+    The name is the field that matters and the page says so, because it is
+    not cosmetic here the way a feed's name is. A collector's packets arrive
+    under it, and a station is matched on the pair (driver, identity) -- so
+    the name typed here is the one to put on the Stations page, and two
+    consoles reporting the same model are told apart by nothing else.
+    """
+    from . import collectors as collector_defs
+
+    form = form or {}
+    chosen = form.get("kind") or "weewx-driver"
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
+        for kind, label in collector_defs.KINDS.items())
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return f'''
+<section class="group">
+  <p class="lede">A collector goes and reads a console, rather than waiting
+     for one to upload. It runs as its own process, where the hardware is --
+     a serial port, a USB device, a radio -- and delivers over the network
+     like any other station. It does not have to be on this machine.</p>
+  <p class="lede">This page configures it and does not start it. Run it with
+     <code>weewx-evo weewx-driver run --collector &lt;name&gt;</code>, or use
+     the unit file in <code>deploy/</code>.</p>
+  {problem}
+  <form method="post" action="./new-collector">
+    <div class="field">
+      <label for="f-name">Name</label>
+      <input type="text" id="f-name" name="name" required
+             value="{html.escape(str(form.get("name", "")))}"
+             placeholder="shed" autocomplete="off" spellcheck="false">
+      <p class="help">Its readings arrive under this name, and a station is
+         announced for it by this name. Two consoles of the same model are
+         told apart by nothing else, so name it for where it is:
+         <code>shed</code>, <code>roof</code>.</p>
+    </div>
+    <div class="field">
+      <label for="f-kind">What it runs</label>
+      <select id="f-kind" name="kind">{options}</select>
+      <ul class="kinds"><li><strong>A WeeWX driver</strong>: any of the
+        hundred-odd drivers written for WeeWX, unchanged. WeeWX itself does
+        not have to be installed -- point at the driver file.</li></ul>
+    </div>
+    <div class="actions"><button type="submit">Create</button></div>
+  </form>
+</section>'''
+
+
 def new_feed_page(admin: Admin, error: str = "",
                   form: dict | None = None) -> str:
     """Two fields: a name and a kind. The rest waits."""
@@ -822,7 +1117,6 @@ def new_feed_page(admin: Admin, error: str = "",
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <h3>Add a feed</h3>
   <p class="lede">A feed turns the readings into files. Several of one kind
      is normal: two sets of JSON in two unit systems, or two themes side by
      side. Each writes its own directory and has its own settings.</p>
@@ -1008,6 +1302,70 @@ def _addresses() -> list[tuple[str, str]]:
     return found
 
 
+def _collector_nav(admin: Any, active: str) -> list[str]:
+    """The collectors, and the way to add one when there are none.
+
+    The add link is outside the "none configured" branch and not inside it.
+    That mistake has already been made once here -- "Add an upload" sat
+    inside its empty state, so the moment one existed there was no way from
+    this page to a second, which reads as the feature not existing.
+    """
+    found = sorted(s for s in admin.schemas if s.kind == "collector")
+    current = (" aria-current='page'"
+               if active == "new-collector"
+               or active.startswith("collector:") else "")
+    out = []
+    for one in found:
+        here = " aria-current='page'" if one.name == active else ""
+        out.append(f'<a href="./{html.escape(one.name)}"{here}>'
+                   f'{html.escape(one.label.split(": ", 1)[-1].split(" (")[0])}'
+                   f"</a>")
+    if not admin.read_only:
+        out.append(f'<a class="add" href="./new-collector"{current}>'
+                   "+ Add a collector</a>")
+    return out
+
+
+def _driver_nav(admin: Any, active: str) -> list[str]:
+    """The drivers, with the ones nobody uses folded away.
+
+    Six protocols arrived at once and the sidebar grew six lines, on an
+    installation running one of them. A driver no station uses has no setting
+    anybody wants to read -- but it has to stay reachable, because setting one
+    up is exactly when it is needed. So: in use first, by name, and the rest
+    behind one line that says how many.
+    """
+    drivers = [s for s in admin.schemas if s.kind == "driver"]
+    if not drivers:
+        return []
+    try:
+        used = {getattr(one, "driver", "") for one in adminstations.load(admin)}
+    except Exception:
+        log.debug("could not read the stations for the driver list",
+                  exc_info=True)
+        used = {one.name for one in drivers}
+
+    def link(one: Any) -> str:
+        current = " aria-current='page'" if one.name == active else ""
+        # "Driver: ecowitt" under a heading that already says Readings in,
+        # beside a link called Consoles. The name is the whole of it.
+        shown = one.label.split(": ", 1)[-1]
+        return (f'<a href="./{html.escape(one.name)}"{current}>'
+                f"{html.escape(shown)}</a>")
+
+    out = [link(one) for one in drivers if one.name in used]
+    rest = [one for one in drivers if one.name not in used]
+    if rest:
+        # Open when one of them is the page being looked at, so following a
+        # search result does not land somewhere the navigation denies.
+        opened = " open" if any(one.name == active for one in rest) else ""
+        out.append(
+            f'<details class="more"{opened}><summary>{len(rest)} more '
+            f'{"driver" if len(rest) == 1 else "drivers"}</summary>'
+            + "".join(link(one) for one in rest) + "</details>")
+    return out
+
+
 def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
@@ -1016,9 +1374,12 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         "new-plot", "import-plots")
     charting = schema is None and (active in ("new-plot", "import-plots")
                                    or active.startswith("plot:"))
-    if schema is None and not adding and not charting:
-        schema = admin.schemas[0]
-        active = schema.name
+    standing = schema is None and active in OWN_PAGES
+    if schema is None and not adding and not charting and not standing:
+        # The overview, not the first form. Somebody arriving here almost
+        # never wants to change a value; they want to know whether it is
+        # working. The forms are one click away and always were.
+        active, standing = "overview", True
 
     # After a failed save, show what was typed rather than what is stored --
     # retyping a form because one field was wrong is how people give up.
@@ -1026,54 +1387,45 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     if form and schema:
         values.update({k: v for k, v in form.items() if k in values})
 
+    # The pages whose content is a wide table rather than a form. Named
+    # here: deciding it from the rendered body would mean a page changing
+    # width depending on how many stations somebody happens to have.
+    wide = "wide" if active in ("stations", "overview", "archives") else ""
+
     nav = []
-    # Feeds and exports are two different things and the page says so: a feed
-    # makes files, an export moves them. See weewx_evo.feeds.
-    empty = {
-        "feed": "None yet. A feed produces something from the readings: a "
-                "CSV, a JSON document, a chart, a whole website.",
-        "export": "None yet. An export moves what a feed produced: FTP, "
-                  "rsync, a copy to a mounted share.",
-        "upload": "None yet. An upload sends the readings to a weather "
-                  "service: Weather Underground, Windy, CWOP, an MQTT "
-                  "broker.",
-        "forecast": "None yet. A forecast says what is coming, and a warning "
-                    "service says when it matters. Both are free and need no "
-                    "account.",
-    }
-    for kind, heading in (("core", "System"), ("driver", "Drivers"),
-                          ("feed", "Feeds"), ("charts", ""),
-                          ("export", "Exports"), ("upload", "Uploads"),
-                          ("forecast", "Forecast")):
-        if kind == "charts":
-            nav.extend(adminplots.nav(admin, active))
-            continue
-        rows = [s for s in admin.schemas if s.kind == kind]
-        if not rows and kind not in empty:
-            continue
-        nav.append(f'<p class="navhead">{heading}</p>')
-        if not rows:
-            nav.append(f'<p class="navempty">{html.escape(empty[kind])}</p>')
-        for s in rows:
-            current = " aria-current='page'" if s.name == active else ""
-            nav.append(f'<a href="./{html.escape(s.name)}"{current}>'
-                       f"{html.escape(s.label)}</a>")
-        if kind == "feed" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-feed" else ""
-            nav.append(f'<a class="add" href="./new-feed"{current}>'
-                       "+ Add a feed</a>")
-        if kind == "export" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-export" else ""
-            nav.append(f'<a class="add" href="./new-export"{current}>'
-                       "+ Add an export</a>")
-        if kind == "upload" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-upload" else ""
-            nav.append(f'<a class="add" href="./new-upload"{current}>'
-                       "+ Add an upload</a>")
-        if kind == "forecast" and not admin.read_only:
-            current = " aria-current='page'" if active == "new-forecast" else ""
-            nav.append(f'<a class="add" href="./new-forecast"{current}>'
-                       "+ Add a forecast</a>")
+    # Fixed sections. The old navigation listed every configured thing --
+    # three feeds, five exports, an upload, each its own link under its own
+    # heading -- so it grew with the installation and was longest on exactly
+    # the installations where finding something matters. The instances live
+    # on their section's page now.
+    nav.extend(adminhome.nav(admin, active))
+
+    nav.append('<p class="navhead">Readings in</p>')
+    nav.extend(adminstations.nav(admin, active))
+    nav.extend(_driver_nav(admin, active))
+    nav.extend(_collector_nav(admin, active))
+
+    nav.append('<p class="navhead">Readings out</p>')
+    nav.extend(adminpublish.nav(admin, active))
+    nav.extend(adminplots.nav(admin, active))
+    forecasts = [s for s in admin.schemas if s.kind == "forecast"]
+    current = " aria-current='page'" if active in (
+        "forecast", "new-forecast") or active.startswith("forecast:") else ""
+    if forecasts:
+        nav.append(f'<a href="./{html.escape(forecasts[0].name)}"{current}>'
+                   f'Forecast<span class="count">{len(forecasts)}</span></a>')
+    elif not admin.read_only:
+        nav.append(f'<a class="add" href="./new-forecast"{current}>'
+                   "+ Add a forecast</a>")
+
+    nav.append('<p class="navhead">Kept</p>')
+    nav.extend(adminarchives.nav(admin, active))
+
+    nav.append('<p class="navhead">System</p>')
+    for one in [s for s in admin.schemas if s.kind == "core"]:
+        current = " aria-current='page'" if one.name == active else ""
+        nav.append(f'<a href="./{html.escape(one.name)}"{current}>'
+                   f"{html.escape(one.label)}</a>")
 
     if charting:
         if active == "new-plot":
@@ -1085,13 +1437,58 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         else:
             body = [adminplots.edit(admin, active.split(":", 1)[1],
                                     admin.columns(), errors, form)]
+    elif active == "search":
+        body = [adminsearch.results(admin, (form or {}).get("q", ""))]
+    elif active == "setup" or active.startswith("setup/"):
+        # The wizard, which renders its own step. `setup/place` and the rest
+        # are one page with a step in the path rather than five pages: the
+        # progress bar has to know where it is, and a page that does not
+        # know cannot draw one.
+        step = active.split("/", 1)[1] if "/" in active else ""
+        body = [adminsetup.page(admin, step, errors.get("", ""), form,
+                                said=message)]
+    elif standing:
+        pages = {"overview": adminhome, "archives": adminarchives,
+                 "stations": adminstations, "publishing": adminpublish,
+                 "charts": adminplots}
+        body = [pages[active].overview(admin, message, errors.get("", ""))]
+    elif active == "new-archive":
+        body = [adminarchives.new(admin, errors.get("", ""), form)]
+    elif active == "new-station":
+        made = (form or {}).get("_made")
+        if made is None and (form or {}).get("learn"):
+            # Coming back to a station that is still waiting for its console.
+            made = adminstations.load(admin).by_name(str(form["learn"]))
+        body = [adminstations.new(admin, errors.get("", ""), form, made=made)]
     elif adding:
         maker = {"new-feed": new_feed_page, "new-upload": new_upload_page,
                  "new-export": new_export_page,
+                 "new-collector": new_collector_page,
                  "new-forecast": new_forecast_page}[active]
         body = [maker(admin, errors.get("", ""), form)]
     else:
-        body = [group_html(g, values, errors) for g in schema.groups]
+        # Which of these the archive list has taken over, if it exists. The
+        # settings are the one archive until there are two; after that they
+        # are read from `archives.toml` and this page has to say so.
+        moved, moved_names = "", frozenset()
+        try:
+            register = adminarchives.load(admin)
+            if register.overriding():
+                moved = str(adminarchives.path_for(admin))
+                moved_names = frozenset(archive_defs.FROM_SETTINGS)
+        except Exception:
+            log.debug("could not read the archives for the settings page",
+                      exc_info=True)
+        jump = "".join(
+            f'<a href="#{html.escape(anchor(g.label))}">'
+            f"{html.escape(g.label)}</a>" for g in schema.groups)
+        # Where this thing sits in the chain, first. A page of FTP settings
+        # with no hint of which feed it sends is one nobody can check
+        # without opening a second tab.
+        body = [adminpublish.context(admin, active),
+                f'<nav class="jump" aria-label="Sections">{jump}</nav>']
+        body += [group_html(g, values, errors, moved, moved_names)
+                 for g in schema.groups]
 
     # An export gets two more buttons: try the destination, and delete it.
     # Testing is worth a great deal here -- a wrong password found now beats
@@ -1212,7 +1609,13 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         restart = ('<div class="banner warn">Saved, and waiting for a '
                    f"restart to take effect: {items}.</div>")
 
-    own_form = adding or charting
+    # `standing` too: the stations page is a list of rows with a form on
+    # each -- adopt, ignore, remove. Wrapped in the save form those are nested
+    # forms, which HTML does not have: the browser drops the inner <form>,
+    # keeps its </form>, and the outer one closes early. The buttons then
+    # belong to no form at all, or to the wrong one. Same failure the exports
+    # and feeds had, which is what `tools/admin_page_test.js` was written for.
+    own_form = adding or charting or standing
     if charting:
         heading = ("Add a chart" if active == "new-plot"
                    else "Import charts" if active == "import-plots"
@@ -1223,11 +1626,24 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         # export" over a form that was nothing of the sort.
         headings = {"new-feed": "Add a feed", "new-export": "Add an export",
                     "new-upload": "Add an upload",
-                    "new-forecast": "Add a forecast"}
+                    "new-collector": "Add a collector",
+                    "new-forecast": "Add a forecast",
+                    "new-station": "Add a station", "stations": "Stations",
+                    "new-archive": "Add an archive", "overview": "Overview",
+                    "archives": "Archives", "publishing": "Publishing",
+                    "charts": "Charts",
+                    "search": "Find a setting"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
+    # The pages that render themselves write their own <h2>, and it carries
+    # more than a name: "Publishing" with a line under it saying what a feed
+    # and an export each do. Printing the shell's as well gave two headings,
+    # the first of them a bare repetition of the second.
     return _PAGE.format(
+        wide=wide,
         title=html.escape(heading),
+        heading="" if standing else f"<h2>{html.escape(heading)}</h2>",
+        find=adminsearch.box(),
         body_form_open="" if own_form else f'<form method="post" action="./{html.escape(active)}">',
         body_form_close="" if own_form else "</form>",
         # After the save form closes, never inside it. `extra` is Try it and
@@ -1248,7 +1664,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         readonly=("<p class='lede'>Started read-only: nothing can be saved.</p>"
                   if admin.read_only else ""),
         save="" if admin.read_only or own_form else
-             '<div class="actions"><button type="submit">Save</button>'
+             '<div class="savebar"><button type="submit">Save</button>'
              '<span class="hint">Written to the configuration file. '
              'The previous version is kept as .bak.</span></div>',
         file=html.escape(str(admin.path)),
@@ -1274,11 +1690,30 @@ _PAGE = """<!doctype html>
       --dim: #9a94a3; --accent: #79c79b; --warn: #e0a86a; --bad: #e08a76;
     }}
   }}
+  /* Every link in the page body was the browser's own colour: #0000ee in
+     light, #9e9eff in dark. The second is the one that gives a dark theme
+     away -- a lilac link on a green-accented panel, on every card of the
+     overview. Colour, not the browser's; underline only on hover, because
+     "Add a feed" beside "Add an export" beside "Add an upload" underlined
+     three times is a fence. */
+  main a {{ color: var(--accent); text-decoration: none; }}
+  main a:hover {{ text-decoration: underline; }}
+  main a:focus-visible {{ outline: 2px solid var(--accent);
+      outline-offset: 2px; border-radius: 3px; }}
   * {{ box-sizing: border-box; }}
   body {{ margin: 0; background: var(--bg); color: var(--ink);
          font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }}
   .shell {{ display: grid; grid-template-columns: 15rem 1fr; min-height: 100vh; }}
-  @media (max-width: 48rem) {{ .shell {{ grid-template-columns: 1fr; }} }}
+  @media (max-width: 48rem) {{
+    .shell {{ grid-template-columns: 1fr; }}
+    /* One column means the whole sidebar comes before the page. It is
+       thirteen entries plus a search box, so on a phone the answer to
+       "is it recording" was below eight hundred pixels of navigation.
+       Capped and scrollable: the top of the page is on the first screen,
+       and the navigation is still all there. */
+    nav {{ max-height: 40vh; overflow-y: auto;
+           border-right: 0; border-bottom: 1px solid var(--line); }}
+  }}
 
   nav {{ background: var(--panel); border-right: 1px solid var(--line);
         padding: 1.25rem 1rem; }}
@@ -1296,7 +1731,20 @@ _PAGE = """<!doctype html>
   nav a[aria-current] {{ background: color-mix(in srgb, var(--accent) 15%, transparent);
                         font-weight: 600; }}
 
-  main {{ padding: 1.75rem 1.5rem 5rem; max-width: 46rem; }}
+  /* 46rem is a reading measure, and most of these pages are forms and
+     prose that want one. The station page is a table five columns wide, and
+     holding it to a paragraph's width made every cell wrap: "LAST VALUE" ran
+     into the heading beside it and a field name broke across two lines. */
+  main {{ padding: 1.75rem 1.5rem 5rem; max-width: 46rem;
+          /* A grid item's default minimum is its content, so a 32-character
+             identity in a table made the whole page scroll sideways on a
+             phone. */
+          min-width: 0; }}
+  main.wide {{ max-width: 72rem; }}
+  /* A table wider than the phone scrolls inside its own card. The page
+     itself never does: a horizontal scrollbar on the body hides content
+     behind a gesture nobody performs on a settings page. */
+  section.group {{ overflow-x: auto; }}
   h2 {{ font-size: 1.375rem; margin: 0 0 1.25rem; letter-spacing: -.01em; }}
   h3 {{ font-size: .9375rem; margin: 0 0 .2rem; }}
   .lede {{ color: var(--dim); font-size: .875rem; margin: 0 0 1rem; }}
@@ -1367,10 +1815,30 @@ _PAGE = """<!doctype html>
   .navgroup > summary::-webkit-details-marker {{ display: none; }}
   .navgroup > summary:hover {{ background: color-mix(in srgb, var(--ink) 6%, transparent);
       color: var(--ink); }}
+  form.find {{ margin: 0 0 1.25rem; }}
+  form.find input {{ width: 100%; padding: .4rem .6rem; font-size: .8125rem;
+      border: 1px solid var(--line); border-radius: .35rem;
+      background: var(--bg); color: var(--ink); }}
+  form.find input:focus {{ outline: 2px solid var(--accent);
+      outline-offset: -1px; }}
+
+  nav a .count {{ float: right; font-variant-numeric: tabular-nums;
+                  font-size: .75rem; color: var(--dim); font-weight: 400;
+                  margin-left: .5rem; }}
+  nav a[aria-current] .count {{ color: var(--ink); }}
   .navgroup > summary .count {{ font-variant-numeric: tabular-nums;
       opacity: .65; }}
   .navgroup[open] > summary {{ color: var(--ink); font-weight: 500; }}
   nav a.sub {{ padding-left: 1.1rem; font-size: .8125rem; }}
+  /* The drivers nobody uses. A line that says how many, and the same
+     indentation as anything else nested under a section. */
+  details.more > summary {{ padding: .35rem 0; font-size: .8125rem;
+      color: var(--dim); cursor: pointer; list-style: none; }}
+  details.more > summary::before {{ content: "+ "; }}
+  details.more[open] > summary::before {{ content: "2 "; }}
+  details.more > summary::-webkit-details-marker {{ display: none; }}
+  details.more > summary:hover {{ color: var(--ink); }}
+  details.more > a {{ padding-left: 1.1rem; font-size: .8125rem; }}
   .row {{ display: flex; flex-wrap: wrap; gap: 1rem 1.4rem; margin-bottom: 1rem; }}
   .row > label {{ flex: 1 1 13rem; display: block; font-size: .8125rem;
       color: var(--dim); }}
@@ -1413,6 +1881,253 @@ _PAGE = """<!doctype html>
            color: #fff; background: var(--accent); border: 1px solid transparent; }}
   button:hover {{ filter: brightness(1.08); }}
   .hint {{ font-size: .8125rem; color: var(--dim); }}
+
+  /* -- the overview -------------------------------------------------- */
+
+  /* Wide enough for "12 345 packets, 45.6 MB" without wrapping, and as many
+     across as the window allows. Not a breakpoint: the number of cards grows
+     with what somebody has configured, and a fixed column count would be one
+     more thing to keep in step with it. */
+  .cards {{ display: grid; gap: 1rem; margin-top: 1.25rem;
+            grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); }}
+  .card {{ border: 1px solid var(--line); border-radius: .5rem;
+           padding: .85rem 1rem 1rem; background: var(--panel); }}
+  .card h3 {{ margin: 0 0 .5rem; font-size: .8125rem; font-weight: 600;
+              text-transform: uppercase; letter-spacing: .04em;
+              color: var(--dim); }}
+  .card .navempty {{ margin: 0; }}
+  .cardlink {{ margin: .6rem 0 0; font-size: .8125rem; }}
+  /* `table-layout: fixed` and a min-width of zero on the card: without
+     both, one long path in one cell widened the table past the grid track
+     and put a horizontal scrollbar under the whole page. */
+  .card {{ min-width: 0; }}
+  table.chain {{ width: 100%; border-collapse: collapse;
+                 table-layout: fixed; }}
+  table.chain td {{ padding: .3rem 0; vertical-align: baseline;
+                    border-top: 1px solid var(--line); font-size: .875rem;
+                    overflow-wrap: anywhere; }}
+  table.chain tr:first-child td {{ border-top: 0; }}
+  table.chain td:first-child {{ font-weight: 600; padding-right: .5rem;
+                                width: 36%; overflow-wrap: normal;
+                                text-overflow: ellipsis; overflow: hidden;
+                                white-space: nowrap; }}
+  /* With room for it, the name is worth more than the ellipsis: an archive
+     called "Kirchdorf an der Amper" read "Kirchdorf an d..." on a card with
+     four empty centimetres beside it. */
+  main.wide table.chain td:first-child {{ width: 44%; }}
+  /* The age is what the eye goes to, so it is aligned and monospaced: a
+     column of "12 s ago" and "4 h ago" compares at a glance, the same
+     strings ragged do not. */
+  table.chain td.when {{ text-align: right; white-space: nowrap;
+                         font-variant-numeric: tabular-nums;
+                         color: var(--dim); font-size: .8125rem; }}
+  /* The last day, as a shape. Faint, because it is context and not the
+     number -- a glance should land on the age first. */
+  tr.sparkrow td {{ border-top: 0; padding: 0 0 .35rem; }}
+  svg.spark {{ display: block; width: 100%; height: 22px;
+               fill: color-mix(in srgb, var(--accent) 55%, transparent); }}
+
+  .banner.warn ul {{ margin: .4rem 0 0; padding-left: 1.1rem;
+                     font-size: .875rem; }}
+  .banner.warn li {{ margin: .25rem 0; }}
+  nav a.home {{ font-weight: 600; margin-bottom: .5rem; }}
+
+  /* -- long forms ----------------------------------------------------- */
+
+  /* Seven groups of settings is a page four thousand pixels tall, and the
+     only way to the seventh was scrolling past the other six. */
+  nav.jump {{ display: flex; flex-wrap: wrap; gap: .3rem;
+              margin: 0 0 1.25rem; padding-bottom: .9rem;
+              border-bottom: 1px solid var(--line); }}
+  /* `nav a` is the sidebar's rule and it applies here too -- this is a
+     <nav> as well. Two of its declarations had to be undone: the negative
+     side margin, which made each chip lap over the last letter of the one
+     before it ("Statior", "Archiv"), and the panel background and border
+     that put a white box around the whole strip. */
+  nav.jump {{ background: none; border-right: 0; padding: 0; }}
+  nav.jump a {{ flex: 0 0 auto; white-space: nowrap; margin: 0;
+                font-size: .8125rem; padding: .25rem .6rem; border-radius: 1rem;
+                color: var(--dim); text-decoration: none;
+                border: 1px solid var(--line); background: var(--panel); }}
+  nav.jump a:hover {{ color: var(--ink); border-color: var(--dim); }}
+  .group, .flow {{ scroll-margin-top: 1rem; }}
+  nav.jump a .count {{ float: none; margin-left: .35rem; }}
+
+  /* And the Save button was at the bottom of all of it. Sticky rather than
+     repeated: one button, always reachable, and it still belongs to the one
+     form. */
+  .savebar {{ position: sticky; bottom: 0; display: flex; align-items: center;
+              gap: .75rem; margin: 1.5rem -1.5rem -5rem; padding: .8rem 1.5rem;
+              background: color-mix(in srgb, var(--bg) 92%, transparent);
+              backdrop-filter: blur(6px);
+              border-top: 1px solid var(--line); }}
+  .savebar .hint {{ font-size: .75rem; color: var(--dim); }}
+  @media (max-width: 48rem) {{ .savebar {{ margin-left: -1rem;
+                                           margin-right: -1rem; }} }}
+
+  /* -- publishing: the flow ------------------------------------------ */
+
+  .actions {{ display: flex; gap: .5rem; margin: 0 0 1.25rem; }}
+  a.button {{ display: inline-block; padding: .4rem .8rem; border-radius: .35rem;
+              background: var(--accent); color: #fff; text-decoration: none;
+              font-size: .8125rem; font-weight: 600; }}
+  a.button.quiet {{ background: transparent; color: var(--ink);
+                    border: 1px solid var(--line); font-weight: 500; }}
+  .sectionhead {{ margin: 2rem 0 .3rem; font-size: .8125rem;
+                  text-transform: uppercase; letter-spacing: .04em;
+                  color: var(--dim); }}
+  /* One block per feed. The exports sit inside its border rather than
+     beside it, because "inside" is the claim being made: this feed is what
+     they publish. */
+  .flow {{ border: 1px solid var(--line); border-radius: .5rem;
+           background: var(--panel); margin-bottom: .75rem; }}
+  .made {{ display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap;
+           padding: .7rem .9rem; }}
+  .made .title, .sends .title {{ font-weight: 600; font-size: .9375rem;
+                                 color: var(--ink); text-decoration: none; }}
+  .made a.title:hover {{ text-decoration: underline; }}
+  /* The age goes to the right edge and stays on one line. `margin-left:
+     auto` alone does not do it inside a wrapping flex row: the item wraps
+     first and then has a whole line to itself. */
+  /* The age goes to the right edge and stays on one line. Marked with a
+     class rather than :last-child -- a block with no age has its
+     description last, and that was being pushed to the right instead. */
+  .made .when, .sends .when, .made .aside, .sends .aside {{
+      margin-left: auto; color: var(--dim); font-size: .8125rem;
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+      padding-left: 1rem; }}
+  .made .aside, .sends .aside {{ white-space: normal; }}
+  /* Something that went wrong, in the slot the age usually sits in. The
+     rule above is more specific than `.warn` on its own, so without this a
+     refused login was printed in the same grey as "10 s ago". */
+  .made .when.warn, .sends .when.warn {{ color: var(--warn);
+      white-space: normal; }}
+  /* The context band: above the form, and marked as belonging to the page
+     rather than to the settings under it. */
+  .flow.context {{ margin-bottom: 1.25rem;
+      background: color-mix(in srgb, var(--accent) 7%, transparent);
+      border-color: color-mix(in srgb, var(--accent) 25%, transparent); }}
+  .flow.context .made {{ padding: .55rem .9rem; }}
+  .made .note, .sends .note {{ min-width: 0; overflow-wrap: anywhere; }}
+  .sends {{ list-style: none; margin: 0; padding: 0;
+            border-top: 1px solid var(--line); }}
+  .sends li {{ display: flex; align-items: baseline; gap: .5rem;
+               flex-wrap: wrap; padding: .5rem .9rem .5rem 1.6rem;
+               font-size: .875rem; border-top: 1px solid var(--line); }}
+  .sends li:first-child {{ border-top: 0; }}
+  .sends.plain li {{ padding-left: .9rem; }}
+  .sends li.none {{ color: var(--dim); font-size: .8125rem; }}
+  .sends .arrow {{ position: absolute; margin-left: -.9rem; color: var(--dim); }}
+  .sends li a {{ font-weight: 600; color: var(--ink); }}
+  .chip {{ font-size: .6875rem; padding: .1rem .4rem; border-radius: .25rem;
+           background: color-mix(in srgb, var(--ink) 8%, transparent);
+           color: var(--dim); text-transform: uppercase;
+           letter-spacing: .03em; }}
+  .flow .note {{ font-size: .8125rem; color: var(--dim); }}
+
+  /* -- the stations page ------------------------------------------- */
+  /* A list of consoles rather than a form, so it is a table. Laid out
+     rather than left to the browser: the identity is a 32-character hex
+     string and, left to itself, it takes the width from every column that
+     has something to say. */
+  table.stations {{ width: 100%; border-collapse: collapse;
+      font-size: .875rem; margin: .4rem 0 0; }}
+  table.stations th {{ text-align: left; font-weight: 600; color: var(--dim);
+      font-size: .75rem; text-transform: uppercase; letter-spacing: .04em;
+      padding: 0 .6rem .4rem 0; white-space: nowrap; }}
+  table.stations td {{ padding: .55rem .6rem .55rem 0; vertical-align: top;
+      border-top: 1px solid var(--line); }}
+  table.stations tr:first-child td {{ border-top: 0; }}
+  table.stations td.act {{ text-align: right; white-space: nowrap; }}
+  /* The identity is the widest thing here and the least often read. It
+     breaks rather than pushing the columns somebody is looking at. */
+  /* The placement table. Wider than the station list it folds out of, and
+     the chooser is the widest thing in it. */
+  table.fields select {{ font-size: .8125rem; max-width: 22rem; width: 100%; }}
+  table.fields td {{ vertical-align: top; }}
+  table.fields td.mono {{ font-family: var(--mono); font-size: .8125rem;
+                          overflow-wrap: anywhere; }}
+  table.fields button.quiet {{ margin-top: .25rem; font-size: .75rem; }}
+  /* The readings that are fine, folded away under a count. */
+  details.settled {{ margin-top: .8rem; }}
+  details.settled > summary {{ font-size: .8125rem; color: var(--dim);
+      cursor: pointer; padding: .3rem 0; }}
+  details.settled > summary:hover {{ color: var(--ink); }}
+  /* Which measurement it is, for sorting the chooser. Narrow: it is context
+     for the column beside it, not a column somebody reads down. */
+  table.fields td:nth-child(4) {{ font-size: .75rem; }}
+  /* Fixed, and in per cent. Left to the browser the status column took what
+     it liked and the chooser got the remainder, which read "-- wherever the";
+     given a minimum instead, the table grew wider than the card holding it.
+     Shares of the card is the only one of the three that cannot do either. */
+  table.fields {{ table-layout: fixed; width: 100%; }}
+  table.fields th:nth-child(1) {{ width: 17%; }}
+  table.fields th:nth-child(2) {{ width: 11%; }}
+  table.fields th:nth-child(3) {{ width: 28%; }}
+  table.fields th:nth-child(4) {{ width: 12%; }}
+  /* `table.stations th` is nowrap, and in a fixed layout a nowrap heading
+     does not widen its column -- it runs into the next one. */
+  table.fields th {{ white-space: normal; }}
+  table.fields td.mono {{ overflow-wrap: anywhere; }}
+  table.fields .ok, table.fields .warn, table.fields .bad,
+  table.fields .note {{ font-size: .75rem; }}
+
+  /* The two settings of a station, at the top of its fold. A rule above and
+     air below, so it does not read as the first row of the field table. */
+  table.stations td form.props {{ display: flex; align-items: center; gap: .9rem;
+      flex-wrap: wrap; margin: 0 0 .9rem; padding: .55rem .75rem;
+      background: color-mix(in srgb, var(--ink) 3%, transparent);
+      border-radius: 6px; }}
+  table.stations td form.props select {{ font-size: .75rem; padding: .2rem .4rem; }}
+  table.stations td form.props label.tick {{ margin-right: 0; display: inline-flex;
+      align-items: center; gap: .35rem; }}
+  table.stations td form.props button {{ margin-left: auto; }}
+  /* The clock, folded away. It takes the whole width below the row so the
+     bar above it stays one line. */
+  table.stations td form.props > details.clock {{ flex: 1 0 100%;
+      margin-top: .2rem; }}
+  details.clock > summary {{ font-size: .75rem; color: var(--dim);
+      cursor: pointer; }}
+  details.clock > summary:hover {{ color: var(--ink); }}
+  details.clock .hint {{ margin: .35rem 0; }}
+  details.clock label {{ font-size: .75rem; color: var(--dim);
+      margin-right: .9rem; }}
+  /* Two settings, not one sentence: "indoor Its readings are" read as
+     one line of prose with a dropdown in the middle of it. */
+  table.stations td form.props > label.tick + label.tick {{
+      padding-left: .9rem; border-left: 1px solid var(--line); }}
+
+  table.stations code {{ font-family: var(--mono); font-size: .8125rem;
+      word-break: break-all; }}
+  table.stations .note {{ font-size: .75rem; color: var(--dim); }}
+  /* Something that is wrong and would otherwise be invisible: the readings
+     stay right, only the day boundaries move. */
+  .warn {{ font-size: .75rem; color: var(--warn); }}
+  nav .warn {{ font-weight: 700; }}
+  table.stations td form {{ display: inline; margin: 0; }}
+  table.stations input[type=text] {{ font-size: .8125rem; padding: .3rem .5rem;
+      width: 9rem; }}
+  label.tick {{ font-size: .75rem; color: var(--dim); margin-right: .5rem;
+      white-space: nowrap; }}
+  label.tick input {{ vertical-align: -1px; margin-right: .15rem; }}
+  /* Remove and Ignore are not what anybody came to the page to press. */
+  button.quiet {{ background: transparent; color: var(--dim);
+      border-color: var(--line); padding: .3rem .8rem; }}
+  button.quiet:hover {{ color: var(--bad); border-color: var(--bad);
+      filter: none; }}
+  table.stations.enter th {{ text-transform: none; letter-spacing: 0;
+      font-size: .8125rem; padding-right: 1.2rem; white-space: nowrap; }}
+  /* What a station sends, folded away under it. */
+  tr.sendsrow td {{ border-top: 0; padding-top: 0; }}
+  details.sends summary {{ font-size: .75rem; color: var(--dim);
+      cursor: pointer; }}
+  details.sends summary:hover {{ color: var(--ink); }}
+  details.sends[open] summary {{ margin-bottom: .4rem; }}
+  textarea.rawupload {{ width: 100%; font-family: var(--mono);
+      font-size: .75rem; background: var(--sunk, #00000022);
+      color: var(--dim); border: 1px solid var(--line); border-radius: .3rem;
+      padding: .5rem; resize: vertical; }}
+
   footer {{ margin-top: 2rem; font-size: .75rem; color: var(--dim); }}
   footer code {{ font-family: var(--mono); }}
 </style>
@@ -1421,10 +2136,11 @@ _PAGE = """<!doctype html>
 <div class="shell">
   <nav>
     <h1>weewx-evo<small>settings</small></h1>
+    {find}
     {nav}
   </nav>
-  <main>
-    <h2>{title}</h2>
+  <main class="{wide}">
+    {heading}
     {readonly}
     {banner}
     {body_form_open}
@@ -1506,6 +2222,38 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: object) -> None:
         log.debug("%s %s", self.address_string(), fmt % args)
 
+    def handle_one_request(self) -> None:
+        """Every request, with a net under it.
+
+        Without this an unhandled exception anywhere in a handler drops the
+        connection: the browser says the connection was reset, the log has a
+        traceback nobody is looking at, and whoever was uploading fifteen
+        years of readings has no idea whether any of it arrived.
+
+        A page that cannot be built is a 500 with the reason in it. That is
+        worth more than a tidy stack trace on a terminal somebody closed --
+        and it is the same rule the listener follows for a console, where
+        answering anything beats going quiet.
+
+        Only for what was not already answered: `_reply` marks the response
+        as sent, so a handler that failed *after* replying does not get a
+        second set of headers written over the first.
+        """
+        self._answered = False
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            # The other end left. Ordinary, and nothing to report: a browser
+            # that navigates away mid-request does this every time.
+            self.close_connection = True
+        except Exception as exc:
+            log.exception("a request to the settings page failed")
+            if not self._answered:
+                try:
+                    self._reply(500, _oops(exc), "text/html; charset=utf-8")
+                except Exception:
+                    self.close_connection = True
+
     def _authorised(self, path: str) -> bool:
         peer = self.client_address[0] if self.client_address else ""
         if self.admin.token in path.strip("/").split("/"):
@@ -1537,6 +2285,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _reply(self, code: int, body: bytes, ctype: str = "text/html; charset=utf-8",
                headers: dict[str, str] | None = None) -> None:
+        self._answered = True
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -1565,11 +2314,21 @@ class _Handler(BaseHTTPRequestHandler):
             # clicked, which looks like the link is broken rather than the
             # list being short. `new-upload` and `new-forecast` were both
             # missing exactly that way.
-            if part in names or part in ADD_PAGES:
+            if part in names or part in ADD_PAGES or part in OWN_PAGES:
+                # The wizard is one page with a step in the path, so the
+                # step has to survive being routed. Without this every
+                # `setup/<step>` came back as `setup` and rendered the first
+                # one -- a progress bar you could click and that took you
+                # nowhere.
+                if part == "setup" and parts[-1] != "setup":
+                    return f"setup/{parts[-1]}"
                 return part
             if part.startswith("plot:"):
                 return part
-        return self.admin.schemas[0].name
+        # Nothing named, so: the overview. It used to be the first schema,
+        # which put somebody who opened the bare URL into a form they had not
+        # asked for.
+        return "overview"
 
     def do_GET(self) -> None:
         if not self._permitted():
@@ -1589,8 +2348,16 @@ class _Handler(BaseHTTPRequestHandler):
         said = parse_qs(parsed.query)
         message = ("Saved." if "saved" in said
                    else "Removed." if "removed" in said else "")
+        # `?learn=name` reopens the wizard on a station still waiting for its
+        # console, so the values to type in are one link away rather than
+        # gone once the page was left.
+        form = {"learn": said["learn"][0]} if said.get("learn") else None
+        # The search reads its query from the URL, because a search result
+        # you can link to and reload is worth more than a tidy POST.
+        if said.get("q"):
+            form = {"q": said["q"][0]}
         self._reply(200, page(self.admin, self._which(parsed.path),
-                              message=message))
+                              message=message, form=form))
 
     def do_POST(self) -> None:
         if not self._permitted():
@@ -1604,6 +2371,15 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
+
+        # An archive goes another way entirely, and has to branch before
+        # both of the lines below it. `MAX_FORM` is a quarter of a megabyte
+        # and a real archive is hundreds; `_form` decodes the body as text
+        # and an archive is a SQLite file. So it is streamed to disk and
+        # never becomes a `form` at all.
+        if self._parts(parsed.path)[-2:] == ["setup", "upload-archive"]:
+            self._take_archive(length)
+            return
 
         # Refused, not truncated. Reading the first quarter of a megabyte of
         # an uploaded skin and importing whatever plots happened to fit is
@@ -1619,8 +2395,37 @@ class _Handler(BaseHTTPRequestHandler):
         parts = self._parts(parsed.path)
         action = parts[-1] if parts else ""
 
+        # The wizard. Its steps are `setup/<name>`, so the step is the last
+        # segment and the one before it says which page we are on -- routed
+        # here rather than in the big table below because every one of them
+        # comes back to the wizard rather than to a settings page.
+        if len(parts) >= 2 and parts[-2] == "setup":
+            self._setup_step(action, form)
+            return
+
         # Adding one. Two fields; everything else waits for the page that
         # appears next.
+        if action == "new-collector":
+            error = self.admin.add_collector(form.get("name", ""),
+                                             form.get("kind", ""))
+            if error:
+                self._reply(200, page(self.admin, "new-collector",
+                                      errors={"": error}, form=form))
+                return
+            made = form["name"].strip().lower()
+            self._redirect(f"./collector:{made}")
+            return
+
+        if (action == "remove" and len(parts) >= 2
+                and parts[-2].startswith("collector:")):
+            error = self.admin.remove_collector(parts[-2].split(":", 1)[1])
+            if error:
+                self._reply(200, page(self.admin, parts[-2],
+                                      errors={"": error}))
+                return
+            self._redirect("./new-collector?removed=1")
+            return
+
         if action == "new-feed":
             error = self.admin.add_feed(form.get("name", ""),
                                         form.get("kind", ""))
@@ -1690,6 +2495,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._redirect(f"./{action}?saved=1")
             return
 
+        # The stations page. Its own verbs, because adopting a stranger and
+        # creating a station are not the same act: one takes an identity off
+        # the wire, the other hands one out.
+        if action == "new-station" or "stations" in parts:
+            self._station_action(action, parts, form)
+            return
+
+        if action == "new-archive" or "archives" in parts:
+            self._archive_action(action, parts, form)
+            return
+
         if action in ("new-export", "new-upload", "new-forecast"):
             add = {"new-export": self.admin.add_export,
                    "new-upload": self.admin.add_upload,
@@ -1739,11 +2555,532 @@ class _Handler(BaseHTTPRequestHandler):
         # Redirect after a save, so a reload does not save again.
         self._redirect(f"./{which}?saved=1")
 
+    def _archive_action(self, action: str, parts: list, form: dict) -> None:
+        """Add, change or remove a series. Redirects, like the stations do."""
+        if action in ("new-archive", "add"):
+            made, error = adminarchives.create(self.admin, form)
+            if error:
+                self._reply(200, page(self.admin, "new-archive",
+                                      errors={"": error}, form=form))
+                return
+            log.info("archive %r added, keeping its readings in %s",
+                     made.name, made.file)
+            self._redirect("./archives?saved=1")
+            return
+
+        if action == "set" and len(parts) >= 3:
+            error = adminarchives.configure(self.admin, parts[-2], form)
+        elif action == "remove" and len(parts) >= 3:
+            error = adminarchives.remove(self.admin, parts[-2])
+        else:
+            error = f"Unknown archive action {action!r}."
+
+        if error:
+            self._reply(200, page(self.admin, "archives", errors={"": error}))
+            return
+        self._redirect("./archives?saved=1")
+
+    def _place_fields(self, name: str, form: dict) -> str:
+        """Where this station's readings go, and the column one of them needs.
+
+        One form for the whole table, because the decisions are made
+        together: moving `tf_ch1` to `soilTemp3` is usually the same thought
+        as moving `tf_ch2` to `soilTemp4`, and saving them one at a time
+        means four round trips and four chances to stop halfway.
+
+        The "create the column" button submits the same form, so a placement
+        typed beside it is saved too rather than lost to the button.
+        """
+        from . import adminfields
+
+        register = adminstations.load(self.admin)
+        station = register.by_name(name)
+        if station is None:
+            return f"There is no station called {name!r}."
+
+        for key, value in sorted(form.items()):
+            if not key.startswith("place:"):
+                continue
+            error = adminfields.place(self.admin, name, key[6:], str(value))
+            if error:
+                return error
+
+        wanted = str(form.get("addcolumn") or "").strip()
+        if wanted:
+            # Re-read: the placement above may have just decided which
+            # column this is.
+            station = adminstations.load(self.admin).by_name(name) or station
+            return adminfields.add_column(self.admin, station, wanted)
+        return ""
+
+    def _station_action(self, action: str, parts: list, form: dict) -> None:
+        """Adopt, ignore, remove, or announce a new one.
+
+        All of them end in a redirect rather than a rendered page. The browser
+        would otherwise offer to repeat the POST on reload, and repeating
+        "adopt" is a duplicate name error on a page that just worked.
+        """
+        if action == "new-station":
+            station, error = adminstations.announce(
+                self.admin, form.get("name", ""), form.get("driver", ""),
+                form.get("archive", ""))
+            if error:
+                self._reply(200, page(self.admin, "new-station",
+                                      errors={"": error}, form=form))
+                return
+            # Straight to what has to be typed into the console. That is the
+            # point of the page, and it is the one screen somebody needs in
+            # front of them while standing at the hardware.
+            self._reply(200, page(self.admin, "new-station",
+                                  form={"_made": station}))
+            return
+
+        error = ""
+        if action == "adopt":
+            error = adminstations.adopt(
+                self.admin, form.get("driver", ""), form.get("identity", ""),
+                form.get("name", ""), form.get("archive", ""))
+        elif action in ("ignore", "unignore"):
+            error = adminstations.ignore(
+                self.admin, form.get("driver", ""), form.get("identity", ""),
+                on=(action == "ignore"))
+        elif action == "fields" and len(parts) >= 3:
+            error = self._place_fields(parts[-2], form)
+        elif action == "set" and len(parts) >= 3:
+            error = adminstations.configure(self.admin, parts[-2], form)
+        elif action == "learn" and len(parts) >= 3:
+            found, error = adminstations.learn(self.admin, parts[-2])
+            if not error and found is None:
+                # Nothing has uploaded yet. Not a failure: the console may
+                # take a minute, and saying "no" would read as "wrong".
+                self._reply(200, page(
+                    self.admin, "stations",
+                    errors={"": "Nothing new has uploaded yet. Give the "
+                                "console a minute and press it again."}))
+                return
+        elif action == "remove" and len(parts) >= 3:
+            error = adminstations.remove(self.admin, parts[-2])
+        else:
+            error = f"Unknown station action {action!r}."
+
+        if error:
+            self._reply(200, page(self.admin, "stations", errors={"": error}))
+            return
+        self._redirect("./stations?saved=1")
+
     def _redirect(self, where: str) -> None:
         self._reply(303, b"", "text/plain", {"Location": where})
 
+    # -- the wizard -------------------------------------------------------
+
+    def _take_archive(self, length: int) -> None:
+        """An uploaded archive, written to disk as it arrives.
+
+        Not through `_form`, and that is the whole of why this exists. A
+        multipart body is read into memory there and decoded as text; an
+        archive is a SQLite file of tens or hundreds of megabytes, so doing
+        it that way would mean holding all of it twice and then throwing
+        away every byte above 0x7F.
+
+        So the body is read in blocks and the file part is written straight
+        through. The boundary is found by reading the first header block --
+        the parts of multipart a station's own upload path never needs, and
+        the reason this is fifty lines rather than three.
+
+        **Nothing is written over.** The archive lands beside the settings
+        under a `.part` name and is renamed only once it has been opened and
+        found to be a real WeeWX archive. A truncated upload leaves a
+        `.part` file and no archive, which is the right outcome: the failure
+        is visible and nothing has replaced anything.
+        """
+        try:
+            self._take_archive_inner(length)
+        except Exception as exc:
+            log.exception("an archive upload failed")
+            self._reply(200, page(
+                self.admin, "setup/readings",
+                errors={"": f"That upload failed: "
+                            f"{type(exc).__name__}: {exc}"}))
+
+    def _take_archive_inner(self, length: int) -> None:
+        from . import adopt
+        from . import config as config_file
+
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.lower().startswith("multipart/form-data"):
+            self._reply(400, b"send the file as a form upload", "text/plain")
+            return
+        boundary = ""
+        for bit in ctype.split(";"):
+            key, _, value = bit.strip().partition("=")
+            if key.strip().lower() == "boundary":
+                boundary = value.strip().strip('"')
+        if not boundary:
+            self._reply(400, b"no boundary in that upload", "text/plain")
+            return
+
+        where = config_file.resolved_path(
+            self.admin.config(), "archive_db", Path(self.admin.path).parent,
+            "data/weewx.sdb")
+        if where.exists():
+            self._reply(200, page(
+                self.admin, "setup/readings",
+                errors={"": (f"There is already an archive at {where}. Move "
+                             f"it aside first -- nothing here writes over "
+                             f"readings that are already stored.")}))
+            return
+
+        where.parent.mkdir(parents=True, exist_ok=True)
+        staging = where.with_suffix(where.suffix + ".part")
+        # An earlier attempt's journals describe a file that is gone, and
+        # SQLite refuses to open the new one because of them -- which reads
+        # as "that is not an archive" and is nothing of the sort.
+        self._clear_sqlite_files(staging)
+        try:
+            written = self._stream_part(length, boundary, staging)
+        except Exception as exc:
+            log.exception("an uploaded archive could not be written")
+            staging.unlink(missing_ok=True)
+            self._reply(200, page(self.admin, "setup/readings",
+                                  errors={"": f"That upload failed: {exc}"}))
+            return
+
+        if not written:
+            staging.unlink(missing_ok=True)
+            self._reply(200, page(self.admin, "setup/readings",
+                                  errors={"": "Nothing arrived. Choose a "
+                                              "file before sending it."}))
+            return
+
+        # Opened and asked, not trusted. A file named weewx.sdb that is not
+        # one has to fail here rather than three steps later, with the whole
+        # station configured around it.
+        if not adopt.is_archive(staging):
+            log.warning("an uploaded archive was refused: %d bytes at %s",
+                        written, staging)
+            self._clear_sqlite_files(staging)
+            self._reply(200, page(
+                self.admin, "setup/readings",
+                errors={"": (
+                    f"That is not a WeeWX archive: {written} bytes arrived, "
+                    f"and there is no `archive` table with dateTime, usUnits "
+                    f"and interval in it. If the station it came from is "
+                    f"still running, the file may be almost empty: SQLite "
+                    f"keeps recent readings in a `-wal` file beside it until "
+                    f"a checkpoint. Stop WeeWX and copy it again, or give "
+                    f"the path in the other form -- that route reads through "
+                    f"the WAL.")}))
+            return
+
+        staging.replace(where)
+        # SQLite leaves `-wal` and `-shm` beside a file it has opened, and
+        # `is_archive` opens this one. Renaming the database and leaving
+        # those two behind gives the next reader a journal that belongs to a
+        # file that is no longer there.
+        for extra in ("-wal", "-shm"):
+            staging.with_name(staging.name + extra).unlink(missing_ok=True)
+        first, last = adopt.span_of(where)
+        when = ""
+        if first and last:
+            when = (f", {time.strftime('%Y-%m-%d', time.localtime(first))} "
+                    f"to {time.strftime('%Y-%m-%d', time.localtime(last))}")
+        from urllib.parse import quote
+
+        said = (f"{adopt.count_records(where)} records carried over{when}. "
+                f"The file WeeWX has is untouched -- this is a copy.")
+        self._redirect(f"../setup/publish?said={quote(said)}")
+
+    @staticmethod
+    def _clear_sqlite_files(where: Path) -> None:
+        """A rejected upload, and the journals SQLite left beside it."""
+        for name in (where.name, where.name + "-wal", where.name + "-shm"):
+            where.with_name(name).unlink(missing_ok=True)
+
+    def _stream_part(self, length: int, boundary: str, into: Path) -> int:
+        """Write the first file part of a multipart body to `into`.
+
+        Blocks rather than lines: a SQLite file has no newlines to speak of,
+        and `readline` on one is a single read of the whole thing.
+
+        The trailing CRLF before the closing boundary belongs to the
+        boundary and not to the file. Getting that wrong adds two bytes to
+        every upload, which SQLite notices and nothing else does.
+        """
+        marker = f"--{boundary}".encode()
+        end = b"\r\n" + marker
+        block = 1 << 20
+
+        left = length
+        buffer = b""
+        # Skip to the part's own headers, then past the blank line after
+        # them. Only the first file part is taken: the wizard's form has one.
+        while b"\r\n\r\n" not in buffer and left > 0:
+            chunk = self.rfile.read(min(block, left))
+            if not chunk:
+                break
+            left -= len(chunk)
+            buffer += chunk
+        _headers, _, buffer = buffer.partition(b"\r\n\r\n")
+
+        written = 0
+        with into.open("wb") as handle:
+            while True:
+                found = buffer.find(end)
+                if found >= 0:
+                    handle.write(buffer[:found])
+                    written += found
+                    break
+                # Keep back as much as the boundary could straddle, so a
+                # boundary split across two reads is still found.
+                keep = len(end)
+                if len(buffer) > keep:
+                    handle.write(buffer[:-keep])
+                    written += len(buffer) - keep
+                    buffer = buffer[-keep:]
+                if left <= 0:
+                    handle.write(buffer)
+                    written += len(buffer)
+                    break
+                chunk = self.rfile.read(min(block, left))
+                if not chunk:
+                    handle.write(buffer)
+                    written += len(buffer)
+                    break
+                left -= len(chunk)
+                buffer += chunk
+        return written
+
+    def _setup_step(self, step: str, form: dict) -> None:
+        """One step of the wizard. Every one of them comes back to it.
+
+        A step that fails re-renders its own page with the message rather
+        than redirecting: the answer somebody typed is still in the form,
+        and a redirect would lose it. A step that works redirects to the
+        next one, so a reload does not repeat it.
+        """
+        handler = {
+            "place": self._setup_place,
+            "adopt": self._setup_adopt,
+            "charts": self._setup_charts,
+            "archive": self._setup_archive,
+            "publish": self._setup_publish,
+        }.get(step)
+        if handler is None:
+            self._redirect("../setup")
+            return
+
+        try:
+            said, error, goto = handler(form)
+        except Exception as exc:
+            log.exception("the wizard step %r failed", step)
+            said, error, goto = "", f"That did not work: {exc}", ""
+
+        if error:
+            self._reply(200, page(self.admin, f"setup/{step}",
+                                  errors={"": error}, form=form))
+            return
+        where = goto or "done"
+        # The message travels in the URL rather than in the session, because
+        # there is no session: this page holds nothing between requests, and
+        # a redirect that arrives with nothing to say looks like a step that
+        # did nothing.
+        from urllib.parse import quote
+
+        tail = f"?said={quote(said)}" if said else ""
+        self._redirect(f"../setup/{where}{tail}")
+
+    def _setup_place(self, form: dict) -> tuple[str, str, str]:
+        """Name and coordinates, and a forecast if it was asked for."""
+        name = (form.get("name") or "").strip()
+        if not name:
+            return "", ("A station needs a name. It goes at the top of "
+                        "every page."), ""
+
+        values: dict[str, object] = {"station.name": name}
+        for field, label in (("latitude", "Latitude"),
+                             ("longitude", "Longitude"),
+                             ("altitude", "Altitude")):
+            raw = (form.get(field) or "").strip()
+            if not raw:
+                if field == "altitude":
+                    continue
+                return "", (f"{label} is needed: sunrise, sunset and every "
+                            f"twilight band on a chart come from it."), ""
+            try:
+                values[f"station.{field}"] = float(raw.replace(",", "."))
+            except ValueError:
+                return "", (f"{label} has to be a number in degrees, like "
+                            f"48.3858. {raw!r} is not one."), ""
+
+        error = self.admin.write_settings(values, "the setup wizard")
+        if error:
+            return "", error, ""
+
+        said = f"{name} it is."
+        if form.get("forecast"):
+            # `open-meteo`, with the hyphen: the name comes from the
+            # registry and not from memory, and getting it wrong here
+            # produced a wizard that said it had set up a forecast and had
+            # not -- the error came back as a string nobody read.
+            made = self.admin.add_forecast("ahead", "open-meteo")
+            said += (" A forecast is being fetched for it."
+                     if not made else f" (the forecast: {made})")
+        return said, "", "readings"
+
+    def _setup_adopt(self, form: dict) -> tuple[str, str, str]:
+        """A weewx.conf, uploaded or named, read into these settings.
+
+        Nothing of WeeWX's is written to. What comes over is its answers --
+        where the station is, how often it archives, which skins it renders
+        and where it uploads -- and the uploads arrive switched off.
+        """
+        from . import adopt
+
+        text = form.get("upload") or ""
+        named = (form.get("conf") or "").strip()
+        if not text and not named:
+            return "", ("Send a weewx.conf or say where one is. Everything "
+                        "this step does comes out of that one file."), ""
+
+        found = adopt.read(named, text=text)
+        if not found.usable:
+            why = found.problems[0] if found.problems else "nothing in it"
+            return "", f"That did not read as a weewx.conf: {why}", ""
+
+        # `import.*` are notes about where its skins and pages were, not
+        # settings of ours. Kept out of the file rather than written and
+        # ignored.
+        #
+        # And `archive_db` is left out on purpose, which is the whole of
+        # being non-invasive. A weewx.conf says where *WeeWX's* database is,
+        # and writing that here would point this station at the file WeeWX
+        # is recording into -- two programs writing one SQLite file, which
+        # loses it. The path is offered as something to copy *from*, on the
+        # next step, and never as somewhere to write.
+        skipped = {"archive_db"}
+        values = {k: v for k, v in found.settings.items()
+                  if not k.startswith("import.") and k not in skipped}
+        error = self.admin.write_settings(values, "read from a weewx.conf")
+        if error:
+            return "", error, ""
+
+        said = [f"{len(values)} setting(s) taken"]
+        if found.exports:
+            for name, settings in found.exports.items():
+                made = self.admin.add_export_settings(name, settings)
+                if not made:
+                    said.append(f"its {settings.get('kind')} account as "
+                                f"{name!r}, switched off")
+        if found.skins:
+            said.append(", ".join(skin for _r, skin, _h in found.skins)
+                        + " is what it renders")
+        if found.archive is not None:
+            said.append(f"its archive is at {found.archive} -- copy it on "
+                        f"the next step; this station will not write to it")
+        elif found.elsewhere:
+            said.append(f"its readings are in {found.elsewhere}")
+        return "; ".join(said), "", "readings"
+
+    def _setup_charts(self, form: dict) -> tuple[str, str, str]:
+        """A skin.conf, through the importer that already exists."""
+        uploaded, pasted = form.get("upload", ""), form.get("pasted", "")
+        said, error = adminplots.bring_over(
+            self.admin, form.get("source", ""),
+            replace=bool(form.get("replace")),
+            text=uploaded or pasted or "",
+            origin="the uploaded file" if uploaded else "the pasted text")
+        return said, error, "readings"
+
+    def _setup_archive(self, form: dict) -> tuple[str, str, str]:
+        """An existing archive, copied into place.
+
+        By path here. The upload is a different route entirely -- an archive
+        is tens or hundreds of megabytes and cannot go through a form that
+        decodes its body as text -- and lives in `_setup_upload`.
+        """
+        from . import adopt
+        from . import config as config_file
+
+        source = (form.get("source") or "").strip()
+        if not source:
+            return "", ("Say where the archive is, or send the file with the "
+                        "other form."), ""
+
+        where = config_file.resolved_path(
+            self.admin.config(), "archive_db", Path(self.admin.path).parent,
+            "data/weewx.sdb")
+        try:
+            said = adopt.adopt_archive(source, where)
+        except ValueError as exc:
+            return "", str(exc), ""
+        except OSError as exc:
+            return "", f"Could not copy it: {exc}", ""
+        return (f"Carried over: {said}. WeeWX still has its own copy -- this "
+                f"one is a copy, so nothing of its is touched."), "", "publish"
+
+    def _setup_publish(self, form: dict) -> tuple[str, str, str]:
+        """An FTP account, and the address its pages are served at."""
+        host = (form.get("host") or "").strip()
+        if not host:
+            return "Nothing published from here yet.", "", "done"
+
+        settings = {
+            "kind": "ftp",
+            "host": host,
+            "user": (form.get("user") or "").strip(),
+            "password": form.get("password") or "",
+            "directory": (form.get("directory") or "/").strip(),
+            # The pages, and the charts they draw from, in one export: a page
+            # that arrives before its charts is the half-published site the
+            # `feed` trigger exists to prevent.
+            "source": "site",
+            "also": ["json -> data/json"],
+        }
+        address = (form.get("live_push_url") or "").strip()
+        if address:
+            settings["live_push_url"] = address
+        error = self.admin.add_export_settings("site", settings)
+        if error:
+            return "", error, ""
+        said = f"Publishing to {host}."
+        if address:
+            said += (" The pages will show live readings: a small PHP file "
+                     "goes up with them and this station posts to it.")
+        return said, "", "done"
+
     def do_HEAD(self) -> None:
         self.do_GET()
+
+
+def _oops(exc: Exception) -> bytes:
+    """What a request that failed answers with.
+
+    The message, not the traceback. Somebody looking at this page is not
+    reading Python, and the line that matters -- what they were doing and
+    what went wrong -- is the first line of it. The traceback is in the log
+    for whoever wants it.
+
+    No stylesheet and no template: this is what is left when the thing that
+    builds pages is the thing that failed.
+    """
+    said = html.escape(f"{type(exc).__name__}: {exc}")
+    return (f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>That did not work</title>
+<style>
+  body {{ font: 15px/1.6 system-ui, sans-serif; max-width: 40rem;
+          margin: 4rem auto; padding: 0 1.25rem; }}
+  code {{ background: #f4f4f5; padding: .15rem .35rem; border-radius: .2rem; }}
+  p.said {{ background: #fff4f4; border-left: 3px solid #c33;
+            padding: .75rem 1rem; }}
+</style></head><body>
+<h1>That did not work</h1>
+<p class="said"><code>{said}</code></p>
+<p>Nothing was changed by the request that failed. The settings page is
+   still running &mdash; go back and try again, or take another route to
+   the same thing.</p>
+<p>The full traceback is in the log, which is where it is useful.</p>
+</body></html>""").encode()
 
 
 def _describe(admin: Admin) -> dict:

@@ -108,7 +108,30 @@ def main() -> int:
         quiet = Settings(CORE, config=config, args=args_with(), path=path)
         failures += not check("the file still wins", quiet.get("port"), 8100)
 
+
+        print("\nand the page says so, rather than saving into the void")
+        # The rest of this file proves the order is right. This proves the
+        # operator is told: the page writes the file, the environment beats
+        # the file, so without a word on the field a save changes nothing
+        # and looks like it worked. `deploy/compose.yml` shipped
+        # WEEWX_EVO_INTERVAL with a default of 300 for exactly this reason,
+        # which made the archive interval unsettable on the page.
+        from weewx_evo.admin import field, overridden
+
+        interval = next(o for g in CORE.groups for o in g.options
+                        if o.name == "interval")
+        port = next(o for g in CORE.groups for o in g.options
+                    if o.name == "port")
+        failures += not check("the field knows what beats it",
+                              overridden(interval), "WEEWX_EVO_INTERVAL")
+        failures += not check("and a field nothing beats says nothing",
+                              overridden(port), "")
+        failures += not check("the page shows it on the field",
+                              "WEEWX_EVO_INTERVAL" in field(interval, 300), True)
+
         del os.environ["WEEWX_EVO_INTERVAL"]
+        failures += not check("and stops once it is unset",
+                              overridden(interval), "")
 
         print("\nolder environment names still work")
         os.environ["WEEWX_EVO_RETENTION_DAYS"] = "3"
@@ -169,6 +192,25 @@ def main() -> int:
         failures += not check("and the new value is there", live.get("port"), 8200)
         failures += not check("what the file dropped went back to its default",
                               live.get("interval"), 300)
+
+        # And the case the caller actually depends on: something in the file
+        # that is not a core option at all. Every export, feed, upload and
+        # forecast is named by the operator, so none of them is in any
+        # schema -- and this answered "nothing changed" for all of them. The
+        # loop only calls `apply_live` when this says yes, so a newly added
+        # FTP export sat in the file until the next restart, whenever that
+        # was, with nothing in any log about it.
+        path.write_text('station.name = "From the file"\nport = 8200\n'
+                        'exports.evoftp.kind = "ftp"\n'
+                        'exports.evoftp.host = "ftp.example.org"\n',
+                        encoding="utf-8")
+        failures += not check("a new export is a change", live.reload(), True)
+        failures += not check("even though no core option moved",
+                              live.changed, [])
+        failures += not check("so nothing asks for a restart",
+                              live.needs_restart(), [])
+        failures += not check("and it is readable", config_file.get(
+            live.config, "exports.evoftp.host"), "ftp.example.org")
         print("\na changed setting either applies or restarts")
         # Not folklore, and not a list anybody maintains: the schema says
         # which options a running process cannot apply, and the loop asks
@@ -342,6 +384,49 @@ def main() -> int:
         failures += not check("with the rest of the feed",
                               config_file.get(after, "feeds.wdc.kind"),
                               "cheetah")
+
+        # -- a relative path means the file it was written in ------------
+        #
+        # Two readers of one setting resolved it two different ways: the
+        # settings page against the configuration file, the service against
+        # whatever directory it happened to start in. `archive_db =
+        # "weewx.sdb"` therefore named two different files, and the page's
+        # offer to add a column added it to the one the service was not
+        # writing -- while saying it had worked.
+        print("\na relative path is relative to the file it is written in")
+        elsewhere = tmp / "station"
+        elsewhere.mkdir(exist_ok=True)
+        (elsewhere / "evo.toml").write_text(
+            'token = "abcdefghij123456"\narchive_db = "weewx.sdb"\n',
+            encoding="utf-8")
+        placed = Settings(CORE, config_file.read(elsewhere / "evo.toml"),
+                          args_with(), path=elsewhere / "evo.toml")
+        failures += not check("against the file, not the cwd",
+                              placed.get("archive_db"),
+                              str(elsewhere / "weewx.sdb"))
+        # The default is a relative path too, and it is read before parse()
+        # ever runs -- so it needs the same treatment or `data/weewx.sdb`
+        # still means whatever directory the process was started in.
+        failures += not check("and so is the default",
+                              Path(placed.get("live_db")).parent.parent,
+                              elsewhere)
+
+        # The command line is the exception, and the obvious one: a path
+        # somebody just typed means the directory they typed it in.
+        typed = Settings(CORE, config_file.read(elsewhere / "evo.toml"),
+                         args_with(archive="typed.sdb"),
+                         path=elsewhere / "evo.toml")
+        failures += not check("but a typed one is left alone",
+                              typed.get("archive_db"), "typed.sdb")
+        # An absolute path is nobody's business but its own.
+        (elsewhere / "abs.toml").write_text(
+            'token = "abcdefghij123456"\n'
+            f'archive_db = "{(tmp / "far.sdb").as_posix()}"\n',
+            encoding="utf-8")
+        far = Settings(CORE, config_file.read(elsewhere / "abs.toml"),
+                       args_with(), path=elsewhere / "abs.toml")
+        failures += not check("and an absolute one untouched",
+                              Path(far.get("archive_db")).name, "far.sdb")
 
     finally:
         os.environ.clear()

@@ -32,9 +32,12 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import archives as archives_module
+from . import collectors, units, watchdog, weewxconf
 from . import config as config_file
 from . import exports as export_registry
 from . import feedrunner as feed_runner
@@ -42,13 +45,15 @@ from . import forecast as forecast_registry
 from . import options as option_defs
 from . import plots as plot_defs
 from . import settings as settings_state
-from . import units, weewxconf
+from . import stations as stations_module
 from . import uploads as upload_registry
 from .admin import Admin, AdminServer
 from .archiver import Archiver
 from .db.archive import ArchiveStore
 from .db.live import LiveStore
 from .derive import from_settings as deriver_from
+from .exports import livepush
+from .exports import record as export_record
 from .exports import runner as export_runner
 from .forecast import Place as ForecastPlace
 from .forecast import codes as forecast_codes
@@ -72,6 +77,24 @@ log = logging.getLogger("weewx_evo")
 
 def env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(f"WEEWX_EVO_{name}", default)
+
+
+def add_archive_arg(parser: argparse.ArgumentParser) -> None:
+    """Which series a single-shot command works on.
+
+    `--series` rather than `--archive`, because `--archive` is already the
+    path to a database file. Two meanings for one flag -- a path here, a name
+    there -- is the sort of thing that works until somebody has an archive
+    called `data`.
+
+    `default=None` like everything else here: argparse cannot tell "not
+    given" from "given the default", and naming the default here would beat
+    the configuration file the same way an environment variable does.
+    """
+    parser.add_argument("--series", default=None,
+                        help="which measurement series to work on, by name "
+                             "from archives.toml. The default one unless "
+                             "there is more than one.")
 
 
 def add_common(parser: argparse.ArgumentParser) -> None:
@@ -224,6 +247,40 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
         # everything else is. It never sees the rest -- not the upload token,
         # not the database paths, not another driver's console list.
         options = dict(section.get(name, {}))
+        # The field maps come from the stations, not from the driver's own
+        # section. Two consoles both number their channels from one, so the
+        # map belongs to the console; it is handed to the driver because only
+        # the driver knows what `tf_ch1` means before it is parsed.
+        maps = station_field_maps(cfg, name)
+        instance = drivers.DEFAULT.get(name)
+        if maps and _accepts(instance, "stations"):
+            options.setdefault("stations", maps)
+        # How to read an upload used to be asked once per protocol, so six
+        # protocols were six forms carrying the same three fields -- and on
+        # a running installation not one of them was ever filled in. What
+        # they describe is either a policy of the whole installation or a
+        # property of one console, and neither is a property of a protocol.
+        # Offered here to any driver that takes them, the same way `state`
+        # and `stations` are.
+        for shared in ("infer_unknown", "max_behind", "max_ahead"):
+            if not _accepts(instance, shared):
+                continue
+            if shared in options:
+                # Left in the file from when this was asked per protocol. It
+                # still works -- deciding otherwise would change how uploads
+                # are read without anybody asking -- but it no longer appears
+                # on any page, and a setting that is in force and invisible
+                # is the worst of the three possible states. So it is said
+                # once, at the start, with where the setting lives now.
+                log.info("drivers.%s.%s = %r is still in %s and still "
+                         "applies. This is asked once now, under %s in the "
+                         "settings, or per console on the stations page. "
+                         "Delete the line to follow it.",
+                         name, shared, options[shared],
+                         getattr(cfg, "_path", "the configuration file"),
+                         shared)
+                continue
+            options[shared] = cfg.get(shared)
         factory_only = not options and archive is None
         if factory_only:
             continue
@@ -242,7 +299,56 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
             log.info("driver %r configured (%s)%s", name, settings or "state only",
                      f", also serving {', '.join(also)}" if also else "")
 
+    # A configured collector gets an endpoint under its own name, so its
+    # packets arrive as that driver rather than as `json`. That pair --
+    # driver and identity -- is what `stations.by_identity` matches on, and
+    # without it two collectors would be the same driver and their consoles
+    # could not be told apart. Registered from the *configuration*: the
+    # collector itself is another process and possibly another machine, and
+    # nothing of it is imported here.
+    collectors.register_names(drivers.DEFAULT, cfg)
+
     install_driver_groups()
+
+
+def station_field_maps(cfg: Settings, driver: str) -> dict:
+    """Per-console field maps for one driver, out of `stations.toml`.
+
+    In the shape the driver already takes them -- keyed by a name, each with a
+    passkey and its own extensions -- so nothing about the driver changes. All
+    that moves is where the answer comes from: a console's own field names sat
+    under `[drivers.ecowitt.stations]`, which is a second place to describe a
+    console after `stations.toml` was built to be the first.
+    """
+    # `_path` rather than a public one: Settings keeps the file it was
+    # read from and nothing else needed it until now.
+    where = getattr(cfg, "_path", None)
+    if not where:
+        return {}
+    try:
+        register = stations_module.load(
+            stations_module.path_for(Path(where).parent))
+    except Exception:
+        log.debug("could not read the stations for %r", driver, exc_info=True)
+        return {}
+
+    made = {}
+    for one in register:
+        if one.driver != driver:
+            continue
+        # A console with nothing of its own said about it needs no entry.
+        # With one, the entry carries everything that is true of the box
+        # rather than of the protocol -- its field names and its clock.
+        settings = {}
+        if one.field_map:
+            settings["field_map_extensions"] = dict(one.field_map)
+        if one.max_behind is not None:
+            settings["max_behind"] = one.max_behind
+        if one.max_ahead is not None:
+            settings["max_ahead"] = one.max_ahead
+        if settings:
+            made[one.name] = {"passkey": one.identity, **settings}
+    return made
 
 
 def install_driver_groups() -> None:
@@ -275,6 +381,125 @@ def _accepts(driver: Any, keyword: str) -> bool:
         return keyword in inspect.signature(type(driver).__init__).parameters
     except (TypeError, ValueError):
         return False
+
+
+def stations_path(args: argparse.Namespace, cfg: Settings) -> Path:
+    """Where stations.toml lives: beside the configuration, like plots.toml.
+
+    Not beside the database. Both are usually the same directory, but this is
+    a file a person edits and diffs, so it belongs with the others of that
+    kind -- and the settings page looks for it there.
+    """
+    if getattr(args, "config", None):
+        return stations_module.path_for(Path(args.config).parent)
+    return stations_module.path_for(Path(cfg.get("live_db")).parent)
+
+
+def archives_path(args: argparse.Namespace, cfg: Settings) -> Path:
+    """Where archives.toml lives: beside stations.toml, for the same reason."""
+    if getattr(args, "config", None):
+        base = Path(args.config).parent
+    else:
+        base = Path(cfg.get("live_db")).parent
+    return base / archives_module.FILENAME
+
+
+def read_archives(args: argparse.Namespace,
+                  cfg: Settings) -> archives_module.Register:
+    """Every measurement series this installation keeps.
+
+    A missing file is one archive, described by the settings, which is every
+    installation that has not asked for a second one. Nothing to migrate: the
+    file appears when somebody adds the second, and the page writes the first
+    into it at the same moment.
+    """
+    where = archives_path(args, cfg)
+    register = archives_module.Register.load(where, cfg)
+    if register.several():
+        log.info("%d archive(s) in %s: %s", len(register), where,
+                 ", ".join(register.names()))
+    # Said at info even for one archive: a container without TZ set runs on
+    # UTC, and a station in Germany then gets days that begin at two in the
+    # morning. Nothing fails, no reading is wrong, and every daily maximum is
+    # for the wrong day -- which is exactly the sort of thing that goes
+    # unnoticed for a year.
+    for name, said in register.concerns().items():
+        log.warning("archive %r: %s", name, said)
+    return register
+
+
+def open_archive(archive: archives_module.Archive, cfg: Settings,
+                 base: Path | None = None) -> ArchiveStore:
+    """The store for one series.
+
+    Relative paths resolve against the configuration file, the same as every
+    other path this program is handed. An archive named in `archives.toml`
+    would otherwise land wherever the process happened to be started from.
+    """
+    where = Path(archive.file)
+    if not where.is_absolute() and base is not None:
+        where = base / where
+    return ArchiveStore(where, table_name=cfg.get("table"))
+
+
+def build_archivers(args: argparse.Namespace, cfg: Settings, live: LiveStore,
+                    archives: archives_module.Register,
+                    stations: Any) -> list[tuple[Any, ArchiveStore, Archiver]]:
+    """One archiver per series, each with its own place and its own stations.
+
+    The three numbers come off the archive rather than out of the settings,
+    which is the whole point of there being archives: sunrise for the north
+    field computed with the south field's coordinates is wrong by seconds and
+    looks entirely correct.
+
+    With a single archive nothing is filtered. That is not a shortcut -- it is
+    what every installation did before stations existed, and an unannounced
+    sensor must go on reaching the series it has been reaching for a year.
+    """
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    sources = read_sources(cfg, args.sources)
+    several = archives.several()
+    built = []
+    for archive in archives.all():
+        store = open_archive(archive, cfg, base)
+        mine = None
+        if several:
+            mine = sorted(one.name for one in stations.for_archive(archive.name))
+            if not mine:
+                log.warning("archive %r has no stations, so nothing will be "
+                            "written to %s", archive.name, archive.file)
+        built.append((archive, store, Archiver(
+            live, store,
+            interval_seconds=cfg.get("interval"),
+            loop_hilo=cfg.get("loop_hilo"),
+            sources=sources,
+            deriver=deriver_from(cfg, archive),
+            name=archive.name,
+            stations=mine)))
+    return built
+
+
+def read_stations(args: argparse.Namespace, cfg: Settings,
+                  live: object | None = None) -> tuple:
+    """The announced consoles, and where strangers get noted.
+
+    Two halves stored two ways, on purpose. `stations.toml` is decided by a
+    person and belongs beside the other files somebody edits and diffs.
+    Sightings are observed, change every few seconds and go stale, so they sit
+    in the live database next to the readings that produced them.
+
+    A missing file is an installation that has not announced anything yet.
+    That is every existing one, and it keeps working: packets go on carrying
+    whatever identity their driver read off the hardware.
+    """
+    from .ingest.sightings import Sightings
+
+    where = stations_path(args, cfg)
+    register = stations_module.load(where)
+    if len(register):
+        log.info("%d station(s) announced in %s: %s", len(register), where,
+                 ", ".join(sorted(one.name for one in register)))
+    return register, Sightings(live)
 
 
 def read_sources(cfg: Settings, path: Path | None = None) -> SourcePolicy:
@@ -315,13 +540,51 @@ def open_stores(args: argparse.Namespace) -> tuple[LiveStore, ArchiveStore]:
 
 
 def make_archiver(args: argparse.Namespace) -> tuple[LiveStore, ArchiveStore, Archiver]:
+    """One archiver, for the series `--archive` named or for the default.
+
+    The single-shot commands work on one at a time. Catching up or rebuilding
+    every series at once would be the sort of thing somebody runs on a
+    Saturday and cannot stop halfway.
+    """
     cfg = settings_for(args)
-    live, archive = open_stores(args)
-    return live, archive, Archiver(live, archive,
-                                   interval_seconds=cfg.get("interval"),
-                                   loop_hilo=cfg.get("loop_hilo"),
-                                   sources=read_sources(cfg, args.sources),
-                                   deriver=deriver_from(cfg))
+    live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
+                     keep_raw_seconds=cfg.get("raw_retention"))
+    announced, _sightings = read_stations(args, cfg, live)
+    registry = read_archives(args, cfg)
+    live.archives = registry.names()
+
+    wanted = getattr(args, "series", None) or archives_module.DEFAULT
+    if wanted not in registry.names():
+        print(f"no series called {wanted!r}. There is: "
+              f"{', '.join(registry.names())}", file=sys.stderr)
+        raise SystemExit(2)
+    for archive_def, store, archiver in build_archivers(
+            args, cfg, live, registry, announced):
+        if archive_def.name == wanted:
+            return live, store, archiver
+    raise SystemExit(2)  # unreachable: the name was checked above
+
+
+def start_watchdog(cfg: Any, live: Any,
+                   on_unwell: Callable[[str], None], *runners: Any,
+                   heartbeat: bool = True) -> Any:
+    """The watchdog, where this installation asked for one.
+
+    Built here rather than in each command because all three long-running
+    ones want it and they want it identically. The one thing that differs is
+    what stopping means: `serve` and `archive` set their loop's event, the
+    listener shuts its server down.
+    """
+    if not cfg.get("watchdog"):
+        return None
+    dog = watchdog.Watchdog(live, on_unwell,
+                            cooldown=cfg.get("watchdog_cooldown"),
+                            heartbeat=heartbeat,
+                            threads=watchdog.threads_of(*runners))
+    dog.start()
+    log.info("watchdog watching; it will not restart more than once every "
+             "%.0f min", cfg.get("watchdog_cooldown") / 60)
+    return dog
 
 
 def cmd_listen(args: argparse.Namespace) -> int:
@@ -339,9 +602,15 @@ def cmd_listen(args: argparse.Namespace) -> int:
     warn_if_open(access, "The listener")
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
+    announced, sightings = read_stations(args, cfg, live)
+    # The listener writes the live table, and every archive reads it. It has
+    # to mark all of them pending, so it needs their names even though it
+    # opens none of them.
+    live.archives = read_archives(args, cfg).names()
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
-                    access=access, limits=limits)
+                    access=access, limits=limits,
+                    stations=announced, sightings=sightings)
     if cfg.get("token") is None:
         log.warning("no token set: anything that can reach this port can write "
                     "to the measurement series")
@@ -356,11 +625,19 @@ def cmd_listen(args: argparse.Namespace) -> int:
         udp.start()
         log.info("UDP on %s:%s", cfg.get("host"), cfg.get("udp_port"))
 
+    # No heartbeat here: this process sits in serve_forever, and the last
+    # time it did anything is a fact about the console rather than about
+    # itself. The descriptor and thread checks are the ones that apply --
+    # and a leaked connection per upload is exactly this process's failure.
+    dog = start_watchdog(cfg, live, lambda why: http.stop(), udp,
+                         heartbeat=False)
     try:
         http.serve_forever()
     except KeyboardInterrupt:
         log.info("stopping")
     finally:
+        if dog is not None:
+            dog.stop()
         http.stop()
         if udp:
             udp.stop()
@@ -370,7 +647,26 @@ def cmd_listen(args: argparse.Namespace) -> int:
 
 def cmd_archive(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
-    live, archive, archiver = make_archiver(args)
+    live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
+                     keep_raw_seconds=cfg.get("raw_retention"))
+    announced, _sightings = read_stations(args, cfg, live)
+    registry = read_archives(args, cfg)
+    series = build_archivers(args, cfg, live, registry, announced)
+    # Every archive is still marked pending, whichever ones this process
+    # works: another process is doing the rest, and an interval nobody marked
+    # is one nobody builds.
+    live.archives = registry.names()
+
+    wanted = getattr(args, "series", None)
+    if wanted:
+        # One process, one place. This is how two sites in two timezones
+        # work: the day boundary comes from the process clock, so each gets
+        # its own archiver with its own TZ, both reading this one live table.
+        series = [one for one in series if one[0].name == wanted]
+        if not series:
+            print(f"no series called {wanted!r}. There is: "
+                  f"{', '.join(registry.names())}", file=sys.stderr)
+            return 2
     stopping = threading.Event()
 
     def handle(signum: int, frame: object) -> None:
@@ -380,8 +676,9 @@ def cmd_archive(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, handle)
     signal.signal(signal.SIGTERM, handle)
 
-    log.info("archiving every %ds into %s", cfg.get("interval"),
-             cfg.get("archive_db"))
+    for archive_def, _store, _archiver in series:
+        log.info("archiving every %ds into %s (%s)", cfg.get("interval"),
+                 archive_def.file, archive_def.name)
 
     runner = None
     # The feeds. This process has the archive, so in a split deployment it is
@@ -394,7 +691,14 @@ def cmd_archive(args: argparse.Namespace) -> int:
     # no directory set", which reads like the export is wrong when it is not.
     scheduled = build_schedule(args, cfg)
     if scheduled:
-        runner = export_runner.Runner(scheduled)
+        # How each run went, written where the settings page can read it. It
+        # is a different process, so "not recorded here" was the only honest
+        # answer it had about an FTP export -- true, and no use to anybody
+        # asking whether their upload is working.
+        runner = export_runner.Runner(
+            scheduled,
+            note=lambda name, result, error: export_record.write(
+                live, name, result, error))
         runner.start()
         if feeds is not None:
             # An export set to run when its feed finishes is waiting for
@@ -419,23 +723,33 @@ def cmd_archive(args: argparse.Namespace) -> int:
             forecaster = forecast_runner.Runner(scheduled_forecasts,
                                                 forecast_store)
             forecaster.start()
+
+    dog = start_watchdog(cfg, live, lambda why: stopping.set(),
+                         feeds, runner, uploader, forecaster)
     last_prune = 0.0
     try:
         while not stopping.is_set():
             try:
-                n = archiver.process_due(grace=cfg.get("grace"))
-                if n:
-                    log.info("archived %d interval(s)", n)
+                if dog is not None:
+                    # Said here rather than at the top of the loop: this is
+                    # past the settings reload, so a config that takes a
+                    # while to read cannot look like a stopped loop.
+                    dog.beats()
+
+                for archive_def, _store, archiver in series:
+                    n = archiver.process_due(grace=cfg.get("grace"))
+                    if not n:
+                        continue
+                    log.info("archived %d interval(s) into %s", n,
+                             archive_def.name)
                     if feeds is not None:
                         # Sets a flag and returns, like the exports. The work
                         # happens elsewhere.
-                        feeds.record_written()
+                        feeds.record_written(archive_def.name)
                     if runner is not None:
                         # Sets a flag and returns. Nothing about an upload
                         # happens on this thread.
                         runner.record_written()
-                    if uploader is not None:
-                        uploader.record_written()
                     if uploader is not None:
                         uploader.record_written()
                 # The raw uploads go first and far more often: they are a
@@ -462,7 +776,8 @@ def cmd_archive(args: argparse.Namespace) -> int:
         if forecast_store is not None:
             forecast_store.close()
         live.close()
-        archive.close()
+        for _archive_def, store, _archiver in series:
+            store.close()
     return 0
 
 
@@ -737,11 +1052,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
-    archive = ArchiveStore(cfg.get("archive_db"), table_name=cfg.get("table"))
-    archiver = Archiver(live, archive, interval_seconds=cfg.get("interval"),
-                        loop_hilo=cfg.get("loop_hilo"),
-                        sources=read_sources(cfg, args.sources),
-                        deriver=deriver_from(cfg))
+    announced, sightings = read_stations(args, cfg, live)
+    registry = read_archives(args, cfg)
+    series = build_archivers(args, cfg, live, registry, announced)
+    # Every archive marks its own pending intervals, so the table has to know
+    # who is reading it before the first packet lands.
+    live.archives = registry.names()
+    # The first one is the default, and it is what anything wanting "the
+    # archive" without saying which gets: the drivers' state, the status
+    # command, a feed that names nothing.
+    archive = series[0][1]
     configure_drivers(cfg, archive)
     try:
         access = Access.parse(cfg.get("allow"))
@@ -753,7 +1073,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     announce(limits, "The listener")
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
-                    access=access, limits=limits)
+                    access=access, limits=limits,
+                    stations=announced, sightings=sightings)
     if cfg.get("token") is None:
         log.warning("no token set: anything that can reach this port can write "
                     "to the measurement series")
@@ -798,9 +1119,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         udp.start()
         log.info("UDP on %s:%s", cfg.get("host"), cfg.get("udp_port"))
 
-    caught = archiver.catch_up()
-    if caught:
-        log.info("caught up %d interval(s) from the live table", caught)
+    for archive_def, _store, archiver in series:
+        caught = archiver.catch_up()
+        if caught:
+            log.info("caught up %d interval(s) from the live table into %s",
+                     caught, archive_def.name)
 
     # The feeds. On their own thread for the same reason the exports are:
     # a hundred charts is most of a second, and a second here is a second the
@@ -811,6 +1134,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         # Once at startup, so a restart does not leave yesterday's pages
         # up until the next record lands a minute later.
         feeds.record_written()
+        # And every reading, for a feed that asked for one. `realtime.txt` is
+        # polled every ten seconds by the scripts that read it, so producing
+        # it on the archive record made it as old as the interval -- which is
+        # the one thing that file is not supposed to be.
+        ingest.on_packets = feeds.packet_stored
 
 
     # The local web server for whatever the feeds produced. Its own port:
@@ -835,7 +1163,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # no directory set", which reads like the export is wrong when it is not.
     scheduled = build_schedule(args, cfg)
     if scheduled:
-        runner = export_runner.Runner(scheduled)
+        # How each run went, written where the settings page can read it. It
+        # is a different process, so "not recorded here" was the only honest
+        # answer it had about an FTP export -- true, and no use to anybody
+        # asking whether their upload is working.
+        runner = export_runner.Runner(
+            scheduled,
+            note=lambda name, result, error: export_record.write(
+                live, name, result, error))
         runner.start()
         if feeds is not None:
             # An export set to run when its feed finishes is waiting for
@@ -869,14 +1204,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
 
     watcher = _Watcher(getattr(args, "config", None))
-    # Set when a setting changed that only a fresh process can apply.
-    # The supervisor brings it back: `restart: unless-stopped` in
-    # compose, `Restart=always` in a unit file.
-    restarting = False
-    # Set when a setting changed that only a fresh process can apply. The
-    # supervisor brings it back: `restart: unless-stopped` in compose,
+    # Set when only a fresh process can carry on: a setting that cannot be
+    # applied to a running one, or the watchdog finding this one unwell. The
+    # supervisor brings it back -- `restart: unless-stopped` in compose,
     # `Restart=always` in a unit file.
     restarting = False
+
+    def restart_for(why: str) -> None:
+        nonlocal restarting
+        restarting = True
+        stopping.set()
+
+    dog = start_watchdog(cfg, live, restart_for,
+                         feeds, runner, uploader, forecaster)
     last_prune = 0.0
     try:
         while not stopping.is_set():
@@ -898,15 +1238,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         restarting = True
                         stopping.set()
                         continue
-                    apply_live(args, cfg, web, runner, uploader, forecaster)
+                    apply_live(args, cfg, web, runner, uploader, forecaster,
+                               feeds)
 
-                n = archiver.process_due(grace=cfg.get("grace"))
-                if n:
-                    log.info("archived %d interval(s)", n)
+                if dog is not None:
+                    dog.beats()
+
+                for archive_def, _store, archiver in series:
+                    n = archiver.process_due(grace=cfg.get("grace"))
+                    if not n:
+                        continue
+                    log.info("archived %d interval(s) into %s", n,
+                             archive_def.name)
                     if feeds is not None:
                         # Sets a flag and returns, like the exports below. The
-                        # work happens on their own thread.
-                        feeds.record_written()
+                        # work happens on their own thread. The name goes with
+                        # it so a feed reading the north field is not produced
+                        # because the south field wrote a record.
+                        feeds.record_written(archive_def.name)
                     if runner is not None:
                         # Sets a flag and returns. Nothing about an upload
                         # happens on this thread.
@@ -927,6 +1276,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             stopping.wait(cfg.get("poll"))
     finally:
         log.info("stopping")
+        if dog is not None:
+            dog.stop()
         if feeds is not None:
             feeds.stop()
         if runner is not None:
@@ -945,7 +1296,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if udp:
             udp.stop()
         live.close()
-        archive.close()
+        for _archive_def, store, _archiver in series:
+            store.close()
         if restarting:
             log.info("stopped so a new process can pick up the change."
                      " If nothing brings this back, the supervisor is"
@@ -1068,6 +1420,244 @@ def cmd_derive(args: argparse.Namespace) -> int:
     finally:
         live.close()
         archive.close()
+    return 0
+
+
+def _collector_settings(args: argparse.Namespace) -> dict:
+    """One collector's settings out of the configuration file.
+
+    `--collector shed` instead of six arguments. The point is not brevity: a
+    collector configured in the file has a page on the settings site, and a
+    collector configured in a unit file has whatever somebody typed there
+    once. An argument that is also given still wins -- that is the ordering
+    everything else here follows.
+    """
+    name = getattr(args, "collector", None)
+    if not name:
+        return {}
+    cfg = settings_for(args)
+    found = collectors.settings_for(cfg, name)
+    if not found:
+        known = ", ".join(collectors.configured(cfg)) or "none"
+        raise SystemExit(
+            f"no collector named {name!r} in the configuration "
+            f"(there is: {known})")
+    return found
+
+
+def _shim_config(args: argparse.Namespace) -> dict:
+    """The weewx.conf a WeeWX driver is configured by.
+
+    Its own file, not ours. A WeeWX driver reads its settings out of the
+    section named after it, and those settings are the ones that were already
+    working -- serial port, station model, sensor map. Copying them into our
+    file would mean maintaining a second place for them and getting the
+    translation wrong for the drivers nobody here can test.
+    """
+    from .ingest import weewxshim
+
+    # An argument beats the collector's own setting beats the usual place.
+    # Same order as everything else: what somebody just typed wins for this
+    # run, and the file is what the settings page writes.
+    from_file = _collector_settings(args).get("conf")
+    path = args.conf or from_file or "/etc/weewx/weewx.conf"
+    if not Path(path).exists():
+        raise SystemExit(f"no weewx.conf at {path}. Say where it is with --conf.")
+    return weewxshim.read_config(path)
+
+
+def _shim_options(args: argparse.Namespace) -> dict:
+    """What to build the shim with: the collector's settings under arguments.
+
+    Gathered in one place because three commands take them and a collector
+    whose `driver_file` reached `check` but not `run` would look configured
+    and record nothing.
+    """
+    one = _collector_settings(args)
+    name = getattr(args, "collector", None)
+
+    def pick(argument: str, key: str, default=None):
+        given = getattr(args, argument, None)
+        return given if given not in (None, "", 0) else one.get(key, default)
+
+    return {
+        "module_name": pick("driver", "driver") or None,
+        "driver_file": pick("driver_file", "driver_file") or None,
+        "source": pick("source", "source") or None,
+        "catchup_seconds": int(pick("catchup", "catchup", 0) or 0),
+        "batch_seconds": float(pick("batch", "batch", 5.0) or 5.0),
+        # The endpoint, and the reason a collector is named at all. Packets
+        # arriving at `/<token>/shed/` are recorded as driver `shed`, which
+        # is what a station is matched on together with its identity. An
+        # ad-hoc run has no name and goes in as an envelope.
+        "as_driver": name or "json",
+    }
+
+
+def cmd_weewx_driver_list(args: argparse.Namespace) -> int:
+    """What this weewx.conf asks for, and whether it can be built."""
+    from .ingest import weewxnames, weewxshim
+
+    if weewxnames.installed():
+        import weewx
+        version = f"WeeWX {getattr(weewx, '__version__', 'unknown')}"
+    else:
+        # Not an error any more. What a driver imports is a handful of
+        # constants and two exceptions, and `weewxnames` has them -- so the
+        # thing to say is which one it will run against, since that decides
+        # what a later failure means.
+        version = "no WeeWX installed; drivers run against the stand-in"
+
+    config_dict = _shim_config(args)
+    print(version)
+    station = (config_dict.get("Station") or {}).get("station_type", "?")
+    print(f"station_type: {station}")
+    try:
+        module = args.driver or weewxshim.driver_module_name(config_dict)
+    except ValueError as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 1
+    print(f"driver:       {module}")
+
+    section = config_dict.get(station) or {}
+    settings = [k for k in section if k != "driver"]
+    if settings:
+        print(f"its settings: {', '.join(sorted(settings))}")
+    return 0
+
+
+#: What a driver imports to reach hardware, and what to install for it. The
+#: import name and the package name differ for every one of them, which is
+#: why this table exists rather than a sentence saying to install it.
+_HARDWARE_LIBS = {
+    "usb": "pyusb",            # fousb, te923, ws28xx, wmr300
+    "serial": "pyserial",      # vantage, ws23xx, ultimeter, ws1, cc3000
+    "hid": "hidapi",           # some builds of the HID drivers
+    "ftdi": "pylibftdi",
+}
+
+
+def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
+    """Build the driver, take a few packets, deliver nothing.
+
+    The question this answers is the one worth asking before a service is
+    installed: does this driver, this configuration and this hardware work
+    together at all. It writes nothing and needs no listener, so it is also
+    what to run when something has stopped arriving.
+    """
+    from .ingest import weewxshim
+
+    config_dict = _shim_config(args)
+    chosen = _shim_options(args)
+    try:
+        found = weewxshim.probe(config_dict, chosen["module_name"],
+                                count=args.count, source=chosen["source"],
+                                driver_file=chosen["driver_file"])
+    except Exception as exc:
+        print(f"the driver could not be run: {exc}", file=sys.stderr)
+        # A driver talks to hardware, and the library for that is the one
+        # thing no stand-in can supply. Naming the package is the difference
+        # between a minute and an afternoon, and the module name is not it:
+        # `import usb` is pyusb, and nobody guesses that.
+        wanted = getattr(exc, "name", None)
+        if isinstance(exc, ModuleNotFoundError) and wanted in _HARDWARE_LIBS:
+            print(f"\nThat is the library it uses to reach the hardware. "
+                  f"Install it with:\n\n    pip install "
+                  f"{_HARDWARE_LIBS[wanted]}\n", file=sys.stderr)
+        log.debug("driver probe failed", exc_info=True)
+        return 1
+
+    print(f"driver:           {found['driver']}")
+    print(f"source name:      {found['source']}")
+    print(f"archive interval: {found['archive_interval']}s")
+    print(f"callbacks bound:  {found['callbacks']}")
+    if found["standing_in"]:
+        print(f"running against:  a stand-in for "
+              f"{', '.join(found['standing_in'])}")
+    if getattr(args, "collector", None):
+        print(f"delivers as:      {args.collector}  "
+              f"(announce a station with driver = {args.collector!r})")
+    # WeeWX asks this as `record_generation`; here it is a fact about the
+    # console rather than a choice, because the archiver builds every record
+    # anyway and takes the console's where there is one.
+    if found.get("logs_its_own"):
+        print("keeps its own log: yes -- `catchup` can fill an outage")
+    else:
+        print("keeps its own log: no -- `catchup` has nothing to fetch")
+    print(f"packets:          {found['packets']}")
+    print(f"usUnits:          {found['usUnits']}")
+    print(f"fields ({len(found['fields'])}): {', '.join(found['fields'])}")
+    if found["sample"]:
+        print("\nfirst packet, first few fields:")
+        for name, value in found["sample"].items():
+            print(f"  {name:<20} {value}")
+    if not found["packets"]:
+        print("\nThe driver built but produced nothing. For hardware that is "
+              "usually\nthe wrong port or a console that is asleep.")
+        return 1
+    return 0
+
+
+def cmd_weewx_driver_run(args: argparse.Namespace) -> int:
+    """Run the driver and deliver what it produces to the listener.
+
+    This is the long-running form, meant for a service file. It stays in its
+    own process on purpose: that is the whole reason a WeeWX driver is safe to
+    run here, and putting it inside `serve` would give back exactly what the
+    arrangement buys.
+    """
+    import signal
+
+    from .ingest import weewxshim
+
+    cfg = settings_for(args)
+    config_dict = _shim_config(args)
+    # From the settings, and deliberately not from a --token argument the way
+    # `url` and `listen` take one. Those are typed and over in a second; this
+    # is a service that runs for months, and an argument would put the token
+    # in /proc/<pid>/cmdline, where `ps` prints it for every user on the
+    # machine. WEEWX_EVO_TOKEN in the unit's EnvironmentFile, or the
+    # configuration file.
+    token = cfg.get("token")
+    port = args.port or cfg.get("port") or 8000
+    host = args.host or "127.0.0.1"
+
+    if not token:
+        print("No upload token is set, so the listener would refuse every",
+              file=sys.stderr)
+        print("packet and this would run and deliver nothing.", file=sys.stderr)
+        print(file=sys.stderr)
+        print("  WEEWX_EVO_TOKEN=...  in the environment, or `token` in the",
+              file=sys.stderr)
+        print("  configuration file. Not an argument: it would show up in ps.",
+              file=sys.stderr)
+        return 1
+
+    chosen = _shim_options(args)
+    shim = weewxshim.Shim(
+        config_dict, chosen["module_name"], source=chosen["source"],
+        host=host, port=port, token=token,
+        batch_seconds=chosen["batch_seconds"],
+        catchup_seconds=chosen["catchup_seconds"], dry_run=args.dry_run,
+        driver_file=chosen["driver_file"], as_driver=chosen["as_driver"])
+
+    def bye(_signum, _frame):
+        # The generator blocks on the hardware, so the flag is read between
+        # packets. A console that has gone quiet still needs the second
+        # signal, which is the supervisor's job and not ours.
+        shim.stop()
+
+    signal.signal(signal.SIGINT, bye)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, bye)
+
+    where = "nowhere (--dry-run)" if args.dry_run else f"{host}:{port}"
+    print(f"running {shim.module_name}, delivering to {where}")
+    sent = shim.run(limit=args.limit)
+    print(f"{sent} packet(s) delivered in {shim.delivered_batches} batch(es)")
+    if shim.dropped:
+        print(f"{shim.dropped} packet(s) dropped while the listener was "
+              f"unreachable", file=sys.stderr)
     return 0
 
 
@@ -1390,15 +1980,17 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         factory = feed_registry.factory_for(kind)
         if factory is None:
             continue
-        groups = list(factory.options()) if hasattr(factory, "options") else []
+        # When it runs and which archive it reads, on every feed's page. The
+        # same question for all of them, so it is asked in one place rather
+        # than left to each feed to remember.
+        groups = list(feed_registry.schedule_options())
+        groups += list(factory.options()) if hasattr(factory, "options") else []
         # A skin declares its own settings, and they belong on the page of
         # the feed that runs it -- there is no separate skin page, because a
         # skin is only ever configured through the feed it belongs to.
         if hasattr(factory, "skin_options"):
             groups += factory.skin_options(str(settings.get("skin") or ""),
                                            settings.get("skins_dir"))
-        if not groups:
-            continue
         schemas.append(option_defs.Schema(
             name=f"feed:{name}", label=f"Feed: {name} ({kind})", kind="feed",
             help=feed_registry.describe(kind),
@@ -1445,6 +2037,22 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         schema.groups = tuple(
             replace_group(group, f"uploads.{name}") for group in schema.groups)
         schemas.append(schema)
+
+    # One page per configured collector. A collector is a *process*, not
+    # something this one runs -- it is where the hardware is, possibly on
+    # another machine -- so its page configures it and does not start it.
+    # It is here at all because a collector that lives only in a unit file
+    # has no name anywhere, and the name is what a station is matched on.
+    for name, settings in sorted(
+            collectors.configured(configured).items()):
+        kind = str(settings.get("kind", "")).strip()
+        if kind not in collectors.KINDS:
+            continue
+        schemas.append(option_defs.Schema(
+            name=f"collector:{name}", label=f"Collector: {name} ({kind})",
+            kind="collector", help=collectors.describe(kind),
+            groups=tuple(replace_group(group, f"collectors.{name}")
+                         for group in collectors.options())))
 
     # One page per configured forecast source. Two of them is the ordinary
     # arrangement rather than the exception: a model for the numbers and a
@@ -1583,7 +2191,13 @@ def cmd_admin(args: argparse.Namespace) -> int:
         print("Say which configuration file with --config.", file=sys.stderr)
         return 1
     cfg = settings_for(args)
-    token = args.token or cfg.get("admin.token")
+    # The eleventh place. Nothing configures a driver here, so without this
+    # the field table has no unit group for anything only a driver names --
+    # `eventRain`, `maxdailygust`, the lightning count -- and the chooser
+    # cannot put the fields that measure the same thing first for exactly
+    # the readings somebody came to this page to place.
+    install_driver_groups()
+    token = getattr(args, "admin_token", None) or cfg.get("admin.token")
     if not token:
         import secrets
         token = secrets.token_urlsafe(24)
@@ -1675,6 +2289,17 @@ def build_upload(name: str, settings: dict) -> object:
             first = next(iter(errors.values()))
             raise ValueError(f"upload {name!r}: {first}")
         settings = parsed
+    # Settings *about* an upload rather than *for* it. Both say where its
+    # readings come from and are the runner's to act on; no upload takes
+    # either, and every one of the eight raises TypeError when handed one.
+    #
+    # Which means `archive` was on every upload's page and unusable on all
+    # of them: filling it in got "unexpected keyword argument 'archive'" and
+    # the upload was skipped, said once at warning and never again. Adding
+    # `live_source` reproduced it within the hour, which is why this is a
+    # list and not an `if`.
+    for elsewhere in ("archive", "live_source"):
+        settings.pop(elsewhere, None)
     return factory(**settings)
 
 
@@ -1686,7 +2311,7 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     cost nothing and a catch-up possible at all.
     """
     configured = dict(configured_uploads(args))
-    configured.update(live_readings_locally(cfg, configured))
+    configured.update(live_readings_locally(cfg, configured, args))
     if not configured:
         return []
     base = Path(getattr(args, "config", None) or ".").parent
@@ -1707,19 +2332,36 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
         live_db = base / live_db
     packets = upload_records.live_source(live_db) if live_db.exists() else None
 
+    # One reader per series, for an installation with more than one. An
+    # upload is a station registered with a weather service, and that station
+    # stands in one place.
+    registry = read_archives(args, cfg)
+    by_archive: dict[str, Any] = {}
+    if registry.several():
+        for one in registry.all():
+            where = Path(one.file)
+            if not where.is_absolute():
+                where = base / where
+            by_archive[one.name] = upload_records.source(where)
+
     def with_station(name: str, settings: dict) -> object:
         # Two settings that belong to the station rather than to a service,
         # filled in here so nobody types them twice -- and only when the
         # upload did not say its own.
         kind = str(settings.get("kind", ""))
+        # The place this upload reports from. Its coordinates go out with
+        # every CWOP packet, so a second site sending the first one's
+        # position puts a station on the map in the wrong field.
+        place = archives_module.placed(cfg, registry.get(
+            settings.get("archive"))) if registry.several() else cfg
         if kind == "cwop":
             # The packet is a position report; without one there is nothing
             # to send.
-            settings.setdefault("latitude", cfg.get("station.latitude"))
-            settings.setdefault("longitude", cfg.get("station.longitude"))
+            settings.setdefault("latitude", place.get("station.latitude"))
+            settings.setdefault("longitude", place.get("station.longitude"))
         if kind == "mqtt" and not settings.get("station"):
             # What Home Assistant calls the device.
-            settings["station"] = cfg.get("station.name") or ""
+            settings["station"] = place.get("station.name") or ""
         if kind == "webpush":
             # Where the pages are and what the token is: both already known
             # to the export that publishes them. Asking again here is how
@@ -1727,7 +2369,15 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
             # as a page that renders perfectly and never updates.
             from .uploads.webpush import WebPushUpload
 
-            where, token, directories = WebPushUpload.from_exports(cfg)
+            where, token, directories, system = WebPushUpload.from_exports(cfg)
+            if not settings.get("unit_system") and system:
+                # The units the pages are written in. Without this an upload
+                # added by hand for a web host published whatever the station
+                # sends -- Fahrenheit from an Ecowitt, into pages in Celsius,
+                # with nothing on either side able to notice. The local ones
+                # have always had it; this is the same figure, from the same
+                # function.
+                settings["unit_system"] = system
             if not settings.get("url") and where:
                 settings["url"] = where
                 settings["_inferred"] = True
@@ -1751,77 +2401,131 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
                 for one in (str(w).strip() for w in written) if one]
         return build_upload(name, settings)
 
+    # Which consoles belong to which series, so a live upload for one site
+    # publishes that site's readings. The live table holds the whole
+    # installation; only the archive is per series.
+    # Which consoles belong to which series, and which of them is the main
+    # one. Both are needed: the first says whose readings this site may
+    # publish at all, the second which of them it prefers.
+    consoles: dict[str, list[str]] = {}
+    main_consoles: dict[str, list[str]] = {}
+    register, _sightings = read_stations(args, cfg)
+    for one in registry.all():
+        mine = list(register.for_archive(one.name))
+        if registry.several():
+            consoles[one.name] = sorted(station.name for station in mine)
+        # The main ones even with a single archive: a station with a shed
+        # sensor has the same question, and it is the commoner case.
+        main_consoles[one.name] = sorted(
+            station.name for station in mine
+            if getattr(station, "role", "main") == "main")
+
     return upload_runner.build(configured, with_station, progress, records,
-                               packets)
+                               packets, by_archive=by_archive,
+                               consoles=consoles,
+                               main_consoles=main_consoles)
 
 
 def live_readings_locally(cfg: Settings,
-                          configured: dict[str, dict]) -> dict[str, dict]:
-    """Write `live.json` where this machine serves, with nothing configured.
+                          configured: dict[str, dict],
+                          args: argparse.Namespace | None = None
+                          ) -> dict[str, dict]:
+    """The live upload an export has already asked for, with nothing to fill in.
 
-    A local export saying "live readings" has already said everything there is
-    to say: there is no address to choose, no token to derive and nothing
-    leaves the machine. Making somebody add an upload with no settings in it
-    would be a step that answers no question.
+    An export saying "live readings" has said everything there is to say. A
+    local one knows the directory; one publishing to a web host knows the
+    address, because it was typed into "Address the pages are served at" --
+    and the token is derived from the station's own. Making somebody add an
+    upload with no settings in it is a step that answers no question, and the
+    step they take instead is to add one and leave every field empty, which
+    is how a station sending Fahrenheit came to publish Fahrenheit into pages
+    written in Celsius.
 
-    Only for directories. An upload that *posts* somewhere goes out over
-    somebody else's network, and starting that because a checkbox defaulted on
-    is not this program's decision -- so a web host still wants an upload
-    added on purpose, and this leaves one alone as soon as there is one.
+    **The address is the decision, not the checkbox.** This used to cover
+    directories only, on the grounds that posting somewhere goes out over
+    somebody else's network and should not start because a switch defaulted
+    on. That is right, and the switch is not what starts it: `live_push_url`
+    is empty until a person types a domain into it. With one there, the
+    intent is on the record.
 
     Grouped by the units the pages are rendered in, because that is what the
     numbers have to match. A station reporting Fahrenheit and a page showing
     Celsius is the ordinary case here, not an odd one -- and the page has no
     way to tell that 82.8 is not what it was about to print. Two sites in
     different units are two uploads, which costs a second file of a kilobyte.
+
+    One added by hand still wins: this stands aside as soon as there is a
+    webpush upload of any kind in the file.
     """
     if any(str(one.get("kind", "")) == "webpush" for one in configured.values()):
         return {}
 
     section = cfg.config.get("exports") or {}
-    grouped: dict[str, list[str]] = {}
+    # Which series each export publishes, by way of the feed it sends. An
+    # export moves a feed's directory, and the feed names the archive it
+    # reads -- so that is the site those pages are of, and the site whose
+    # consoles their live readings should come from.
+    #
+    # Without this both sites were handed one document taken from whichever
+    # console reported last: a north-field page showing the south field's
+    # temperature beside its own archive's, and nothing able to notice.
+    per_feed = feed_schedule(args) if args is not None else {}
+
+    def series_of(export: dict) -> str:
+        feed = str(export.get("source") or "").strip()
+        return str((per_feed.get(feed) or {}).get("archive")
+                   or archives_module.DEFAULT)
+
+    grouped: dict[tuple[str, str], list[str]] = {}
+    posted: dict[tuple[str, str], str] = {}
     for _name, export in sorted(section.items()):
-        if not isinstance(export, dict) or export.get("kind") != "local":
+        if not isinstance(export, dict) or not export.get("live_push", True):
             continue
-        if not export.get("live_push", True):
+        system = livepush.rendered_units(cfg, export)
+        where_from = (system, series_of(export))
+        if export.get("kind") == "local":
+            where = str(export.get("directory") or "").strip()
+            if where:
+                grouped.setdefault(where_from, []).append(where)
             continue
-        where = str(export.get("directory") or "").strip()
-        if not where:
-            continue
-        grouped.setdefault(_rendered_units(cfg, export), []).append(where)
+        # Anything else publishes to a host, and only with an address on it.
+        address = str(export.get("live_push_url") or "").strip()
+        if address:
+            posted.setdefault(where_from, livepush.url_for(address))
 
-    if not grouped:
+    if not grouped and not posted:
         return {}
-    if len(grouped) == 1:
-        system, directories = next(iter(grouped.items()))
-        return {"live": {"kind": "webpush", "directories": directories,
-                         "unit_system": system, "_inferred": True}}
-    return {f"live-{system.lower() or 'stored'}":
-            {"kind": "webpush", "directories": directories,
-             "unit_system": system, "_inferred": True}
-            for system, directories in grouped.items()}
 
+    made: dict[tuple[str, str], dict] = {}
+    for key in sorted(set(grouped) | set(posted)):
+        system, series = key
+        settings: dict = {"kind": "webpush", "unit_system": system,
+                          "archive": series, "_inferred": True}
+        if grouped.get(key):
+            settings["directories"] = grouped[key]
+        if posted.get(key):
+            settings["url"] = posted[key]
+        made[key] = settings
+    if len(made) == 1:
+        return {"live": next(iter(made.values()))}
 
-def _rendered_units(cfg: Settings, export: dict) -> str:
-    """Which units the pages this export publishes are written in.
+    # More than one document, so each is named for what makes it different --
+    # and only for that. An installation with one archive and two sets of
+    # units keeps the names it had (`live-us`), because the series is not
+    # what distinguishes them and putting it in would rename a file nobody
+    # asked to be renamed.
+    systems = {system for system, _ in made}
+    several = len({series for _, series in made}) > 1
 
-    The same three steps the Cheetah feed takes, in the same order: what the
-    feed was told to show, then what the language asks for, then nothing --
-    which means the archive's own units and is what the upload does with an
-    empty string. Working it out twice in two places is how the two drift, so
-    if that order ever changes it changes in both.
-    """
-    feeds = cfg.config.get("feeds") or {}
-    feed = feeds.get(str(export.get("source") or "").strip())
-    if not isinstance(feed, dict):
-        feed = {}
-    chosen = str(feed.get("units") or "").strip()
-    if chosen:
-        return chosen
-    from . import language
+    def named(system: str, series: str) -> str:
+        if not several:
+            return f"live-{system.lower() or 'stored'}"
+        if len(systems) == 1:
+            return f"live-{series}"
+        return f"live-{series}-{system.lower() or 'stored'}"
 
-    spoken = language.get(str(feed.get("lang") or cfg.get("language") or ""))
-    return str(getattr(spoken, "unit_system", "") or "")
+    return {named(system, series): settings
+            for (system, series), settings in made.items()}
 
 
 def configured_forecasts(args: argparse.Namespace) -> dict[str, dict]:
@@ -1884,7 +2588,7 @@ def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
 
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
                runner: Any, uploader: Any = None,
-               forecaster: Any = None) -> None:
+               forecaster: Any = None, feeds: Any = None) -> None:
     """Apply a changed configuration to a running process.
 
     Everything that can be rebuilt in place, in one function. Scattering
@@ -1898,10 +2602,23 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
         fresh = build_schedule(args, cfg)
         if _differs(fresh, runner):
             # An export added on the settings page joins the running set.
-            runner.stop()
-            runner.exports = fresh
-            runner.start()
+            # `replace`, not stop-assign-start: the stop flag, the wake-up
+            # events and the thread list belong together, and doing two of
+            # the three left every new thread ending the moment it started.
+            runner.replace(fresh)
             log.info("%d export(s) running", len(fresh))
+
+    if feeds is not None:
+        # The fourth. A feed deleted on the settings page went on being
+        # produced and a new one was not produced at all, both silently,
+        # until a restart -- which is the failure this function's own
+        # docstring warns about, arriving in the one place it had missed.
+        charts = load_plots(args, cfg)
+        if len(charts):
+            made = build_feeds(args, cfg, charts)
+            if [n for n, _b, _i in made] != [n for n, _b, _i in feeds.feeds]:
+                feeds.replace(made, feed_schedule(args))
+                log.info("%d feed(s) producing", len(made))
 
     if uploader is not None:
         fresh = build_upload_schedule(args, cfg)
@@ -1951,11 +2668,15 @@ def _differs(fresh: list, runner: Any) -> bool:
     Restarting their threads costs nothing much, but doing it on every write
     to the file would interrupt an upload in progress for no reason.
     """
-    before = [(s.name, str(s.source), getattr(s.export, "trigger", ""),
-               s.feed) for s in (runner.exports if runner is not None else [])]
-    after = [(s.name, str(s.source), getattr(s.export, "trigger", ""), s.feed)
-             for s in fresh]
-    return before != after
+    def shape(one: Any) -> tuple:
+        # `extra` is in here because adding a second feed to an export is a
+        # change to what it sends, and without it the running one would keep
+        # sending only the first until somebody restarted.
+        return (one.name, str(one.source), getattr(one.export, "trigger", ""),
+                one.feed, one.extra)
+
+    before = [shape(s) for s in (runner.exports if runner is not None else [])]
+    return before != [shape(s) for s in fresh]
 
 
 def build_schedule(args: argparse.Namespace, cfg: Settings) -> list:
@@ -1975,7 +2696,11 @@ def build_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     return export_runner.build(
         configured,
         lambda name, settings: build_export(name, settings, token),
-        lambda settings: export_registry.source_for(settings, where.get))
+        lambda settings: export_registry.source_for(settings, where.get),
+        # And where the *other* feeds an export carries write, by name. An
+        # export sends a skin and the charts it draws from, and those are two
+        # feeds writing two directories.
+        feeds=where)
 
 
 def resolve_paths(args: argparse.Namespace, settings: dict) -> dict:
@@ -2196,16 +2921,42 @@ def plots_path(args: argparse.Namespace, cfg: Settings) -> Path:
 
 
 def load_plots(args: argparse.Namespace, cfg: Settings) -> plot_defs.PlotSet:
-    return plot_defs.load(plots_path(args, cfg))
+    """The charts, laying the starter set down on a first run.
+
+    A station with no charts has no feed with anything to draw, so the whole
+    publishing half of this program sits there doing nothing while every
+    page reports success. The starter set is what WeeWX's Seasons skin
+    draws, and a chart for a sensor this station does not have is skipped
+    when the feeds run.
+
+    Only when the file is absent. A file that exists and is empty is an
+    answer somebody gave, and putting a hundred charts back into it would be
+    this function arguing with them.
+    """
+    where = plots_path(args, cfg)
+    if not where.exists():
+        from . import starter
+
+        said = starter.install_plots(where)
+        if said:
+            log.info("%s", said)
+    return plot_defs.load(where)
 
 
 #: What a station gets when nothing has been configured. Named the same as
 #: their kinds, so an existing file that says `feeds.json.units` keeps
 #: meaning what it meant.
-DEFAULT_FEEDS = {
-    "json": {"kind": "json"},
-    "diagnostic": {"kind": "diagnostic", "source": "json"},
-}
+#: `deck` rather than `diagnostic`. The diagnostic page draws what is on the
+#: disk and is for working out why something is missing; the first thing a
+#: new station should have is a website, and being handed a troubleshooting
+#: page instead reads as though something is already wrong.
+def _default_feeds() -> dict[str, dict]:
+    from . import starter
+
+    return {name: dict(one) for name, one in starter.FEEDS.items()}
+
+
+DEFAULT_FEEDS = _default_feeds()
 
 
 def configured_feeds(args: argparse.Namespace) -> dict[str, dict]:
@@ -2247,6 +2998,51 @@ def feed_dirs(cfg: Settings,
     return out
 
 
+def feed_schedule(args: argparse.Namespace) -> dict:
+    """When each configured feed runs, and which archive it reads.
+
+    Read here rather than asked of the feed class, because it is the
+    operator's answer and not the author's. A feed declares the trigger it
+    was written for; this is where that can be overridden for one
+    installation -- hourly charts on a slow machine, a summary once a night.
+
+    A feed that says nothing runs on the archive record, which is what every
+    feed did when there was no choice.
+    """
+    from . import feeds as feed_registry
+    from .options import parse_duration
+
+    out: dict[str, dict] = {}
+    for name, settings in (configured_feeds(args) or {}).items():
+        if not isinstance(settings, dict):
+            continue
+        factory = feed_registry.factory_for(str(settings.get("kind", "")))
+        # The class's own trigger is the default: `realtime` is written for
+        # every reading and should not have to be configured into it.
+        declared = getattr(factory, "trigger", "record") if factory else "record"
+        wanted = str(settings.get("trigger") or declared)
+        if wanted not in feed_registry.TRIGGERS:
+            log.warning("the feed %r asks to run on %r, which is not one of "
+                        "%s; running it with the archive", name, wanted,
+                        ", ".join(feed_registry.TRIGGERS))
+            wanted = "record"
+        every = 0.0
+        if wanted == "schedule":
+            try:
+                every = float(parse_duration(settings.get("every") or "1h"))
+            except Exception:
+                log.warning("the feed %r has an unreadable schedule %r; "
+                            "using an hour", name, settings.get("every"))
+                every = 3600.0
+        out[name] = {
+            "trigger": wanted,
+            "every": every,
+            "archive": str(settings.get("archive")
+                           or feed_registry.DEFAULT_ARCHIVE),
+        }
+    return out
+
+
 def build_feeds(args: argparse.Namespace, cfg: Settings,
                 charts: plot_defs.PlotSet) -> list:
     """The feeds this configuration asks for, in the order they run.
@@ -2258,6 +3054,7 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
 
     where = feed_dirs(cfg, args)
     configured = configured_feeds(args)
+    registry = read_archives(args, cfg)
 
     def rank(item: tuple[str, dict]) -> tuple[int, str]:
         # A feed that reads another one goes second.
@@ -2268,13 +3065,19 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
         kind = str(settings.get("kind", "")).strip()
         if settings.get("enabled") is False:
             continue
+        # The settings as this feed's archive sees them: same names, the
+        # right place. A page for the north field prints the north field's
+        # altitude and works out its own sunrise, without any feed having
+        # been told that there is more than one series.
+        placed = archives_module.placed(
+            cfg, registry.get(settings.get("archive")))             if registry.several() else cfg
         if kind == "json":
-            made.append((name, _json_feed(cfg, name, charts, args),
+            made.append((name, _json_feed(placed, name, charts, args),
                          where[name]))
         elif kind == "images":
-            made.append((name, _image_feed(cfg, name, args), where[name]))
+            made.append((name, _image_feed(placed, name, args), where[name]))
         elif kind == "cheetah":
-            made.append((name, _cheetah_feed(cfg, name, args), where[name]))
+            made.append((name, _cheetah_feed(placed, name, args), where[name]))
         elif kind == "diagnostic":
             reads = str(settings.get("source") or "json")
             made.append((name, _diagnostic_feed(cfg, name,
@@ -2302,10 +3105,32 @@ def _image_feed(cfg: Settings, name: str, args: argparse.Namespace):
 
 
 def _cheetah_feed(cfg: Settings, name: str, args: argparse.Namespace):
+    """One skin, and the other series it may name.
+
+    A page reads one archive -- its own -- and that is the whole point of
+    archives being separate. `$archives.<name>` is the deliberate way past
+    it, for an overview page showing several sites at once, and this is what
+    puts the other files within reach.
+
+    Each comes with its own settings, wrapped in `archives.Placed`, so
+    `$archives.nordfeld` has the north field's coordinates. Given this
+    page's, its readings would be right and its sunrise wrong by minutes.
+    """
     from .feeds import cheetah
 
+    registry = read_archives(args, cfg)
+    others: dict[str, Any] = {}
+    if registry.several():
+        base = Path(args.config).parent if getattr(args, "config", None) else None
+        for one in registry.all():
+            where = Path(one.file)
+            if not where.is_absolute() and base is not None:
+                where = base / where
+            others[one.name] = (where, archives_module.placed(cfg, one))
+
     return lambda reader: cheetah.from_settings(
-        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}")
+        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
+        archives=others)
 
 
 def _diagnostic_feed(cfg: Settings, name: str, reads: Path):
@@ -2562,26 +3387,74 @@ def start_feeds(args: argparse.Namespace,
                  "Bring some over with `weewx-evo plots import`.",
                  plots_path(args, cfg))
         return None
-    if cfg.get("feeds.json.enabled") is False:
+    # `feeds.json.enabled` is from when there was exactly one feed and it was
+    # called `json`. It still turns off a feed of that name, and it must not
+    # decide anything for an installation whose feeds are called something
+    # else -- two archives means two JSON feeds with two names, and neither
+    # of them is this one.
+    if (configured_feeds(args).get("json") or {}) and \
+            cfg.get("feeds.json.enabled") is False:
         log.info("the JSON feed is switched off, so no feeds are running")
         return None
 
+    registry = read_archives(args, cfg)
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    paths = {}
+    for archive in registry.all():
+        where = Path(archive.file)
+        if not where.is_absolute() and base is not None:
+            where = base / where
+        paths[archive.name] = where
+
     runner = feed_runner.Runner(build_feeds(args, cfg, charts),
-                                archive_path=Path(cfg.get("archive_db")))
+                                archive_path=paths[archives_module.DEFAULT],
+                                schedule=feed_schedule(args),
+                                archives=paths)
     runner.start()
+    # Every feed's directory, not `where["json"]`. That indexed a feed by
+    # name on the assumption there was one called `json`, so an installation
+    # with two of them -- which is what two archives look like -- raised
+    # KeyError here and the service did not start at all. The line is a log
+    # message; it took the whole process with it.
     where = feed_dirs(cfg, args)
+    written = ", ".join(f"{name} -> {path}"
+                        for name, path in sorted(where.items())) or "nowhere"
     log.info("%d chart(s) from %s, written to %s", len(charts),
-             plots_path(args, cfg), where["json"])
+             plots_path(args, cfg), written)
     return runner
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
     live_path = Path(cfg.get("live_db"))
-    archive_path = Path(cfg.get("archive_db"))
-    live, archive = open_stores(args)
+    live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
+                     keep_raw_seconds=cfg.get("raw_retention"))
+    registry = read_archives(args, cfg)
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    opened = []
     try:
         first, last = live.span()
+        series = {}
+        for one in registry.all():
+            store = open_archive(one, cfg, base)
+            opened.append(store)
+            where = Path(one.file)
+            if not where.is_absolute() and base is not None:
+                where = base / where
+            series[one.name] = {
+                "path": str(where),
+                "records": store.count(),
+                "newest": store.last_timestamp(),
+                "columns": len(store.schema.columns),
+                "daily_tables": len(store.schema.day_types),
+                "summary_version": store.schema.version,
+                "size_mb": round(where.stat().st_size / 1e6, 1)
+                if where.exists() else 0.0,
+                # Per series, because that is how the live table now counts
+                # them: an interval one archive has taken and another has
+                # not is not the same number twice.
+                "pending_intervals": len(live.due(grace=0, archive=one.name)),
+            }
         report = {
             "live": {
                 "path": str(live_path),
@@ -2592,20 +3465,16 @@ def cmd_status(args: argparse.Namespace) -> int:
                 "size_mb": round(live_path.stat().st_size / 1e6, 1),
             },
             "drivers": drivers.names(),
-            "archive": {
-                "path": str(archive_path),
-                "records": archive.count(),
-                "newest": archive.last_timestamp(),
-                "columns": len(archive.schema.columns),
-                "daily_tables": len(archive.schema.day_types),
-                "summary_version": archive.schema.version,
-                "size_mb": round(archive_path.stat().st_size / 1e6, 1),
-            },
+            # The default one under its old name, so anything reading this
+            # output goes on working, and every one of them under "archives".
+            "archive": series[archives_module.DEFAULT],
+            "archives": series,
         }
         print(json.dumps(report, indent=2))
     finally:
         live.close()
-        archive.close()
+        for store in opened:
+            store.close()
     return 0
 
 
@@ -2627,16 +3496,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("archive", help="the archiver alone")
     add_common(p), add_archive_args(p)
+    add_archive_arg(p)
     p.set_defaults(func=cmd_archive)
 
     p = sub.add_parser("catchup", help="build every interval the live table covers")
     add_common(p)
+    add_archive_arg(p)
     p.add_argument("--replace", action="store_true",
                    help="overwrite records that are already there")
     p.set_defaults(func=cmd_catchup)
 
     p = sub.add_parser("rebuild", help="work a time span out again")
     add_common(p)
+    add_archive_arg(p)
     p.add_argument("start", type=int, help="unix timestamp, exclusive")
     p.add_argument("stop", type=int, help="unix timestamp, inclusive")
     p.set_defaults(func=cmd_rebuild)
@@ -2662,6 +3534,69 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="say what would change and change nothing.")
     p.set_defaults(func=cmd_derive)
+
+    # A WeeWX driver, run in its own process. Its own subcommand rather than
+    # an option on `listen`, because that is the arrangement: the driver is
+    # somewhere else, and what reaches the listener is an ordinary upload.
+    p = sub.add_parser("weewx-driver",
+                       help="run a WeeWX driver and deliver what it produces")
+    shim_sub = p.add_subparsers(dest="shim_command", required=True)
+
+    def add_shim_common(q):
+        add_common(q)
+        q.add_argument("--collector", default=None,
+                       help="a collector named in the configuration file. Its "
+                            "settings are used, and -- the part that matters "
+                            "-- its packets arrive under its own name, so a "
+                            "station can be announced for it.")
+        q.add_argument("--conf", default=None,
+                       help="the weewx.conf the driver is configured by. "
+                            "/etc/weewx/weewx.conf by default.")
+        q.add_argument("--driver", default=None,
+                       help="the driver module, if not the one [Station] "
+                            "names. For example weewx.drivers.vantage.")
+        q.add_argument("--driver-file", default=None,
+                       help="load the driver from this file rather than from "
+                            "an installed WeeWX. A driver is one file, and "
+                            "what it imports is stood in for -- so one USB "
+                            "console no longer means installing all of WeeWX.")
+        q.add_argument("--source", default=None,
+                       help="what to record these readings under. The "
+                            "driver's own hardware name by default.")
+
+    q = shim_sub.add_parser("list", help="what the weewx.conf asks for")
+    add_shim_common(q)
+    q.set_defaults(func=cmd_weewx_driver_list)
+
+    q = shim_sub.add_parser("check", help="build it, take a few packets, "
+                                          "deliver nothing")
+    add_shim_common(q)
+    q.add_argument("--count", type=int, default=3,
+                   help="how many packets to wait for")
+    q.set_defaults(func=cmd_weewx_driver_check)
+
+    q = shim_sub.add_parser("run", help="deliver to the listener, until stopped")
+    add_shim_common(q)
+    q.add_argument("--host", default=None,
+                   help="the listener's address. Loopback by default, which "
+                        "is where it is when both run on one machine.")
+    q.add_argument("--port", type=int, default=None,
+                   help="the listener's port")
+    q.add_argument("--batch", type=float, default=5.0,
+                   help="seconds of packets per delivery. One request per "
+                        "loop packet is a round trip every two seconds for "
+                        "readings that are aggregated at the end of the "
+                        "interval anyway.")
+    q.add_argument("--catchup", type=int, default=None,
+                   help="seconds of the console's own logged records to "
+                        "fetch at startup, for hardware that keeps them. "
+                        "This is how an outage becomes a filled gap instead "
+                        "of a lost one.")
+    q.add_argument("--limit", type=int, default=None,
+                   help="stop after this many packets. For trying it out.")
+    q.add_argument("--dry-run", action="store_true",
+                   help="run the driver and deliver nothing.")
+    q.set_defaults(func=cmd_weewx_driver_run)
 
     p = sub.add_parser("columns", help="readings that have nowhere to live")
     add_common(p)
@@ -2741,7 +3676,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="which addresses get an answer: 'private' (the default, "
                         "meaning the local network), 'any', or a list")
     p.add_argument("--port", type=int, default=None)
-    p.add_argument("--token", default=None,
+    # `dest`, because an argument reaches the settings under the option name
+    # with the dots turned into underscores -- and the option here is
+    # `admin.token`. Without it `--token` set the *upload* token instead, so
+    # the one flag whose help says "never the upload one" was the upload one,
+    # and the command then refused to start because the two now matched.
+    p.add_argument("--token", dest="admin_token", default=None,
                    help="its own token, never the upload one")
     p.add_argument("--rate", type=float, default=None,
                    help="requests a second per address (default: 5)")

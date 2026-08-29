@@ -80,6 +80,32 @@ class BaseDriver:
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
         raise NotImplementedError
 
+    def claims(self, body: bytes, meta: dict) -> float:
+        """How sure this driver is that the upload is its protocol.
+
+        Asked only when the path did not name a driver, which is the ordinary
+        case for hardware with no server-path field: an Ambient WS-2902 is
+        reached by pointing DNS at us and sends whatever its firmware has
+        burned in.
+
+        Zero means "not mine" and is the default, so a driver that only ever
+        answers on a named path need not implement this. Above zero is a
+        confidence, and the highest wins:
+
+            1.0   something only this protocol has -- Ecowitt's PASSKEY
+            0.9   a strong marker -- `action=updateraw`
+            0.5   plausible, but another driver may know better
+
+        A number rather than a boolean because a boolean needs a tie-break,
+        and the only one available is registration order, which is
+        alphabetical. `ecowitt` before `wunderground` would work today and
+        break silently on the first driver named `ambient`.
+
+        **Cheap and certain, in that order.** This runs on every upload whose
+        path says nothing. Look for a marker, do not parse the payload.
+        """
+        return 0.0
+
     def status(self) -> dict[str, Any]:
         """Whatever the driver wants reported at /status. Optional."""
         return {}
@@ -247,6 +273,33 @@ class Registry:
 
     def aliases_of(self, name: str) -> list[str]:
         return list(self._aliases.get(name, ()))
+
+    def claimant(self, body: bytes, meta: dict) -> str | None:
+        """Which driver recognises this upload, or None.
+
+        Canonical names only and sorted, so two drivers that answer with the
+        same confidence resolve the same way on every start rather than by
+        whatever order the registry happened to fill up in.
+
+        A driver that raises here is passed over rather than allowed to decide
+        which protocol every other upload is. This is a guess being made about
+        an unidentified payload; it must never be the thing that stops one
+        being read.
+        """
+        best, chosen = 0.0, None
+        for name in sorted(self.canonical_names()):
+            driver = self.get(name)
+            fn = getattr(driver, "claims", None)
+            if fn is None:
+                continue
+            try:
+                sure = float(fn(body, meta) or 0.0)
+            except Exception:
+                log.exception("driver %r failed while identifying an upload", name)
+                continue
+            if sure > best:
+                best, chosen = sure, name
+        return chosen
 
     def unit_groups(self) -> dict[str, str]:
         """What every driver here says about its own fields, in one table.

@@ -276,6 +276,76 @@ def against_weewx() -> bool:
 
 # ---------------------------------------------------------------------------
 
+def test_a_fast_upload_is_summarised(caplog=None) -> None:
+    """One line a minute, not one every ten seconds.
+
+    The live upload runs six times a minute, so it wrote three hundred and
+    sixty identical lines an hour: `upload live: 1 sent, 0.1s`, over and
+    over. A log at that rate is one nobody reads, and that costs the lines
+    that matter.
+
+    A slower upload is untouched: more than a minute since its last line
+    means this one is printed at once, which is what a five-minute upload
+    has always done.
+    """
+    import logging
+
+    from weewx_evo.uploads import Posted
+    from weewx_evo.uploads import runner as upload_runner
+
+    class Sends:
+        def post(self, records):
+            return Posted(sent=1, seconds=0.1)
+
+    progress = type("P", (), {"sent": lambda *a: None,
+                              "save": lambda *a: None,
+                              "through": lambda *a, **k: 0})()
+
+    def a_job(name):
+        return upload_runner.Scheduled(
+            name, Sends(), progress=progress,
+            records=lambda a, b: [{"dateTime": 1}])
+
+    said: list[str] = []
+
+    class Catch(logging.Handler):
+        def emit(self, entry):
+            said.append(entry.getMessage())
+
+    catcher = Catch()
+    log = logging.getLogger("weewx_evo.uploads.runner")
+    log.addHandler(catcher)
+    # Nothing has configured logging in this test, so the logger is at
+    # WARNING and an info line never reaches a handler at all.
+    before = log.level
+    log.setLevel(logging.INFO)
+    was, upload_runner.time.monotonic = upload_runner.time.monotonic, None
+    try:
+        now = [0.0]
+        upload_runner.time.monotonic = lambda: now[0]
+
+        fast = a_job("live")
+        for tick in range(19):          # three minutes, ten seconds apart
+            now[0] = tick * 10.0
+            fast.run()
+        check("nineteen runs, four lines", len(said), 4)
+        check("the first is the ordinary one", said[0],
+              "upload live: 1 sent, 0.1s")
+        check("then one a minute, with the rate",
+              said[1], "upload live: 6 runs in 60s, one every 10.0s, 6 sent")
+
+        said.clear()
+        slow = a_job("wunderground")
+        for tick in range(3):           # five minutes apart
+            now[0] = 10_000.0 + tick * 300.0
+            slow.run()
+        check("a slower one is unchanged", len(said), 3)
+    finally:
+        upload_runner.time.monotonic = was
+        log.setLevel(before)
+        log.removeHandler(catcher)
+
+
 def main() -> int:
     import tempfile
 
@@ -286,6 +356,7 @@ def main() -> int:
     test_weathercloud_scaling()
     test_indoor_is_off()
     test_wow_renames_both_credentials()
+    test_a_fast_upload_is_summarised()
     with tempfile.TemporaryDirectory() as tmp:
         test_progress_never_goes_backwards(Path(tmp))
 

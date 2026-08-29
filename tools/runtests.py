@@ -86,6 +86,11 @@ def tests() -> list[Test]:
         Test("derive", ["derive_test.py", db],
              "the derived readings against what WeeWX wrote",
              needs_reference=True),
+        # The one rule, in the direction the others do not go: a database
+        # *we* wrote, opened and written into by WeeWX itself.
+        Test("stillweewx", ["stillweewx_test.py"],
+             "a database written here is one WeeWX can carry on using",
+             needs=("weewx",)),
 
         # -- the transcriptions, against WeeWX itself --------------------
         Test("units", ["unitcheck.py"],
@@ -110,8 +115,12 @@ def tests() -> list[Test]:
         # -- the parts that stand on their own ---------------------------
         Test("settings", ["settings_test.py"],
              "the five places a setting comes from, in order"),
+        Test("setup", ["setup_test.py"],
+             "an empty directory to a configured station, by forms alone"),
         Test("admin", ["adminpage.py"],
              "the settings page: every form, and what a partial POST does"),
+        Test("resilience", ["resilience_test.py"],
+             "a failure inside a handler is answered, not dropped"),
         Test("netaccess", ["netaccess_test.py"],
              "who gets an answer and who gets a 404"),
         Test("ratelimit", ["ratelimit_test.py"],
@@ -134,6 +143,56 @@ def tests() -> list[Test]:
              "the realtime files, field by field"),
         Test("forecast", ["forecast_test.py"],
              "Open-Meteo, DWD, MeteoAlarm and NWS, from recorded responses"),
+        Test("feedtiming", ["feedtiming_test.py"],
+             "every trigger a feed declares is one the runner acts on"),
+        Test("schedule", ["schedule_test.py"],
+             "an interval runs on the hour's grid, not from when it started"),
+        Test("watchdog", ["watchdog_test.py"],
+             "it restarts for what a restart fixes, and not more often"),
+        Test("livedb", ["livedb_test.py"],
+             "the live table hands a descriptor back when its thread ends"),
+        Test("livesource", ["livesource_test.py"],
+             "which console a live reading comes from"),
+        Test("roles", ["roles_test.py"],
+             "a second station is moved aside, and one notices nothing"),
+        Test("adminfields", ["adminfields_test.py"],
+             "a reading can be placed, and what is already there is said"),
+        Test("adminsearch", ["adminsearch_test.py"],
+             "a word finds its setting, and the link lands on it"),
+        Test("adminhome", ["adminhome_test.py"],
+             "the overview says what is wrong, and only when something is"),
+        Test("archives", ["archives_test.py"],
+             "two places, two series, and neither one is the other's"),
+        # Slow on purpose: a real serve, a simulator uploading
+        # throughout, and two archive intervals to wait for. It
+        # covers the half archives_test does not -- feeds,
+        # exports, and what a page can see.
+        Test("archives-e2e", ["archives_e2e.py"],
+             "two archives, from the console to the published file",
+             slow=True),
+        Test("stations", ["stations_test.py"],
+             "announced consoles, strangers noticed, neither guessed at"),
+        Test("shim", ["shim_test.py"],
+             "a WeeWX driver, run in its own process, delivering to us",
+             needs=("weewx",)),
+        # No `needs` on any of these four: the point is that WeeWX is not
+        # required. Each finds the driver file it wants or says so and skips,
+        # and where WeeWX *is* installed it is used as the thing to compare
+        # against rather than as a thing to run on.
+        Test("collector", ["collector_test.py"],
+             "a collector is a station: its own name, its own rules"),
+        Test("standin", ["standin_test.py"],
+             "a WeeWX driver decodes a record with no WeeWX installed"),
+        Test("vantage", ["vantage_test.py"],
+             "a Davis console, simulated to the serial port and back"),
+        Test("fousb", ["fousb_test.py"],
+             "a Fine Offset console, simulated down to the USB bus"),
+        Test("sdr", ["sdr_test.py"],
+             "weewx-sdr, against an rtl_433 that is a child process"),
+        Test("alldrivers", ["alldrivers_test.py"],
+             "every driver behaves the same on the stand-in as on WeeWX"),
+        Test("wunderground", ["wunderground_test.py"],
+             "the WU protocol, against our own upload of the same protocol"),
 
         # -- what a page comes out as ------------------------------------
         Test("feeds", ["feeds_test.py"],
@@ -147,13 +206,16 @@ def tests() -> list[Test]:
         Test("deck", ["deck_test.py", db],
              "the bundled skin",
              needs=("Cheetah",), needs_reference=True),
+        Test("deck-dead", ["deck_dead_test.py"],
+             "nothing in the skin is left from the fork it came from",
+             needs=("Cheetah",)),
         Test("deck-live", ["deck_live_test.py"],
              "live readings: the document, live.php, and the page run in jsdom",
              needs=("Cheetah",)),
 
         # -- the driver's own suite --------------------------------------
-        Test("ecowitt", ["-m", "pytest", "tests/ecowitt", "-q"],
-             "the Ecowitt driver's own suite, 83 tests",
+        Test("push", ["-m", "pytest", "tests/push", "-q"],
+             "the six push protocols' own suite, 135 tests",
              needs=("pytest",)),
 
         # -- and the check that finds what no test does -------------------

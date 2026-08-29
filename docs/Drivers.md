@@ -238,6 +238,144 @@ as readings.
 
 Reachable at `/<token>/json/`, over UDP, and via `listener.push()`.
 
+## Running a WeeWX driver — `ingest/weewxshim.py`
+
+WeeWX has fifteen years of drivers: fourteen in its own tree and around a
+hundred outside it, for hardware nobody here owns and cannot test against.
+They run unchanged.
+
+```bash
+weewx-evo weewx-driver check --conf /etc/weewx/weewx.conf   # build it, send nothing
+weewx-evo weewx-driver run   --conf /etc/weewx/weewx.conf   # deliver
+```
+
+Its own process, delivering over `listener.push()` like any other collector.
+That is the point rather than an implementation detail: in WeeWX the driver
+lives inside the engine, so a serial port that stops answering stops
+everything. Here it can wedge, crash or leak and the listener and archiver
+carry on — and it does not have to be on the same machine. `deploy/weewx-driver.service`
+is a unit file for it.
+
+**Where it taps in.** WeeWX's engine puts a loop packet through four groups of
+services before the accumulator sees it:
+
+```
+genLoopPackets()
+  -> prep     StdTimeSynch
+  -> process  StdConvert, StdCalibrate, StdQC, StdWXCalculate
+  -> xtype    StdWXXTypes, StdPressureCooker, StdRainRater, StdDelta
+  -> archive  StdArchive
+```
+
+None of it is reproduced, because running it would run it twice: `units.py`
+is StdConvert, `derive.py` is StdWXCalculate and the four xtype services,
+`archiver.py` is StdArchive. The raw packet is what is taken. (StdCalibrate
+and StdQC have no counterpart here yet.)
+
+The shapes already match — a loop packet is `{dateTime, usUnits, …readings}`
+and the envelope is that plus `source`, `kind` and `interval`. Two keys move
+out and the rest is `data`. That is not luck: the field names and the
+`usUnits` constants are WeeWX's, because keeping a WeeWX database readable
+meant adopting them.
+
+**What a driver may ask of the engine** is one method, `bind`. Measured over
+WeeWX's fourteen own drivers, exactly one — Vantage — touches the engine at
+all, because it is a driver and a service at once. Its events are really
+dispatched, including `END_ARCHIVE_PERIOD`: Vantage accumulates the loop gust
+across packets and clears it only there, so a shim that skipped it would
+report a gust that never falls, with nothing about the numbers looking wrong.
+
+Hardware that keeps its own records can be asked for them at startup with
+`--catchup`, delivered as `kind="archive"`, which the archiver already prefers
+over what it accumulated. That is what turns an outage into a filled gap.
+
+### With no WeeWX installed — `ingest/weewxnames.py`
+
+A driver is one file, and what it imports at the top is nearly nothing.
+Counted across the fourteen drivers in WeeWX's tree:
+
+| | uses it | what it is |
+|---|---|---|
+| `weewx.drivers` | 13 | three base classes, nearly empty |
+| `weewx.WeeWxIOError` | 12 | an exception |
+| `weewx.wxformulas` | 11 | one function of it, twelve lines |
+| `weeutil.weeutil` | 10 | `to_bool`, `to_int`, `timestamp_to_string` |
+| `weewx.METRIC` / `US` | 7 | the numbers 16 and 1, which are ours too |
+
+`weewxnames.py` is all of it, so a driver runs with WeeWX nowhere on the
+machine. Point at the file:
+
+```bash
+weewx-evo weewx-driver check --conf ./vantage.conf \
+    --driver-file ~/weewx/src/weewx/drivers/vantage.py
+```
+
+**All thirteen drivers in WeeWX's tree import against it**, from fousb at
+four names to Vantage at twenty. `tools/standin_test.py` measures that in a
+process where `import weewx` raises, and decodes a stored fousb record on top
+of it.
+
+Vantage — every Davis station — needed three pieces the lighter drivers did
+not, and each was its whole reason not to run: `weewx.engine`, because it is
+a driver *and* a service and inherits `StdService`; `weewx.crc16`, which has
+to be a module because it is imported as `from weewx.crc16 import crc16`; and
+`weewx.units` for `ValueTuple`, `convert` and `GenWithConvert`. The
+conversion constants come from our own `units.py` rather than being retyped —
+0.0295299875 against 0.02953 is the fourth decimal of every pressure reading,
+and nothing about the number would look wrong.
+
+Three things about it:
+
+- **Where WeeWX is installed, WeeWX wins.** Same rule as pyephem: whoever has
+  the real one gets its behaviour, edges included. This fills in what is
+  missing rather than replacing what is there.
+- **A name is claimed only if free.** `skinkit.py` puts modules under these
+  same names so a WeeWX *skin* renders, and `sys.modules` is one table per
+  process — whichever ran second would take the other's away.
+- **The hardware library is still needed.** `import usb` is pyusb, `import
+  serial` is pyserial, and no stand-in can supply either: one that did would
+  give a driver that builds and reads nothing. `check` names the package.
+
+### How far this is actually tested
+
+An import proves that no name is missing and nothing else — the pieces only
+Vantage uses (`StdService`, `ValueTuple`, `GenWithConvert`) are the ones it
+never touches. So three devices are simulated, each a layer *below* the
+driver:
+
+| | stands in for | |
+|---|---|---|
+| `tools/vantagesim.py` | a serial port | wake-ups, EEPROM with CRC, 99-byte LOOP packets, 267-byte archive pages |
+| `tools/fousbsim.py` | a USB bus | 64 KB of console memory, the address inside a control message, the ring buffer |
+| `tools/sdrsim.py` | a **program** | weewx-sdr reads `rtl_433`'s stdout, so the simulator is a real child process |
+
+The rung that makes the rest evidence: **the same bytes through our stand-in
+and through WeeWX's own code, compared field by field.** Vantage 42 of 42,
+fousb 14 of 14, weewx-sdr 4 of 4. Same method as `unitcheck.py` and
+`difftest.py` — compare against WeeWX, not against a typed expectation.
+
+`tools/alldrivers_test.py` runs all thirteen twice from a seeded byte stream.
+Where a protocol simulator exists they are compared on readings; the rest on
+**how they fail** — different exceptions, the same on both sides. The report
+says which is which, because "all the same" reads stronger than it is.
+
+**What this is and is not asking.** Not whether a driver reads its hardware
+correctly — that is WeeWX's code and pyusb's or pyserial's, all unchanged, so
+a console answering late or an adapter dropping a byte does the same thing
+under WeeWX. The question is whether a driver behaves *differently* against
+the stand-in than against a real WeeWX, and that one has no hardware in it:
+both sides see the same device.
+
+What stays open is coverage, not equipment — a branch neither run reaches
+that calls something transcribed. The largest of those is `weewx.units`,
+which is the one piece written out rather than handed through, so
+`standin_test.py` converts every field of the schema between all three unit
+systems and compares with WeeWX's own `to_std_system`. Two differences are
+known and named there: `vaporPressure` and `satVaporPressure`, which WeeWX
+gives no group at all and we place in `group_pressure` — correctly, since
+`derive.py` converts them to the record's own unit — and no driver sends
+either.
+
 ## `parsers.py`
 
 The older, function-based registry: a parser gets bytes and returns packets. It

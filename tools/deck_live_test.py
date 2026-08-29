@@ -341,7 +341,8 @@ def test_the_directory_fills_in_by_itself() -> None:
         def get(self, name: str) -> object:
             return "upload-token" if name == "token" else None
 
-    url, token, directories = WebPushUpload.from_exports(FakeSettings())
+    url, token, directories, _units = WebPushUpload.from_exports(
+        FakeSettings())
     check("the web host", url, "https://example.org/wetter/live.php")
     check("every local directory", directories, ["data/site", "data/wdc"])
     ok("and a token for the first", len(token) == 32)
@@ -350,7 +351,8 @@ def test_the_directory_fills_in_by_itself() -> None:
     exports["site"]["live_push"] = False
     exports["wdc"]["live_push"] = False
     exports["host"]["live_push"] = False
-    url, _token, directories = WebPushUpload.from_exports(FakeSettings())
+    url, _token, directories, _units = WebPushUpload.from_exports(
+        FakeSettings())
     check("nothing when it is off", (url, directories), ("", []))
 
 
@@ -388,11 +390,24 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
                                  "live_push": False}})
     check("nothing when the export says no", live_readings_locally(off, {}), {})
 
-    # A web host is not started on its own.
+    # A web host, where the address is the decision. The switch defaults on,
+    # so on its own it says nothing; `live_push_url` is empty until somebody
+    # types a domain into it, and with one there the intent is on the record.
+    # This used to need an upload added by hand, which appeared nowhere until
+    # it was -- and the one people added had every field empty, so it
+    # published the units the station sends rather than the ones the pages
+    # are written in.
+    quiet = FakeSettings({"host": {"kind": "ftp", "live_push": True}})
+    check("an export with no address set up posts nowhere",
+          live_readings_locally(quiet, {}), {})
+
     away = FakeSettings({"host": {"kind": "ftp", "live_push": True,
                                   "live_push_url": "https://example.org/w"}})
-    check("and nothing is posted anywhere unasked",
-          live_readings_locally(away, {}), {})
+    made = live_readings_locally(away, {})
+    check("with an address, the upload is set up", sorted(made), ["live"])
+    check("pointed at the script beside the pages",
+          made["live"].get("url"), "https://example.org/w/live.php")
+    ok("and marked as not typed by anyone", made["live"]["_inferred"])
 
     # One that was configured on purpose is left alone, whatever it says.
     check("an upload that exists is not doubled",
@@ -777,6 +792,187 @@ def test_the_page_shows_what_was_pushed(tmp: Path) -> None:
     ok("it still does not run away", result["observerCallbacks"] < 200)
 
 
+def test_a_404_waits_for_the_export() -> None:
+    """The first upload after a new export is configured must not switch off.
+
+    `live.php` is carried up by the export, so before that export has run
+    once the file is genuinely not there and 404 is the right answer. Taking
+    it as a wrong token switched the live readings off and told somebody to
+    fix settings that were right -- fifteen seconds before the export
+    finished and put the file where it belonged.
+
+    A wrong token answers 404 for ever, so the two are told apart by how long
+    it lasts, and nothing has to be asked of anybody.
+    """
+    from weewx_evo.uploads import Rejected
+    from weewx_evo.uploads.runner import Scheduled
+    from weewx_evo.uploads.webpush import NOT_YET
+
+    job = Scheduled("live", object(), _NoProgress(), lambda a, b: [])
+    waiting = Rejected("answered 404", permanent=True, after=NOT_YET)
+
+    ok("the first one is not believed", not job._settled(waiting))
+    ok("nor the next", not job._settled(waiting))
+    ok("and nothing is switched off", job.blocked == "")
+
+    # An hour of the same answer is a wrong token, and then it does switch off.
+    job._refused_since -= NOT_YET + 1
+    ok("an hour of it is believed", job._settled(waiting))
+
+    # Anything that can only mean one thing is still believed at once.
+    fresh = Scheduled("wu", object(), _NoProgress(), lambda a, b: [])
+    ok("a refusal with no grace period is immediate",
+       fresh._settled(Rejected("401 Unauthorized", permanent=True)))
+
+
+class _NoProgress:
+    """Enough of Progress for a Scheduled that never sends anything."""
+
+    def sent(self, *a, **k) -> None:
+        pass
+
+    def save(self) -> None:
+        pass
+
+    def through(self, *a, **k) -> int:
+        return 0
+
+
+def test_the_units_come_from_the_pages() -> None:
+    """An upload added by hand publishes what the pages are written in.
+
+    Two ways to get live readings, and until now only one carried the units.
+    A *local* export sets its upload up by itself and works the figure out --
+    the feed's own setting, then the language, then the archive. An upload
+    for a web host had to be added on purpose, and that one was built with
+    nothing, so it published whatever the station sends.
+
+    An Ecowitt sends Fahrenheit. The pages were German, so Celsius. The
+    number arrived as 68.2 where the page was about to print 20.1, and
+    neither side can tell.
+    """
+    import argparse
+    import tempfile
+    from pathlib import Path
+
+    from weewx_evo import cli
+    from weewx_evo.uploads.webpush import WebPushUpload
+
+    config = "\n".join([
+        'token = "abcdefghij123456"',
+        'language = "de"',
+        'feeds.wdc.kind = "cheetah"',
+        'feeds.wdc.skin = "deck"',
+        'exports.evoftp.kind = "ftp"',
+        'exports.evoftp.host = "example.org"',
+        'exports.evoftp.source = "wdc"',
+        'exports.evoftp.live_push = true',
+        'exports.evoftp.live_push_url = "https://evoftp.example.de"',
+    ]) + "\n"
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        path = Path(raw) / "evo.toml"
+        # Added on the page with nothing filled in at all, which is what
+        # somebody does first.
+        path.write_text(config + 'uploads.vg.kind = "webpush"\n',
+                        encoding="utf-8")
+        args = argparse.Namespace(config=path)
+        import weewx_evo.settings as settings_state
+
+        settings_state.set_running(None, None)
+        cfg = cli.settings_for(args)
+
+        _url, _token, _dirs, system = WebPushUpload.from_exports(cfg)
+        check("the export knows what its pages are in", system, "METRICWX")
+
+        made = cli.build_upload_schedule(args, cfg)
+        ok("one upload was built", len(made) == 1)
+        document = made[0].upload.document(
+            {"dateTime": 1787900000, "usUnits": 1, "outTemp": 68.2})
+        ok("and it publishes Celsius, as the pages do",
+           "outTemp_C" in document and "outTemp_F" not in document)
+        check("with the number converted",
+              round(document["outTemp_C"], 1), 20.1)
+
+        # What the operator says beats all of it: publishing a second site in
+        # another unit system is something somebody does on purpose.
+        path.write_text(config + 'uploads.vg.kind = "webpush"\n'
+                        + 'uploads.vg.unit_system = "US"\n',
+                        encoding="utf-8")
+        settings_state.set_running(None, None)
+        cfg = cli.settings_for(args)
+        theirs = cli.build_upload_schedule(args, cfg)[0].upload.document(
+            {"dateTime": 1787900000, "usUnits": 1, "outTemp": 68.2})
+        ok("an explicit setting still wins", "outTemp_F" in theirs)
+
+
+def test_a_web_host_sets_itself_up_too() -> None:
+    """Switching live readings on in an FTP export is the whole of it.
+
+    A local export has always set its own upload up; one publishing to a web
+    host did not, so somebody had to add an upload by hand and it appeared
+    nowhere until they did. The reason was that posting goes out over
+    somebody else's network and should not start because a switch defaulted
+    on -- which is right, and the switch is not what starts it. The address
+    is: `live_push_url` is empty until a person types a domain into it.
+
+    So: no address, no upload. An address, and it is set up, with the units
+    the pages are written in.
+    """
+    import argparse
+    import tempfile
+    from pathlib import Path
+
+    import weewx_evo.settings as settings_state
+    from weewx_evo import cli
+
+    common = [
+        'token = "abcdefghij123456"',
+        'language = "de"',
+        'feeds.wdc.kind = "cheetah"',
+        'feeds.wdc.skin = "deck"',
+        'exports.evoftp.kind = "ftp"',
+        'exports.evoftp.host = "example.org"',
+        'exports.evoftp.source = "wdc"',
+    ]
+
+    def implied(lines, existing=None):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+            path = Path(raw) / "evo.toml"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            settings_state.set_running(None, None)
+            cfg = cli.settings_for(argparse.Namespace(config=path))
+            return cli.live_readings_locally(cfg, existing or {})
+
+    live_on = common + ['exports.evoftp.live_push = true']
+    with_url = live_on + [
+        'exports.evoftp.live_push_url = "https://evoftp.example.de"']
+
+    ok("switched off, nothing is set up",
+       implied(common + ['exports.evoftp.live_push = false']) == {})
+    ok("on but with no address, still nothing", implied(live_on) == {})
+
+    made = implied(with_url)
+    ok("with an address, one upload", list(made) == ["live"])
+    check("posting to the script beside the pages",
+          made["live"].get("url"), "https://evoftp.example.de/live.php")
+    check("in the units the pages are written in",
+          made["live"].get("unit_system"), "METRICWX")
+
+    # A local site beside it is the same document in the same units, so it is
+    # the same upload writing a file as well as posting.
+    both = implied(with_url + ['exports.site.kind = "local"',
+                               'exports.site.directory = "data/site"',
+                               'exports.site.source = "wdc"'])
+    ok("a local site beside it joins the same upload",
+       both["live"].get("directories") == ["data/site"]
+       and both["live"].get("url"))
+
+    # And one added by hand is left alone, whatever it says.
+    ok("one added on purpose stands in the way",
+       implied(with_url, {"mine": {"kind": "webpush"}}) == {})
+
+
 def main() -> int:
     global CHECKS
 
@@ -789,6 +985,9 @@ def main() -> int:
         test_no_mqtt_left()
         test_the_document()
         test_it_needs_a_token()
+        test_the_units_come_from_the_pages()
+        test_a_web_host_sets_itself_up_too()
+        test_a_404_waits_for_the_export()
         test_the_local_way(tmp)
         test_a_local_export_carries_no_php(tmp)
         test_the_directory_fills_in_by_itself()

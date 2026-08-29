@@ -49,6 +49,18 @@ from .. import units
 
 log = logging.getLogger(__name__)
 
+#: The series an upload reads when it names none. The same name the feeds and
+#: the stations use.
+DEFAULT_ARCHIVE = "default"
+
+
+def _archive_names() -> list[tuple[str, str]]:
+    """The archives, for the settings page. The same list the feeds offer."""
+    from ..feeds import archive_names
+
+    return archive_names()
+
+
 ENTRY_POINT_GROUP = "weewx_evo.uploads"
 
 #: Long enough for a service having a slow afternoon, short enough that a dead
@@ -107,9 +119,23 @@ class Rejected(UploadError):
     gets blocked; a 503 is Tuesday.
     """
 
-    def __init__(self, message: str, permanent: bool = False) -> None:
+    def __init__(self, message: str, permanent: bool = False,
+                 after: float = 0.0) -> None:
         super().__init__(message)
         self.permanent = permanent
+        #: How long the same refusal has to keep coming before `permanent`
+        #: is believed. Zero means immediately, which is right for an answer
+        #: that can only mean one thing.
+        #:
+        #: It is not right for `live.php` answering 404. That file is carried
+        #: up by an export, so before the first export of a newly configured
+        #: one has finished, a 404 is the expected answer and means nothing
+        #: is wrong. Switching off there, with "fix the settings and
+        #: restart", diagnoses a wrong token from what is a sequence: the
+        #: file appears fifteen seconds later and the upload is off until
+        #: somebody notices. A wrong token answers 404 for ever, so waiting
+        #: separates the two without having to ask anybody.
+        self.after = after
 
 
 @runtime_checkable
@@ -425,8 +451,17 @@ def when_options(trigger: str = "record", every: int = 900,
                         "Its own schedule is for a service that asks for less "
                         "often than the archive interval."),
             Option("every", "Its own schedule", kind="duration",
-                   default=every, minimum=60, maximum=86400,
-                   help="Only used with 'on its own schedule'."),
+                   # The floor follows the default rather than sitting above
+                   # it. Two uploads shipped a default of ten seconds under a
+                   # minimum of sixty, and a setting that cannot hold its own
+                   # default is one the page cannot render: `field` parses the
+                   # value it is about to show, the parse raised, and the
+                   # whole settings page answered 500 -- so the figure could
+                   # not be corrected either.
+                   default=every, minimum=min(60, every), maximum=86400,
+                   help="Only used with 'on its own schedule'."
+                        + (" A live upload runs far more often than that, so "
+                           "this one goes down to seconds." if live else "")),
             Option("catch_up", "Send up to this many missed records",
                    kind="int", default=catch_up, minimum=0, maximum=288,
                    advanced=True,
@@ -434,5 +469,32 @@ def when_options(trigger: str = "record", every: int = 900,
                         "the newest. The limit exists so that a station "
                         "offline for a week does not come back and fire two "
                         "thousand requests at a free service."),
+            Option("archive", "Sends readings from", kind="choice",
+                   default=DEFAULT_ARCHIVE, choices_from=_archive_names,
+                   advanced=True,
+                   help="Which measurement series. With one there is nothing "
+                        "to choose. With two, a station registered with a "
+                        "weather service belongs to one place, and the "
+                        "coordinates sent with it come from that place."),
+            Option("live_source", "Live readings come from",
+                   kind="choice", default="main", advanced=True,
+                   choices=(
+                       ("main", "The main console"),
+                       ("main-or-extra",
+                        ("The main console, or an extra one when it "
+                         "goes quiet")),
+                       ("newest", "Whichever console reported last"),
+                       ("average", "The average of every console"),
+                       ("extra", "The extra consoles only"),
+                   ),
+                   help="Only matters where a site has more than one "
+                        "console. An archive record is worked out from all "
+                        "of them together; a live reading is one packet, so "
+                        "something has to say which. The default is the main "
+                        "console -- the one whose readings go in their own "
+                        "columns -- because that is what a station means by "
+                        "'the temperature'. 'Whichever reported last' is "
+                        "what this did before the setting existed, and it "
+                        "makes a page flicker between a garden and a shed."),
         )),
     ]

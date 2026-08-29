@@ -26,6 +26,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import schedule
+from .db.live import DEFAULT_ARCHIVE
+
 log = logging.getLogger(__name__)
 
 #: How long to wait after a record before running. Several records can land
@@ -35,15 +38,34 @@ SETTLE = 2.0
 
 
 class Runner:
-    """Produces every feed, in order, whenever a record lands."""
+    """Produces feeds, in order, when whatever each one waits for happens.
+
+    Three things can set a feed going, and until this took notice of them
+    only one did. Every feed ran on the archive record, including `realtime`,
+    whose whole reason for existing is being newer than that: a file consumers
+    poll every ten seconds was as old as the last archive interval.
+    """
 
     def __init__(self, feeds: list[tuple[str, Callable, Path]],
                  archive_path: Path,
-                 on_produced: Callable[[str, list], None] | None = None) -> None:
+                 on_produced: Callable[[str, list], None] | None = None,
+                 schedule: dict[str, dict] | None = None,
+                 archives: dict[str, Path] | None = None) -> None:
         #: (name, build(reader) -> feed, where to write). Built late, with a
         #: connection made on this thread.
         self.feeds = list(feeds)
         self.archive_path = Path(archive_path)
+        #: Every series a feed may name, by name. The default is always in
+        #: here and is what a feed naming nothing reads -- which is every
+        #: feed on an installation with one archive.
+        self.archives: dict[str, Path] = {DEFAULT_ARCHIVE: self.archive_path}
+        self.archives.update({k: Path(v) for k, v in (archives or {}).items()})
+        #: Per feed: {"trigger": ..., "every": seconds, "archive": name}.
+        #: Anything not named here runs on the archive record, which is what
+        #: every feed did before there was a choice.
+        self.schedule = dict(schedule or {})
+        #: When each scheduled feed is next due, by name.
+        self._next: dict[str, float] = {}
         #: Called with (name, files) after each feed finishes. This is what
         #: an export set to run "when its feed finishes" is waiting for, and
         #: without it such an export waits for ever without saying so.
@@ -53,15 +75,78 @@ class Runner:
         #: together where both are already in scope.
         self.on_produced = on_produced
         self.due = threading.Event()
+        #: Set for a reading rather than a record. Separate from `due` so a
+        #: packet does not also produce the feeds waiting on the archive.
+        self.live = threading.Event()
         self.stopping = threading.Event()
+        #: Which series wrote since the feeds last ran. A set, because the
+        #: archiver reports each of them before this thread wakes -- see
+        #: `record_written`.
+        self._wrote: set[str] = set()
+        self._lock = threading.Lock()
+        self._wants_packets = any(
+            one.get("trigger") == "packet" for one in self.schedule.values())
         self.thread: threading.Thread | None = None
         self.runs = 0
         self.failures = 0
         self.last_note = ""
         self.last_run: float | None = None
 
-    def record_written(self) -> None:
-        """Called by the archiver. Sets a flag and returns."""
+    def record_written(self, archive: str = "") -> None:
+        """Called by the archiver. Notes which series, and returns.
+
+        `archive` is which series wrote. A feed reading another one is not
+        produced for it: with two sites, the north field writing a record is
+        no reason to rebuild the south field's page, and doing so would
+        publish the same files twice as often for no new data.
+
+        **A set, and not the last one.** The archiver walks its series in a
+        loop and calls this once per series that wrote, all before the feed
+        thread gets a turn -- so a single name was overwritten by the next
+        one and only the last series' feeds ran. With two archives that is
+        the first one's pages never being rebuilt at all: they are written
+        once at startup and then go stale, while everything logs success.
+
+        Same shape as the mistake `pending` had in the live table, keyed on
+        the interval alone: whoever came second decided for everybody.
+        """
+        with self._lock:
+            self._wrote.add(archive or DEFAULT_ARCHIVE)
+        self.due.set()
+
+    def packet_stored(self) -> None:
+        """Called by the listener for every reading that lands.
+
+        Only wakes feeds that asked for it. A feed on `record` is not produced
+        here, or an eight-second console would rebuild a whole skin eight
+        times a minute.
+        """
+        if self._wants_packets:
+            self.live.set()
+
+    def replace(self, feeds: list[tuple[str, Callable, Path]],
+                schedule: dict[str, dict] | None = None) -> None:
+        """Swap in a new set, after the configuration changed.
+
+        A feed deleted on the settings page kept being produced, and a new
+        one was not produced at all, until somebody restarted -- with nothing
+        anywhere saying so. `apply_live` rebuilds the exports, the uploads
+        and the forecasts, and its own docstring warns that scattering this
+        across the loop is how three of them came to be missing. The feeds
+        were the fourth.
+
+        No thread to restart: there is one, it reads this list each time
+        round, and a *new* list assigned between two rounds is seen whole.
+        Mutating the old one in place would not be -- the loop is walking it.
+        """
+        self.feeds = list(feeds)
+        if schedule is not None:
+            self.schedule = dict(schedule)
+        # A feed that is gone should not keep a due time, and one that is new
+        # should be due at once rather than an interval from now.
+        known = {name for name, _build, _into in self.feeds}
+        self._next = {name: when for name, when in self._next.items()
+                      if name in known}
         self.due.set()
 
     def start(self) -> None:
@@ -77,64 +162,160 @@ class Runner:
 
     def _loop(self) -> None:
         while not self.stopping.is_set():
-            self.due.wait()
+            # Wake for a record, for a reading, or when the next scheduled
+            # feed falls due -- whichever comes first. Waiting on the event
+            # with a timeout rather than polling: a feed due in an hour costs
+            # one wakeup, not three thousand.
+            waited = self.due.wait(timeout=self._until_next())
             if self.stopping.is_set():
                 return
-            self.due.clear()
-            # Let a burst settle. Catching up ten intervals should produce
-            # one set of files, not ten.
-            self.stopping.wait(SETTLE)
-            self.due.clear()
-            if self.stopping.is_set():
-                return
-            self.run_once()
 
-    def run_once(self) -> str:
-        """Every feed, in order. Returns what happened, for a status page."""
-        if not self.archive_path.exists():
-            log.debug("no archive at %s yet", self.archive_path)
-            return ""
+            if waited:
+                self.due.clear()
+                # Let a burst settle. Catching up ten intervals should
+                # produce one set of files, not ten.
+                self.stopping.wait(SETTLE)
+                self.due.clear()
+                if self.stopping.is_set():
+                    return
+                self.run_once(because="record")
+            elif self.live.is_set():
+                self.live.clear()
+                self.run_once(because="packet")
+            else:
+                self.run_once(because="schedule")
 
+    def _until_next(self) -> float | None:
+        """Seconds until the next scheduled feed is due, or None for never.
+
+        None rather than a long number, so a configuration with nothing on a
+        clock waits on the event exactly as it did before.
+        """
+        due = list(self._next.values())
+        if not due:
+            return None if not self._wants_packets else 1.0
+        return max(0.0, min(due) - time.time())
+
+    def _plan(self, name: str, now: float | None = None) -> None:
+        """When this feed is next due, rounded to the clock.
+
+        On the hour rather than an hour after the service started: an hourly
+        feed that produces at 14:37 because that is when somebody restarted
+        is one whose files nobody can predict the age of.
+        """
+        now = now or time.time()
+        every = float(self.schedule.get(name, {}).get("every") or 0)
+        if every <= 0:
+            return
+        # The same grid everything else on a clock uses. This was
+        # `now // every`, which agrees wherever the offset is a whole number
+        # of hours and is half an hour out in India -- see schedule.py.
+        self._next[name] = schedule.next_slot(now, every)
+
+    def archive_for(self, name: str) -> str:
+        """Which series this feed reads. The default unless it says."""
+        return self.schedule.get(name, {}).get("archive") or DEFAULT_ARCHIVE
+
+    def path_for(self, name: str) -> Path:
+        """The file behind that name, falling back to the default.
+
+        Falling back rather than failing: the name is in a feed's settings,
+        and one pointing at an archive somebody removed should produce a page
+        from the series that is left.
+        """
+        return self.archives.get(self.archive_for(name), self.archive_path)
+
+    def due_now(self, name: str, because: str, now: float | None = None) -> bool:
+        """Whether this feed runs on this pass."""
+        wanted = self.schedule.get(name, {}).get("trigger", "record")
+        if wanted == "packet":
+            return because == "packet"
+        if wanted != "schedule":
+            if because != "record":
+                return False
+            # Which series wrote. Empty means nobody said, which is every
+            # caller that predates there being more than one.
+            return not self._wrote or self.archive_for(name) in self._wrote
+        now = now or time.time()
+        if name not in self._next:
+            self._plan(name, now)
+            # Produced once at startup, so a feed on a nightly clock does not
+            # leave an empty directory until midnight.
+            return True
+        if now >= self._next[name]:
+            self._plan(name, now)
+            return True
+        return False
+
+    def run_once(self, because: str = "record") -> str:
+        """The feeds this pass is for, in order. Returns what happened.
+
+        `because` says what woke the thread. A feed set to its own clock is
+        not produced by an archive record, and one on the archive is not
+        produced by a reading -- which is the whole point of the setting.
+        """
         started = time.time()
         notes = []
-        try:
-            connection = sqlite3.connect(
-                f"file:{self.archive_path}?mode=ro", uri=True)
-        except sqlite3.Error as exc:
-            log.error("could not open the archive to produce the feeds: %s",
-                      exc)
-            self.failures += 1
+        # Grouped by the file they read, so one connection serves every feed
+        # on that series -- and a second archive costs a second connection
+        # rather than one per feed.
+        wanted: dict[Path, list] = {}
+        for name, build, into in self.feeds:
+            if self.due_now(name, because):
+                wanted.setdefault(self.path_for(name), []).append(
+                    (name, build, into))
+
+        # Taken now, once the decisions are made, so a record arriving while
+        # the feeds are producing is not thrown away with the batch it came
+        # after. Cleared rather than left to accumulate: a name that stayed
+        # in here would make its feeds due on every later pass, including the
+        # ones woken by a reading.
+        if because == "record":
+            with self._lock:
+                self._wrote = set()
+        if not wanted:
             return ""
 
-        try:
-            from .series import Reader
+        for path, group in wanted.items():
+            if not path.exists():
+                log.debug("no archive at %s yet", path)
+                continue
+            try:
+                connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            except sqlite3.Error as exc:
+                log.error("could not open %s to produce the feeds: %s",
+                          path, exc)
+                self.failures += 1
+                continue
+            try:
+                from .series import Reader
 
-            reader = Reader(connection)
-            for name, build, into in self.feeds:
-                try:
-                    feed = build(reader)
-                    made = feed.produce(into)
-                    notes.append(f"{name}: {made.note}" if made.note else name)
-                    if self.on_produced is not None:
-                        # After the files are written, never before. That
-                        # ordering is the whole reason an export prefers this
-                        # over the archive record: started by the record it
-                        # can begin while the feed is still writing, and half
-                        # a page gets published.
-                        try:
-                            self.on_produced(name, list(made.files))
-                        except Exception:
-                            log.exception("could not hand %r on to the "
-                                          "exports; carrying on", name)
-                except Exception:
-                    # One feed failing must not cost the others. A broken
-                    # template should not stop the JSON that everything else
-                    # is built on.
-                    log.exception("the feed %r failed; carrying on", name)
-                    self.failures += 1
-                    notes.append(f"{name}: failed")
-        finally:
-            connection.close()
+                reader = Reader(connection)
+                for name, build, into in group:
+                    try:
+                        feed = build(reader)
+                        made = feed.produce(into)
+                        notes.append(f"{name}: {made.note}" if made.note else name)
+                        if self.on_produced is not None:
+                            # After the files are written, never before. That
+                            # ordering is the whole reason an export prefers
+                            # this over the archive record: started by the
+                            # record it can begin while the feed is still
+                            # writing, and half a page gets published.
+                            try:
+                                self.on_produced(name, list(made.files))
+                            except Exception:
+                                log.exception("could not hand %r on to the "
+                                              "exports; carrying on", name)
+                    except Exception:
+                        # One feed failing must not cost the others. A broken
+                        # template should not stop the JSON that everything
+                        # else is built on.
+                        log.exception("the feed %r failed; carrying on", name)
+                        self.failures += 1
+                        notes.append(f"{name}: failed")
+            finally:
+                connection.close()
 
         self.runs += 1
         self.last_run = time.time()

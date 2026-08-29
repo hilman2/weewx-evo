@@ -85,11 +85,23 @@ class ExportError(Exception):
 class Export(Protocol):
     """Files out."""
 
-    def send(self, source: Path, files: list[Path] | None = None) -> Sent:
+    def send(self, source: Path, files: list[Path] | None = None,
+             into: str = "", protect: tuple[str, ...] = ()) -> Sent:
         """Send `source` to wherever this export sends things.
 
         `files` is what changed, when the caller knows. None means work it out
         from the directory.
+
+        `into` is a path under the destination, for an export that sends more
+        than one feed: a skin at the root and the charts it draws from under
+        `data/json`. Empty is the destination itself.
+
+        `protect` names the other sources' sub-paths, for an export that
+        deletes what is no longer produced. Only rsync needs it -- it deletes
+        by comparing the far end with the source, so without it the first
+        source of every run removes the second one's files. The others delete
+        only what their own record says they put there, and a record is per
+        source, so they cannot reach another feed's output in the first place.
 
         Raising means nothing was sent and why. Individual files that fail go
         in `Sent.failures` instead, because one unreadable file is not a
@@ -111,7 +123,8 @@ class BaseExport:
     #: Set when the export is built; without it nothing is installed.
     upload_token: str = ""
 
-    def send(self, source: Path, files: list[Path] | None = None) -> Sent:
+    def send(self, source: Path, files: list[Path] | None = None,
+             into: str = "", protect: tuple[str, ...] = ()) -> Sent:
         raise NotImplementedError
 
     def prepare(self, source: Path) -> list[Path]:
@@ -266,6 +279,33 @@ def _feed_choices() -> list[tuple[str, str]]:
     from ..options import defined_feeds
 
     return [(name, f"the {label}") for name, label in defined_feeds()]
+
+
+def also_option() -> Any:
+    """Further feeds this export carries, each with where it lands.
+
+    A skin is its pages *and* the charts they draw from, and those are two
+    feeds writing two directories. Publishing one of them puts up a site
+    whose diagrams are empty.
+
+    Two exports to the same account would move the files, but nothing would
+    hold the second until the first had finished -- and a page that arrives
+    before the chart it points at is the same half-published site the `feed`
+    trigger exists to prevent. So it is one export, and it waits for all of
+    them.
+    """
+    from ..options import Option
+
+    return Option(
+        "also", "And these feeds as well", kind="list",
+        placeholder="json -> data/json",
+        help="One per line. `json -> data/json` puts that feed's files in "
+             "that path under the destination; a name on its own puts them "
+             "at the destination itself. The export then waits for every "
+             "feed named here as well as the one above, so nothing is "
+             "published while any of them is still being written. Each keeps "
+             "its own record of what was sent, so one never deletes "
+             "another's files.")
 
 
 def live_push_options(local: bool = False) -> list:

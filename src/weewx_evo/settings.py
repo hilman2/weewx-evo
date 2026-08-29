@@ -117,17 +117,39 @@ class Settings:
         raw, source = self._raw(name)
         if raw is None:
             self._sources[name] = "default"
-            return option.default if option is not None else default
+            if option is None:
+                return default
+            return self._anchor(option, option.default, "default")
 
         self._sources[name] = source
         if option is None:
             return raw
         try:
-            return option.parse(raw)
+            return self._anchor(option, option.parse(raw), source)
         except Invalid as exc:
             log.warning("%s (from %s): %s. Using the default instead.",
                         name, source, exc)
             return option.default
+
+    def _anchor(self, option: Any, value: Any, source: str) -> Any:
+        """A relative path from the file, against the file.
+
+        Two readers of one setting were resolving it two different ways: the
+        settings page against the configuration file, the service against
+        whatever directory it was started in. So `archive_db = "weewx.sdb"`
+        named two files, and the page offering to add a column added it to
+        the one the service was not writing -- and said it had worked.
+
+        The command line is the exception, and it is the obvious one: a path
+        somebody just typed means the directory they typed it in.
+        """
+        if (option.kind != "path" or not value
+                or source == "command line" or self._path is None):
+            return value
+        found = Path(str(value))
+        if found.is_absolute():
+            return value
+        return str(self._path.parent / found)
 
     def _raw(self, name: str) -> tuple[Any, str]:
         # 1. the command line
@@ -209,13 +231,26 @@ class Settings:
     # -- reloading -------------------------------------------------------
 
     def reload(self, path: str | Path | None = None) -> bool:
-        """Re-read the file. Returns whether anything actually changed.
+        """Re-read the file. Returns whether the file is different.
 
         This is what a settings service would be for, without the service.
         Anything holding this object sees the new values; anything that
         latched a value at startup does not, which is why an option that
         cannot be changed while running is marked `restart` and the admin page
         says so.
+
+        **The file, not the schema.** This used to answer "did one of the
+        core options change", and everything named in the file that is not a
+        core option -- every export, feed, upload and forecast, all of which
+        are named by the operator -- was therefore a change it reported as no
+        change. The caller only calls `apply_live` when this says yes, so a
+        newly added FTP export sat in the file and was picked up at the next
+        restart, whenever that was. Nothing in any log mentioned it.
+
+        `self.changed` still lists only the core options that moved, which is
+        what `needs_restart` is asked about. The two questions are different:
+        one decides whether to look again, the other whether looking is
+        enough.
         """
         if path is None:
             path = self._path
@@ -237,9 +272,10 @@ class Settings:
         # applied while running and some cannot, and the difference is in the
         # schema rather than in anybody's memory.
         self.changed = changed
-        if changed:
-            log.info("configuration reloaded; changed: %s", ", ".join(changed))
-        return bool(changed)
+        log.info("configuration reloaded; changed: %s",
+                 ", ".join(changed) if changed
+                 else "nothing in the core settings")
+        return True
 
     def needs_restart(self) -> list[str]:
         """Which of the settings that just changed cannot be applied live.

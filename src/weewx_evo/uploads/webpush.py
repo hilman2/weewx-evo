@@ -48,6 +48,11 @@ from .mqtt import NEVER, topic_name
 log = logging.getLogger(__name__)
 
 
+#: How long `live.php` may keep answering 404 before it is taken to mean a
+#: wrong token rather than an export that has not run yet.
+NOT_YET = 3600.0
+
+
 class WebPushUpload(BaseUpload):
     """Posts the current readings to a `live.php` on the web host."""
 
@@ -167,10 +172,17 @@ class WebPushUpload(BaseUpload):
             # What `live.php` answers to a wrong token, on purpose: saying
             # "wrong token" would confirm there is a right one. So this
             # cannot tell the two apart, and says both.
+            # Not believed straight away. `live.php` is carried up by an
+            # export, so the answer before that export has run once is a 404
+            # that means "not yet" -- and switching off there told somebody
+            # to fix settings that were right, fifteen seconds before the
+            # file appeared. A wrong token answers 404 for ever, so an hour
+            # tells the two apart: longer than any export interval, shorter
+            # than leaving it broken.
             raise Rejected(
                 f"{self.host}{self.path} answered 404. Either live.php is "
                 f"not there, or the token does not match the one in "
-                f"live.token beside it.", permanent=True)
+                f"live.token beside it.", permanent=True, after=NOT_YET)
         if status == 503:
             raise Rejected(f"{self.host}: {text[:160]}", permanent=True)
         if status == 405:
@@ -277,11 +289,12 @@ class WebPushUpload(BaseUpload):
                 "directories": self.directories}
 
     @staticmethod
-    def from_exports(settings: object) -> tuple[str, str, list[str]]:
+    def from_exports(settings: object) -> tuple[str, str, list[str], str]:
         """Where to send, from the exports that asked for live readings.
 
-        Three things come back: the address of a `live.php` on a web host, the
-        token for it, and every directory on this machine to write into. An
+        Four things come back: the address of a `live.php` on a web host, the
+        token for it, every directory on this machine to write into, and the
+        units those pages are written in. An
         export that publishes the pages already knows all of it -- where they
         end up, what token it writes beside the script, which directory the
         built-in server hands out. Asking again here is how the two drift
@@ -295,12 +308,15 @@ class WebPushUpload(BaseUpload):
         somebody else's network, and that is a decision -- so it wants a
         second upload with its own `url`.
         """
-        from ..exports.livepush import token_for, url_for
+        from ..exports.livepush import rendered_units, token_for, url_for
 
         section = getattr(settings, "config", {}).get("exports") or {}
         token = token_for(str(settings.get("token") or ""))
         url = ""
         directories: list[str] = []
+        # The units of whichever export supplies the address, or of the first
+        # local one -- the same export whose pages will be reading the file.
+        system = ""
         for _name, configured in sorted(section.items()):
             if not isinstance(configured, dict):
                 continue
@@ -312,11 +328,17 @@ class WebPushUpload(BaseUpload):
                 where = str(configured.get("directory") or "").strip()
                 if where and where not in directories:
                     directories.append(where)
+                    if not system:
+                        system = rendered_units(settings, configured)
                 continue
             address = str(configured.get("live_push_url") or "").strip()
             if address and not url:
                 url = url_for(address)
-        return url, token, directories
+                # The address wins over a local directory: it is the export
+                # somebody configured on purpose, and its pages are the ones
+                # this document is for.
+                system = rendered_units(settings, configured)
+        return url, token, directories, system
 
     @staticmethod
     def options() -> list:
