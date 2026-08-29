@@ -593,6 +593,202 @@ def test_the_command_does_not_print_the_token() -> None:
     check("no token in the listing", "write-token" in done.stdout, False)
 
 
+# ---------------------------------------------------------------------------
+# The weather icons, and the forecast dashboard.
+# ---------------------------------------------------------------------------
+
+def test_every_code_the_core_knows_draws_as_something() -> None:
+    """No sky reaches a panel with nothing to show for it.
+
+    Checked against `codes.CODES` rather than against a list here: a code
+    added to the core would otherwise map to nothing, and a blank cell in a
+    forecast table looks like missing data rather than a missing icon.
+    """
+    from weewx_evo.forecast import codes
+    from weewx_evo.grafana import icons
+
+    for code in codes.CODES:
+        symbol = codes.symbol(code)
+        check(f"code {code} has a file", symbol in icons.FILES, True)
+        check(f"code {code} has a colour", symbol in icons.COLOURS, True)
+
+    for symbol in icons.NIGHT_SYMBOLS:
+        check(f"{symbol} has a file", symbol in icons.FILES, True)
+        check(f"{symbol} has a colour", symbol in icons.COLOURS, True)
+
+
+def test_every_icon_file_is_there() -> None:
+    """A mapping to a file that does not exist is a broken image."""
+    from weewx_evo.grafana import icons
+
+    for symbol, name in icons.FILES.items():
+        check(f"{symbol}: {name} exists", (icons.SOURCE / name).exists(), True)
+
+
+def test_an_icon_is_given_a_colour() -> None:
+    """Carbon's files carry no `fill`, and Grafana loads them through an
+    `<img>` where nothing of ours is in scope.
+
+    An icon left as it comes is black: invisible on Grafana's dark theme,
+    which is the default, on a panel that renders perfectly and tests green.
+    That fault has been paid for once already, in Deck's forecast section.
+    """
+    from weewx_evo.grafana import icons
+
+    where = Path(tempfile.mkdtemp())
+    made = icons.written(where)
+    check("one file per symbol", len(made), len(icons.FILES))
+
+    for path in made:
+        text = path.read_text(encoding="utf-8")
+        symbol = path.stem
+        check(f"{symbol} states a colour",
+              f'fill="{icons.COLOURS[symbol]}"' in text, True)
+        # On the root element, so the `.cls-1 { fill: none }` rule that hides
+        # Carbon's bounding rectangle still beats it.
+        head = text[:text.index(">") + 1]
+        check(f"{symbol} states it on the svg", "<svg" in head and "fill=" in head,
+              True)
+
+
+def test_a_file_that_states_its_own_colour_keeps_it() -> None:
+    """Nothing here overrules a drawing that means its colours."""
+    from weewx_evo.grafana import icons
+
+    stated = '<svg fill="#ff0000" viewBox="0 0 32 32"><path d="M0 0"/></svg>'
+    check("left alone", icons.coloured(stated, "#00ff00"), stated)
+
+
+def test_the_mappings_answer_both_spellings() -> None:
+    """InfluxDB writes every field as a float, and Grafana matches the
+    mapping against the value as it displays it.
+
+    `61` and `61.0` are the same code and two different keys, and which one
+    arrives depends on the datasource's own formatting.
+    """
+    from weewx_evo.forecast import codes
+    from weewx_evo.grafana import icons
+
+    options = icons.mappings()[0]["options"]
+    for code in codes.CODES:
+        check(f"{code} as an integer", str(code) in options, True)
+        check(f"{code} as a float", str(float(code)) in options, True)
+        check(f"{code} points at a file",
+              options[str(code)]["text"].startswith(icons.URL), True)
+
+
+def test_night_has_its_own_pictures() -> None:
+    """A clear night is not a sun. A page that draws one looks broken."""
+    from weewx_evo.grafana import icons
+
+    day = icons.mappings()[0]["options"]["0.0"]["text"]
+    night = icons.mappings(night=True)[0]["options"]["0.0"]["text"]
+    check("day and night differ", day == night, False)
+    check("and the night one is the moon", "clear-night" in night, True)
+
+
+def test_the_forecast_dashboard_is_only_written_when_there_is_one() -> None:
+    """A dashboard of empty panels reads as a broken installation, and
+    nothing on it can say why."""
+    from weewx_evo.grafana import dashboards
+
+    server = servers()[0]
+    without = dashboards.all_of(server, None, False, forecasts=False)
+    check("not there by default", "weewx-evo-forecast" in without, False)
+
+    with_one = dashboards.all_of(server, None, False, forecasts=True)
+    check("there when a source is configured",
+          "weewx-evo-forecast" in with_one, True)
+
+
+def test_the_forecast_dashboard_asks_the_forecast_measurement() -> None:
+    """Its own measurement, beside the readings.
+
+    A panel pointed at `weather` would draw measurements and call them a
+    forecast, which is the confusion the separate measurement exists to
+    prevent.
+    """
+    from weewx_evo.grafana import dashboards
+
+    board = dashboards.forecast(servers()[0])
+    queries = [target["query"] for panel in board["panels"]
+               for target in panel.get("targets", [])]
+    check("something is asked", len(queries) > 0, True)
+    forecast = [q for q in queries if "_forecast" in q]
+    check("most of it is the forecast", len(forecast) >= 4, True)
+    check("the days are asked for by kind",
+          any('r.kind == "day"' in q for q in queries), True)
+    check("and the hours too",
+          any('r.kind == "hour"' in q for q in queries), True)
+
+
+def test_the_forecast_line_draws_both_halves() -> None:
+    """The measured reading and the expected one, on one axis.
+
+    Dashed, because a prediction and a measurement that look identical
+    invite somebody to read Thursday's high as something that happened.
+    """
+    from weewx_evo.grafana import panels
+
+    server = servers()[0]
+    panel = panels.forecast_line(server, "outTemp", panels.grid(0, 0, 12, 8))
+    check("two targets", len(panel["targets"]), 2)
+    check("one of them is the archive",
+          "_forecast" not in panel["targets"][0]["query"], True)
+    check("and one is the forecast",
+          "_forecast" in panel["targets"][1]["query"], True)
+
+    dashed = [o for o in panel["fieldConfig"]["overrides"]
+              if any(p["id"] == "custom.lineStyle" for p in o["properties"])]
+    check("the forecast half is dashed", len(dashed), 1)
+    check("and it is the second frame",
+          dashed[0]["matcher"]["options"], "B")
+
+
+def test_the_week_table_draws_a_picture_per_row() -> None:
+    """An image cell, and a mapping that produces a URL for it."""
+    from weewx_evo.grafana import icons, panels
+
+    panel = panels.forecast_week(servers()[0], panels.grid(0, 0, 9, 12))
+    check("it is a table", panel["type"], "table")
+
+    sky = [o for o in panel["fieldConfig"]["overrides"]
+           if o["matcher"]["options"] == "code"]
+    check("the code column is configured", len(sky), 1)
+    cell = [p["value"] for p in sky[0]["properties"]
+            if p["id"] == "custom.cellOptions"]
+    check("as an image", cell[0]["type"], "image")
+    mapped = [p["value"] for p in sky[0]["properties"] if p["id"] == "mappings"]
+    check("with the icon mappings on it",
+          mapped[0][0]["options"]["0.0"]["text"].startswith(icons.URL), True)
+
+
+def test_the_days_query_asks_for_the_future() -> None:
+    """A dashboard showing the last six hours would otherwise show no
+    forecast at all, which reads as a broken panel."""
+    from weewx_evo.grafana import query_influx as flux
+
+    query = flux.forecast_days("weewx", "weather", ("code", "tempMax"))
+    check("the range runs forward", "stop: 7d" in query, True)
+    check("not against the dashboard's own",
+          "v.timeRangeStop" in query, False)
+    check("and the fields come back side by side", "pivot(" in query, True)
+
+
+def test_provisioning_writes_the_icons() -> None:
+    """Grafana serves them from its own `public/`, and it cannot see into
+    our container -- so they have to be somewhere a mount can reach."""
+    tmp = Path(tempfile.mkdtemp())
+    report = grafana.provision(tmp, UPLOADS, None, forecasts=True)
+    check("icons were written", report.icons > 0, True)
+    check("into an icons directory", (tmp / "icons").is_dir(), True)
+    check("and the note says where to mount them",
+          any("public/img/weewx-evo" in note for note in report.notes), True)
+    check("the forecast dashboard is among the files",
+          any(path.name == "weewx-evo-forecast.json" for path in report.files),
+          True)
+
+
 def main() -> int:
     for name, test in sorted(globals().items()):
         if name.startswith("test_") and callable(test):

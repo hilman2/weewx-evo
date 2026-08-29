@@ -321,7 +321,64 @@ def operations(server: Any) -> dict:
                   server, panel_list, span="now-7d")
 
 
-def all_of(server: Any, plots: Any, weight: bool = False) -> dict[str, dict]:
+def forecast(server: Any, weight: bool = False) -> dict:
+    """What is coming, beside what has been.
+
+    Its own dashboard rather than a row on the location one. A forecast is
+    the only thing here that is not a measurement, and mixing the two on one
+    page is how somebody reads Thursday's high as a reading -- the same
+    confusion the separate measurement in the bucket exists to prevent, one
+    storey up.
+
+    Written only where a source is configured. A dashboard of empty panels
+    reads as a broken installation, and there is no way to tell it from one.
+    """
+    words, ids = server.words, _Ids()
+    panel_list: list[dict] = [
+        panels.forecast_week(server, grid(0, 0, 9, 12), location="$location",
+                             source="$source", panel_id=ids(), words=words,
+                             system=server.system),
+        panels.forecast_line(server, "outTemp", grid(9, 0, 15, 12),
+                             location="$location", source="$source",
+                             panel_id=ids(), words=words,
+                             system=server.system, weight=weight),
+    ]
+
+    y = 12
+    # Rain and wind get the same treatment, because "will I need a coat" and
+    # "can I put the awning out" are the two questions after temperature.
+    for index, obs in enumerate(("rain", "windSpeed")):
+        panel_list.append(panels.forecast_line(
+            server, obs, grid(index * HALF, y, HALF), location="$location",
+            source="$source", panel_id=ids(), words=words,
+            system=server.system, weight=weight))
+    y += 8
+
+    panel_list.append(panels.text("", stamp(words), grid(0, y, FULL, 3),
+                                  panel_id=ids()))
+    board = _shell("weewx-evo-forecast", words.title(words.forecast), server,
+                   panel_list, variable=True, span="now-12h")
+
+    # Which source, where two are configured. Asked of the data like the
+    # locations are: a source added next month appears without anybody
+    # regenerating anything.
+    board["templating"]["list"].append({
+        "name": "source",
+        "label": words.forecast,
+        "type": "query",
+        "datasource": server.reference(),
+        "query": flux.forecast_sources(server.bucket, server.measurement),
+        "refresh": 1,
+        "includeAll": False,
+        "multi": False,
+        "current": {},
+        "options": [],
+    })
+    return board
+
+
+def all_of(server: Any, plots: Any, weight: bool = False,
+           forecasts: bool = False) -> dict[str, dict]:
     """Every dashboard for one server, by file name."""
     boards = {
         "weewx-evo-now": now(server, weight),
@@ -329,6 +386,8 @@ def all_of(server: Any, plots: Any, weight: bool = False) -> dict[str, dict]:
         "weewx-evo-compare": compare(server, weight),
         "weewx-evo-operations": operations(server),
     }
+    if forecasts:
+        boards["weewx-evo-forecast"] = forecast(server, weight)
     if plots is not None and len(plots):
         boards.update(charts(server, plots, weight))
     return boards

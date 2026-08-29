@@ -1260,7 +1260,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # The local web server for whatever the feeds produced. Its own port:
     # the listener answers hardware behind a token and this answers browsers,
     # and one port for two audiences means the stricter rule has to lose.
-    web = None
+    # Declared out here because the watchdog is handed to it further down,
+    # and an installation with the web server switched off reached that line
+    # and stopped `serve` from starting at all.
+    web = metrics = None
     if cfg.get("web.enabled"):
         site = site_from(cfg)
         metrics = build_metrics(args, cfg, live=live)
@@ -4227,7 +4230,10 @@ def cmd_grafana_provision(args: argparse.Namespace) -> int:
         archive=archive if archive and archive.exists() else None,
         read_token=getattr(args, "read_token", "") or "",
         language=language.get(getattr(args, "language", None)
-                              or cfg.get("language")))
+                              or cfg.get("language")),
+        # A forecast dashboard where no source is configured is a page of
+        # empty panels, and nothing on it can say why.
+        forecasts=bool(configured_forecasts(args)))
 
     for note in report.notes:
         print(f"note: {note}")

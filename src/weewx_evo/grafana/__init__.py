@@ -217,16 +217,18 @@ class Written:
     files: list[Path] = field(default_factory=list)
     servers: int = 0
     panels: int = 0
+    icons: int = 0
     notes: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
-        return (f"{len(self.files)} files, {self.servers} datasource(s), "
+        said = (f"{len(self.files)} files, {self.servers} datasource(s), "
                 f"{self.panels} panels")
+        return said + (f", {self.icons} icons" if self.icons else "")
 
 
 def provision(out: str | Path, uploads: dict[str, dict], plots: Any,
-              archive: str | Path | None = None,
-              read_token: str = "", language: Any = None) -> Written:
+              archive: str | Path | None = None, read_token: str = "",
+              language: Any = None, forecasts: bool = False) -> Written:
     """Write everything Grafana needs into `out`.
 
     Nothing is started and nothing is asked of Grafana: these are files, and
@@ -280,8 +282,24 @@ def provision(out: str | Path, uploads: dict[str, dict], plots: Any,
     _write(path, provider_yaml())
     report.files.append(path)
 
+    if forecasts:
+        # Grafana serves these from its own `public/`, and it cannot see into
+        # our container -- so the files go where the compose file mounts
+        # them. Without that mount the panel shows a broken image, which says
+        # what to fix; with a mapping to a file that is not there it would
+        # show nothing at all.
+        from . import icons as weather_icons
+
+        made = weather_icons.written(out / "icons")
+        report.icons = len(made)
+        report.notes.append(
+            f"{len(made)} weather icons written to {out / 'icons'}. Mount "
+            f"that at /usr/share/grafana/public/img/weewx-evo, or the "
+            f"forecast table draws broken images.")
+
     for server in servers:
-        for name, board in build.all_of(server, plots, weight).items():
+        for name, board in build.all_of(server, plots, weight,
+                                        forecasts).items():
             path = out / "dashboards" / f"{name}.json"
             _write(path, json.dumps(board, indent=2, sort_keys=False) + "\n")
             report.files.append(path)

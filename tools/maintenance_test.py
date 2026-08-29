@@ -275,8 +275,36 @@ def test_a_sharper_extreme_is_not_a_fault() -> None:
                      "max = max + 5 WHERE dateTime = ?", (start,))
         conn.commit()
 
-    verdict = maintenance.verify(source, days=1)
+    verdict = maintenance.verify(source, days=0)
     check("a sharper day is not reported", verdict.days, [])
+
+
+def test_days_counts_back_from_the_newest() -> None:
+    """Which end `days` cuts from, said out loud.
+
+    It cuts from the newest, which is the useful half after a crash. Three
+    checks above were written against a fixture whose oldest day was the
+    changed one, and passed for a year without measuring anything: the day
+    they altered was never in the window.
+    """
+    where = Path(tempfile.mkdtemp())
+    source = an_archive(where / "weewx.sdb", days=3)
+
+    with closing(sqlite3.connect(source)) as conn:
+        days = [int(row[0]) for row in conn.execute(
+            "SELECT DISTINCT dateTime FROM archive_day_outTemp "
+            "ORDER BY dateTime")]
+        # The oldest, so a window of one cannot reach it.
+        conn.execute("UPDATE archive_day_outTemp SET max = max - 5 "
+                     "WHERE dateTime = ?", (days[0],))
+        conn.commit()
+
+    check("one day looks at one day",
+          maintenance.verify(source, days=1).checked_days, 1)
+    check("and it is not the changed one",
+          maintenance.verify(source, days=1).days, [])
+    check("every day finds it",
+          maintenance.verify(source, days=0).days, [days[0]])
 
 
 def test_a_duller_extreme_is_a_fault() -> None:
@@ -291,7 +319,7 @@ def test_a_duller_extreme_is_a_fault() -> None:
                      "WHERE dateTime = ?", (start,))
         conn.commit()
 
-    verdict = maintenance.verify(source, days=1)
+    verdict = maintenance.verify(source, days=0)
     check("the day is named", verdict.days, [start])
 
 
@@ -306,7 +334,7 @@ def test_a_wrong_sum_is_a_fault() -> None:
                      "WHERE dateTime = ?", (start,))
         conn.commit()
 
-    verdict = maintenance.verify(source, days=1)
+    verdict = maintenance.verify(source, days=0)
     check("a count that does not follow is named", verdict.days, [start])
 
 
@@ -328,7 +356,7 @@ def test_verify_writes_nothing() -> None:
             "SELECT max FROM archive_day_outTemp WHERE dateTime = ?",
             (start,)).fetchone()[0]
 
-    maintenance.verify(source, days=1)
+    maintenance.verify(source, days=0)
 
     with closing(sqlite3.connect(f"file:{source}?mode=ro", uri=True)) as conn:
         after = conn.execute(
@@ -362,7 +390,7 @@ def test_a_damaged_file_is_reported_and_not_compared() -> None:
         data[offset] = (data[offset] + 137) % 256
     source.write_bytes(bytes(data))
 
-    verdict = maintenance.verify(source, days=1)
+    verdict = maintenance.verify(source, days=0)
     check("it is not called sound", verdict.sound, False)
     check("and something is said about it", bool(verdict.problems), True)
     check("and it did not go on to the summaries", verdict.days, [])

@@ -353,3 +353,149 @@ def stat(title: str, query: str, server: Any, position: dict, unit: str = "",
             "justifyMode": "auto",
         },
     }
+
+
+def forecast_week(server: Any, position: dict, location: str = "",
+                  source: str = "", panel_id: int = 1,
+                  words: Any = None, system: int = 16) -> dict:
+    """The days ahead, as a table with a picture per row.
+
+    A table rather than a row of stat panels. Seven stats are seven panels to
+    place, and a dashboard that says "5 days" in one place and has seven
+    boxes in another is the kind of disagreement nobody notices until they
+    count. A table takes as many rows as the source sent.
+
+    The picture is a value mapping from the WMO code to an icon URL, drawn by
+    an image cell. Grafana resolves that URL against its own `public/`, which
+    is where the compose file mounts what `icons.written()` produced -- so a
+    Grafana without that mount shows a broken image rather than a wrong one,
+    which is the failure that says what to fix.
+    """
+    from . import icons
+    from . import query_influx as flux
+
+    say = words
+    fields = ("code", "tempMax", "tempMin", "rainProbability")
+    query = flux.forecast_days(server.bucket, server.measurement, fields,
+                               location=location, source=source)
+    temperature = unit_for("outTemp", system)
+
+    def named(field: str, title: str, unit: str = "",
+              extra: dict | None = None) -> dict:
+        config = {"displayName": title, "unit": unit}
+        config.update(extra or {})
+        return {"matcher": {"id": "byName", "options": field},
+                "properties": [{"id": "custom.width", "value": 110},
+                               *({"id": key, "value": value}
+                                 for key, value in config.items())]}
+
+    return {
+        "id": panel_id,
+        "type": "table",
+        "title": _say(say, "the_week", "The week ahead"),
+        "description": _say(say, "about_week", ""),
+        "datasource": server.reference(),
+        "gridPos": position,
+        "targets": [{"refId": "A", "query": query,
+                     "datasource": server.reference()}],
+        "fieldConfig": {
+            "defaults": {
+                "custom": {"align": "center", "cellOptions": {"type": "auto"},
+                           "inspect": False},
+                "color": {"mode": "thresholds"},
+                "thresholds": {"mode": "absolute",
+                               "steps": [{"color": "text", "value": None}]},
+            },
+            "overrides": [
+                {"matcher": {"id": "byName", "options": "_time"},
+                 "properties": [
+                     {"id": "displayName", "value": _say(say, "day", "day")},
+                     {"id": "unit", "value": "time:ddd D MMM"},
+                     {"id": "custom.width", "value": 130},
+                 ]},
+                # The sky. An image cell draws whatever text the mapping
+                # produced, and the mapping produces a URL.
+                {"matcher": {"id": "byName", "options": "code"},
+                 "properties": [
+                     {"id": "displayName", "value": _say(say, "sky", "Sky")},
+                     {"id": "custom.cellOptions",
+                      "value": {"type": "image", "alt": "code"}},
+                     {"id": "mappings", "value": icons.mappings()},
+                     {"id": "custom.width", "value": 70},
+                 ]},
+                named("tempMax", _say(say, "high", "High"), temperature),
+                named("tempMin", _say(say, "low", "Low"), temperature),
+                named("rainProbability", _say(say, "chance", "Chance"),
+                      "percent"),
+            ],
+        },
+        "options": {"showHeader": True, "cellHeight": "lg",
+                    "footer": {"show": False, "reducer": ["sum"],
+                               "countRows": False, "fields": ""}},
+        "transformations": [{"id": "organize",
+                             "options": {"excludeByName": {},
+                                         "indexByName": {
+                                             "_time": 0, "code": 1,
+                                             "tempMax": 2, "tempMin": 3,
+                                             "rainProbability": 4}}}],
+    }
+
+
+def forecast_line(server: Any, obs: str, position: dict, location: str = "",
+                  source: str = "", panel_id: int = 1, words: Any = None,
+                  system: int = 16, weight: bool = False) -> dict:
+    """One reading measured and forecast, on one axis.
+
+    Two targets in one panel, which is the whole reason both live in one
+    bucket. The forecast half is drawn dashed: a prediction and a
+    measurement that look identical on an axis invite somebody to read
+    Thursday's high as something that happened.
+    """
+    from . import query_influx as flux
+
+    say = words
+    label = say.obs(obs) if say is not None else obs
+    measured = (flux.weighted(server.bucket, server.measurement, obs, location)
+                if weight else
+                flux.plain(server.bucket, server.measurement, obs,
+                           location=location))
+    ahead = flux.forecast_hours(server.bucket, server.measurement, obs,
+                                location=location, source=source)
+    expected = _say(say, "expected", "expected")
+
+    board = timeseries(server, [(obs, "", label)],
+                       _say(say, "the_hours", "The hours ahead"),
+                       position, panel_id=panel_id)
+    board["description"] = _say(say, "about_forecast", "")
+    board["targets"] = [
+        {"refId": "A", "query": measured, "datasource": server.reference()},
+        {"refId": "B", "query": ahead, "datasource": server.reference()},
+    ]
+    board["fieldConfig"]["defaults"]["unit"] = unit_for(obs, system)
+    board["fieldConfig"]["overrides"] = [
+        {"matcher": {"id": "byFrameRefID", "options": "A"},
+         "properties": [{"id": "displayName", "value": label}]},
+        {"matcher": {"id": "byFrameRefID", "options": "B"},
+         "properties": [
+             {"id": "displayName", "value": f"{label} ({expected})"},
+             {"id": "custom.lineStyle",
+              "value": {"fill": "dash", "dash": [10, 10]}},
+             {"id": "custom.fillOpacity", "value": 0},
+         ]},
+    ]
+    return board
+
+
+def _say(words: Any, key: str, fallback: str) -> str:
+    """A word, or its English, or nothing.
+
+    `Words.__getattr__` raises for a key nobody has added, which is right
+    when a dashboard is being written and wrong when one is being drawn: a
+    missing caption must not take the panel with it.
+    """
+    if words is None:
+        return fallback
+    try:
+        return getattr(words, key)
+    except Exception:
+        return fallback

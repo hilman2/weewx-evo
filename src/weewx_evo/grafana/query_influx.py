@@ -243,3 +243,88 @@ def locations(bucket: str, measurement: str) -> str:
          f'predicate: (r) => r._measurement == "{escape(measurement)}", '
          f'start: -30d)'),
     ])
+
+
+# ---------------------------------------------------------------------------
+# The forecast.
+# ---------------------------------------------------------------------------
+
+#: What the forecast is written under, beside the measurements. See
+#: `uploads/influx.py`: a predicted `outTemp` and a measured one are two
+#: different things and must not be one series.
+FORECAST_SUFFIX = "_forecast"
+
+
+def forecast_days(bucket: str, measurement: str, fields: tuple[str, ...],
+                  location: str = "", source: str = "",
+                  ahead: str = "7d") -> str:
+    """One row per day, the named fields side by side.
+
+    `pivot` rather than several queries joined in the panel: a table needs
+    the fields in columns, and Flux is where that turns from n round trips
+    into one.
+
+    The range starts at `now()` rather than at the dashboard's own range.
+    A forecast is about the future by definition, and a dashboard showing the
+    last six hours would otherwise show no forecast at all -- which reads as
+    a broken panel rather than as the range being wrong.
+    """
+    wanted = " or ".join(f'r._field == "{escape(f)}"' for f in fields)
+    lines = [
+        f'from(bucket: "{escape(bucket)}")',
+        f"  |> range(start: -1d, stop: {ahead})",
+        (f'  |> filter(fn: (r) => r._measurement == '
+         f'"{escape(measurement)}{FORECAST_SUFFIX}")'),
+        '  |> filter(fn: (r) => r.kind == "day")',
+    ]
+    if location:
+        lines.append(f'  |> filter(fn: (r) => r.location == "{escape(location)}")')
+    if source:
+        lines.append(f'  |> filter(fn: (r) => r.source == "{escape(source)}")')
+    lines += [
+        f"  |> filter(fn: (r) => {wanted})",
+        ('  |> pivot(rowKey: ["_time"], columnKey: ["_field"], '
+         'valueColumn: "_value")'),
+        '  |> sort(columns: ["_time"])',
+        '  |> yield(name: "days")',
+    ]
+    return "\n".join(lines)
+
+
+def forecast_hours(bucket: str, measurement: str, field: str,
+                   location: str = "", source: str = "",
+                   ahead: str = "48h") -> str:
+    """One reading over the coming hours, as a line.
+
+    Drawn beside the measured one on the same axis, which is the whole point
+    of both being in one bucket: the temperature that was and the temperature
+    that is expected, meeting at now.
+    """
+    lines = [
+        f'from(bucket: "{escape(bucket)}")',
+        f"  |> range(start: -6h, stop: {ahead})",
+        (f'  |> filter(fn: (r) => r._measurement == '
+         f'"{escape(measurement)}{FORECAST_SUFFIX}")'),
+        '  |> filter(fn: (r) => r.kind == "hour")',
+    ]
+    if location:
+        lines.append(f'  |> filter(fn: (r) => r.location == "{escape(location)}")')
+    if source:
+        lines.append(f'  |> filter(fn: (r) => r.source == "{escape(source)}")')
+    lines += [
+        f'  |> filter(fn: (r) => r._field == "{escape(field)}")',
+        '  |> keep(columns: ["_time", "_value", "location"])',
+        '  |> sort(columns: ["_time"])',
+        f'  |> yield(name: "{escape(field)}")',
+    ]
+    return "\n".join(lines)
+
+
+def forecast_sources(bucket: str, measurement: str) -> str:
+    """Which forecast sources have written, for a dashboard variable."""
+    return "\n".join([
+        'import "influxdata/influxdb/schema"',
+        (f'schema.tagValues(bucket: "{escape(bucket)}", tag: "source", '
+         f'predicate: (r) => r._measurement == '
+         f'"{escape(measurement)}{FORECAST_SUFFIX}", start: -7d)'),
+    ])
