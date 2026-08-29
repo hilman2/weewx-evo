@@ -2795,7 +2795,12 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     live_db = Path(cfg.get("live_db") or "data/live.sdb")
     if not live_db.is_absolute():
         live_db = base / live_db
-    packets = upload_records.live_source(live_db) if live_db.exists() else None
+    # The same rules the archiver applies, on the other reader of the same
+    # table. Without this a spike the archive throws away was still
+    # published live, every ten seconds, and the reading a visitor saw was
+    # one the station's own charts did not have.
+    packets = (upload_records.live_source(live_db, read_quality(args, cfg))
+               if live_db.exists() else None)
 
     # One reader per series, for an installation with more than one. An
     # upload is a station registered with a weather service, and that station

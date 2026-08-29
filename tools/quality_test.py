@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import time
 from pathlib import Path
+from typing import ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -650,6 +652,109 @@ def test_a_real_station_s_own_rules_refuse_nothing() -> None:
         checker.check(checker.calibrate(row, "", system),
                       float(row.get("dateTime") or 0), "", system)
     check("and its own history passes them", checker.dropped, {})
+
+
+def test_the_rules_reach_the_live_readings() -> None:
+    """The archive throws a spike away and the live page published it.
+
+    `archiver.build()` is the right place for the decision -- the archive is
+    what has to be defensible -- but this table has two readers and only one
+    of them goes through the archiver. So the reading a visitor saw was one
+    the station's own charts did not have, every ten seconds, with nothing on
+    either side able to show the disagreement.
+    """
+    import tempfile
+
+    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.quality import Policy, Rule
+    from weewx_evo.uploads import records as upload_records
+
+    where = Path(tempfile.mkdtemp()) / "live.sdb"
+    store = LiveStore(where)
+    base = int(time.time())
+    try:
+        # An ordinary reading, then one no thermometer produces.
+        store.add(Packet(dateTime=base - 20, usUnits=units.METRICWX,
+                         data={"outTemp": 21.0, "outHumidity": 60.0},
+                         source="ecowitt"))
+        store.add(Packet(dateTime=base - 10, usUnits=units.METRICWX,
+                         data={"outTemp": -40.0, "outHumidity": 61.0},
+                         source="ecowitt"))
+    finally:
+        store.close()
+
+    plain = upload_records.live_source(where)
+    got = plain.after(0, 1)
+    check("without rules the spike is published", got[0].get("outTemp"), -40.0)
+    plain.close()
+
+    policy = Policy(limits={"outTemp": Rule(minimum=-30.0, maximum=50.0)},
+                    system=units.METRICWX)
+    screened = upload_records.live_source(where, policy)
+    got = screened.after(0, 1)
+    check("with them it is not there", "outTemp" in got[0], False)
+    check("and the rest of the packet still is",
+          got[0].get("outHumidity"), 61.0)
+    screened.close()
+
+
+def test_the_live_readings_are_calibrated_too() -> None:
+    """An offset is part of what the reading *is*.
+
+    A live page showing the raw value beside an archive holding the
+    corrected one is the same disagreement in a smaller font.
+    """
+    import tempfile
+
+    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.quality import Adjust, Policy
+    from weewx_evo.uploads import records as upload_records
+
+    where = Path(tempfile.mkdtemp()) / "live.sdb"
+    store = LiveStore(where)
+    base = int(time.time())
+    try:
+        store.add(Packet(dateTime=base - 5, usUnits=units.METRICWX,
+                         data={"outTemp": 20.0}, source="ecowitt"))
+    finally:
+        store.close()
+
+    policy = Policy(calibration={"": {"outTemp": Adjust(offset=-0.4)}},
+                    system=units.METRICWX)
+    live = upload_records.live_source(where, policy)
+    got = live.after(0, 1)
+    check("the offset was applied", round(got[0]["outTemp"], 3), 19.6)
+    live.close()
+
+
+def test_rules_that_cannot_be_applied_do_not_stop_the_readings() -> None:
+    """A quality file with something odd in it is a settings problem. A page
+    that stops updating because of one is an outage."""
+    import tempfile
+
+    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.uploads import records as upload_records
+
+    where = Path(tempfile.mkdtemp()) / "live.sdb"
+    store = LiveStore(where)
+    try:
+        store.add(Packet(dateTime=int(time.time()) - 5,
+                         usUnits=units.METRICWX, data={"outTemp": 20.0},
+                         source="ecowitt"))
+    finally:
+        store.close()
+
+    class Broken:
+        limits: ClassVar[dict] = {"outTemp": None}
+        calibration: ClassVar[dict] = {}
+
+        def __bool__(self) -> bool:
+            return True
+
+    live = upload_records.live_source(where, Broken())
+    got = live.after(0, 1)
+    check("the reading came through anyway", got[0].get("outTemp"), 20.0)
+    live.close()
 
 
 def main() -> int:

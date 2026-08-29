@@ -168,6 +168,19 @@ class Live:
     because that is what lets the listener and the archiver run as separate
     processes. A live feed that only works when they are one process would
     quietly take that apart.
+
+    **The quality rules apply here too, and that is not optional.** They live
+    in `archiver.build()`, which is the right place for the decision: the
+    archive is what has to be defensible. But this table is read by two
+    things, and only one of them went through the archiver -- so a spike the
+    archive throws away was still published, every ten seconds, to the live
+    page and the broker. The reading a visitor sees would be one the
+    station's own charts do not have, and nothing on either side could show
+    the disagreement.
+
+    Same rules, same file, same `Check`. Not a second copy of the arithmetic:
+    that is the mistake `chartdata.py` describes, and a limit that disagreed
+    with the archiver by a tenth would be worse than none.
     """
 
     #: Which console a live reading comes from, when a site has more than
@@ -200,8 +213,19 @@ class Live:
     def __init__(self, path: str | Path,
                  sources: list[str] | None = None,
                  pick: str = DEFAULT_PICK,
-                 main: list[str] | None = None) -> None:
+                 main: list[str] | None = None,
+                 policy: Any = None) -> None:
         self.path = Path(path)
+        #: The quality rules, or None where none are configured -- which is
+        #: every installation until somebody writes some, and costs it a
+        #: single `is None`.
+        #:
+        #: The policy rather than a `Check`: a check carries the run-up a
+        #: spike rule needs, so it is state, and this object is read from one
+        #: thread per upload. Shared, two uploads would judge each other's
+        #: readings as their own history -- and the second one publishing
+        #: would see every packet twice.
+        self.policy = policy
         #: Whose readings to publish. There is one live table for the whole
         #: installation -- only the archive is per series -- so an upload
         #: that belongs to one site has to say which consoles are its own.
@@ -228,7 +252,7 @@ class Live:
                     pick: str = "", main: list[str] | None = None) -> Live:
         """The same table, seen through one site's consoles."""
         return Live(self.path, sources, pick or self.pick,
-                    main if main is not None else self.main)
+                    main if main is not None else self.main, self.policy)
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -290,6 +314,52 @@ class Live:
             if interval is not None:
                 record["interval"] = interval
             found.append({k: v for k, v in record.items() if v is not None})
+        return [self._screened(one) for one in found]
+
+    def _screened(self, record: dict) -> dict:
+        """One packet with the rules applied. Unchanged where there are none.
+
+        Calibration as well as the limits, and in that order, because that is
+        the order `archiver.build()` uses: an offset is part of what the
+        reading *is*, so a limit is about the corrected value. A live page
+        showing the raw one beside an archive holding the corrected one is
+        the same disagreement in a smaller font.
+
+        A reading the rules refuse is dropped, not zeroed and not held: the
+        packet after it is seconds away, and the live table is the one place
+        where an absent reading costs nothing.
+        """
+        checker = self._checker()
+        if checker is None:
+            return record
+        try:
+            stamp = float(record.get("dateTime") or 0)
+            system = record.get("usUnits")
+            source = str(record.get("source") or "")
+            fixed = checker.calibrate(record, source, system)
+            # The verdicts are the archiver's to log: it has the interval
+            # the reading belongs to and something to say about it. Here the
+            # same reading is judged six times a minute, and a line each
+            # would bury the log the moment one sensor went odd.
+            screened, _verdicts = checker.check(fixed, stamp, source, system)
+            return screened
+        except Exception:
+            # The rules must never be able to stop the live readings. A
+            # quality file with something odd in it is a settings problem;
+            # a page that stops updating because of one is an outage.
+            log.warning("could not apply the quality rules to a live packet",
+                        exc_info=True)
+            return record
+
+    def _checker(self) -> Any:
+        """This thread's `Check`, built once. None where there are no rules."""
+        if not self.policy:
+            return None
+        found = getattr(self._local, "check", None)
+        if found is None:
+            from .. import quality as quality_module
+
+            found = self._local.check = quality_module.Check(self.policy)
         return found
 
     # -- which console ---------------------------------------------------
@@ -416,6 +486,6 @@ class Live:
     __call__ = after
 
 
-def live_source(path: str | Path) -> Live:
+def live_source(path: str | Path, policy: Any = None) -> Live:
     """A `records(after, limit)` callable over the live table."""
-    return Live(path)
+    return Live(path, policy=policy)

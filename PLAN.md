@@ -76,20 +76,20 @@ Freispülen, ein Funksensor am Rand der Reichweite fünfzehn Minuten lang
 denselben Wert. Alles drei landet heute in `archive` — und `archive` ist
 genau das, was **nicht** neu gebaut werden kann.
 
-- [ ] `src/weewx_evo/quality.py` — `Rule` je Feld: `minimum`, `maximum`,
+- [x] `src/weewx_evo/quality.py` — `Rule` je Feld: `minimum`, `maximum`,
       `spike` (Δ je Minute), `stuck` (n gleiche Werte), `offset`, `scale`.
       `apply(data, rules, history) -> (data, verdicts)`
-- [ ] `quality.toml` neben `stations.toml` und `sources.toml`. **Nicht** in
+- [x] `quality.toml` neben `stations.toml` und `sources.toml`. **Nicht** in
       `evo.toml`: das sind viele gleichartige Sätze, dieselbe Begründung wie
       bei `plots.toml`
-- [ ] Einhängepunkt A: `archiver.build()`, zwischen `source_merge` und
+- [x] Einhängepunkt A: `archiver.build()`, zwischen `source_merge` und
       `deriver.apply` (`archiver.py:114`–`124`)
-- [ ] Einhängepunkt B: die Live-Leser — Live-Seite, `uploads/webpush.py`,
+- [x] Einhängepunkt B: die Live-Leser — Live-Seite, `uploads/webpush.py`,
       `uploads/mqtt.py`. Sonst zeigt die Seite −40 °C, während das Archiv
       sauber ist
-- [ ] `adminquality.py` — eine Zeile je Feld, **mit dem gemessenen
+- [x] `adminquality.py` — eine Zeile je Feld, **mit dem gemessenen
       Wertebereich der letzten 30 Tage daneben**. Ohne den rät man Grenzen
-- [ ] `weewx-evo quality check` (was würde verworfen), `quality suggest`
+- [x] `weewx-evo quality check` (was würde verworfen), `quality suggest`
       (Grenzen aus der Historie vorschlagen)
 
 **Entscheidungen:**
@@ -129,19 +129,19 @@ Gegrept: kein SMTP, kein Webhook, kein ntfy, nirgends. Der Watchdog startet
 den Prozess neu und **sagt es niemandem**. Eine Station, die seit sechs
 Stunden schweigt, steht auf einer Seite, die niemand aufmacht.
 
-- [ ] `src/weewx_evo/notify/__init__.py` — Registry im Muster von
+- [x] `src/weewx_evo/notify/__init__.py` — Registry im Muster von
       `uploads/__init__.py` (`register_factory`, `kinds()`, Entry-Points)
-- [ ] `notify/smtp.py`, `notify/webhook.py` (deckt ntfy, Gotify, Slack,
+- [x] `notify/smtp.py`, `notify/webhook.py` (deckt ntfy, Gotify, Slack,
       Discord, Telegram über URL + Template ab), `notify/mqtt.py` auf dem
       vorhandenen Client
-- [ ] `notify/rules.py` — die Ereignisse, **Liste geschlossen und nur
+- [x] `notify/rules.py` — die Ereignisse, **Liste geschlossen und nur
       Betrieb**: Station schweigt · Batterie leer · Export oder Upload
       scheitert seit n Läufen · Watchdog hat neu gestartet, und warum ·
       Deskriptoren oder Platte nahe am Limit · Archiver-Herzschlag steht
-- [ ] `notify/runner.py` — eigener Thread, Muster von `exports/runner.py`,
+- [x] `notify/runner.py` — eigener Thread, Muster von `exports/runner.py`,
       mit `replace()`; eingehängt in `cli.py` neben den anderen Runnern und
       an `start_watchdog` übergeben (`cli.py:727`, `cli.py:1218`)
-- [ ] Zustand in `live_metadata`, wie `exports/record.py` — die
+- [x] Zustand in `live_metadata`, wie `exports/record.py` — die
       Einstellungsseite ist ein anderer Prozess
 
 **Entscheidungen:**
@@ -179,12 +179,12 @@ Fünfzehn Jahre Messwerte in einer Datei, und `weewx-evo backup` gibt es
 nicht. Kein `integrity_check`, kein VACUUM, keine Prüfung von `archive`
 gegen `archive_day_*` (WeeWX hat dafür `wee_database --check`).
 
-- [ ] `src/weewx_evo/maintenance.py`
-- [ ] `weewx-evo backup [--keep n]` — SQLite `.backup`-API, **nie `cp`**
-- [ ] `weewx-evo verify` — `PRAGMA integrity_check`, plus `archive` gegen
+- [x] `src/weewx_evo/maintenance.py`
+- [x] `weewx-evo backup [--keep n]` — SQLite `.backup`-API, **nie `cp`**
+- [x] `weewx-evo verify` — `PRAGMA integrity_check`, plus `archive` gegen
       `archive_day_*` über `rebuild_day`, ohne zu schreiben
-- [ ] `weewx-evo vacuum`, `weewx-evo prune`
-- [ ] Optional auf einem Zeitplan über `schedule.py`, auf dem Raster der
+- [x] `weewx-evo vacuum`, `weewx-evo prune`
+- [x] Optional auf einem Zeitplan über `schedule.py`, auf dem Raster der
       Stunde
 
 **Fallen:**
@@ -215,12 +215,12 @@ beantwortet, hat keinen Weg: Home Assistant nicht, eine App nicht, ein Skript
 nicht — und Grafana über Infinity auch nicht. `series.py` kann das alles
 schon; es fehlt der Endpunkt.
 
-- [ ] `src/weewx_evo/api.py`, bedient vom `webserver.py`
-- [ ] `GET /api/v1/archives`, `/stations`, `/fields`, `/current`, `/series`,
+- [x] `src/weewx_evo/api.py`, bedient vom `webserver.py`
+- [x] `GET /api/v1/archives`, `/stations`, `/fields`, `/current`, `/series`,
       `/aggregate`
-- [ ] Read-only. Token im Header **und** im Pfad — Konsolen können keine
+- [x] Read-only. Token im Header **und** im Pfad — Konsolen können keine
       Header, Skripte wollen keinen Token in der URL
-- [ ] Einheiten als Parameter (`units=metric|us|metricwx`, oder je Gruppe)
+- [x] Einheiten als Parameter (`units=metric|us|metricwx`, oder je Gruppe)
 
 **Entscheidung:** **nutzt `series.py`, keine zweite Arithmetik.** Das ist der
 ganze Punkt — sonst ist es der Fehler aus `chartdata.py` noch einmal.
@@ -240,8 +240,8 @@ ganze Punkt — sonst ist es der Fehler aus `chartdata.py` noch einmal.
 Der Watchdog misst schon alles; es liegt nur in der Live-Tabelle statt auf
 einem Endpunkt.
 
-- [ ] `src/weewx_evo/metrics.py` — Prometheus-Textformat, keine Abhängigkeit
-- [ ] Deskriptoren, Threads, Herzschlag-Alter, Pakete je Minute und Station,
+- [x] `src/weewx_evo/metrics.py` — Prometheus-Textformat, keine Abhängigkeit
+- [x] Deskriptoren, Threads, Herzschlag-Alter, Pakete je Minute und Station,
       letzter Archivsatz, Export-Erfolg und -Dauer, Feed-Dauer, Größe der
       Live-Tabelle
 
@@ -262,14 +262,14 @@ Kein handgemaltes Dashboard ins Repo: das ist bei der ersten Zusatzspalte
 falsch. Stattdessen erzeugt aus `archives.toml`, `stations.toml`,
 `plots.toml`, dem Schema und `units.all_groups()`.
 
-- [ ] `src/weewx_evo/grafana/__init__.py`, `datasources.py`, `dashboards.py`,
+- [x] `src/weewx_evo/grafana/__init__.py`, `datasources.py`, `dashboards.py`,
       `panels.py`, `query_sqlite.py`
-- [ ] `weewx-evo grafana provision --out /data/grafana`
-- [ ] `datasources/` — eine je Archiv, plus die Live-Tabelle
-- [ ] `dashboards/` — Übersicht aller Stationen, Station-Detail, Betrieb,
+- [x] `weewx-evo grafana provision --out /data/grafana`
+- [x] `datasources/` — eine je Archiv, plus die Live-Tabelle
+- [x] `dashboards/` — Übersicht aller Stationen, Station-Detail, Betrieb,
       Sensorzustand (Batterie, Signal, Lücken) — plus **ein Panel je Plot**
       aus `plots.toml`
-- [ ] `${station}` als Datasource-Variable, damit ein Dashboard für n
+- [x] `${station}` als Datasource-Variable, damit ein Dashboard für n
       Konsolen reicht
 
 **Die Entscheidung, die alles trägt:** **Grafana darf nicht anders rechnen
@@ -305,10 +305,10 @@ Zahlen.
 
 ### 2.4 `deploy/compose.grafana.yml` — als Overlay
 
-- [ ] `GF_INSTALL_PLUGINS=frser-sqlite-datasource`, Provisioning gemountet,
+- [x] `GF_INSTALL_PLUGINS=frser-sqlite-datasource`, Provisioning gemountet,
       Archive read-only
-- [ ] anonymer Lesezugang als Option (Wandanzeige im Flur)
-- [ ] `docker compose -f compose.yml -f compose.grafana.yml up -d`
+- [x] anonymer Lesezugang als Option (Wandanzeige im Flur)
+- [x] `docker compose -f compose.yml -f compose.grafana.yml up -d`
 
 **Entscheidung: Overlay, nicht Ersatz.** Wer Grafana nicht will, gibt keine
 300 MB dafür her. Das `mem_limit: 256m` im bestehenden Compose steht mit
@@ -328,8 +328,8 @@ Zigbee2MQTT, ESPHome, Home Assistant und jeden selbstgebauten Sensor — der
 häufigste Fall für „noch ein Sensor dazu", und die Rollen-Mechanik
 (`outTemp` → `extraTemp3`) ist dafür schon gebaut.
 
-- [ ] `ingest/plugins/mqtt/` — Topic-Muster auf Feldnamen, `unit_groups()`
-- [ ] Falle: ein Broker ist ein **Sammler**, kein Parser. Eigener Thread, und
+- [x] `ingest/plugins/mqtt/` — Topic-Muster auf Feldnamen, `unit_groups()`
+- [x] Falle: ein Broker ist ein **Sammler**, kein Parser. Eigener Thread, und
       er darf hängen, ohne den Listener mitzunehmen.
 
 ### 3.2 Import
@@ -337,9 +337,9 @@ häufigste Fall für „noch ein Sensor dazu", und die Rollen-Mechanik
 `adopt.py` deckt weewx.sdb ab, kostenlos, weil es dieselbe Datei ist. Der
 eigene Docstring benennt die andere Hälfte.
 
-- [ ] `dumps.py` — MySQL und Postgres
-- [ ] `weewx-evo import csv`, WU-History
-- [ ] Falle: ein Import schreibt in `archive` und muss danach die
+- [x] `dumps.py` — MySQL und Postgres
+- [x] `weewx-evo import csv`, WU-History
+- [x] Falle: ein Import schreibt in `archive` und muss danach die
       Tagesstatistiken neu bauen, sonst ist der Cache älter als die Daten.
 
 ### 3.3 `uploads/influx.py`
@@ -364,9 +364,9 @@ Abgleichprüfung, die sagt, wo Punkte fehlen. Dazu 512 MB bis 1 GB RAM und
 Influx' eigene Brüche (1.x → 2.x → 3.x, InfluxQL → Flux → SQL), was für ein
 Projekt mit dieser Prämisse keine Kleinigkeit ist.
 
-- [ ] `uploads/influx.py`, `grafana/query_influx.py`
-- [ ] `rebuild` zieht die Senke mit
-- [ ] `weewx-evo upload check --compare` — Punktzahl hier gegen dort
+- [x] `uploads/influx.py`, `grafana/query_influx.py`
+- [x] `rebuild` zieht die Senke mit
+- [x] `weewx-evo upload check --compare` — Punktzahl hier gegen dort
 
 ### 3.4 Mehrere Archive in einem Diagramm
 
@@ -379,14 +379,14 @@ auch kann und nicht nur Grafana.
 
 ## In jedem Schritt gleich
 
-- [ ] Eine Einstellung geht ins Schema, sonst nirgends — `options.py` für den
+- [x] Eine Einstellung geht ins Schema, sonst nirgends — `options.py` für den
       Kern, `options()` am Plugin. Daraus entstehen Formular, Validierung,
       Dateikommentar und `--explain` von selbst
-- [ ] `ruff check src/ tools/ tests/` **vor** dem Commit; der Hook blockiert
-- [ ] Ein Werkzeug in `tools/`, eingetragen in `tools/runtests.py` und damit
+- [x] `ruff check src/ tools/ tests/` **vor** dem Commit; der Hook blockiert
+- [x] Ein Werkzeug in `tools/`, eingetragen in `tools/runtests.py` und damit
       im Docker-Lauf
-- [ ] Eine Seite in `docs/`, verlinkt in `docs/Home.md` und `_Sidebar.md`
-- [ ] Der Abschnitt in `CLAUDE.md` — mit den Fallen, nicht mit der
+- [x] Eine Seite in `docs/`, verlinkt in `docs/Home.md` und `_Sidebar.md`
+- [x] Der Abschnitt in `CLAUDE.md` — mit den Fallen, nicht mit der
       Funktionsbeschreibung
 
 ---
