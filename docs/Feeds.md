@@ -27,6 +27,8 @@ feeds/
   jsongenerator/     the series everything else stands on
   diagnostic/        draws what is actually on disk
     vendor/          its own uPlot, MIT, 51 KB
+  cheetah/           runs a WeeWX skin, unchanged -- see [Deck](Deck)
+  imagegenerator/    the same charts as PNG
 ```
 
 A feed that gains templates, stylesheets or a JS bundle keeps them next to its
