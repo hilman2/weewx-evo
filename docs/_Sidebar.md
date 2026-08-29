@@ -37,6 +37,7 @@
 - [Forecast](Forecast)
 - [Web server](Web-Server)
 - [API](API)
+- [Metrics](Metrics)
 
 **Operation**
 - [Configuration](Configuration)
