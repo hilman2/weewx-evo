@@ -208,6 +208,22 @@ class Language:
                       else value)
                 for key, value in found.items()}
 
+    def text(self, section: str, key: str, fallback: str = "") -> str:
+        """One word out of any section, or `fallback`.
+
+        The escape hatch for everything that is neither a reading, a month
+        nor a compass point -- the handful of structural words a page needs
+        around them ("today", "compare", "indoors"). The caller carries the
+        English, for the same reason this module does: a fallback that can
+        be missing is not one.
+
+        An untranslated key is not warned about. A language file with
+        fifteen of twenty words should show fifteen translated, not produce
+        five log lines every time a page is drawn.
+        """
+        found = (self.values.get(section) or {}).get(key)
+        return found if isinstance(found, str) and found else fallback
+
     def _sequence(self, section: str, key: str,
                   wanted: int) -> tuple[str, ...]:
         found = (self.values.get(section) or {}).get(key)

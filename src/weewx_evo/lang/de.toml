@@ -1,7 +1,7 @@
 # Was weewx-evo selbst schreibt, auf Deutsch.
 #
-# Nicht die Woerter einer Skin: die stehen in deren eigener
-# lang/de.conf und gewinnen ueberall, wo sie etwas sagen. Hier steht,
+# Nicht die Wörter einer Skin: die stehen in deren eigener
+# lang/de.conf und gewinnen überall, wo sie etwas sagen. Hier steht,
 # was der Kern schreibt, wenn keine Skin dazwischen ist -- die
 # Beschriftung in den Diagrammen, die Namen der Mondphasen, die
 # Himmelsrichtungen.
@@ -14,14 +14,14 @@ unit_system = "METRICWX"
 
 # Wie ein Datum hier geschrieben wird. `%x` und `%X` beantwortet strftime
 # sonst aus der Locale des Prozesses -- und im Image ist keine gesetzt,
-# also kaeme "08/27/26" auf einer deutschen Seite heraus.
+# also käme "08/27/26" auf einer deutschen Seite heraus.
 [formats]
 date = "%d.%m.%Y"
 time = "%H:%M:%S"
 datetime = "%d.%m.%Y %H:%M"
 
 [obs]
-outTemp = "Aussentemperatur"
+outTemp = "Außentemperatur"
 inTemp = "Innentemperatur"
 dewpoint = "Taupunkt"
 inDewpoint = "Taupunkt innen"
@@ -29,19 +29,19 @@ outHumidity = "Luftfeuchte"
 inHumidity = "Luftfeuchte innen"
 barometer = "Luftdruck"
 pressure = "Stationsdruck"
-altimeter = "Hoehenmesser"
-barometerRate = "Luftdruckaenderung"
+altimeter = "Höhenmesser"
+barometerRate = "Luftdruckänderung"
 windSpeed = "Windgeschwindigkeit"
 windDir = "Windrichtung"
-windGust = "Boen"
-windGustDir = "Boenrichtung"
+windGust = "Böen"
+windGustDir = "Böenrichtung"
 wind = "Wind"
 windvec = "Windvektor"
-windgustvec = "Boenvektor"
+windgustvec = "Böenvektor"
 windchill = "Windchill"
 windrun = "Windweg"
 heatindex = "Hitzeindex"
-appTemp = "Gefuehlte Temperatur"
+appTemp = "Gefühlte Temperatur"
 humidex = "Humidex"
 rain = "Regen"
 rainRate = "Regenrate"
@@ -49,18 +49,18 @@ hail = "Hagel"
 hailRate = "Hagelrate"
 snow = "Schnee"
 snowRate = "Schneerate"
-snowDepth = "Schneehoehe"
+snowDepth = "Schneehöhe"
 radiation = "Sonnenstrahlung"
 maxSolarRad = "Klarhimmel-Strahlung"
 UV = "UV-Index"
 ET = "Verdunstung"
 cloudbase = "Wolkenuntergrenze"
 heatdeg = "Heizgradtage"
-cooldeg = "Kuehlgradtage"
+cooldeg = "Kühlgradtage"
 growdeg = "Wachstumsgradtage"
 lightning_distance = "Blitzentfernung"
-lightning_strike_count = "Blitzeinschlaege"
-rxCheckPercent = "Signalqualitaet"
+lightning_strike_count = "Blitzeinschläge"
+rxCheckPercent = "Signalqualität"
 consBatteryVoltage = "Konsolenbatterie"
 supplyVoltage = "Versorgungsspannung"
 referenceVoltage = "Referenzspannung"
@@ -68,18 +68,18 @@ heatingVoltage = "Heizungsspannung"
 txBatteryStatus = "Senderbatterie"
 windBatteryStatus = "Windsensor-Batterie"
 rainBatteryStatus = "Regensensor-Batterie"
-outTempBatteryStatus = "Aussensensor-Batterie"
+outTempBatteryStatus = "Außensensor-Batterie"
 inTempBatteryStatus = "Innensensor-Batterie"
 pm1_0 = "PM1,0"
 pm2_5 = "PM2,5"
 pm10_0 = "PM10"
 
-# Messwerte, die es in Familien gibt. Die Nummer haengt der Kern an.
+# Messwerte, die es in Familien gibt. Die Nummer hängt der Kern an.
 [obs.numbered]
 extraTemp = "Temperatur"
 extraHumid = "Luftfeuchte"
 leafTemp = "Blatttemperatur"
-leafWet = "Blattnaesse"
+leafWet = "Blattnässe"
 soilTemp = "Bodentemperatur"
 soilMoist = "Bodenfeuchte"
 batteryStatus = "Batterie"
@@ -92,14 +92,14 @@ phases = ["Neumond", "zunehmende Sichel", "erstes Viertel",
           "letztes Viertel", "abnehmende Sichel"]
 
 [compass]
-# Sechzehn Punkte, dann das Wort fuer "gar kein Wind".
+# Sechzehn Punkte, dann das Wort für "gar kein Wind".
 directions = ["N", "NNO", "NO", "ONO", "O", "OSO", "SO", "SSO",
               "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
               "k. A."]
 north = "N"
 
 [months]
-# Fuer die Zeitachse eines Diagramms. Nicht ueber strftime, weil das
+# Für die Zeitachse eines Diagramms. Nicht über strftime, weil das
 # der Locale des Prozesses folgt und nicht dieser Einstellung: in
 # einem Container ohne gesetzte Locale kommt "May" statt "Mai".
 short = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun",
@@ -113,9 +113,9 @@ short = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 long = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag",
         "Samstag", "Sonntag"]
 
-# Was der Himmel macht, nach WMO-Code. Der Schluessel ist die Zahl,
-# weil die Zahl das ist, was die Quelle schickt -- eine Uebersetzung,
-# die am englischen Wortlaut haengt, bricht sobald jemand
+# Was der Himmel macht, nach WMO-Code. Der Schlüssel ist die Zahl,
+# weil die Zahl das ist, was die Quelle schickt -- eine Übersetzung,
+# die am englischen Wortlaut hängt, bricht sobald jemand
 # "Light rain showers" umformuliert.
 [weather]
 0 = "Klarer Himmel"
@@ -147,16 +147,50 @@ long = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag",
 96 = "Gewitter mit leichtem Hagel"
 99 = "Gewitter mit Hagel"
 
-# Die Woerter, die in einer Einheit stecken. Nur die, die anders
-# heissen -- "°C" ist ueberall "°C".
+# Die Wörter, die in einer Einheit stecken. Nur die, die anders
+# heißen -- "°C" ist überall "°C".
 [units]
 day = [" Tag", " Tage"]
 hour = [" Stunde", " Stunden"]
 minute = [" Minute", " Minuten"]
 second = [" Sekunde", " Sekunden"]
 meter = " m"
-foot = " Fuss"
+foot = " Fuß"
 mile_per_hour = " mph"
 degree_C_day = " °C-Tag"
 degree_F_day = " °F-Tag"
 
+# Die Wörter einer Übersichtsseite -- die vier Dashboards, die beiden
+# Auswahlfelder und die Handvoll Begriffe, die einen Titel zusammenhalten.
+# Alles andere steht schon in [obs]: ein Diagramm heißt nach dem, was es
+# zeigt, und das ist oben übersetzt.
+#
+# Was hier fehlt, bleibt englisch. Eine Datei mit zwölf von zwanzig
+# Wörtern zeigt zwölf übersetzt, statt gar nichts.
+[dashboard]
+weather = "Wetter"
+now = "Jetzt"
+one_location = "Ein Standort"
+compare = "Vergleich"
+operations = "Betrieb"
+charts = "Diagramme"
+
+day = "Tag"
+week = "Woche"
+month = "Monat"
+year = "Jahr"
+
+location = "Standort"
+reading = "Messwert"
+
+today = "heute"
+last_seen = "Zuletzt gehört"
+indoors = "Innen, Batterien und Signal"
+every_location = "alle Standorte"
+sun = "Sonne"
+
+about_compare = "Alle Standorte auf einer Achse. Der Messwert wird oben gewählt; die Legende nennt die Stationen."
+about_last_seen = "Wie lange es her ist, dass ein Standort zuletzt etwas geschrieben hat. Ein Archivintervall sind fünf Minuten, eine Viertelstunde also drei verpasste."
+about_interval = "Jeder Mittelwert ist damit gewichtet. Eine Stufe hier ist die Stelle, an der ein ungewichteter Mittelwert von den Seiten der Station abzuweichen beginnt."
+about_battery = "Ein Wert über null heißt bei den meisten Konsolen: Batterie wechseln."
+generated = "Erzeugt von `weewx-evo grafana provision` am {when}. Änderungen hier werden beim nächsten Lauf überschrieben; die Diagramme ändert man in `plots.toml` oder auf der Einstellungsseite."
