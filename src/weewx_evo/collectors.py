@@ -47,12 +47,13 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-#: What a collector can be. One for now; the shape is here because a second
-#: (a script that prints envelopes, an MQTT subscriber) is the same problem
-#: with a different fetch, and the naming and the settings page are all of
-#: what this module does.
+#: What a collector can be. Two so far, and they differ only in what they go
+#: and read: the naming, the endpoint and the settings page are the same
+#: problem either way, which is all of what this module does. A third -- a
+#: script that prints envelopes -- would add a line here and nothing else.
 KINDS = {
     "weewx-driver": "A WeeWX driver, running in its own process",
+    "mqtt": "A broker to subscribe to, in its own process",
 }
 
 #: Names that would collide with something the listener already answers to.
@@ -127,8 +128,19 @@ def register_names(registry: Any, settings: Any) -> list[str]:
     return claimed
 
 
-def options() -> list:
+def options(kind: str = "weewx-driver") -> list:
     """One collector's settings, for its page.
+
+    Per kind, because they have almost nothing in common: a WeeWX driver is
+    a `weewx.conf` and a serial port, a broker is an address and a map from
+    topics to field names. One page carrying both would ask a broker for its
+    catch-up interval and a USB console for its topic filter, and every
+    field somebody has to work out is not theirs is a field they might fill
+    in.
+
+    What *is* shared is the first group, and it is the only thing that has
+    to be: the kind decides the rest, so it has to be answerable before the
+    rest is drawn.
 
     `conf` is a WeeWX configuration file and not a copy of its contents. The
     settings a driver needs -- the serial port, the model, the sensor map --
@@ -138,14 +150,43 @@ def options() -> list:
     """
     from .options import Group, Option
 
+    kind = kind if kind in KINDS else "weewx-driver"
+    which = Group("The collector", "What this one is.", (
+        Option("kind", "What kind of collector this is",
+               kind="choice", default=kind, choices=tuple(KINDS.items()),
+               help="Both run in their own process and deliver over the "
+                    "loopback, so a serial port or a broker that stops "
+                    "answering cannot stop the archiver."),
+    ))
+
+    if kind == "mqtt":
+        from .ingest import mqttsub
+
+        return [
+            which,
+            Group("The broker", "Where it is, and what to listen to.",
+                  tuple(one for one in mqttsub.options()
+                        if one.name != "unit_system")),
+            Group("The readings", "What the topics mean.", (
+                Option("source", "Record its readings under this name",
+                       kind="text", default="",
+                       help="Empty means the collector's own name. This is "
+                            "the identity a station is matched on, so it is "
+                            "what to announce on the Stations page."),
+                Option("unit_system", "Units the broker publishes in",
+                       kind="choice", default="metricwx",
+                       choices=(("metricwx", "Celsius, mm, m/s"),
+                                ("metric", "Celsius, cm, km/h"),
+                                ("us", "Fahrenheit, inches, mph")),
+                       help="A broker states no units. Getting this wrong "
+                            "writes Fahrenheit into a Celsius column, and "
+                            "nothing downstream can tell."),
+            )),
+        ]
+
     return [
-        Group("The collector", "What it runs, and where.", (
-            Option("kind", "What kind of collector this is",
-                   kind="choice", default="weewx-driver",
-                   choices=tuple(KINDS.items()),
-                   help="A WeeWX driver runs in its own process and delivers "
-                        "over the loopback, so a serial port that stops "
-                        "answering cannot stop the archiver."),
+        which,
+        Group("What it runs", "The driver, and where its settings are.", (
             Option("conf", "The weewx.conf it is configured by",
                    kind="path", default="/etc/weewx/weewx.conf",
                    help="Its own file. The driver reads its settings from "

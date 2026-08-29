@@ -1785,6 +1785,144 @@ def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _mqtt_settings(args: argparse.Namespace, cfg: Settings) -> dict:
+    """One collector's settings, from the file and the arguments.
+
+    Named collector first, because that is the one with a page. The
+    arguments are for trying a broker out before writing anything down.
+    """
+    from . import collectors
+
+    found: dict = {}
+    name = getattr(args, "collector", None)
+    if name:
+        configured = collectors.configured(cfg)
+        if name not in configured:
+            raise SystemExit(
+                f"No collector called {name!r} in the configuration.\n"
+                f"Configured: {', '.join(sorted(configured)) or '(none)'}")
+        found = dict(configured[name])
+        if str(found.get("kind", "")) != "mqtt":
+            raise SystemExit(
+                f"Collector {name!r} is a {found.get('kind')!r}, not an MQTT "
+                f"one. `weewx-evo weewx-driver run --collector {name}` is "
+                f"probably what was meant.")
+
+    for key in ("host", "port", "topic", "username", "password", "tls",
+                "client_id", "unit_system", "bundle"):
+        value = getattr(args, key, None)
+        if value is not None:
+            found[key] = value
+
+    if not found.get("host"):
+        raise SystemExit("No broker. --host, or a collector in the "
+                         "configuration file.")
+
+    # A named collector delivers under its own name, so the packets can be
+    # told from another collector's. See `collectors.py`.
+    found["as_driver"] = name or "json"
+    found["source"] = found.get("source") or name or "mqtt"
+    return found
+
+
+def _mqtt_subscription(args: argparse.Namespace, cfg: Settings,
+                       dry_run: bool = False):
+    from .ingest import mqttsub
+
+    settings = _mqtt_settings(args, cfg)
+    # The map is a section of its own in the file, because a dozen topic
+    # names in a settings form is a textarea and a textarea is not a setting.
+    field_map = settings.pop("map", None) or settings.pop("field_map", None)
+    settings.pop("kind", None)
+    return mqttsub.Subscription(
+        field_map=field_map or {},
+        listener_host=getattr(args, "host_listener", None) or "127.0.0.1",
+        listener_port=(getattr(args, "listener_port", None)
+                       or cfg.get("port") or 8000),
+        token=cfg.get("token"), dry_run=dry_run,
+        **{k: v for k, v in settings.items()
+           if k in ("host", "port", "topic", "username", "password", "tls",
+                    "client_id", "unit_system", "source", "bundle",
+                    "as_driver")})
+
+
+def cmd_mqtt_check(args: argparse.Namespace) -> int:
+    """Subscribe, print what arrives, deliver nothing.
+
+    The command somebody runs first, and the reason it exists: a broker
+    publishes topics nobody wrote down, and the map cannot be written until
+    they are known. So this prints what it could not place as well as what it
+    could -- an unmapped topic is the output, not an error.
+    """
+    cfg = settings_for(args)
+    sub = _mqtt_subscription(args, cfg, dry_run=True)
+
+    print(f"Subscribing to {sub.topic} at {sub.host}:{sub.port} ...")
+    try:
+        sub.connect()
+    except Exception as exc:
+        print(f"Could not: {exc}", file=sys.stderr)
+        return 1
+
+    until = time.time() + max(1, int(getattr(args, "seconds", 10)))
+    try:
+        while time.time() < until:
+            sub.client.pump(0.5)
+            if sub.due():
+                sub.flush()
+        sub.flush()
+    finally:
+        sub._drop()
+
+    print(f"\n{sub.messages} message(s), {sub.packets} packet(s) they would "
+          f"have made.")
+    for packet in sub.sent[:5]:
+        readings = ", ".join(f"{k}={v}" for k, v in sorted(packet.data.items()))
+        print(f"  {packet.dateTime}  {readings}")
+    if sub.unmapped:
+        print("\nNothing named these, so they were dropped:")
+        for topic, count in sorted(sub.unmapped.items(), key=lambda r: -r[1]):
+            print(f"  {topic}  ({count})")
+        print("\nName the ones that are readings under [collectors.<name>.map],")
+        print("as topic-or-key = archive field. For example:")
+        print('  map = { temperature = "outTemp", humidity = "outHumidity" }')
+    elif not sub.messages:
+        print("\nNothing arrived. The topic filter may not match anything "
+              "the broker publishes; try --topic '#'.")
+    return 0
+
+
+def cmd_mqtt_run(args: argparse.Namespace) -> int:
+    """Subscribe and deliver, until stopped.
+
+    Its own process, like the WeeWX shim and for the same reason: a broker
+    that stops answering, or a reconnect that goes wrong, must not be able to
+    stop the archiver.
+    """
+    import signal
+
+    cfg = settings_for(args)
+    if not cfg.get("token"):
+        print("No upload token is set, so the listener would refuse every",
+              file=sys.stderr)
+        print("packet and this would run and deliver nothing.", file=sys.stderr)
+        return 1
+
+    sub = _mqtt_subscription(args, cfg, dry_run=getattr(args, "dry_run", False))
+
+    def bye(_signum, _frame):
+        sub.stop()
+
+    signal.signal(signal.SIGINT, bye)
+    signal.signal(signal.SIGTERM, bye)
+    sub.run()
+
+    said = sub.status()
+    log.info("mqtt collector stopped: %d message(s), %d packet(s)",
+             said["messages"], said["packets"])
+    return 0
+
+
 def cmd_weewx_driver_run(args: argparse.Namespace) -> int:
     """Run the driver and deliver what it produces to the listener.
 
@@ -2259,7 +2397,7 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
             name=f"collector:{name}", label=f"Collector: {name} ({kind})",
             kind="collector", help=collectors.describe(kind),
             groups=tuple(replace_group(group, f"collectors.{name}")
-                         for group in collectors.options())))
+                         for group in collectors.options(kind))))
 
     # One page per configured forecast source. Two of them is the ordinary
     # arrangement rather than the exception: a model for the numbers and a
@@ -4427,6 +4565,45 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--dry-run", action="store_true",
                    help="run the driver and deliver nothing.")
     q.set_defaults(func=cmd_weewx_driver_run)
+
+    p = sub.add_parser("mqtt", help="subscribe to a broker and deliver what "
+                                    "it publishes")
+    mqtt_sub = p.add_subparsers(dest="mqtt_command", required=True)
+
+    def add_mqtt_common(q):
+        add_common(q)
+        q.add_argument("--collector", default=None,
+                       help="a collector named in the configuration file. Its "
+                            "settings are used, and its packets arrive under "
+                            "its own name, so a station can be announced "
+                            "for it.")
+        # None everywhere, so a value here does not silently outrank the
+        # configuration file. Same trap as anywhere else in this parser.
+        q.add_argument("--broker", dest="host", default=None,
+                       help="where the broker is")
+        q.add_argument("--port", type=int, default=None,
+                       help="the broker's port. 1883, or 8883 with --tls.")
+        q.add_argument("--topic", default=None,
+                       help="what to subscribe to. `#` is everything.")
+        q.add_argument("--username", default=None)
+        q.add_argument("--tls", action="store_const", const=True, default=None)
+
+    q = mqtt_sub.add_parser("check", help="subscribe, print what arrives, "
+                                         "deliver nothing")
+    add_mqtt_common(q)
+    q.add_argument("--seconds", type=int, default=10,
+                   help="how long to listen for")
+    q.set_defaults(func=cmd_mqtt_check)
+
+    q = mqtt_sub.add_parser("run", help="deliver to the listener, until stopped")
+    add_mqtt_common(q)
+    q.add_argument("--listener", dest="host_listener", default=None,
+                   help="the listener's address. Loopback by default.")
+    q.add_argument("--listener-port", type=int, default=None,
+                   help="the listener's port")
+    q.add_argument("--dry-run", action="store_true",
+                   help="subscribe and deliver nothing")
+    q.set_defaults(func=cmd_mqtt_run)
 
     p = sub.add_parser("columns", help="readings that have nowhere to live")
     add_common(p)

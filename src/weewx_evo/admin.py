@@ -1407,7 +1407,11 @@ def _collector_nav(admin: Any, active: str) -> list[str]:
     inside its empty state, so the moment one existed there was no way from
     this page to a second, which reads as the feature not existing.
     """
-    found = sorted(s for s in admin.schemas if s.kind == "collector")
+    # By name. `Schema` has no ordering, so a bare `sorted` raises the
+    # moment there are two of them -- and it is the navigation, so
+    # every page of the settings site answers 500 at once.
+    found = sorted((s for s in admin.schemas if s.kind == "collector"),
+                   key=lambda one: one.name)
     current = (" aria-current='page'"
                if active == "new-collector"
                or active.startswith("collector:") else "")

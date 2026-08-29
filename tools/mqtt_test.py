@@ -75,6 +75,9 @@ class Broker(threading.Thread):
         self.connects: list[dict] = []
         self.pings = 0
         self.protocol_errors: list[str] = []
+        #: The connection being served, so the broker can publish *to* the
+        #: client. Every test until now only ever read from it.
+        self._live: socket.socket | None = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
 
@@ -119,6 +122,7 @@ class Broker(threading.Thread):
 
     def _serve(self, conn: socket.socket) -> None:
         published = 0
+        self._live = conn
         try:
             kind, _flags, body = self._packet(conn)
             if kind != 1:
@@ -194,6 +198,7 @@ class Broker(threading.Thread):
         except (ConnectionError, OSError, IndexError, struct.error):
             return
         finally:
+            self._live = None
             try:
                 conn.close()
             except OSError:
@@ -219,6 +224,23 @@ class Broker(threading.Thread):
     def messages(self, count: int, seconds: float = 5.0) -> bool:
         return self.until(lambda b: len(b.published) >= count, seconds)
 
+    def deliver(self, topic: str, payload: bytes, qos: int = 0) -> bool:
+        """Publish to the connected client. The direction a collector needs.
+
+        Waits for a connection rather than assuming one: the subscriber
+        connects on its own thread, and a test that publishes into nothing
+        fails somewhere else entirely.
+        """
+        if not self.until(lambda b: b._live is not None, 5.0):
+            return False
+        body = encode_string(topic) + payload
+        head = bytes([(3 << 4) | (qos << 1)]) + encode_length(len(body))
+        try:
+            self._live.sendall(head + body)
+        except OSError:
+            return False
+        return True
+
     def stop(self) -> None:
         self._stop.set()
         try:
@@ -230,6 +252,197 @@ class Broker(threading.Thread):
 # ---------------------------------------------------------------------------
 # The checks.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# The other direction: a broker as a station.
+# ---------------------------------------------------------------------------
+
+def a_subscription(broker: Broker | None = None, **kw):
+    """A subscription, delivering nothing.
+
+    Without a broker for the checks that are about naming readings: those
+    need no socket, and one they do not use is a port left open on every
+    run.
+    """
+    from weewx_evo.ingest import mqttsub
+
+    settings = {"host": "127.0.0.1", "topic": "#", "bundle": 0.0,
+                "dry_run": True}
+    if broker is not None:
+        settings["port"] = broker.port
+    settings.update(kw)
+    return mqttsub.Subscription(**settings)
+
+
+def test_a_json_document_becomes_one_packet() -> None:
+    """Zigbee2MQTT's shape: one topic, several readings.
+
+    The map is from key to archive field name, and a key nobody named is
+    counted rather than guessed at. Which column a reading belongs in is the
+    one decision that cannot be undone afterwards.
+    """
+    sub = a_subscription()
+    sub.field_map = {"temperature": "outTemp", "humidity": "outHumidity"}
+    sub.take("zigbee2mqtt/garten",
+             b'{"temperature": 21.5, "humidity": 60, "linkquality": 84}')
+
+    packet = sub.flush()
+    check("one packet", packet is not None, True)
+    check("with both named readings", sorted(packet.data),
+          ["outHumidity", "outTemp"])
+    check("the temperature", packet.data["outTemp"], 21.5)
+    check("and the unnamed key is counted, not guessed at",
+          "zigbee2mqtt/garten/linkquality" in sub.unmapped, True)
+
+
+def test_one_topic_per_value_becomes_one_packet_too() -> None:
+    """The other ordinary shape, and the reason for the bundle window.
+
+    A packet per message would give an archive interval two records that each
+    know half of what happened -- `outTemp` alone a second before
+    `outHumidity` alone.
+    """
+    sub = a_subscription(bundle=5.0)
+    sub.field_map = {"home/garden/temp": "outTemp",
+                     "home/garden/hum": "outHumidity"}
+    sub.take("home/garden/temp", b"21.5")
+    check("nothing goes out yet", sub.due(), False)
+    sub.take("home/garden/hum", b"60")
+
+    packet = sub.flush()
+    check("both readings in one packet", sorted(packet.data),
+          ["outHumidity", "outTemp"])
+
+
+def test_a_wildcard_in_the_map_matches_but_an_exact_name_wins() -> None:
+    """A map with both `home/+/temp` and `home/shed/temp` means the specific
+    one where it applies. Dictionary order is not somewhere to put that."""
+    sub = a_subscription()
+    sub.field_map = {"home/+/temp": "extraTemp1", "home/shed/temp": "outTemp"}
+
+    check("the specific one wins", sub._named_by_topic("home/shed/temp"),
+          "outTemp")
+    check("and the wildcard covers the rest",
+          sub._named_by_topic("home/garage/temp"), "extraTemp1")
+
+
+def test_a_payload_that_says_when_keeps_its_own_time() -> None:
+    """Timestamping on arrival is a different measurement, and it looks
+    identical afterwards."""
+    sub = a_subscription()
+    sub.field_map = {"temperature": "outTemp"}
+    sub.take("s", b'{"dateTime": 1756308600, "temperature": 21.5}')
+    check("the payload's own time", sub.flush().dateTime, 1756308600)
+
+    sub.take("s", b'{"temperature": 21.5}')
+    stamped = sub.flush().dateTime
+    check("and arrival where there is none",
+          abs(stamped - int(time.time())) < 5, True)
+
+
+def test_what_a_broker_publishes_that_is_not_a_number() -> None:
+    """Strings, booleans and nulls all turn up on a broker."""
+    from weewx_evo.ingest.mqttsub import _number
+
+    check("a string number", _number("21.5"), 21.5)
+    check("a boolean is a number", _number(True), 1.0)
+    check("false too", _number(False), 0.0)
+    check("null is nothing", _number(None), None)
+    check("and a word is nothing", _number("ON"), None)
+    check("nor an empty string", _number("  "), None)
+
+
+def test_a_bare_number_on_an_unnamed_topic_is_dropped() -> None:
+    """Counted and named in `check`, because the output somebody needs is
+    the list of topics they have not written down yet."""
+    sub = a_subscription()
+    sub.take("home/somewhere/else", b"42")
+    check("nothing was made of it", sub.flush(), None)
+    check("but it is named", sub.unmapped.get("home/somewhere/else"), 1)
+
+
+def test_it_subscribes_and_reads_what_the_broker_sends() -> None:
+    """The whole way through, against a real socket.
+
+    Not a mock: the thing being checked is that our own client, turned
+    around, reads a PUBLISH the way a broker sends one.
+    """
+    broker = Broker()
+    broker.start()
+    try:
+        sub = a_subscription(broker)
+        sub.field_map = {"temperature": "outTemp"}
+        sub.connect()
+        check("it subscribed",
+              broker.until(lambda b: b.subscribed == ["#"]), True)
+
+        broker.deliver("zigbee2mqtt/garten", b'{"temperature": 19.25}')
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not sub.messages:
+            sub.client.pump(0.1)
+        check("the message arrived", sub.messages, 1)
+
+        packet = sub.flush()
+        check("and became a reading", packet.data.get("outTemp"), 19.25)
+    finally:
+        sub._drop()
+        broker.stop()
+
+
+def test_a_broker_that_refuses_permanently_is_not_retried() -> None:
+    """Bad credentials do not become better by asking every thirty seconds
+    for a week. The log line is the useful output."""
+    broker = Broker(refuse=4)          # bad user name or password
+    broker.start()
+    try:
+        sub = a_subscription(broker)
+        started = time.monotonic()
+        sub.run()
+        check("it gave up rather than looping", time.monotonic() - started < 5,
+              True)
+        check("and said why", "refused" in sub.last_error.lower()
+              or "password" in sub.last_error.lower(), True)
+    finally:
+        broker.stop()
+
+
+def test_a_listener_that_is_not_there_drops_rather_than_queues() -> None:
+    """A queue here would grow through an outage and then deliver an hour of
+    stale readings. The next message is seconds away and says the same."""
+    sub = a_subscription()
+    sub.dry_run = False
+    sub.listener_port = 1          # nothing listens here
+    sub.token = "x" * 32
+    sub.field_map = {"temperature": "outTemp"}
+    sub.take("s", b'{"temperature": 21.5}')
+    sub.flush()
+
+    check("it said what happened", bool(sub.last_error), True)
+    check("and held nothing back", sub._holding, {})
+
+
+def test_the_collector_kinds_include_it() -> None:
+    """A collector is a name at the listener and a page, whatever it fetches."""
+    from weewx_evo import collectors
+
+    check("mqtt is one", "mqtt" in collectors.KINDS, True)
+    check("and it is described", bool(collectors.describe("mqtt")), True)
+
+
+def test_every_option_has_a_default_it_would_accept() -> None:
+    """A setting whose default fails its own validation is one nobody can
+    save -- and rendering the page parses the value it is about to show, so
+    the whole page answers 500."""
+    from weewx_evo import options as option_defs
+    from weewx_evo.ingest import mqttsub
+
+    for option in mqttsub.options():
+        schema = option_defs.Schema(
+            name="mqtt", label="MQTT",
+            groups=(option_defs.Group("", (option,)),))
+        _parsed, errors = schema.parse({option.name: str(option.default)})
+        check(f"{option.name} accepts its own default", errors, {})
+
 
 def test_connect_bytes() -> None:
     """CONNECT is a byte layout. Every field is checked, not assumed."""
@@ -585,6 +798,19 @@ def main() -> int:
     test_home_assistant_discovery()
     with tempfile.TemporaryDirectory() as tmp:
         test_the_live_path(Path(tmp))
+
+    # The other direction: a broker as a station.
+    test_a_json_document_becomes_one_packet()
+    test_one_topic_per_value_becomes_one_packet_too()
+    test_a_wildcard_in_the_map_matches_but_an_exact_name_wins()
+    test_a_payload_that_says_when_keeps_its_own_time()
+    test_what_a_broker_publishes_that_is_not_a_number()
+    test_a_bare_number_on_an_unnamed_topic_is_dropped()
+    test_it_subscribes_and_reads_what_the_broker_sends()
+    test_a_broker_that_refuses_permanently_is_not_retried()
+    test_a_listener_that_is_not_there_drops_rather_than_queues()
+    test_the_collector_kinds_include_it()
+    test_every_option_has_a_default_it_would_accept()
 
     print()
     for failure in FAILURES:
