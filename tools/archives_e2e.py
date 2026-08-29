@@ -70,6 +70,11 @@ READINGS = {
 
 failures = 0
 gaps: list[str] = []
+#: Which checks failed, so the summary can name them. `runtests.py` shows the
+#: last few lines of a failing tool, and this one prints forty lines of the
+#: service's own log before its verdict -- so "1 check(s) failed" was all
+#: that survived, and finding out which one meant running it again by hand.
+failed: list[str] = []
 
 
 def check(what: str, got: object, want: object) -> bool:
@@ -77,7 +82,9 @@ def check(what: str, got: object, want: object) -> bool:
     ok = got == want
     tail = "" if ok else f"  (wanted {want!r})"
     print(f"  {'ok  ' if ok else 'FAIL'} {what}: {got!r}{tail}")
-    failures += 0 if ok else 1
+    if not ok:
+        failures += 1
+        failed.append(f"{what}: {got!r} (wanted {want!r})")
     return ok
 
 
@@ -482,7 +489,9 @@ def main() -> int:
             print(f"  - {one}")
         print()
     if failures:
-        print(f"{failures} check(s) failed")
+        print(f"{failures} check(s) failed:")
+        for one in failed:
+            print(f"  {one}")
         return 1
     print("two archives: ingest, archiver, feeds and exports keep them apart")
     return 0
