@@ -33,7 +33,7 @@
     #if 'logo_image' in $Extras
     <img class="logo" src="$Extras['logo_image']" alt="$gettext('Logo')" />
     #else
-      #include "includes/icons/wdc.svg"
+      #include "includes/icons/deck.svg"
     #end if
     <span class="header__station">$station.location</span>
   </a>
