@@ -104,6 +104,7 @@ sitting next to it.
 | [Web-Server](Web-Server) | Serving the feeds locally |
 | [Grafana](Grafana) | Dashboards for more than one console, through InfluxDB |
 | [Notifications](Notifications) | Who hears about it when something stops |
+| [Maintenance](Maintenance) | Backup, integrity, and reclaiming space |
 
 ### Operation
 

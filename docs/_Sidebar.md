@@ -32,6 +32,7 @@
 - [Uploads](Uploads)
 - [Grafana](Grafana)
 - [Notifications](Notifications)
+- [Maintenance](Maintenance)
 - [MQTT](MQTT)
 - [Forecast](Forecast)
 - [Web server](Web-Server)
