@@ -205,12 +205,17 @@ every minute. A changed dashboard needs no restart; a new datasource does.
 program is that publishing needs nothing reachable: a feed writes files and an
 [export](Exports) puts them on a web host. Grafana cannot be uploaded.
 
-Three ways out, and only the last fits this program: keep Grafana internal and
-publish [Deck](Deck) as before; open Grafana behind a reverse proxy and use
-its shared dashboards, which needs a domain and a certificate; or render
-panels to PNG through Grafana's render API into a directory and let the
-existing FTP export carry them. The last is why every panel here has to be
-legible on its own at 1200×500.
+So the split is deliberate. **Grafana is the operator's cockpit; [Deck](Deck)
+is the published page.** An installation that wants dashboards on the open
+internet puts Grafana behind a reverse proxy and uses its shared dashboards,
+which needs a domain and a certificate — the two things the rest of this
+program is built to avoid needing.
+
+Rendering panels to PNG through Grafana's render API and letting the FTP
+export carry them was considered and **decided against**: it needs a
+Chromium container to publish pictures of charts that Deck already draws from
+the same data. Panels are still written so that each is legible on its own at
+1200×500, because that is what a screen on a wall wants as well.
 
 **Forecast icons.** The forecast lives in `forecast.sdb` and the upload writes
 archive records, so there is nothing in the bucket to draw yet.

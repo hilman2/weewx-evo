@@ -401,3 +401,4 @@ auch kann und nicht nur Grafana.
 | Zeitzone je Archiv | `archive_day_*` ist auf lokale Mitternacht geschlüsselt — das wäre eine Änderung an der Arithmetik. Offene Frage in `docs/Stations-and-Archives.md` |
 | MQTT-Broker mitliefern | war gebaut, ist wieder raus, weil es an Zertifikaten bricht |
 | Views in die Archivdatei | die eine Regel: WeeWX muss die Datei weiterbenutzen können. Additive Schemaobjekte sind ein Risiko für nichts |
+| Ein Grafana-Render-Feed | Panels als PNG über Grafanas Render-API, per FTP hoch. Braucht einen Chromium-Container, um Bilder von Diagrammen zu veröffentlichen, die Deck aus denselben Daten schon zeichnet. Grafana ist das Cockpit, Deck die Seite. |

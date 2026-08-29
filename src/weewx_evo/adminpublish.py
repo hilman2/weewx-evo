@@ -311,6 +311,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
   <a class="button" href="./new-feed">Add a feed</a>
   <a class="button quiet" href="./new-export">Add an export</a>
   <a class="button quiet" href="./new-upload">Add an upload</a>
+  <a class="button quiet" href="./new-notify">Add a notification</a>
 </div>
 {NEWLINE.join(blocks)}
 {loose}

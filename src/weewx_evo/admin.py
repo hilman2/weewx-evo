@@ -43,6 +43,7 @@ from . import (
 )
 from . import archives as archive_defs
 from . import config as config_file
+from . import notify as notify_registry
 from .netaccess import PRIVATE_ONLY, Access
 from .options import UNITS, Group, Invalid, Option, Schema, split_duration
 from .ratelimit import Limits
@@ -164,7 +165,7 @@ NEWLINE = chr(10)
 #: listed. One list, used by both the router and the renderer, because two
 #: lists is how one of them ends up short.
 ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
-             "new-collector", "new-plot", "import-plots",
+             "new-notify", "new-collector", "new-plot", "import-plots",
              "new-station", "new-archive")
 
 #: Pages that are neither a schema nor a form to create one. They render
@@ -442,6 +443,36 @@ class Admin:
             try:
                 config_file.write(self.path, current, self.schemas)
             except Exception as exc:
+                return f"Could not write {self.path}: {exc}"
+        self.refresh()
+        return ""
+
+    def add_channel(self, name: str, kind: str) -> str:
+        """Create a notification channel. Returns an error, or empty.
+
+        Name and kind only, like an upload: asking for a server and a
+        password before there is anything to save them in is how a form
+        loses what somebody typed.
+        """
+        if self.read_only:
+            return "This admin page was started read-only."
+        name = (name or "").strip().lower()
+        if not NAME.match(name):
+            return ("A name may hold lowercase letters, digits, - and _, and "
+                    "must start with a letter. It becomes a heading.")
+        if kind not in notify_registry.kinds():
+            return (f"{kind!r} is not one of: "
+                    f"{', '.join(notify_registry.kinds())}")
+
+        with self._lock:
+            current = self.config()
+            if config_file.get(current, f"notify.{name}") is not None:
+                return f"There is already a channel called {name!r}."
+            config_file.put(current, f"notify.{name}.kind", kind)
+            try:
+                config_file.write(self.path, current, self.schemas)
+            except Exception as exc:
+                log.exception("could not write the configuration")
                 return f"Could not write {self.path}: {exc}"
         self.refresh()
         return ""
@@ -957,6 +988,66 @@ def new_export_page(admin: Admin, error: str = "", form: dict | None = None) -> 
 </section>'''
 
 
+def notify_kind_choices() -> list[tuple[str, str, str]]:
+    """The channels there are, from the registry rather than from a list."""
+    out = []
+    for kind in notify_registry.kinds():
+        factory = notify_registry.DEFAULT.factory_for(kind)
+        out.append((kind, getattr(factory, "label", kind),
+                    notify_registry.describe(kind)))
+    return out
+
+
+def new_notify_page(admin: Admin, error: str = "",
+                    form: dict | None = None) -> str:
+    """The form that creates one. A name and a way of reaching somebody."""
+    form = form or {}
+    kinds = notify_kind_choices()
+    # Email first: everybody has an address, and it is the one that needs
+    # nothing installed anywhere.
+    kinds.sort(key=lambda row: row[0] != "email")
+    chosen = form.get("kind") or (kinds[0][0] if kinds else "")
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
+        for kind, label, _summary in kinds)
+    explained = "".join(
+        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
+        for _kind, label, summary in kinds if summary)
+    problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    return f'''
+<section class="group">
+  <p class="lede">Somewhere to send word when a station goes quiet, a battery
+     goes flat, or an export keeps failing. Nothing about the weather: a
+     frost warning is a matter of taste, and it must not arrive in the same
+     inbox as the message that says the station is dead.</p>
+  {problem}
+  <form method="post" action="./new-notify">
+    <div class="field">
+      <label for="f-name">Name</label>
+      <input type="text" id="f-name" name="name" required
+             value="{html.escape(str(form.get("name", "")))}"
+             placeholder="mail" autocomplete="off" spellcheck="false">
+      <p class="help">Lowercase letters, digits, - and _. It becomes a
+         heading here and nothing else.</p>
+    </div>
+    <div class="field">
+      <label for="f-kind">How</label>
+      <select id="f-kind" name="kind">{options}</select>
+      <ul class="kinds">{explained}</ul>
+    </div>
+    <div class="actions">
+      <button class="button" type="submit">Add it</button>
+      <a class="button quiet" href="./publishing">Cancel</a>
+    </div>
+  </form>
+  <p class="help">Two of these rather than one, if you can. A message about
+     the network, sent over the network, is the alert most likely to be the
+     one that does not arrive.</p>
+</section>
+'''
+
+
 def new_upload_page(admin: Admin, error: str = "",
                     form: dict | None = None) -> str:
     """The form that creates one. A name and a service."""
@@ -1464,6 +1555,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         maker = {"new-feed": new_feed_page, "new-upload": new_upload_page,
                  "new-export": new_export_page,
                  "new-collector": new_collector_page,
+                 "new-notify": new_notify_page,
                  "new-forecast": new_forecast_page}[active]
         body = [maker(admin, errors.get("", ""), form)]
     else:
@@ -2506,10 +2598,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._archive_action(action, parts, form)
             return
 
-        if action in ("new-export", "new-upload", "new-forecast"):
+        if action in ("new-export", "new-upload", "new-forecast",
+                      "new-notify"):
             add = {"new-export": self.admin.add_export,
                    "new-upload": self.admin.add_upload,
-                   "new-forecast": self.admin.add_forecast}[action]
+                   "new-forecast": self.admin.add_forecast,
+                   "new-notify": self.admin.add_channel}[action]
             error = add(form.get("name", ""), form.get("kind", ""))
             if error:
                 self._reply(200, page(self.admin, action,

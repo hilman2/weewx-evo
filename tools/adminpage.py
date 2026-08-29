@@ -895,6 +895,7 @@ def main() -> int:
         from weewx_evo import collectors as collector_defs
         from weewx_evo import exports as export_registry
         from weewx_evo import feeds as feed_registry
+        from weewx_evo import notify as notify_registry
         from weewx_evo.admin import upload_kinds
 
         for what, kinds in (
@@ -903,6 +904,7 @@ def main() -> int:
                 # publishes them, so it is not offered here. Checked below.
                 ("upload", sorted(upload_kinds())),
                 ("export", sorted(export_registry.DEFAULT.kinds())),
+                ("notify", sorted(notify_registry.kinds())),
                 ("collector", sorted(collector_defs.KINDS)),
                 ("feed", sorted(feed_registry.kinds()))):
             for kind in kinds:

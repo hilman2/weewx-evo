@@ -2220,6 +2220,26 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
             replace_group(group, f"uploads.{name}") for group in schema.groups)
         schemas.append(schema)
 
+    # One page per configured notification channel. Two of them is the
+    # arrangement to aim for rather than the exception: a message about the
+    # network, sent over the network, is the alert most likely to be the one
+    # that does not arrive.
+    for name, settings in sorted((configured.get("notify") or {}).items()):
+        if not isinstance(settings, dict):
+            continue
+        kind = str(settings.get("kind", "")).strip()
+        factory = notify_registry.DEFAULT.factory_for(kind)
+        if factory is None:
+            continue
+        schema = option_defs.schema_of(
+            factory, name=f"notify:{name}",
+            label=f"Notify: {name} ({kind})", kind="notify")
+        if schema is None:
+            continue
+        schema.groups = tuple(
+            replace_group(group, f"notify.{name}") for group in schema.groups)
+        schemas.append(schema)
+
     # One page per configured collector. A collector is a *process*, not
     # something this one runs -- it is where the hardware is, possibly on
     # another machine -- so its page configures it and does not start it.
