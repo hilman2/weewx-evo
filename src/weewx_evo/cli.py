@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from . import archives as archives_module
-from . import collectors, units, watchdog, weewxconf
+from . import collectors, maintenance, units, watchdog, weewxconf
 from . import config as config_file
 from . import exports as export_registry
 from . import feedrunner as feed_runner
@@ -3698,6 +3698,126 @@ def build_notify_runner(args: argparse.Namespace, cfg: Settings, live: Any,
         station_name=str(cfg.get("station.name") or ""))
 
 
+def _databases(args: argparse.Namespace, cfg: Settings) -> list[tuple[str, Path]]:
+    """Every database this installation keeps, by name.
+
+    The archives first, because those are the ones that cannot be rebuilt.
+    The live table and the forecast are here too and are named as what they
+    are -- both are replaceable, and somebody deciding what to copy nightly
+    should be told which is which rather than left to guess from a filename.
+    """
+    found: list[tuple[str, Path]] = []
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+
+    seen: set[Path] = set()
+    for archive in read_archives(args, cfg).all():
+        # Relative against the configuration file, the same rule as
+        # `open_archive` -- an archive named in archives.toml would otherwise
+        # be backed up from wherever the command was typed.
+        where = Path(archive.file)
+        if not where.is_absolute() and base is not None:
+            where = base / where
+        if where not in seen:
+            seen.add(where)
+            found.append((f"archive:{archive.name}", where))
+    return found
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    """Copy the archive safely, while the station carries on.
+
+    `sqlite3.Connection.backup`, not a file copy. See maintenance.py: with
+    WAL on, the file on disk is not the database, and a copy of it opens
+    perfectly while missing everything since the last checkpoint.
+    """
+    cfg = settings_for(args)
+    into = Path(args.into) if args.into else None
+    problems = 0
+
+    for name, where in _databases(args, cfg):
+        if not where.exists():
+            print(f"  {name}: no database at {where}")
+            problems += 1
+            continue
+
+        target = into or where.parent / "backups"
+        tight = maintenance.enough_room(where, target)
+        if tight:
+            # Asked before rather than found out during. A copy that fills
+            # the disk can stop the archiver writing.
+            print(f"  {name}: not enough room -- {tight}")
+            problems += 1
+            continue
+
+        copy = maintenance.backup(where, into=target, keep=args.keep)
+        if not copy.ok:
+            print(f"  {name}: {copy.summary()}")
+            problems += 1
+            continue
+        maintenance.owner_readable_only(copy.path)
+
+        # The check people skip, and the only one that matters: a backup
+        # nobody has opened is a hope.
+        wrong = maintenance.restorable(copy.path)
+        if wrong:
+            print(f"  {name}: written, but it does not read back -- {wrong}")
+            problems += 1
+            continue
+        print(f"  {name}: {copy.path}")
+        print(f"    {copy.summary()}, opens and holds records")
+        for gone in copy.removed:
+            print(f"    removed {gone.name}")
+    return 1 if problems else 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Is the file sound, and do the summaries still follow from the records?
+
+    Two questions, and the second is ours. `archive_day_*` is a cache: all of
+    it is derivable from `archive`, and a day that no longer follows can be
+    repaired with `rebuild`. Nothing here writes.
+    """
+    cfg = settings_for(args)
+    problems = 0
+
+    for name, where in _databases(args, cfg):
+        verdict = maintenance.verify(where, days=args.days, deep=args.deep)
+        print(f"  {name}: {verdict.summary()}")
+        if verdict.problems:
+            problems += 1
+            for said in verdict.problems[:6]:
+                print(f"    {said}")
+        if verdict.days:
+            problems += 1
+            print(f"    {len(verdict.days)} day(s) whose summaries do not "
+                  f"follow from the records:")
+            for start in verdict.days[:6]:
+                stamp = time.strftime("%Y-%m-%d", time.localtime(start))
+                print(f"      {stamp}   weewx-evo rebuild {start} "
+                      f"{start + 86400}")
+        if verdict.ok:
+            print("    sound, and the summaries follow")
+    return 1 if problems else 0
+
+
+def cmd_vacuum(args: argparse.Namespace) -> int:
+    """Rewrite a database without its free pages."""
+    cfg = settings_for(args)
+    for name, where in _databases(args, cfg):
+        if not where.exists():
+            continue
+        room = maintenance.space(where)
+        if room["free"] < args.least * 1_048_576 and not args.force:
+            print(f"  {name}: {room['free'] / 1_048_576:.1f} MB to reclaim, "
+                  f"which is under the {args.least} MB threshold. --force "
+                  f"to do it anyway.")
+            continue
+        before, after = maintenance.vacuum(where)
+        print(f"  {name}: {before / 1_048_576:.1f} MB -> "
+              f"{after / 1_048_576:.1f} MB")
+    return 0
+
+
 def cmd_notify_list(args: argparse.Namespace) -> int:
     """What is configured, and what could be."""
     entries = configured_notify(args)
@@ -4396,6 +4516,32 @@ def main(argv: list[str] | None = None) -> int:
                    help="skip the diagnostic page that draws it all")
     q.add_argument("--plots", default=None)
     q.set_defaults(func=cmd_plots_run)
+
+    p = sub.add_parser("backup", help="copy the archive, safely, while it runs")
+    add_common(p)
+    p.add_argument("--into", type=Path, default=None,
+                   help="where to put it (default: backups/ beside the "
+                        "database)")
+    p.add_argument("--keep", type=int, default=7,
+                   help="how many to keep (default: 7, zero keeps all)")
+    p.set_defaults(func=cmd_backup)
+
+    p = sub.add_parser("verify",
+                       help="is it sound, and do the summaries follow?")
+    add_common(p)
+    p.add_argument("--days", type=int, default=0,
+                   help="only the most recent days (default: all of them)")
+    p.add_argument("--deep", action="store_true",
+                   help="walk every index as well. Minutes on a large file.")
+    p.set_defaults(func=cmd_verify)
+
+    p = sub.add_parser("vacuum", help="reclaim the space a deletion left")
+    add_common(p)
+    p.add_argument("--least", type=int, default=10,
+                   help="skip unless this many MB would come back "
+                        "(default: 10)")
+    p.add_argument("--force", action="store_true")
+    p.set_defaults(func=cmd_vacuum)
 
     p = sub.add_parser("notify",
                        help="who hears about it when something stops")
