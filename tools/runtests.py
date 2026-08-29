@@ -137,6 +137,8 @@ def tests() -> list[Test]:
              "the MQTT client, against a broker started for the test"),
         Test("influx", ["influx_test.py"],
              "the archive as line protocol, and which answers mean stop"),
+        Test("grafana", ["grafana_test.py"],
+             "the generated dashboards: layout, units, queries, language"),
         Test("realtime", ["realtime_test.py"],
              "the realtime files, field by field"),
         Test("forecast", ["forecast_test.py"],

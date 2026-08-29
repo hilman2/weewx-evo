@@ -159,3 +159,38 @@ foot = " Fuß"
 mile_per_hour = " mph"
 degree_C_day = " °C-Tag"
 degree_F_day = " °F-Tag"
+
+# Die Wörter einer Übersichtsseite -- die vier Dashboards, die beiden
+# Auswahlfelder und die Handvoll Begriffe, die einen Titel zusammenhalten.
+# Alles andere steht schon in [obs]: ein Diagramm heißt nach dem, was es
+# zeigt, und das ist oben übersetzt.
+#
+# Was hier fehlt, bleibt englisch. Eine Datei mit zwölf von zwanzig
+# Wörtern zeigt zwölf übersetzt, statt gar nichts.
+[dashboard]
+weather = "Wetter"
+now = "Jetzt"
+one_location = "Ein Standort"
+compare = "Vergleich"
+operations = "Betrieb"
+charts = "Diagramme"
+
+day = "Tag"
+week = "Woche"
+month = "Monat"
+year = "Jahr"
+
+location = "Standort"
+reading = "Messwert"
+
+today = "heute"
+last_seen = "Zuletzt gehört"
+indoors = "Innen, Batterien und Signal"
+every_location = "alle Standorte"
+sun = "Sonne"
+
+about_compare = "Alle Standorte auf einer Achse. Der Messwert wird oben gewählt; die Legende nennt die Stationen."
+about_last_seen = "Wie lange es her ist, dass ein Standort zuletzt etwas geschrieben hat. Ein Archivintervall sind fünf Minuten, eine Viertelstunde also drei verpasste."
+about_interval = "Jeder Mittelwert ist damit gewichtet. Eine Stufe hier ist die Stelle, an der ein ungewichteter Mittelwert von den Seiten der Station abzuweichen beginnt."
+about_battery = "Ein Wert über null heißt bei den meisten Konsolen: Batterie wechseln."
+generated = "Erzeugt von `weewx-evo grafana provision` am {when}. Änderungen hier werden beim nächsten Lauf überschrieben; die Diagramme ändert man in `plots.toml` oder auf der Einstellungsseite."
