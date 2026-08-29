@@ -65,6 +65,25 @@ class Progress:
             if ts > self._through.get(name, 0):
                 self._through[name] = int(ts)
 
+    def rewind(self, name: str, ts: int) -> bool:
+        """Send everything after `ts` again. Says whether it changed anything.
+
+        `sent` deliberately never moves backwards, and this is the one caller
+        that has to. After a rebuild the records in a span are different
+        numbers under the same timestamps, and an upload that has already
+        passed them will never look at them again -- so a store that holds a
+        copy keeps the figures the rebuild was run to correct.
+
+        Only for an upload that says it can take it. A service that files a
+        second reading for a timestamp rather than replacing the first would
+        end up with both.
+        """
+        with self._lock:
+            if self._through.get(name, 0) <= int(ts):
+                return False
+            self._through[name] = int(ts)
+            return True
+
     def forget(self, name: str) -> None:
         """Start this upload again from nothing."""
         with self._lock:

@@ -121,6 +121,10 @@ class InfluxUpload(BaseUpload):
     #: fifteen years of it is the reason to have it.
     backfill = True
     catch_up_limit = 5000
+    #: A point is replaced by its timestamp and tags, so a rebuilt span
+    #: overwrites cleanly. The alternative is two stores that disagree about
+    #: exactly the records somebody went to the trouble of correcting.
+    resend_after_rebuild = True
 
     def __init__(self, url: str = "", api: str = "v2", token: str = "",
                  org: str = "", bucket: str = "", username: str = "",

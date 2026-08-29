@@ -167,6 +167,13 @@ class BaseUpload:
     #: for a week must not come back and fire two thousand requests at a free
     #: service; that is how an account stops working.
     catch_up_limit: int = 12
+    #: Whether a rebuilt span should be sent again. False for a weather
+    #: service: they are asked for the current reading, they keep what they
+    #: are given, and posting last Tuesday twice is how a rainfall total ends
+    #: up doubled. True where the far end is a store the operator runs and a
+    #: point is replaced by its timestamp -- there, *not* resending is the
+    #: fault, because the copy keeps the numbers the rebuild corrected.
+    resend_after_rebuild: bool = False
     #: What wakes it: "record" after every archive record, "interval" on its
     #: own clock, "manual" only when asked.
     trigger: str = "record"

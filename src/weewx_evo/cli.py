@@ -1395,6 +1395,44 @@ def cmd_catchup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resend_rebuilt(args: argparse.Namespace, start: int) -> list[str]:
+    """Wind the uploads that hold a copy back to `start`.
+
+    A rebuild changes the numbers under timestamps an upload has already
+    passed, and `Progress.sent` never moves backwards -- so without this the
+    copy keeps exactly the figures the rebuild was run to correct, and
+    `upload compare` still says both ends agree because it counts points
+    rather than reading them.
+
+    The list is the channel, not a call: this is a command and the uploads
+    belong to a service that may not be running. Rewound here, sent by
+    whoever runs next. Same arrangement as the live table between the
+    listener and the archiver.
+
+    Asked of the class, not of an instance. Building one needs credentials
+    that may be wrong, and whether a service replaces a point or files a
+    second one is a fact about the service.
+    """
+    cfg = settings_for(args)
+    base = Path(getattr(args, "config", None) or ".").parent
+    archive = Path(cfg.get("archive_db") or "data/weewx.sdb")
+    if not archive.is_absolute():
+        archive = base / archive
+
+    progress = Progress(archive.parent / "uploads.json")
+    rewound = []
+    for name, settings in sorted(configured_uploads(args).items()):
+        factory = upload_registry.DEFAULT.factory_for(
+            str(settings.get("kind", "")).strip())
+        if not getattr(factory, "resend_after_rebuild", False):
+            continue
+        if progress.rewind(name, int(start)):
+            rewound.append(name)
+    if rewound:
+        progress.save()
+    return rewound
+
+
 def cmd_rebuild(args: argparse.Namespace) -> int:
     live, archive, archiver = make_archiver(args)
     try:
@@ -1403,6 +1441,15 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
     finally:
         live.close()
         archive.close()
+
+    if not n or getattr(args, "resend", True) is False:
+        return 0
+    rewound = _resend_rebuilt(args, args.start)
+    if rewound:
+        print(f"  {', '.join(rewound)}: wound back to the start of the span. "
+              f"They hold a copy of these records and would otherwise keep "
+              f"the old numbers.")
+        print("  Send now with: weewx-evo upload run")
     return 0
 
 
@@ -3675,6 +3722,11 @@ def main(argv: list[str] | None = None) -> int:
     add_archive_arg(p)
     p.add_argument("start", type=int, help="unix timestamp, exclusive")
     p.add_argument("stop", type=int, help="unix timestamp, inclusive")
+    p.add_argument("--no-resend", dest="resend", action="store_false",
+                   help="leave the uploads that hold a copy of the archive "
+                        "where they are. Without this they are wound back to "
+                        "the start of the span, so the corrected records "
+                        "reach them.")
     p.set_defaults(func=cmd_rebuild)
 
     p = sub.add_parser("derive",

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import http.server
 import math
+import os
 import sys
 import tempfile
 import threading
@@ -547,6 +548,155 @@ def test_both_sides_cut_the_windows_in_the_same_place() -> None:
           {b - a for a, b in zip(sorted(got), sorted(got)[1:], strict=False)})
 
 
+# ---------------------------------------------------------------------------
+# After a rebuild.
+# ---------------------------------------------------------------------------
+
+#: One upload that holds a copy of the archive and one that does not. The
+#: point of the pair: a rebuild has to reach the first and leave the second
+#: alone, and only having one of them would pass either way.
+#:
+#: The InfluxDB address is a port nothing listens on. Nothing here posts --
+#: the command winds a mark back, and sending is somebody else's turn.
+A_COPY_AND_A_SERVICE = """archive_db = "weewx.sdb"
+live_db = "live.sdb"
+interval = "5m"
+
+[uploads.influx]
+kind = "influx"
+url = "http://127.0.0.1:1"
+token = "t"
+org = "o"
+bucket = "weewx"
+location = "here"
+
+[uploads.wu]
+kind = "wunderground"
+station = "IBAYERN1"
+password = "p"
+"""
+
+def test_progress_only_moves_back_when_told() -> None:
+    """`sent` never goes backwards, and `rewind` is the one caller that does.
+
+    Both directions matter. A service that accepts a backfilled record from an
+    hour ago has not un-accepted the current one, so `sent` refusing to move
+    back is what stops the whole hour going again every turn -- and that same
+    refusal is what leaves a corrected span unsent.
+    """
+    from weewx_evo.uploads.progress import Progress
+
+    progress = Progress(Path(tempfile.mkdtemp()) / "uploads.json")
+    progress.sent("influx", 2000)
+    progress.sent("influx", 1000)
+    check("sent does not move back", progress.through("influx"), 2000)
+
+    check("rewind does", progress.rewind("influx", 1000), True)
+    check("and says where it got to", progress.through("influx"), 1000)
+    check("winding forward is not rewinding",
+          progress.rewind("influx", 5000), False)
+    check("so the mark is untouched", progress.through("influx"), 1000)
+
+    # Survives the file, because the service that acts on it is another
+    # process and may not start for an hour.
+    progress.save()
+    check("and it is written down",
+          Progress(progress.path).through("influx"), 1000)
+
+
+def test_a_rebuild_winds_back_the_copy_and_not_the_services() -> None:
+    """The whole point, run for real through the command.
+
+    Everything up to `stations.toml` was checked once before and nothing
+    checked whether the driver ever saw it. So this builds an archive, runs
+    `weewx-evo rebuild`, and reads the file the uploads keep.
+    """
+    import subprocess
+
+    from weewx_evo.db.archive import ArchiveStore
+    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.uploads.progress import Progress
+
+    where = Path(tempfile.mkdtemp())
+    (where / "evo.toml").write_text(A_COPY_AND_A_SERVICE, encoding="utf-8")
+
+    # The archive, made the way this program makes one. A hand-written
+    # `CREATE TABLE archive` was the first version and is not enough: an
+    # archive is also its daily summaries and their metadata table, and the
+    # rebuild fails on the one nobody thought of.
+    ArchiveStore(where / "weewx.sdb").close()
+
+    # Packets to rebuild from. Two intervals' worth, so the rebuild has
+    # something to do and reports a number.
+    start = 1755648000
+    with LiveStore(where / "live.sdb", interval_seconds=300) as live:
+        for offset in range(0, 600, 30):
+            live.add(Packet(dateTime=start + offset, usUnits=16,
+                            data={"outTemp": 20.0 + offset / 100},
+                            source="test", kind="loop"))
+
+    marks = Progress(where / "uploads.json")
+    for name in ("influx", "wu"):
+        marks.sent(name, start + 10_000)
+    marks.save()
+
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parent.parent / "src"),
+         environment.get("PYTHONPATH", "")])
+    environment["PYTHONIOENCODING"] = "utf-8"
+    done = subprocess.run(
+        [sys.executable, "-m", "weewx_evo.cli", "rebuild",
+         "--config", "evo.toml", str(start - 1), str(start + 600)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=where, env=environment, check=False)
+    check("the rebuild succeeds", done.returncode, 0)
+
+    after = Progress(where / "uploads.json")
+    check("the copy is wound back to the span",
+          after.through("influx"), start - 1)
+    check("the weather service is left alone",
+          after.through("wu"), start + 10_000)
+    check("and it says which, and why",
+          "influx" in done.stdout and "copy" in done.stdout, True)
+
+
+def test_no_resend_leaves_the_marks_alone() -> None:
+    """A span rebuilt for a reason that does not change the numbers."""
+    import subprocess
+
+    from weewx_evo.db.archive import ArchiveStore
+    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.uploads.progress import Progress
+
+    where = Path(tempfile.mkdtemp())
+    (where / "evo.toml").write_text(
+        A_COPY_AND_A_SERVICE.split("[uploads.wu]")[0], encoding="utf-8")
+    ArchiveStore(where / "weewx.sdb").close()
+
+    start = 1755648000
+    with LiveStore(where / "live.sdb", interval_seconds=300) as live:
+        for offset in range(0, 600, 30):
+            live.add(Packet(dateTime=start + offset, usUnits=16,
+                            data={"outTemp": 20.0}, source="test"))
+
+    marks = Progress(where / "uploads.json")
+    marks.sent("influx", start + 10_000)
+    marks.save()
+
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(
+        [str(Path(__file__).resolve().parent.parent / "src"),
+         environment.get("PYTHONPATH", "")])
+    subprocess.run(
+        [sys.executable, "-m", "weewx_evo.cli", "rebuild", "--no-resend",
+         "--config", "evo.toml", str(start - 1), str(start + 600)],
+        capture_output=True, text=True, cwd=where, env=environment,
+        check=False)
+    check("--no-resend leaves the mark",
+          Progress(where / "uploads.json").through("influx"), start + 10_000)
+
+
 def main() -> int:
     test_readings_are_converted()
     test_every_value_is_a_float()
@@ -557,6 +707,9 @@ def main() -> int:
     test_the_two_apis_write_to_different_paths()
     test_a_bad_address_is_refused_at_setup()
     test_both_sides_cut_the_windows_in_the_same_place()
+    test_progress_only_moves_back_when_told()
+    test_a_rebuild_winds_back_the_copy_and_not_the_services()
+    test_no_resend_leaves_the_marks_alone()
 
     server, url = serving()
     try:
