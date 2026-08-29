@@ -719,6 +719,216 @@ def a_place_in_another_timezone_is_said_out_loud() -> None:
           sorted(register.concerns()), ["far"])
 
 
+# ---------------------------------------------------------------------------
+# Two places on one chart.
+# ---------------------------------------------------------------------------
+
+def an_archive_with(path: Path, temperatures: list[float],
+                    start: int = 1756308600, every: int = 300) -> Path:
+    """A small archive with one reading in it, so two can be compared."""
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute(
+            "CREATE TABLE archive (dateTime INTEGER PRIMARY KEY, "
+            "usUnits INTEGER, `interval` INTEGER, outTemp REAL)")
+        conn.executemany(
+            "INSERT INTO archive VALUES (?, ?, ?, ?)",
+            [(start + n * every, 17, every // 60, value)
+             for n, value in enumerate(temperatures)])
+        conn.commit()
+    return path
+
+
+def test_one_chart_draws_two_places() -> None:
+    """The question that makes somebody install Grafana, asked of our own
+    charts.
+
+    `archives.py` gives n independent series, and until this nothing could
+    put two of them on one axis -- so "outTemp at both locations" was a
+    question the station's own pages could not answer, whatever they held.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    from weewx_evo import chartdata
+    from weewx_evo import plots as plot_defs
+    from weewx_evo import series as series_module
+    from weewx_evo.series import Reader
+
+    where = Path(tempfile.mkdtemp())
+    an_archive_with(where / "default.sdb", [10.0, 11.0, 12.0, 13.0])
+    an_archive_with(where / "nordfeld.sdb", [4.0, 5.0, 6.0, 7.0])
+
+    charts = plot_defs.from_dict({"plot": [{
+        "name": "both", "span": "day", "time_length": 86400,
+        "line": [{"obs": "outTemp"},
+                 {"obs": "outTemp", "series": "nordfeld",
+                  "label": "North field"}],
+    }]})
+    plot = charts.plots[0]
+    check("the second line names a series", plot.lines[1].series, "nordfeld")
+
+    paths = {"nordfeld": where / "nordfeld.sdb"}
+    wanted = plot_defs.series_named(charts)
+    with (closing(sqlite3.connect(where / "default.sdb")) as conn,
+          series_module.opened(paths, wanted) as readers):
+        check("only what a plot named was opened", sorted(readers),
+              ["nordfeld"])
+        chart = chartdata.build(plot, Reader(conn), 1756308600 + 1200,
+                                readers=readers)
+
+    check("both lines are drawn", len(chart.lines), 2)
+    check("the first is this archive's",
+          [v for v in chart.lines[0].values if v is not None][:2], [10.0, 11.0])
+    check("the second is the other's",
+          [v for v in chart.lines[1].values if v is not None][:2], [4.0, 5.0])
+    check("and it says where it came from", chart.lines[1].series, "nordfeld")
+    check("while the first says nothing, as every single-series line does",
+          chart.lines[0].series, "")
+
+
+def test_a_line_naming_an_archive_that_is_not_there_is_left_out() -> None:
+    """Not read from the default.
+
+    Silently drawing one location's temperature under another location's
+    label is the one outcome worse than a chart with a line missing, and
+    nothing on the page could ever show it.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    from weewx_evo import chartdata
+    from weewx_evo import plots as plot_defs
+    from weewx_evo.series import Reader
+
+    where = Path(tempfile.mkdtemp())
+    an_archive_with(where / "default.sdb", [10.0, 11.0, 12.0])
+
+    charts = plot_defs.from_dict({"plot": [{
+        "name": "both", "span": "day", "time_length": 86400,
+        "line": [{"obs": "outTemp"},
+                 {"obs": "outTemp", "series": "gone"}],
+    }]})
+
+    with closing(sqlite3.connect(where / "default.sdb")) as conn:
+        chart = chartdata.build(charts.plots[0], Reader(conn),
+                                1756308600 + 900, readers={})
+
+    check("one line, not two with the same numbers", len(chart.lines), 1)
+    check("and it is this archive's", chart.lines[0].series, "")
+
+
+def test_a_series_survives_the_round_trip_through_the_file() -> None:
+    """A chart drawing two places has to still do so after a save.
+
+    `plots.toml` is written and read by the settings page, and a field that
+    is read but never written is a setting that vanishes the first time
+    somebody edits an unrelated chart.
+    """
+    from weewx_evo import plots as plot_defs
+
+    where = Path(tempfile.mkdtemp()) / "plots.toml"
+    charts = plot_defs.from_dict({"plot": [{
+        "name": "both", "span": "day", "time_length": 86400,
+        "line": [{"obs": "outTemp"},
+                 {"obs": "outTemp", "series": "nordfeld"}],
+    }]})
+    plot_defs.save(where, charts)
+
+    back = plot_defs.load(where)
+    check("the series came back", back.plots[0].lines[1].series, "nordfeld")
+    check("and the plain line is still plain",
+          back.plots[0].lines[0].series, "")
+
+
+def test_nothing_is_opened_where_no_plot_names_one() -> None:
+    """Every station until somebody writes a series down, which is all of
+    them today. It must cost nothing."""
+    from weewx_evo import plots as plot_defs
+    from weewx_evo import series as series_module
+
+    charts = plot_defs.from_dict({"plot": [{
+        "name": "plain", "span": "day", "time_length": 86400,
+        "line": [{"obs": "outTemp"}],
+    }]})
+    check("nothing is named", plot_defs.series_named(charts), set())
+
+    where = Path(tempfile.mkdtemp())
+    an_archive_with(where / "other.sdb", [1.0])
+    with series_module.opened({"other": where / "other.sdb"},
+                              plot_defs.series_named(charts)) as readers:
+        check("so nothing is opened", readers, {})
+
+
+def test_a_line_can_be_pointed_at_another_series_from_the_page() -> None:
+    """The picker appears only where there is more than one archive.
+
+    On a single-series station it is a field on every line of every chart
+    that a hundred people have to work out is not theirs, and that is the
+    ordinary case.
+    """
+    print("\npointing a chart line at another series")
+    from weewx_evo import adminplots
+    from weewx_evo.admin import Admin
+    from weewx_evo.cli import all_schemas
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        (work / "evo.toml").write_text(
+            'token = "abcdefghij123456"\n'
+            'plots_file = "plots.toml"\n'
+            '[station]\n'
+            'name = "Kirchdorf"\n'
+            "latitude = 48.4012\n"
+            "longitude = 11.6301\n"
+            "altitude = 440.0\n", encoding="utf-8")
+        (work / "plots.toml").write_text(
+            '[[plot]]\nname = "daytemp"\nspan = "day"\n'
+            "time_length = 86400\n"
+            '[[plot.line]]\nobs = "outTemp"\n', encoding="utf-8")
+        admin = Admin(work / "evo.toml",
+                      lambda: all_schemas(work / "evo.toml"), TOKEN)
+
+        check("with one archive nothing is offered",
+              adminplots.known_series(admin), set())
+        check("so the field is not drawn",
+              adminplots._series_field("line0_series", "", admin), "")
+
+        # A second archive, written the way the page writes it.
+        (work / "archives.toml").write_text(
+            '[archives.default]\nfile = "data/weewx.sdb"\n'
+            'label = "Kirchdorf"\n\n'
+            '[archives.nordfeld]\nfile = "data/nord.sdb"\n'
+            'label = "North field"\n', encoding="utf-8")
+        admin.refresh()
+
+        check("now both are offered", adminplots.known_series(admin),
+              {"default", "nordfeld"})
+        field = adminplots._series_field("line0_series", "nordfeld", admin)
+        check("the field is drawn", "<select" in field, True)
+        check("with the one chosen selected",
+              'value="nordfeld" selected' in field, True)
+
+        # And a name nobody configured is refused rather than warned about.
+        errors = adminplots.save(admin, "daytemp", {
+            "line0_obs": "outTemp", "line0_series": "atlantis",
+            "time_length": "86400", "span": "day"}, {"outTemp"})
+        check("a series that does not exist is refused",
+              "line0_series" in errors, True)
+        check("and the answer says what there is",
+              "nordfeld" in errors.get("line0_series", ""), True)
+
+        # The right one saves, and comes back out of the file.
+        errors = adminplots.save(admin, "daytemp", {
+            "line0_obs": "outTemp", "line0_series": "nordfeld",
+            "time_length": "86400", "span": "day"}, {"outTemp"})
+        check("the right one saves", [k for k in errors if k != ""], [])
+        back = adminplots.load(admin).get("daytemp")
+        check("and it is in the file", back.lines[0].series, "nordfeld")
+
+
 def main() -> int:
     one_archive_is_the_settings()
     the_second_one_brings_the_first_with_it()
@@ -735,6 +945,13 @@ def main() -> int:
     the_page_is_how_the_second_one_appears()
     a_command_can_name_its_series()
     two_sites_through_a_real_serve()
+
+    # Two places on one chart, which is what n archives were missing.
+    test_one_chart_draws_two_places()
+    test_a_line_naming_an_archive_that_is_not_there_is_left_out()
+    test_a_series_survives_the_round_trip_through_the_file()
+    test_nothing_is_opened_where_no_plot_names_one()
+    test_a_line_can_be_pointed_at_another_series_from_the_page()
 
     print()
     if failures:

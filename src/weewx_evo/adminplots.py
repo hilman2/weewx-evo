@@ -195,12 +195,25 @@ def save(admin: Any, name: str, form: dict[str, Any],
             errors[f"line{index}_aggregate"] = f"{aggregate!r} is not an aggregate."
             aggregate = ""
         interval = (form.get(f"line{index}_interval") or "").strip()
+        # Which place this line reads. Refused rather than warned about, and
+        # this is the one field here where that is right: a chart naming a
+        # column that does not exist yet draws nothing and says so, but a
+        # chart naming an archive that does not exist would quietly fall
+        # back to this one -- one location's temperature under another
+        # location's label, and nothing on the page could show it.
+        series = (form.get(f"line{index}_series") or "").strip()
+        if series and series not in known_series(admin):
+            errors[f"line{index}_series"] = (
+                f"There is no series called {series!r}. "
+                f"There is: {', '.join(sorted(known_series(admin))) or 'one'}.")
+            series = ""
         lines.append(plot_defs.Line(
             obs=obs,
             label=(form.get(f"line{index}_label") or "").strip(),
             kind=(form.get(f"line{index}_kind") or "line").strip(),
             color=(form.get(f"line{index}_color") or "").strip(),
             aggregate=aggregate,
+            series=series,
             interval=plot_defs._interval(interval) if interval else None,
         ))
 
@@ -416,6 +429,45 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
 '''
 
 
+
+def known_series(admin: Any = None) -> set[str]:
+    """The archives configured, by name. Empty where there is one.
+
+    Empty rather than {"default"}: with one series there is nothing to
+    choose between, the picker is not drawn, and a saved value would be a
+    setting nobody could see.
+    """
+    try:
+        from . import adminarchives
+
+        registry = adminarchives.load(admin)
+        if registry is None or not registry.several():
+            return set()
+        return {one.name for one in registry.all()}
+    except Exception:
+        log.debug("could not list the archives", exc_info=True)
+        return set()
+
+
+def _series_field(name: str, chosen: str, admin: Any = None) -> str:
+    """Where this line reads from. Nothing at all with one archive.
+
+    A picker on every line of every chart on every single-series station is
+    a field a hundred people have to work out is not theirs, and this is
+    the ordinary case.
+    """
+    found = known_series(admin)
+    if not found:
+        return ""
+    options = ['<option value="">This chart\'s own</option>']
+    options += [
+        f'<option value="{html.escape(one)}"'
+        f'{" selected" if chosen == one else ""}>{html.escape(one)}</option>'
+        for one in sorted(found)]
+    return (f'<label>Read from\n  <select name="{html.escape(name)}">'
+            f'{"".join(options)}</select>\n</label>')
+
+
 def _select(name: str, options: tuple, value: Any, extra: str = "") -> str:
     rows = []
     seen = False
@@ -487,12 +539,13 @@ def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
           {_select(f"{prefix}_interval", INTERVALS,
                    "" if line.interval is None else line.interval)}
         </label>
+        {_series_field(f"{prefix}_series", line.series, admin)}
         <label class="tick">
           <input type="checkbox" name="{prefix}_delete" value="1">
           Remove this reading
         </label>
       </div>
-      {err(f"{prefix}_obs")}{err(f"{prefix}_aggregate")}
+      {err(f"{prefix}_obs")}{err(f"{prefix}_aggregate")}{err(f"{prefix}_series")}
     </fieldset>''')
 
     checked = " checked" if plot.show_daynight else ""

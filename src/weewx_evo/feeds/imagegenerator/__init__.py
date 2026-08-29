@@ -77,7 +77,8 @@ class ImageGenerator:
                  spans: tuple[str, ...] = (),
                  titles: bool = True, twilight: bool = True,
                  rose_label: str = "",
-                 language: Any = None) -> None:
+                 language: Any = None,
+                 archives: dict | None = None) -> None:
         self.reader = reader
         self.plots = plots
         self.target = target or units.Target(unit_system)
@@ -109,10 +110,30 @@ class ImageGenerator:
         self.written = 0
         self.skipped = 0
         self.failed: list[tuple[str, str]] = []
+        #: The other archives, by name, for a plot that draws more than one
+        #: place. Paths rather than readers: a connection held across the
+        #: feed's whole life is a descriptor kept for the 99% of the time
+        #: nothing is being drawn.
+        self.archives = dict(archives or {})
+        #: Open only while `produce` runs.
+        self._readers: dict = {}
 
     # -- the feed ---------------------------------------------------------
 
     def produce(self, into: Path, now: float | None = None) -> Produced:
+        """Draw every chart. The other series are opened for this run only."""
+        from ... import series as series_module
+        from ...plots import series_named
+
+        with series_module.opened(self.archives,
+                                  series_named(self.plots)) as readers:
+            self._readers = readers
+            try:
+                return self._produce(into, now)
+            finally:
+                self._readers = {}
+
+    def _produce(self, into: Path, now: float | None = None) -> Produced:
         started = time.time()
         into = Path(into)
         into.mkdir(parents=True, exist_ok=True)
@@ -170,7 +191,8 @@ class ImageGenerator:
             plot, self.reader, generated, target=self.target,
             unit_system=self.unit_system, extra_groups=self.extra_groups,
             labels=self.labels, latitude=self.latitude,
-            longitude=self.longitude, twilight=self.twilight)
+            longitude=self.longitude, twilight=self.twilight,
+            readers=self._readers)
         if chart is None or chart.empty:
             return None
         return self.draw(chart)
@@ -635,7 +657,8 @@ class ImageGenerator:
 
 def from_settings(settings: Any, reader: Reader, plots: PlotSet,
                   extra_groups: dict[str, str] | None = None,
-                  prefix: str = "feeds.images") -> ImageGenerator:
+                  prefix: str = "feeds.images",
+                  archives: dict | None = None) -> ImageGenerator:
     """Build the generator from the configuration.
 
     `prefix` names the configured feed, so two of them can be set up
@@ -682,6 +705,7 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         twilight=option("twilight") is not False,
         rose_label=str(option("rose_label") or ""),
         language=spoken,
+        archives=archives,
     )
 
 

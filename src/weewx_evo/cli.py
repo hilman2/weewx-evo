@@ -3487,19 +3487,42 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
     return made
 
 
+def _archive_files(cfg: Settings, args: argparse.Namespace) -> dict[str, Path]:
+    """Where each configured archive's file is, by name.
+
+    For a chart that draws several places on one axis. Just the paths: the
+    feed opens the ones its own plots name, for the length of one run.
+    Empty where there is one series, which is every station that has not
+    written a second one down.
+    """
+    registry = read_archives(args, cfg)
+    if not registry.several():
+        return {}
+    base = Path(args.config).parent if getattr(args, "config", None) else None
+    out: dict[str, Path] = {}
+    for one in registry.all():
+        where = Path(one.file)
+        if not where.is_absolute() and base is not None:
+            where = base / where
+        out[one.name] = where
+    return out
+
+
 def _json_feed(cfg: Settings, name: str, charts: plot_defs.PlotSet,
                args: argparse.Namespace):
     from .feeds import jsongenerator
 
     return lambda reader: jsongenerator.from_settings(
-        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}")
+        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
+        archives=_archive_files(cfg, args))
 
 
 def _image_feed(cfg: Settings, name: str, args: argparse.Namespace):
     from .feeds import imagegenerator
 
     return lambda reader: imagegenerator.from_settings(
-        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}")
+        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
+        archives=_archive_files(cfg, args))
 
 
 def _cheetah_feed(cfg: Settings, name: str, args: argparse.Namespace):

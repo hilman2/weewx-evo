@@ -94,7 +94,8 @@ class JSONGenerator:
                  spans: tuple[str, ...] = (),
                  manifest: bool = True,
                  twilight: bool = True,
-                 rewrite_unchanged: bool = False) -> None:
+                 rewrite_unchanged: bool = False,
+                 archives: dict | None = None) -> None:
         self.reader = reader
         self.plots = plots
         self.target = target or units.Target(unit_system)
@@ -110,6 +111,14 @@ class JSONGenerator:
         #: default: a client that speaks German should not be handed English.
         self.labels = dict(labels if labels is not None
                            else getattr(plots, "labels", {}) or {})
+        #: The other archives, by name, for a plot that draws more than one
+        #: place. Paths rather than readers: a connection held across the
+        #: feed's whole life is a descriptor kept for the 99% of the time
+        #: nothing is being drawn, which is the shape of the leak that took
+        #: an instance down at 477 of them.
+        self.archives = dict(archives or {})
+        #: Open only while `produce` runs.
+        self._readers: dict = {}
         #: Which groups to produce. Empty means all of them.
         self.spans = tuple(spans)
         self.manifest = manifest
@@ -123,6 +132,19 @@ class JSONGenerator:
     # -- the feed ---------------------------------------------------------
 
     def produce(self, into: Path, now: float | None = None) -> Produced:
+        """Write every plot. The other series are opened for this run only."""
+        from ... import series as series_module
+        from ...plots import series_named
+
+        wanted = series_named(self.plots)
+        with series_module.opened(self.archives, wanted) as readers:
+            self._readers = readers
+            try:
+                return self._produce(into, now)
+            finally:
+                self._readers = {}
+
+    def _produce(self, into: Path, now: float | None = None) -> Produced:
         """Write every plot, and the manifest. Returns what was made."""
         started = time.time()
         into = Path(into)
@@ -247,7 +269,7 @@ class JSONGenerator:
             unit_system=self.unit_system, extra_groups=self.extra_groups,
             labels=self.labels, rounding=self.rounding,
             latitude=self.latitude, longitude=self.longitude,
-            twilight=self.twilight)
+            twilight=self.twilight, readers=self._readers)
         if chart is None:
             return None
         return _document(chart, generated)
@@ -463,7 +485,8 @@ def _document(chart: chartdata.Chart, generated: float) -> dict[str, Any]:
 
 def from_settings(settings: Any, reader: Reader, plots: PlotSet,
                   extra_groups: dict[str, str] | None = None,
-                  prefix: str = "feeds.json") -> JSONGenerator:
+                  prefix: str = "feeds.json",
+                  archives: dict | None = None) -> JSONGenerator:
     """Build the generator from the configuration.
 
     `prefix` names the configured feed, so two of them can be set up
@@ -522,6 +545,7 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         twilight=_truth(option("twilight"), True),
         rewrite_unchanged=_truth(
             option("rewrite_unchanged"), False),
+        archives=archives,
     )
 
 

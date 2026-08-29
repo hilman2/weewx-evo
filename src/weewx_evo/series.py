@@ -46,12 +46,14 @@ is the answer the daily summaries would give.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import logging
 import math
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from . import units
@@ -1064,3 +1066,51 @@ _DAILY_REDUCERS = {
                {"xsum", "ysum", "sumtime"}),
     "gustdir": (_daily_gustdir, {"max_dir", "max", "count"}),
 }
+
+
+@contextlib.contextmanager
+def opened(paths: dict[str, str | Path], wanted: set[str] | None = None
+           ) -> Iterator[dict[str, Reader]]:
+    """Readers for the named archives, closed on the way out.
+
+    For a chart that draws several places on one axis. Opened per run rather
+    than held, for the same reason `Reader` holds no cache: the archiver
+    writes to these files, and a connection kept open across a feed's whole
+    life is a descriptor that outlives every reason to have it. The instance
+    that fell over at 477 of them was exactly this mistake one storey down.
+
+    `wanted` limits it to the archives something actually asked for, so a
+    station with five series and one chart drawing one of them opens one
+    file. Nothing is opened at all where nothing named a series, which is
+    every station until somebody writes one down.
+
+    A file that is not there is left out rather than raised over: an archive
+    configured for a station that has not written yet is an ordinary state,
+    and the chart says so by having no line for it.
+    """
+    readers: dict[str, Reader] = {}
+    connections: list[sqlite3.Connection] = []
+    try:
+        for name, where in sorted(paths.items()):
+            if wanted is not None and name not in wanted:
+                continue
+            path = Path(where)
+            if not path.exists():
+                log.debug("no archive at %s for series %r yet", path, name)
+                continue
+            try:
+                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            except sqlite3.Error as exc:
+                log.warning("could not open %s for series %r: %s",
+                            path, name, exc)
+                continue
+            connections.append(conn)
+            readers[name] = Reader(conn)
+        yield readers
+    finally:
+        for conn in connections:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                log.debug("closing an archive connection failed",
+                          exc_info=True)

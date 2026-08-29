@@ -116,7 +116,22 @@ class Line:
     gap_fraction: float | None = None
     #: Vector plots only, in degrees, positive clockwise.
     rotate: float | None = None
-    #: Which database, when there is more than one.
+    #: Which archive this line reads, where there is more than one. Empty
+    #: is the one the chart is being drawn for, which is every line on
+    #: every station with a single series.
+    #:
+    #: This is what "outTemp at all five locations on one axis" is: five
+    #: lines, one plot, each naming its own place. `archives.py` gives n
+    #: independent series and until now nothing could put two on one chart --
+    #: so the question that makes somebody install Grafana was one our own
+    #: pages could not answer either.
+    #:
+    #: Not `binding`, which is beside it and means WeeWX's `data_binding`:
+    #: `wx_binding` there names a *schema*, not a place. One field with two
+    #: meanings holds until somebody names an archive `wx_binding`.
+    series: str = ""
+    #: WeeWX's `data_binding`, carried through an import and back out again.
+    #: Nothing here reads it.
     binding: str = ""
 
     def resolved(self, position: int = 0) -> Line:
@@ -170,6 +185,22 @@ class Plot:
     def uses(self) -> set[str]:
         """Which readings this plot needs."""
         return {line.obs for line in self.lines}
+
+
+def series_named(plots: Any) -> set[str]:
+    """Every archive the charts in this set ask for, by name.
+
+    So a feed opens the files something actually uses and no others. Empty
+    for every station that has never written a `series` into `plots.toml`,
+    which is the ordinary case and costs it nothing.
+    """
+    out: set[str] = set()
+    for plot in getattr(plots, "plots", ()) or ():
+        for line in getattr(plot, "lines", ()) or ():
+            named = getattr(line, "series", "")
+            if named:
+                out.add(str(named))
+    return out
 
 
 class PlotSet:
@@ -270,6 +301,7 @@ def _plot_from(entry: dict[str, Any]) -> Plot:
             marker_size=_int(raw_line.get("marker_size")),
             gap_fraction=_float(raw_line.get("gap_fraction")),
             rotate=_float(raw_line.get("rotate")),
+            series=str(raw_line.get("series", "")),
             binding=str(raw_line.get("binding", "")),
         ))
 
@@ -369,6 +401,7 @@ def render(plots: PlotSet, note: str = "") -> str:
                                ("fill_color", line.fill_color),
                                ("aggregate", line.aggregate),
                                ("marker", line.marker),
+                               ("series", line.series),
                                ("binding", line.binding)):
                 if value and not (key == "kind" and value == "line"):
                     lines.append(f"  {key} = {_toml(value)}")

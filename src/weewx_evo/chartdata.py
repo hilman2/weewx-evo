@@ -84,6 +84,10 @@ class Line:
     width: float | None = None
     #: The earliest and latest moment this line covers, buckets included.
     reach: tuple[int, int] | None = None
+    #: Which archive it came from, where a chart draws more than one. Empty
+    #: for every line of every single-series station, so nothing downstream
+    #: has to learn about archives to keep working.
+    series: str = ""
 
     @property
     def empty(self) -> bool:
@@ -123,26 +127,44 @@ def build(plot: Plot, reader: Reader, generated: float,
           labels: dict[str, str] | None = None,
           rounding: int | None = ROUNDING,
           latitude: float | None = None, longitude: float | None = None,
-          twilight: bool = True) -> Chart | None:
+          twilight: bool = True,
+          readers: dict[str, Reader] | None = None) -> Chart | None:
     """One plot's data, or None if this station has none of its readings.
 
     Every line is fetched, converted, and trimmed of the points that carry
     nothing. A plot where every line came back missing is not built at all:
     the shipped set covers sensors most stations do not have, and a hundred
     charts of nulls help nobody.
+
+    `readers` is how a chart draws more than one place: archive name to a
+    reader for it, and a line naming one is read from there. A line naming
+    an archive that is not in the map is *left out* rather than read from
+    the default -- silently drawing the wrong location's temperature under
+    another location's label is the one outcome worse than an empty chart.
     """
     target = target or units.Target(unit_system)
     labels = dict(labels or {})
     stop = int(generated)
     start = stop - int(plot.time_length)
 
+    readers = readers or {}
     lines: list[Line] = []
     covered_from, covered_to = start, stop
     for definition in plot.drawn:
-        line = _line(definition, reader, start, stop, target, unit_system,
+        wanted = getattr(definition, "series", "") or ""
+        source = reader
+        if wanted:
+            source = readers.get(wanted)
+            if source is None:
+                log.warning("plot %r line %r asks for series %r, which is not "
+                            "configured; left out", plot.name,
+                            definition.obs, wanted)
+                continue
+        line = _line(definition, source, start, stop, target, unit_system,
                      extra_groups or {}, labels, rounding, plot.skip_if_empty)
         if line is None:
             continue
+        line.series = wanted
         if line.reach:
             covered_from = min(covered_from, line.reach[0])
             covered_to = max(covered_to, line.reach[1])
