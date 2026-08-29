@@ -9,7 +9,17 @@ Display, a download from Weather Underground, a file a neighbour sent.
 `outTemp` to a person and a guess between them is a measurement written into
 the wrong column -- which no later reading of the file can undo, and which
 nothing downstream can notice. So a name the schema does not have is
-*reported* and left out, and `--map` is how somebody says what it is.
+*reported* and left out, and `--map` is how somebody says what it is:
+
+    weewx-evo import csv wu.csv --units us \
+        --map "Temperature=outTemp,Humidity=outHumidity,Pressure=barometer"
+
+Which is also the answer for a Weather Underground history export, and the
+reason there is no `import wunderground`: WU's own CSV download has the
+readings in it, under WU's names, and a downloader would be a second thing
+to keep working against somebody else's API for a file the browser already
+has. The names it uses are in `KNOWN_NAMES`, so the common case needs no map
+at all -- but a name that is not there is still refused rather than guessed.
 
 Three things are read rather than guessed at, because they can be:
 
@@ -62,8 +72,8 @@ log = logging.getLogger(__name__)
 #: an epoch column beats a formatted one where a file carries both, because
 #: it needs no format and cannot be ambiguous.
 TIME_NAMES = ("dateTime", "datetime", "timestamp", "epoch", "unixtime",
-              "time", "date", "Date", "Datum", "date_time", "Date/Time",
-              "observation_time")
+              "time", "date", "Date", "Datum", "Zeit", "Zeitstempel",
+              "date_time", "Date/Time", "observation_time")
 
 #: Cells that mean "nothing was measured". Never a zero: see the docstring.
 ABSENT = {"", "-", "--", "---", "n/a", "N/A", "na", "NA", "null", "NULL",
@@ -71,6 +81,39 @@ ABSENT = {"", "-", "--", "---", "n/a", "N/A", "na", "NA", "null", "NULL",
 
 #: How many records go to `add_records` at once.
 BATCH = 20_000
+
+#: Names other programs use for readings this archive has. Only where the
+#: meaning is unambiguous *and* the unit is not in question: `Temperature`
+#: is the outdoor one on every weather export there is, and `Wind` is not --
+#: it is the speed in one program and the direction in another.
+#:
+#: This is not a general translation table and must not grow into one. Each
+#: entry is a decision that a measurement belongs in a column, and a wrong
+#: one is undoable. Anything not here is reported, and `--map` is where
+#: somebody who knows their own file says what it is.
+KNOWN_NAMES: dict[str, str] = {
+    # Weather Underground's history download, which is the common case.
+    "Temperature": "outTemp",
+    "Dew Point": "dewpoint",
+    "Humidity": "outHumidity",
+    "Wind Speed": "windSpeed",
+    "Wind Gust": "windGust",
+    "Wind Direction": "windDir",
+    "Pressure": "barometer",
+    "Precip. Rate": "rainRate",
+    "Precip. Accum.": "rain",
+    "Solar": "radiation",
+    "UV": "UV",
+    # The same readings as an ordinary spreadsheet writes them.
+    "temperature": "outTemp",
+    "dewpoint": "dewpoint",
+    "humidity": "outHumidity",
+    "pressure": "barometer",
+    "windspeed": "windSpeed",
+    "windgust": "windGust",
+    "winddir": "windDir",
+    "solarradiation": "radiation",
+}
 
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
 
@@ -166,10 +209,28 @@ def _time_column(header: list[str], asked: str | None = None) -> str:
     return ""
 
 
+def parse_map(text: str) -> dict[str, str]:
+    """`--map` as a dictionary. `"Temperature=outTemp,Humidity=outHumidity"`.
+
+    A column name can hold a space and a slash, which is why this splits on
+    the comma and then on the first `=` rather than on both at once.
+    """
+    out: dict[str, str] = {}
+    for part in (text or "").split(","):
+        if "=" not in part:
+            continue
+        left, _, right = part.partition("=")
+        left, right = left.strip(), right.strip()
+        if left and right:
+            out[left] = right
+    return out
+
+
 def _read(path: Path, delimiter: str, time_column: str | None,
           time_format: str | None, unit_system: str,
           columns: set[str] | None, found: Found,
-          interval: float | None = None) -> Any:
+          interval: float | None = None,
+          mapping: dict[str, str] | None = None) -> Any:
     """Rows as records. Fills `found` as it goes.
 
     Records come out with an `interval`, worked out from the gap to the
@@ -202,12 +263,17 @@ def _read(path: Path, delimiter: str, time_column: str | None,
         # than mapped: guessing that `temp` is `outTemp` writes a
         # measurement into a column it does not belong in.
         known = columns if columns is not None else set(units.all_groups())
+        named = dict(mapping or {})
         wanted: list[tuple[int, str]] = []
         for index, name in enumerate(header):
             if index == at or not name:
                 continue
-            if name in known or name in ("usUnits", "interval"):
-                wanted.append((index, name))
+            # What somebody said first, then what is unambiguous, then the
+            # name as it stands. A map entry is a person's decision about
+            # their own file and beats every guess here.
+            as_field = named.get(name) or KNOWN_NAMES.get(name) or name
+            if as_field in known or as_field in ("usUnits", "interval"):
+                wanted.append((index, as_field))
             else:
                 found.ignored.append(name)
         found.columns = [name for _index, name in wanted]
@@ -300,25 +366,28 @@ def _with_intervals(records: Any, interval: float | None,
 
 def inspect(path: str | Path, delimiter: str = ",",
             time_column: str | None = None, time_format: str | None = None,
-            unit_system: str = "us", interval: float | None = None) -> Found:
+            unit_system: str = "us", interval: float | None = None,
+            mapping: dict[str, str] | None = None) -> Found:
     """What is in a CSV, without writing anything."""
     found = Found()
     read = _read(Path(path), delimiter, time_column, time_format,
-                 unit_system, None, found)
+                 unit_system, None, found, mapping=mapping)
     for _record in _with_intervals(read, interval, found):
         found.records += 1
     if found.ignored:
         found.notes.append(
             f"{len(found.ignored)} column(s) are not archive readings and "
             f"were left out: {', '.join(found.ignored[:8])}"
-            + (" ..." if len(found.ignored) > 8 else ""))
+            + (" ..." if len(found.ignored) > 8 else "")
+            + '. --map "<column>=<reading>" says what one is.')
     return found
 
 
 def into(path: str | Path, archive: Any, delimiter: str = ",",
          time_column: str | None = None, time_format: str | None = None,
          unit_system: str = "us", replace: bool = False,
-         interval: float | None = None) -> Found:
+         interval: float | None = None,
+         mapping: dict[str, str] | None = None) -> Found:
     """Read a CSV into an archive. Returns what was done.
 
     Sorted per batch, because `add_records` needs ascending time and a
@@ -328,7 +397,7 @@ def into(path: str | Path, archive: Any, delimiter: str = ",",
     columns = set(archive.schema.columns)
     batch: list[dict] = []
     read = _read(Path(path), delimiter, time_column, time_format,
-                 unit_system, columns, found)
+                 unit_system, columns, found, mapping=mapping)
     for record in _with_intervals(read, interval, found):
         batch.append(record)
         if len(batch) >= BATCH:
@@ -343,5 +412,6 @@ def into(path: str | Path, archive: Any, delimiter: str = ",",
         found.notes.append(
             f"{len(found.ignored)} column(s) are not archive readings and "
             f"were left out: {', '.join(found.ignored[:8])}"
-            + (" ..." if len(found.ignored) > 8 else ""))
+            + (" ..." if len(found.ignored) > 8 else "")
+            + '. --map "<column>=<reading>" says what one is.')
     return found

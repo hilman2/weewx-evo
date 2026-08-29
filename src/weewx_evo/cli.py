@@ -2007,7 +2007,8 @@ def cmd_import_csv(args: argparse.Namespace) -> int:
                                  time_column=args.time_column,
                                  time_format=args.time_format,
                                  unit_system=args.units,
-                                 interval=args.csv_interval)
+                                 interval=args.csv_interval,
+                                 mapping=dumpscsv.parse_map(args.csv_map))
         print(f"{source.name}: {found.summary()}")
         for note in found.notes:
             print(f"  note: {note}")
@@ -2030,7 +2031,8 @@ def cmd_import_csv(args: argparse.Namespace) -> int:
                               time_column=args.time_column,
                               time_format=args.time_format,
                               unit_system=args.units, replace=args.replace,
-                              interval=args.csv_interval)
+                              interval=args.csv_interval,
+                              mapping=dumpscsv.parse_map(args.csv_map))
     finally:
         store.close()
 
@@ -4753,6 +4755,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="minutes each record in the file covers, where it "
                         "does not say. Worked out from the gaps between rows "
                         "otherwise. Every average is weighted by it.")
+    q.add_argument("--map", dest="csv_map", default="",
+                   help='what a column means, where the name is not the '
+                        'archive\'s. For example "Temperature=outTemp,'
+                        'Humidity=outHumidity". A Weather Underground '
+                        'history download needs none of the common ones.')
     q.add_argument("--units", default="us",
                    choices=("us", "metric", "metricwx"),
                    help="what the numbers in the file are in. A CSV states "

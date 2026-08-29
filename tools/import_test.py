@@ -604,6 +604,114 @@ def test_a_file_that_states_its_own_interval_keeps_it(tmp: Path) -> None:
         store.close()
 
 
+def test_a_weather_underground_export(tmp: Path) -> None:
+    """The shape of WU's own history download.
+
+    And the reason there is no `import wunderground`: the file the browser
+    already has holds the readings, and a downloader would be a second thing
+    to keep working against somebody else's API.
+    """
+    print("\na Weather Underground history export")
+    path = tmp / "wu.csv"
+    path.write_text(
+        "Date,Temperature,Dew Point,Humidity,Wind Speed,Pressure\n"
+        "2026-08-27 18:30:00,62.1,55.0,71,4.0,29.92\n"
+        "2026-08-27 18:35:00,62.6,55.2,70,5.0,29.91\n",
+        encoding="utf-8")
+
+    found = dumpscsv.inspect(path)
+    check("both rows read", found.records, 2)
+    check("the date column was found", found.time_column, "Date")
+    check("and WU's names are known",
+          sorted(found.columns),
+          ["barometer", "dewpoint", "outHumidity", "outTemp", "windSpeed"])
+    check("so nothing was left out", found.ignored, [])
+
+    store = an_archive(tmp / "wu.sdb")
+    try:
+        dumpscsv.into(path, store)
+        row = store.conn.execute(
+            "SELECT outTemp, outHumidity FROM archive "
+            "WHERE dateTime > 1756000000 ORDER BY dateTime").fetchone()
+        check("the temperature landed in outTemp", row[0], 62.1)
+        check("and the humidity in outHumidity", row[1], 71.0)
+    finally:
+        store.close()
+
+
+def test_a_column_can_be_named(tmp: Path) -> None:
+    """`--map` is a person's decision about their own file, and it beats
+    every guess in here."""
+    print("\nnaming a column")
+    check("one pair", dumpscsv.parse_map("Aussen=outTemp"),
+          {"Aussen": "outTemp"})
+    check("several", dumpscsv.parse_map("A=outTemp, B = outHumidity"),
+          {"A": "outTemp", "B": "outHumidity"})
+    check("a name with a space and a slash survives",
+          dumpscsv.parse_map("Temp / C=outTemp"), {"Temp / C": "outTemp"})
+    check("nonsense is left out", dumpscsv.parse_map("rubbish"), {})
+
+    path = tmp / "german.csv"
+    path.write_text(
+        "Zeit;Aussentemperatur;Luftfeuchte\n"
+        "1756308600;20,1;71\n1756308900;20,6;70\n", encoding="utf-8")
+
+    without = dumpscsv.inspect(path, delimiter=";")
+    check("without a map nothing is a reading", without.columns, [])
+    check("but they are all named", len(without.ignored), 2)
+    check("and the answer says how to fix it",
+          any("--map" in note for note in without.notes), True)
+
+    store = an_archive(tmp / "german.sdb")
+    try:
+        found = dumpscsv.into(
+            path, store, delimiter=";", unit_system="metricwx",
+            time_column="Zeit",
+            mapping=dumpscsv.parse_map(
+                "Aussentemperatur=outTemp,Luftfeuchte=outHumidity"))
+        check("with one, both rows are written", found.records, 2)
+        rows = list(store.conn.execute(
+            "SELECT outTemp, outHumidity FROM archive "
+            "WHERE dateTime > 1756000000 ORDER BY dateTime"))
+        check("the temperature", [row[0] for row in rows], [20.1, 20.6])
+        check("and the humidity", [row[1] for row in rows], [71.0, 70.0])
+    finally:
+        store.close()
+
+
+def test_a_map_beats_a_known_name(tmp: Path) -> None:
+    """A file whose `Temperature` is the indoor one.
+
+    Rare, and the whole reason a map exists: whoever has the file knows
+    something no table here can.
+    """
+    print("\na map wins over a guess")
+    path = tmp / "indoor.csv"
+    path.write_text("dateTime,Temperature\n1756308600,68.0\n",
+                    encoding="utf-8")
+
+    found = dumpscsv.inspect(
+        path, mapping={"Temperature": "inTemp"})
+    check("it went where it was told", found.columns, ["inTemp"])
+
+
+def test_a_name_nobody_knows_is_still_refused(tmp: Path) -> None:
+    """`KNOWN_NAMES` is not a general translation table and must not grow
+    into one. Each entry is a decision that a measurement belongs in a
+    column, and a wrong one is undoable."""
+    print("\na name nobody knows")
+    path = tmp / "odd.csv"
+    path.write_text("dateTime,Wind,Bodenfeuchte\n1756308600,4.0,31\n",
+                    encoding="utf-8")
+
+    found = dumpscsv.inspect(path)
+    check("neither is taken", found.columns, [])
+    check("both are named", sorted(found.ignored), ["Bodenfeuchte", "Wind"])
+    # `Wind` in particular: the speed in one program and the direction in
+    # another, and no file says which.
+    check("`Wind` is not in the table", "Wind" in dumpscsv.KNOWN_NAMES, False)
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         tmp = Path(raw)
@@ -624,6 +732,10 @@ def main() -> int:
         test_a_csv_with_no_interval_still_writes(tmp)
         test_an_interval_can_be_stated(tmp)
         test_a_file_that_states_its_own_interval_keeps_it(tmp)
+        test_a_weather_underground_export(tmp)
+        test_a_column_can_be_named(tmp)
+        test_a_map_beats_a_known_name(tmp)
+        test_a_name_nobody_knows_is_still_refused(tmp)
 
     print()
     if FAILURES:
