@@ -139,7 +139,7 @@ SKIN_VERSION = 1.2.3
 
 [Labels]
     [[Generic]]
-        outTemp = Aussentemperatur
+        outTemp = Temperatur draußen
 
 [Extras]
     radar_url = https://example.org/radar.png
@@ -171,7 +171,7 @@ unit_system = metricwx
 
 [Labels]
     [[Generic]]
-        outTemp = Aussentemperatur
+        outTemp = Temperatur draußen
         barometer = Luftdruck
 
 [Texts]
@@ -381,7 +381,7 @@ def main() -> int:
         failures += not check("and the skin's own word for the unit",
                               temp.endswith(" Grad"), True)
         failures += not check("what the skin calls the reading",
-                              got.get("label"), "Aussentemperatur")
+                              got.get("label"), "Temperatur draußen")
         press = got.get("press", "")
         failures += not check("millibars", press.endswith(" mbar"), True)
         failures += not check("and one decimal of them", _decimals(press), 1)
@@ -503,7 +503,7 @@ def main() -> int:
         failures += not check("UnitInfoHelper answers",
                               got.get("unit_of"), "degree_C")
         failures += not check("ObsInfoHelper answers",
-                              got.get("called"), "Aussentemperatur")
+                              got.get("called"), "Temperatur draußen")
 
         print("  and one that returns a dictionary adds those names")
         failures += not check("its own SQL ran",
@@ -624,7 +624,7 @@ def main() -> int:
         got = dict(line.split("=", 1) for line in page.splitlines()
                    if "=" in line)
         failures += not check("it renders as written",
-                              got.get("label"), "Aussentemperatur")
+                              got.get("label"), "Temperatur draußen")
 
         print("\nstale_age is honoured on the second run")
         # The steps above wrote language files into the skin, which makes

@@ -403,7 +403,7 @@ def obs_label(obs_type: str, language: Any = None) -> str:
 
     `language` is a `language.Language`. Given one, its word comes first --
     a chart drawn with no skin behind it is still read by somebody, and in
-    German that somebody wants "Aussentemperatur".
+    German that somebody wants "Außentemperatur".
     """
     name = str(obs_type or "")
     if language is not None:

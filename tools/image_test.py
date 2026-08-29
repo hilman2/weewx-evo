@@ -322,7 +322,7 @@ def main() -> int:
         print("\nand it is written in the station's language")
         # One setting for the whole station. A chart has no skin behind
         # it, so without this it says "Outside Temperature" on a page
-        # where everything else says Aussentemperatur.
+        # where everything else says Außentemperatur.
         from weewx_evo import language as language_module
         from weewx_evo.feeds.imagegenerator import canvas as drawing
 
@@ -338,7 +338,7 @@ def main() -> int:
         # no labels falls through to.
         failures += not check("readings are named in it",
                               units.obs_label("outTemp", german),
-                              "Aussentemperatur")
+                              "Außentemperatur")
         failures += not check("including the numbered families",
                               units.obs_label("soilMoist3", german),
                               "Bodenfeuchte 3")
