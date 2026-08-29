@@ -13,8 +13,12 @@ uploading to Weather Underground is not an extension for a weather station, it
 is half the reason to run one. An extension is the tenth service; the shape here
 is built so that the tenth is forty lines.
 
-There are seven: `wunderground`, `pwsweather`, `wow`, `windy`, `weathercloud`,
-`cwop` and `mqtt`.
+There are nine: `wunderground`, `pwsweather`, `wow`, `windy`, `weathercloud`,
+`cwop`, `mqtt`, `webpush` and `influx`.
+
+The last is not a weather service. It writes into a database the operator runs,
+so that Grafana can be asked the question a rendered page cannot answer — see
+[Grafana](Grafana).
 
 ## The interface
 

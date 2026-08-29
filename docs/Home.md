@@ -101,6 +101,7 @@ sitting next to it.
 | [Feeds](Feeds) | What gets produced — JSON feed, diagnostic page |
 | [Exports](Exports) | How it gets somewhere else — FTP, rsync |
 | [Web-Server](Web-Server) | Serving the feeds locally |
+| [Grafana](Grafana) | Dashboards for more than one console, through InfluxDB |
 
 ### Operation
 

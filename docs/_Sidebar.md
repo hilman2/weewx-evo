@@ -29,6 +29,7 @@
 - [Deck](Deck)
 - [Exports](Exports)
 - [Uploads](Uploads)
+- [Grafana](Grafana)
 - [MQTT](MQTT)
 - [Forecast](Forecast)
 - [Web server](Web-Server)
