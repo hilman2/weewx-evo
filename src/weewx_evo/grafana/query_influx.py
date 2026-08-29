@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -97,7 +98,10 @@ def intervals_in(archive: str | Path) -> list[int]:
     on another machine.
     """
     try:
-        with sqlite3.connect(f"file:{Path(archive)}?mode=ro", uri=True) as conn:
+        # `closing` as well: a connection's context manager commits the
+        # transaction and leaves the connection open.
+        with closing(sqlite3.connect(f"file:{Path(archive)}?mode=ro",
+                                     uri=True)) as conn:
             rows = conn.execute(
                 "SELECT DISTINCT interval FROM archive "
                 "WHERE interval IS NOT NULL ORDER BY interval").fetchall()

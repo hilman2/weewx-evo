@@ -27,6 +27,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -659,7 +660,11 @@ class Admin:
         if not path.exists():
             return set()
         try:
-            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+            # `closing` as well as `with`: the context manager on a
+            # connection commits the transaction and leaves the connection
+            # open. This is called on every render of the charts page.
+            with closing(sqlite3.connect(f"file:{path}?mode=ro",
+                                         uri=True)) as conn:
                 return {row[1] for row in conn.execute("PRAGMA table_info(archive)")
                         if row[1] not in ("dateTime", "usUnits", "interval")}
         except Exception:
