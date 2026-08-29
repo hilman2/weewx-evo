@@ -112,6 +112,10 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--sources", type=Path, default=(
         Path(env("SOURCES")) if env("SOURCES") else None),
         help="TOML file saying which station wins for which field")
+    parser.add_argument("--quality", type=Path, default=(
+        Path(env("QUALITY")) if env("QUALITY") else None),
+        help="TOML file with the calibration and the limits "
+             "(default: quality.toml beside the configuration)")
     parser.add_argument("--weewx-conf", type=Path, default=(
         Path(env("WEEWX_CONF")) if env("WEEWX_CONF") else None),
         help="a weewx.conf to fall back on for the settings both systems "
@@ -458,6 +462,7 @@ def build_archivers(args: argparse.Namespace, cfg: Settings, live: LiveStore,
     """
     base = Path(args.config).parent if getattr(args, "config", None) else None
     sources = read_sources(cfg, args.sources)
+    quality = read_quality(args, cfg)
     several = archives.several()
     built = []
     for archive in archives.all():
@@ -475,7 +480,8 @@ def build_archivers(args: argparse.Namespace, cfg: Settings, live: LiveStore,
             sources=sources,
             deriver=deriver_from(cfg, archive),
             name=archive.name,
-            stations=mine)))
+            stations=mine,
+            quality=quality)))
     return built
 
 
@@ -500,6 +506,34 @@ def read_stations(args: argparse.Namespace, cfg: Settings,
         log.info("%d station(s) announced in %s: %s", len(register), where,
                  ", ".join(sorted(one.name for one in register)))
     return register, Sightings(live)
+
+
+def read_quality(args: argparse.Namespace, cfg: Settings) -> Any:
+    """The calibration and the limits, from `quality.toml`.
+
+    Its own file rather than a section in the settings, for the reason
+    `plots.toml` is one: this is many alike entries with tables inside them,
+    and an operator who has worked out what their soil probe does wants to
+    diff it and hand it on.
+
+    Absent means no rules, which is what almost every installation runs.
+    """
+    from . import quality as quality_module
+
+    named = getattr(args, "quality", None) or cfg.get("quality_file")         or "quality.toml"
+    path = Path(named)
+    if not path.is_absolute():
+        # Against the configuration file, like every other relative path that
+        # is not typed on the command line.
+        base = Path(args.config).parent if getattr(args, "config", None) else Path()
+        if not getattr(args, "quality", None):
+            path = base / path
+    policy = quality_module.load(path)
+    if policy:
+        log.info("quality: %d limit(s) and %d calibration(s) from %s",
+                 len(policy.limits),
+                 sum(len(x) for x in policy.calibration.values()), path)
+    return policy
 
 
 def read_sources(cfg: Settings, path: Path | None = None) -> SourcePolicy:

@@ -1,0 +1,447 @@
+#!/usr/bin/env python3
+"""Calibration and limits: what gets into the archive, and what does not.
+
+The check that matters is the last one, and it is why this sits in the
+archiver rather than anywhere else: a refused reading has to be gone *before*
+the accumulator sees it. A spike that reaches the accumulator has set the
+interval's minimum and pulled its mean, and no later filtering takes either
+back out. Measured here on a real archive: the same ten packets with one
+reading of -41 give a mean of 13.6 and a daily low of -41 without rules, and
+20.45 and 20.1 with them.
+
+Three more that no browser and no green unit test would find:
+
+**A limit is a number in a unit.** -50 written in Celsius has to be -58 for a
+console reporting Fahrenheit. A *span* is different again: a five-degree jump
+is nine Fahrenheit degrees, not 41. Get the second one wrong and a spike rule
+turns into a limit at the freezing point.
+
+**Calibration comes before the check.** The other order tests an uncorrected
+reading against corrected limits, so a thermometer with an offset fails at
+its own ceiling.
+
+**A rebuild has to give the same answer.** The checker is made fresh per span
+and seeded from the live table, so building an interval twice, or building it
+a week later, produces the same record. A checker carried between calls would
+make that untrue and nothing would say so.
+
+    python tools/quality_test.py
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from weewx_evo import quality, units
+from weewx_evo.archiver import Archiver
+from weewx_evo.db.archive import ArchiveStore
+from weewx_evo.db.live import LiveStore, Packet
+
+FAILURES: list[str] = []
+CHECKS = 0
+
+
+def check(what: str, got: object, want: object) -> None:
+    global CHECKS
+    CHECKS += 1
+    if got != want:
+        FAILURES.append(f"{what}\n    got  {got!r}\n    want {want!r}")
+
+
+def close_to(what: str, got: float | None, want: float, tol: float = 1e-6) -> None:
+    global CHECKS
+    CHECKS += 1
+    if got is None or abs(got - want) > tol:
+        FAILURES.append(f"{what}\n    got  {got!r}\n    want {want!r}")
+
+
+START = 1755648000
+
+RULES = {
+    "unit_system": "metricwx",
+    "limits": {
+        "outTemp": {"minimum": -50, "maximum": 60, "spike": 5,
+                    "stuck": 4, "resolution": 0.05},
+        "rain": {"minimum": 0, "maximum": 50},
+    },
+    "calibrate": {
+        "everywhere": {"outHumidity": {"offset": 2.0}},
+        "schuppen": {"outTemp": {"offset": -0.4}},
+    },
+}
+
+
+def policy() -> quality.Policy:
+    return quality.from_dict(RULES)
+
+
+# ---------------------------------------------------------------------------
+# The rules.
+# ---------------------------------------------------------------------------
+
+def test_the_three_rules() -> None:
+    checker = quality.Check(policy())
+    readings = [20.0, 20.4, -41.0, 20.5, 99.0, 20.6, 20.6, 20.6, 20.6, 20.6]
+    kept, why = [], []
+    for index, value in enumerate(readings):
+        data, verdicts = checker.check({"outTemp": value}, START + index * 60)
+        kept.append("outTemp" in data)
+        why.append(verdicts[0].rule if verdicts else "")
+
+    check("every plausible reading before the sensor stops is kept",
+          [kept[i] for i in (0, 1, 3, 5, 6, 7, 8)], [True] * 7)
+    check("a jump the weather cannot make", why[2], "spike")
+    check("an impossible reading", why[4], "maximum")
+    check("a sensor that has stopped", why[9], "stuck")
+    check("and they are counted", checker.dropped, {"outTemp": 3})
+    check("with something to read", checker.summary(), "outTemp x3")
+
+
+def test_a_dropped_reading_is_absent_not_zero() -> None:
+    """Zero is a measurement.
+
+    A gauge reporting 0.0 because its reading was refused cannot be told from
+    a dry afternoon, ever.
+    """
+    checker = quality.Check(policy())
+    data, _ = checker.check({"outTemp": 200.0, "outHumidity": 61.0}, START)
+    check("the refused reading is gone", "outTemp" in data, False)
+    check("it is not zeroed", data.get("outTemp"), None)
+    check("its neighbour is untouched", data["outHumidity"], 61.0)
+
+
+def test_a_reading_with_no_rule_passes() -> None:
+    checker = quality.Check(policy())
+    data, verdicts = checker.check({"soilTemp1": -9999.0}, START)
+    check("nothing said about it, nothing done", data["soilTemp1"], -9999.0)
+    check("and no verdict", verdicts, [])
+
+
+def test_rain_gets_no_spike_rule() -> None:
+    """A cloudburst is a step change, and so is a gauge being emptied.
+
+    The two look the same from here, and throwing away real heavy rain is
+    worse than keeping a fault the limits catch anyway.
+    """
+    rules = {"limits": {"rain": {"spike": 0.1, "maximum": 50}}}
+    checker = quality.Check(quality.from_dict(rules))
+    checker.check({"rain": 0.0}, START)
+    data, verdicts = checker.check({"rain": 12.0}, START + 60)
+    check("the cloudburst survives", data.get("rain"), 12.0)
+    check("and nothing was said", verdicts, [])
+
+    # The ceiling still applies: a gauge reporting 300 is a fault.
+    data, verdicts = checker.check({"rain": 300.0}, START + 120)
+    check("but an impossible figure does not", "rain" in data, False)
+    check("caught by the limit", verdicts[0].rule, "maximum")
+
+
+def test_stuck_needs_the_resolution() -> None:
+    """A thermometer reading to a tenth stands still on a calm night.
+
+    Without the resolution every quiet night is a dead sensor.
+    """
+    fine = quality.Check(quality.from_dict(
+        {"limits": {"outTemp": {"stuck": 3, "resolution": 0.05}}}))
+    coarse = quality.Check(quality.from_dict(
+        {"limits": {"outTemp": {"stuck": 3, "resolution": 0.0}}}))
+
+    # Drifting by a hundredth: below the sensor's resolution, so it is the
+    # same reading being reported again.
+    drift = [20.00, 20.01, 20.02, 20.03, 20.04, 20.05]
+    for index, value in enumerate(drift):
+        fine.check({"outTemp": value}, START + index * 60)
+        coarse.check({"outTemp": value}, START + index * 60)
+    check("a sensor resolving to 0.05 is standing still",
+          fine.dropped.get("outTemp", 0) > 0, True)
+    check("one that resolves further is not",
+          coarse.dropped.get("outTemp", 0), 0)
+
+
+# ---------------------------------------------------------------------------
+# Units.
+# ---------------------------------------------------------------------------
+
+def test_a_limit_is_a_number_in_a_unit() -> None:
+    """The same file, a Fahrenheit console. Both directions are traps."""
+    check("-50 C is -58 F",
+          quality._in_system(-50, "outTemp", units.METRICWX, units.US), -58.0)
+    check("60 C is 140 F",
+          quality._in_system(60, "outTemp", units.METRICWX, units.US), 140.0)
+    # And a span is not a point. Converting 5 the same way gives 41, which
+    # would turn a spike rule into a limit at the freezing point.
+    check("a 5 K jump is 9 F degrees",
+          quality._in_system(5, "outTemp", units.METRICWX, units.US,
+                             difference=True), 9.0)
+    close_to("and an offset of -0.4 K is -0.72 F",
+             quality._as_difference(-0.4, "outTemp", units.METRICWX, units.US),
+             -0.72, tol=1e-9)
+
+
+def test_the_limits_reach_a_fahrenheit_console() -> None:
+    checker = quality.Check(policy())
+    # 150 °F is 65.6 °C, over the 60 ceiling.
+    data, verdicts = checker.check({"outTemp": 150.0}, START, system=units.US)
+    check("refused", "outTemp" in data, False)
+    check("and the message is in the packet's own unit",
+          "140" in verdicts[0].why, True)
+
+    # 100 °F is 37.8 °C, which is a hot afternoon and not a fault.
+    data, _ = checker.check({"outTemp": 100.0}, START + 60, system=units.US)
+    check("a hot afternoon is kept", data.get("outTemp"), 100.0)
+
+
+def test_calibration_converts_as_a_difference() -> None:
+    checker = quality.Check(policy())
+    metric = checker.calibrate({"outHumidity": 60.0}, "any", units.METRICWX)
+    check("a metric packet takes the offset as written",
+          metric["outHumidity"], 62.0)
+
+    checker = quality.Check(policy())
+    american = checker.calibrate({"outTemp": 68.0}, "schuppen", units.US)
+    close_to("a Fahrenheit packet takes it converted as a span",
+             american["outTemp"], 68.0 - 0.72, tol=1e-9)
+
+
+def test_a_station_wins_over_everybody() -> None:
+    one = policy()
+    check("the station's own", one.adjust_for("schuppen", "outTemp").offset, -0.4)
+    check("nothing for another station",
+          one.adjust_for("haus", "outTemp"), None)
+    check("and the one for everybody applies to both",
+          [one.adjust_for(who, "outHumidity").offset
+           for who in ("schuppen", "haus")], [2.0, 2.0])
+
+
+def test_calibration_comes_before_the_check() -> None:
+    """Otherwise a thermometer with an offset fails at its own ceiling."""
+    rules = {"limits": {"outTemp": {"maximum": 60}},
+             "calibrate": {"everywhere": {"outTemp": {"offset": -5.0}}}}
+    checker = quality.Check(quality.from_dict(rules))
+    corrected = checker.calibrate({"outTemp": 63.0}, "", units.METRICWX)
+    check("the correction brings it under the ceiling", corrected["outTemp"], 58.0)
+    data, _ = checker.check(corrected, START)
+    check("so it is kept", data.get("outTemp"), 58.0)
+
+
+# ---------------------------------------------------------------------------
+# The file.
+# ---------------------------------------------------------------------------
+
+def test_a_missing_file_is_no_rules() -> None:
+    where = Path(tempfile.mkdtemp()) / "quality.toml"
+    empty = quality.load(where)
+    check("no rules", bool(empty), False)
+    check("and nothing is dropped",
+          quality.Check(empty).check({"outTemp": -9999.0}, START)[1], [])
+
+
+def test_the_file_round_trips() -> None:
+    where = Path(tempfile.mkdtemp()) / "quality.toml"
+    where.write_text(FILE, encoding="utf-8")
+    one = quality.load(where)
+    check("the limits", sorted(one.limits), ["outTemp", "rain"])
+    check("the ceiling", one.limits["outTemp"].maximum, 60.0)
+    check("the resolution", one.limits["outTemp"].resolution, 0.1)
+    check("a station's calibration",
+          one.calibration["schuppen"]["outTemp"].offset, -0.4)
+    check("and the system the figures are in", one.system, units.METRICWX)
+
+
+def test_an_empty_rule_is_not_a_rule() -> None:
+    """A table with nothing in it must not make everything unchecked-looking."""
+    one = quality.from_dict({"limits": {"outTemp": {}}})
+    check("no rule kept", one.limits, {})
+    check("so the policy is empty", bool(one), False)
+
+
+# ---------------------------------------------------------------------------
+# In the archiver, which is the whole point.
+# ---------------------------------------------------------------------------
+
+def an_archive(where: Path, readings: list[float], every: int = 30,
+               station: str = "s") -> Path:
+    live_path = where / "live.sdb"
+    with LiveStore(live_path, interval_seconds=300) as live:
+        for index, value in enumerate(readings):
+            live.add(Packet(dateTime=START + index * every, usUnits=units.METRICWX,
+                            data={"outTemp": value, "outHumidity": 60.0},
+                            source=station))
+    return live_path
+
+
+def built_with(where: Path, live_path: Path, policy_or_none: object,
+               name: str, stop: int = START + 300) -> tuple:
+    live = LiveStore(live_path, interval_seconds=300)
+    store = ArchiveStore(where / f"{name}.sdb")
+    try:
+        archiver = Archiver(live, store, interval_seconds=300,
+                            quality=policy_or_none)
+        built = archiver.build(stop)
+        archiver.store(built)
+        day = store.conn.execute(
+            "SELECT min, max FROM archive_day_outTemp").fetchone()
+        return built, day
+    finally:
+        live.close()
+        store.close()
+
+
+def test_a_spike_never_reaches_the_daily_low() -> None:
+    """The reason this sits in the archiver and not after it.
+
+    A refused reading has to be gone before the accumulator, because the
+    accumulator is what writes the daily minimum -- and nothing takes that
+    back out afterwards.
+    """
+    where = Path(tempfile.mkdtemp())
+    live_path = an_archive(
+        where, [20.0, 20.1, -41.0, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.8])
+
+    loose, loose_day = built_with(where, live_path, None, "loose")
+    tight, tight_day = built_with(where, live_path, policy(), "tight")
+
+    close_to("without rules the mean is dragged down",
+             loose.record["outTemp"], 13.62, tol=0.01)
+    check("and the daily low is the spike", round(loose_day[0], 1), -41.0)
+
+    close_to("with rules the mean is the weather",
+             tight.record["outTemp"], 20.45, tol=0.01)
+    check("and the daily low is a real reading", round(tight_day[0], 1), 20.1)
+    check("the archiver reports what it refused", tight.dropped, {"outTemp": 1})
+
+
+def test_building_twice_gives_the_same_record() -> None:
+    """`build` is a function of a time span, and has to stay one.
+
+    A checker carried between calls would make an interval depend on what was
+    built before it, so a rebuild would differ from the original -- silently,
+    and only where a rule fired.
+    """
+    where = Path(tempfile.mkdtemp())
+    live_path = an_archive(
+        where, [20.0, 20.1, -41.0, 20.2, 20.3, 20.4, 20.5, 20.6, 20.7, 20.8])
+
+    first, _ = built_with(where, live_path, policy(), "first")
+    second, _ = built_with(where, live_path, policy(), "second")
+    check("the same record", first.record, second.record)
+    check("and the same verdicts", first.dropped, second.dropped)
+
+    # Twice through one archiver, which is what a rebuild does.
+    live = LiveStore(live_path, interval_seconds=300)
+    store = ArchiveStore(where / "again.sdb")
+    try:
+        archiver = Archiver(live, store, interval_seconds=300, quality=policy())
+        one = archiver.build(START + 300)
+        two = archiver.build(START + 300)
+        check("and again from the same archiver", one.record, two.record)
+        check("with the same count", one.dropped, two.dropped)
+    finally:
+        live.close()
+        store.close()
+
+
+def test_an_outlier_in_the_run_up_is_not_the_reference() -> None:
+    """One bad packet must not switch a station off.
+
+    The run-up has to judge as well as remember. Taking every reading as read
+    means an outlier becomes what the next reading is compared against -- so
+    the first real one is a spike from -41, and so is the one after it, for
+    as long as the sensor keeps working.
+    """
+    where = Path(tempfile.mkdtemp())
+    # The outlier is the last packet of the first interval, so it reaches the
+    # second interval only through the run-up.
+    readings = ([20.0 + i * 0.1 for i in range(9)] + [-41.0]
+                + [21.0 + i * 0.1 for i in range(10)])
+    live_path = an_archive(where, readings)
+
+    built, _day = built_with(where, live_path, policy(), "outlier",
+                             stop=START + 600)
+    check("the readings after it are kept", built.dropped, {})
+    close_to("and the record is the weather",
+             built.record["outTemp"], 21.5, tol=0.3)
+
+
+def test_the_run_up_closes_the_boundary() -> None:
+    """A spike on the first packet of an interval has nothing to jump from.
+
+    Without reading the packets before the span, every interval boundary is a
+    hole a spike walks through -- once every five minutes, for ever.
+    """
+    where = Path(tempfile.mkdtemp())
+    # Drifting gently through the first interval -- not ten identical
+    # readings, which would be a stuck sensor and is a different test -- and
+    # then the jump lands on the first packet of the *second* interval, which
+    # is the packet with nothing before it to be compared against.
+    readings = ([20.0 + i * 0.1 for i in range(11)] + [-41.0]
+                + [21.2 + i * 0.1 for i in range(8)])
+    live_path = an_archive(where, readings)
+
+    built, _day = built_with(where, live_path, policy(), "boundary",
+                             stop=START + 600)
+    check("the spike on the boundary is caught", built.dropped, {"outTemp": 1})
+    close_to("so the second interval is the weather",
+             built.record["outTemp"], 21.55, tol=0.2)
+
+
+def test_calibration_reaches_the_record() -> None:
+    where = Path(tempfile.mkdtemp())
+    live_path = an_archive(where, [20.0] * 10, station="schuppen")
+    built, _ = built_with(where, live_path, policy(), "shed")
+    close_to("the station's offset is applied",
+             built.record["outTemp"], 19.6)
+    close_to("and the one for everybody too",
+             built.record["outHumidity"], 62.0)
+
+
+def test_no_policy_costs_nothing() -> None:
+    """Almost every installation runs without rules, and must be untouched."""
+    where = Path(tempfile.mkdtemp())
+    live_path = an_archive(where, [20.0, 20.5, 21.0, 20.5] * 2)
+    built, _ = built_with(where, live_path, None, "plain")
+    check("nothing dropped", built.dropped, {})
+    check("and a record all the same", "outTemp" in built.record, True)
+
+
+FILE = """unit_system = "metricwx"
+
+[limits.outTemp]
+minimum = -50
+maximum = 60
+spike = 5
+stuck = 40
+resolution = 0.1
+
+[limits.rain]
+minimum = 0
+maximum = 50
+
+[calibrate.schuppen.outTemp]
+offset = -0.4
+"""
+
+
+def main() -> int:
+    for name, test in sorted(globals().items()):
+        if name.startswith("test_") and callable(test):
+            try:
+                test()
+            except Exception as exc:  # a failing test is the finding
+                FAILURES.append(f"{name} raised {type(exc).__name__}: {exc}")
+
+    if FAILURES:
+        print(f"{len(FAILURES)} of {CHECKS} checks failed:\n")
+        for failure in FAILURES:
+            print(f"  {failure}\n")
+        return 1
+    print(f"quality: {CHECKS} checks passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -28,15 +28,33 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+from . import units
 from .aggregate import Accumulator, start_of_archive_day
 from .db.archive import ArchiveStore
 from .db.live import DEFAULT_ARCHIVE, LiveStore, interval_stop
 from .derive import Deriver
 from .obstypes import DEFAULT_POLICY, Policy
+from .quality import Check
+from .quality import Policy as QualityPolicy
 from .sources import Policy as SourcePolicy
 from .sources import apply as source_merge
 
 log = logging.getLogger(__name__)
+
+#: How far before a span to read for context, at most. A stuck rule counts
+#: readings, not minutes, so the run-up is worked out from the longest one on
+#: the assumption that packets arrive at least once a minute -- which is the
+#: slowest any of these consoles report. Capped, because the point is to seed
+#: two numbers per field and not to re-read the day.
+MAX_RUN_UP = 6 * 3600
+
+
+def _run_up(policy: QualityPolicy, seconds: int) -> int:
+    """Seconds of packets to read before a span, for the rules that need them."""
+    if not policy.limits:
+        return seconds
+    longest = max((rule.stuck or 0) for rule in policy.limits.values())
+    return min(MAX_RUN_UP, max(seconds, longest * 60))
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +71,11 @@ class Built:
     #: with a single station. The full provenance is always in the live table;
     #: this is the summary of what the merge decided.
     provenance: dict[str, str] = field(default_factory=dict)
+    #: Readings quality control refused, by name and count. Empty where no
+    #: rules are configured, which is most installations. Reported rather
+    #: than dropped in silence: a silent drop looks exactly like a broken
+    #: sensor, which is the thing this is meant to help find.
+    dropped: dict[str, int] = field(default_factory=dict)
 
 
 class Archiver:
@@ -63,7 +86,8 @@ class Archiver:
                  loop_hilo: bool = True, sources: SourcePolicy | None = None,
                  deriver: Deriver | None = None,
                  name: str = DEFAULT_ARCHIVE,
-                 stations: Iterable[str] | None = None) -> None:
+                 stations: Iterable[str] | None = None,
+                 quality: QualityPolicy | None = None) -> None:
         self.live = live
         self.archive = archive
         #: Which series this is. It keys this archiver's own place in the
@@ -90,6 +114,10 @@ class Archiver:
         # from the record entirely.
         self.deriver = deriver or Deriver()
         self.stations = None if stations is None else list(stations)
+        # Calibration and limits. Applied per packet and before deriving, so
+        # a corrected reading is what the dew point is computed from and a
+        # refused one never reaches the accumulator. Empty by default.
+        self.quality = quality or QualityPolicy()
 
     # -- building --------------------------------------------------------
 
@@ -115,13 +143,19 @@ class Archiver:
         archived, archive_provenance = source_merge(archived, self.sources)
         provenance = {**archive_provenance, **provenance}
 
+        checker = self._checker(start, seconds)
+
         accum = Accumulator(start, stop, policy=self.policy)
         n = 0
         for packet in loop:
+            # Corrected and checked before deriving. The other order computes
+            # a dew point from a reading that is about to be corrected or
+            # thrown away, and leaves it in the record either way.
+            record = self._sound(checker, packet)
             # Derived per packet, before accumulating. The other way round
             # gives the dew point of an average hour, which is not a thing
             # that happened: dewpoint(mean(T)) != mean(dewpoint(T)).
-            accum.add_record(self.deriver.apply(packet.record()), weight=1)
+            accum.add_record(self.deriver.apply(record), weight=1)
             n += 1
 
         hardware: dict | None = None
@@ -130,7 +164,10 @@ class Archiver:
             # readings we never saw, at a resolution we cannot match. Several
             # sources may deliver one -- there is no primary station here --
             # so they are laid over each other in arrival order.
-            hardware = {**(hardware or {}), **packet.record()}
+            #
+            # Checked all the same. A console with a dead sensor writes its
+            # own records out of the same reading.
+            hardware = {**(hardware or {}), **self._sound(checker, packet)}
 
         if hardware is None and n == 0:
             return None
@@ -151,9 +188,50 @@ class Archiver:
             # until the record exists.
             self.deriver.apply(record)
 
+        if checker is not None and checker.dropped:
+            log.info("%s: interval ending %d dropped %s",
+                     self.name, stop, checker.summary())
+
         return Built(stop=stop, seconds=seconds, record=record, accumulator=accum,
                      packets=n, from_hardware=hardware is not None,
-                     provenance=provenance)
+                     provenance=provenance,
+                     dropped=dict(checker.dropped) if checker else {})
+
+    def _checker(self, start: int, seconds: int) -> Check | None:
+        """A fresh checker for this span, seeded from the packets before it.
+
+        Fresh, because `build` has to be a function of a time span and
+        nothing else: a checker carried between calls would make a record
+        depend on what was built before it, and a rebuild would then differ
+        from the original.
+
+        Seeded, because the spike and stuck rules need a previous reading and
+        the first packet of an interval has none. Without the run-up, a
+        boundary is a hole a spike walks through every five minutes. It reads
+        the same live table the span comes from, so it is deterministic.
+        """
+        if not self.quality:
+            return None
+        checker = Check(self.quality)
+        run_up = _run_up(self.quality, seconds)
+        if run_up:
+            checker.context(self.live.packets(start - run_up, start,
+                                              kind="loop",
+                                              sources=self.stations))
+        return checker
+
+    def _sound(self, checker: Check | None, packet: object) -> dict:
+        """One packet, corrected and checked. The record itself where neither."""
+        record = packet.record()
+        if checker is None:
+            return record
+        station = getattr(packet, "source", "") or ""
+        system = units.system_from(record.get("usUnits"),
+                                   default=units.METRICWX)
+        record = checker.calibrate(record, station, system)
+        record, _verdicts = checker.check(
+            record, float(record.get("dateTime") or 0), station, system)
+        return record
 
     # -- writing ---------------------------------------------------------
 
