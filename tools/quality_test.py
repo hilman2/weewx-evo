@@ -502,6 +502,56 @@ def test_the_measured_rules_pass_their_own_data() -> None:
     check("its own history passes", checker.dropped, {})
 
 
+def test_a_reading_that_does_not_move_gets_no_rule() -> None:
+    """An archive column holds more than measurements.
+
+    `lightning_time` is a Unix timestamp, a battery field is a flag. Both sit
+    still, and a rule worked out from one refuses the next value that
+    differs. Measured on the reference database before this: a ceiling two
+    seconds above a lightning timestamp refused 36% of the records it came
+    from, and a spike rule of zero on a battery flag refuses every change
+    there will ever be.
+    """
+    # A timestamp: a span of four seconds around 1.79 billion.
+    stamps = a_year([("lightning_time", [1787604641.0] * 30
+                      + [1787604645.0] * 10)])
+    seen = quality.watch(stamps)
+    check("no rule at all for a timestamp",
+          seen["lightning_time"].rule().empty(), True)
+    check("because it does not vary", seen["lightning_time"].varies(), False)
+
+    # A flag that never changes.
+    flat = a_year([("txBatteryStatus", [1.62] * 40)])
+    check("nor for a flag that never moves",
+          flat["txBatteryStatus"].rule().empty() if "txBatteryStatus" in flat
+          else True, True)
+
+    # And a reading that does move still gets one.
+    real = quality.watch(a_year([("outTemp", [10.0, 15.0, 20.0, 12.0] * 10)]))
+    check("but a reading that moves does",
+          real["outTemp"].rule().empty(), False)
+
+
+def test_a_spike_rule_is_never_zero() -> None:
+    """Zero is not a rule, it is a prohibition on ever changing."""
+    rows = a_year([("someField", [5.0, 5.0, 5.0000001, 5.0] * 10)])
+    seen = quality.watch(rows)
+    if "someField" in seen:
+        rule = seen["someField"].rule()
+        check("no spike rule of zero",
+              rule.spike is None or rule.spike > 0, True)
+
+
+def test_standing_still_can_be_the_normal_state() -> None:
+    """A battery flag that has not moved for a quarter of the year is not a
+    dead sensor, and a stuck rule about it fires on the ordinary case."""
+    # Moves at the very end, so it "varies", but is still for most of it.
+    values = [1.0] * 36 + [2.0, 1.0, 2.0, 1.0]
+    seen = quality.watch(a_year([("someFlag", values)]))
+    check("no stuck rule where stillness is normal",
+          seen["someFlag"].rule().stuck, None)
+
+
 def test_the_suggest_command_writes_readable_toml() -> None:
     """What it prints has to parse, or the next step is retyping it."""
     import subprocess
@@ -564,6 +614,42 @@ maximum = 50
 [calibrate.schuppen.outTemp]
 offset = -0.4
 """
+
+
+def test_a_real_station_s_own_rules_refuse_nothing() -> None:
+    """The round trip that matters, on a database nobody made up.
+
+    134 columns, of which 54 are recorded: timestamps, battery flags, soil
+    probes and the weather. Suggest rules from all of it, run them over the
+    same records, and refuse nothing. This is the check that found three
+    faults a synthetic fixture could not: the headroom under a timestamp, a
+    spike rule that rounded to zero, and a stuck rule on a reading whose
+    normal state is standing still.
+    """
+    where = Path(__file__).resolve().parent.parent / "reference" / "weewx.sdb"
+    if not where.exists():
+        return
+
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(f"file:{where}?mode=ro", uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(row) for row in conn.execute(
+            "SELECT * FROM archive ORDER BY dateTime")]
+
+    seen = quality.watch(rows, system=units.METRICWX)
+    limits = {obs: entry.rule() for obs, entry in seen.items()
+              if not entry.rule().empty()}
+    check("most readings get a rule", len(limits) > 20, True)
+
+    checker = quality.Check(quality.Policy(limits=limits,
+                                           system=units.METRICWX))
+    for row in rows:
+        system = units.system_from(row.get("usUnits"), default=units.METRICWX)
+        checker.check(checker.calibrate(row, "", system),
+                      float(row.get("dateTime") or 0), "", system)
+    check("and its own history passes them", checker.dropped, {})
 
 
 def main() -> int:

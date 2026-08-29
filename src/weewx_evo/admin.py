@@ -31,13 +31,14 @@ from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from . import (
     adminarchives,
     adminhome,
     adminplots,
     adminpublish,
+    adminquality,
     adminsearch,
     adminsetup,
     adminstations,
@@ -175,7 +176,7 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 #: here rather than in ADD_PAGES because it is not adding one thing:
 #: it is the path from an empty directory to a station recording.
 OWN_PAGES = ("overview", "stations", "archives", "publishing",
-             "charts", "search", "setup")
+             "charts", "quality", "search", "setup")
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -1504,6 +1505,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     nav.append('<p class="navhead">Readings out</p>')
     nav.extend(adminpublish.nav(admin, active))
     nav.extend(adminplots.nav(admin, active))
+    nav.extend(adminquality.nav(admin, active))
     forecasts = [s for s in admin.schemas if s.kind == "forecast"]
     current = " aria-current='page'" if active in (
         "forecast", "new-forecast") or active.startswith("forecast:") else ""
@@ -1546,7 +1548,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     elif standing:
         pages = {"overview": adminhome, "archives": adminarchives,
                  "stations": adminstations, "publishing": adminpublish,
-                 "charts": adminplots}
+                 "charts": adminplots, "quality": adminquality}
         body = [pages[active].overview(admin, message, errors.get("", ""))]
     elif active == "new-archive":
         body = [adminarchives.new(admin, errors.get("", ""), form)]
@@ -1728,7 +1730,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "new-station": "Add a station", "stations": "Stations",
                     "new-archive": "Add an archive", "overview": "Overview",
                     "archives": "Archives", "publishing": "Publishing",
-                    "charts": "Charts",
+                    "charts": "Charts", "quality": "Quality control",
                     "search": "Find a setting"}
         heading = schema.label if schema else headings.get(active, "Settings")
 
@@ -2599,6 +2601,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._station_action(action, parts, form)
             return
 
+        if "quality" in parts:
+            self._quality_action(action, form)
+            return
+
         if action == "new-archive" or "archives" in parts:
             self._archive_action(action, parts, form)
             return
@@ -2653,6 +2659,27 @@ class _Handler(BaseHTTPRequestHandler):
             return
         # Redirect after a save, so a reload does not save again.
         self._redirect(f"./{which}?saved=1")
+
+    def _quality_action(self, action: str, form: dict) -> None:
+        """Save the table, or fill it in from what the station recorded."""
+        if action == "suggest":
+            said = adminquality.suggest(self.admin)
+            # `suggest` says both kinds of thing: "nothing to work them out
+            # from" is not an error, it is the answer.
+            if said and said.startswith("Could not"):
+                self._reply(200, page(self.admin, "quality",
+                                      errors={"": said}))
+                return
+            self._redirect("./quality?saved=1"
+                           + (f"&said={quote(said)}" if said else ""))
+            return
+
+        errors = adminquality.save(self.admin, form)
+        if errors:
+            self._reply(200, page(self.admin, "quality", errors=errors,
+                                  form=form))
+            return
+        self._redirect("./quality?saved=1")
 
     def _archive_action(self, action: str, parts: list, form: dict) -> None:
         """Add, change or remove a series. Redirects, like the stations do."""
@@ -2883,7 +2910,6 @@ class _Handler(BaseHTTPRequestHandler):
         if first and last:
             when = (f", {time.strftime('%Y-%m-%d', time.localtime(first))} "
                     f"to {time.strftime('%Y-%m-%d', time.localtime(last))}")
-        from urllib.parse import quote
 
         said = (f"{adopt.count_records(where)} records carried over{when}. "
                 f"The file WeeWX has is untouched -- this is a copy.")
@@ -2983,7 +3009,6 @@ class _Handler(BaseHTTPRequestHandler):
         # there is no session: this page holds nothing between requests, and
         # a redirect that arrives with nothing to say looks like a step that
         # did nothing.
-        from urllib.parse import quote
 
         tail = f"?said={quote(said)}" if said else ""
         self._redirect(f"../setup/{where}{tail}")

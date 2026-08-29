@@ -918,6 +918,33 @@ def main() -> int:
                 failures += not check(f"{kind} {what}: with a form on it",
                                       "<form" in rendered, True)
 
+        # The quality page is written by hand rather than generated, so it
+        # gets its own walk: render it, fill it in from the archive, and
+        # render it again. The suggestion is the button the page exists for,
+        # and it writes a file.
+        code, rendered = get(f"{base}/{TOKEN}/quality")
+        failures += not check("the quality page renders", code, 200)
+        failures += not check("with a table on it", "<table" in rendered, True)
+
+        code, _body = post(f"{base}/{TOKEN}/quality/suggest", {})
+        failures += not check("its suggestions can be taken", code, 303)
+        code, rendered = get(f"{base}/{TOKEN}/quality")
+        failures += not check("and the page still renders after", code, 200)
+
+        # And the rules it wrote must not refuse the readings they came
+        # from. A page whose one button produces a rule that throws away
+        # measurements is worse than no page -- measured once on a real
+        # archive, a ceiling two seconds above a lightning timestamp refused
+        # 36% of the records it was derived from.
+        #
+        # Asked of the dry run the page prints rather than of the word
+        # "refuse", which is in its help text either way.
+        code, rendered = get(f"{base}/{TOKEN}/quality")
+        failures += not check(
+            "the rules it wrote refuse nothing",
+            "would refuse nothing" in rendered
+            or "record(s), these rules would refuse" not in rendered, True)
+
         # And the one that is not offered cannot be reached by typing the URL
         # either. It was, and what people made was an upload with every field
         # empty -- including the units, so a station sending Fahrenheit

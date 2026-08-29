@@ -448,6 +448,27 @@ HEADROOM = 0.25
 #: limit a millimetre away from it. In the unit of the reading.
 LEAST_HEADROOM = 2.0
 
+#: How small a reading's whole range may be, against its own size, before it
+#: is taken as something that does not vary.
+#:
+#: An archive column holds more than measurements. `lightning_time` is a Unix
+#: timestamp, a battery field is a flag, a firmware field is a version. All of
+#: them sit still, and a rule worked out from one refuses the next value that
+#: differs -- measured on a real station: a ceiling two seconds above a
+#: lightning timestamp refused 36% of the records it was derived from, and a
+#: spike rule of zero on a battery flag refuses every change there will ever
+#: be.
+#:
+#: A ratio rather than a list of field names, because the next station has a
+#: field nobody here has heard of.
+VARIES = 1e-6
+
+#: And how much of a reading's history may be one unbroken still spell before
+#: standing still is taken as its normal state rather than as a fault. A
+#: battery flag that has not moved for a quarter of the year is not a dead
+#: sensor.
+STILL_ENOUGH = 0.2
+
 #: The most of a reading's whole range its resolution is allowed to be.
 #:
 #: The resolution is measured as the smallest change ever seen between two
@@ -502,15 +523,38 @@ class Seen:
     #: sensor's resolution, measured rather than looked up.
     step: float = math.inf
 
+    def varies(self) -> bool:
+        """Whether this reading actually moves.
+
+        Against its own size, not against a fixed figure: a span of four is
+        the whole range of a lightning timestamp and nothing at all for a
+        number near 1.8 billion. See `VARIES`.
+        """
+        span = self.highest - self.lowest
+        if span <= 0:
+            return False
+        scale = max(abs(self.highest), abs(self.lowest), 1.0)
+        return span / scale > VARIES
+
     def rule(self) -> Rule:
         """A rule with room in it, inside what physics allows.
 
         Never tighter than what has been seen, and never wider than what can
         happen: the room added below the lowest reading would otherwise put
         the floor for wind speed at -2.
+
+        And nothing at all for a reading that does not vary. A column holding
+        a flag or a timestamp is not a measurement, and every rule derived
+        from one refuses the next value that differs.
         """
+        if not self.varies():
+            return Rule()
+
         span = max(self.highest - self.lowest, 0.0)
-        room = max(span * HEADROOM, LEAST_HEADROOM)
+        # The floor under the headroom is relative as well. Two units is
+        # generous for a temperature and invisible next to a timestamp.
+        room = max(span * HEADROOM, LEAST_HEADROOM,
+                   abs(self.highest) * VARIES)
         floor, ceiling = PHYSICAL.get(units.group_of(self.obs) or "",
                                       (None, None))
 
@@ -522,13 +566,21 @@ class Seen:
             high = min(high, ceiling)
 
         counter = self.obs in COUNTERS
+        # A spike rule of zero is not a rule, it is a prohibition: it refuses
+        # every change there will ever be. It comes from a reading whose
+        # fastest observed change rounded to nothing.
+        spike = round(self.fastest * SPIKE_ALLOWANCE, 3)
+        # Standing still is this reading's normal state where it has done it
+        # for a large part of its history, and a rule about it would fire on
+        # the ordinary case.
+        settled = (self.longest_still >= self.count * STILL_ENOUGH
+                   if self.count else True)
         return Rule(
             minimum=round(low, 3),
             maximum=round(high, 3),
             # No spike rule for a counter, and none for a reading that
             # wraps: the wind passing north is not a jump of 358 degrees.
-            spike=(round(self.fastest * SPIKE_ALLOWANCE, 3)
-                   if self.fastest > 0 and not counter
+            spike=(spike if spike > 0 and not counter
                    and not _circular(self.obs) else None),
             # Twice the longest quiet spell on record, and never fewer than
             # ten: a rule at the observed figure fires on the first calm
@@ -537,7 +589,8 @@ class Seen:
             # Never for a counter. Rain sits at zero for a fortnight in
             # August, and that is the weather rather than a dead gauge.
             stuck=(max(10, self.longest_still * 2)
-                   if self.longest_still and not counter else None),
+                   if self.longest_still and not counter and not settled
+                   else None),
             resolution=self.resolution())
 
     def resolution(self) -> float:
