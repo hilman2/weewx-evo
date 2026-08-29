@@ -2289,14 +2289,16 @@ def build_upload(name: str, settings: dict) -> object:
             first = next(iter(errors.values()))
             raise ValueError(f"upload {name!r}: {first}")
         settings = parsed
-    # Settings *about* an upload rather than *for* it. `archive` says which
-    # series it reads and is the runner's to act on; no upload takes it, and
-    # every one of the eight raises TypeError when handed it.
+    # Settings *about* an upload rather than *for* it. Both say where its
+    # readings come from and are the runner's to act on; no upload takes
+    # either, and every one of the eight raises TypeError when handed one.
     #
-    # Which means the setting was on every upload's page and unusable on all
+    # Which means `archive` was on every upload's page and unusable on all
     # of them: filling it in got "unexpected keyword argument 'archive'" and
-    # the upload was skipped, said once at warning and never again.
-    for elsewhere in ("archive",):
+    # the upload was skipped, said once at warning and never again. Adding
+    # `live_source` reproduced it within the hour, which is why this is a
+    # list and not an `if`.
+    for elsewhere in ("archive", "live_source"):
         settings.pop(elsewhere, None)
     return factory(**settings)
 
@@ -2402,16 +2404,26 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     # Which consoles belong to which series, so a live upload for one site
     # publishes that site's readings. The live table holds the whole
     # installation; only the archive is per series.
+    # Which consoles belong to which series, and which of them is the main
+    # one. Both are needed: the first says whose readings this site may
+    # publish at all, the second which of them it prefers.
     consoles: dict[str, list[str]] = {}
-    if registry.several():
-        register, _sightings = read_stations(args, cfg)
-        for one in registry.all():
-            consoles[one.name] = sorted(
-                station.name for station in register.for_archive(one.name))
+    main_consoles: dict[str, list[str]] = {}
+    register, _sightings = read_stations(args, cfg)
+    for one in registry.all():
+        mine = list(register.for_archive(one.name))
+        if registry.several():
+            consoles[one.name] = sorted(station.name for station in mine)
+        # The main ones even with a single archive: a station with a shed
+        # sensor has the same question, and it is the commoner case.
+        main_consoles[one.name] = sorted(
+            station.name for station in mine
+            if getattr(station, "role", "main") == "main")
 
     return upload_runner.build(configured, with_station, progress, records,
                                packets, by_archive=by_archive,
-                               consoles=consoles)
+                               consoles=consoles,
+                               main_consoles=main_consoles)
 
 
 def live_readings_locally(cfg: Settings,

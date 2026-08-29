@@ -452,6 +452,7 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
           packets: Callable[[int, int], list[dict]] | None = None,
           by_archive: dict[str, Callable[[int, int], list[dict]]] | None = None,
           consoles: dict[str, list[str]] | None = None,
+          main_consoles: dict[str, list[str]] | None = None,
           ) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
@@ -483,9 +484,16 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         # `for_sources` only where the reader has it: a split deployment
         # passes something else here, and an upload publishing everything is
         # what it did before and is not worse than not publishing.
+        # And which of that site's consoles a live reading is taken from.
+        # An archive record is worked out from all of them together; a live
+        # reading is one packet, so something has to say which -- and
+        # "whichever reported last" makes a page flicker between a garden
+        # and a shed.
         mine = packets
         named = (consoles or {}).get(wanted) if wanted else None
-        if named and hasattr(packets, "for_sources"):
-            mine = packets.for_sources(named)
+        main = (main_consoles or {}).get(wanted or "") or []
+        pick = str(settings.get("live_source") or "main")
+        if (named or main) and hasattr(packets, "for_sources"):
+            mine = packets.for_sources(named, pick, main)
         ready.append(Scheduled(name, upload, progress, source, mine))
     return ready

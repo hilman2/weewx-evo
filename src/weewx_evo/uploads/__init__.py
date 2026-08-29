@@ -476,5 +476,25 @@ def when_options(trigger: str = "record", every: int = 900,
                         "to choose. With two, a station registered with a "
                         "weather service belongs to one place, and the "
                         "coordinates sent with it come from that place."),
+            Option("live_source", "Live readings come from",
+                   kind="choice", default="main", advanced=True,
+                   choices=(
+                       ("main", "The main console"),
+                       ("main-or-extra",
+                        ("The main console, or an extra one when it "
+                         "goes quiet")),
+                       ("newest", "Whichever console reported last"),
+                       ("average", "The average of every console"),
+                       ("extra", "The extra consoles only"),
+                   ),
+                   help="Only matters where a site has more than one "
+                        "console. An archive record is worked out from all "
+                        "of them together; a live reading is one packet, so "
+                        "something has to say which. The default is the main "
+                        "console -- the one whose readings go in their own "
+                        "columns -- because that is what a station means by "
+                        "'the temperature'. 'Whichever reported last' is "
+                        "what this did before the setting existed, and it "
+                        "makes a page flicker between a garden and a shed."),
         )),
     ]

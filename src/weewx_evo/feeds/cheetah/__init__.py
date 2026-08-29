@@ -1099,9 +1099,20 @@ def _settings_block(value: Any) -> dict[str, Any]:
         return dict(value)
     if not value:
         return {}
+    # A list too, because the option declares `kind="list"` and that is what
+    # a hand-written file naturally holds:
+    #
+    #     extras = ["base_path = /wdc/", "charts_path = /wdc/json/"]
+    #
+    # Without this it went through `str()`, so the one "line" was the repr of
+    # the list and every setting in it was silently dropped -- pages asking
+    # for /assets/deck.css while being served under /wdc/, with the skin
+    # rendering perfectly and looking unstyled.
+    lines = value if isinstance(value, (list, tuple)) \
+        else str(value).splitlines()
     out: dict[str, Any] = {}
-    for line in str(value).splitlines():
-        key, sep, said = line.partition("=")
+    for line in lines:
+        key, sep, said = str(line).partition("=")
         if sep and key.strip():
             out[key.strip()] = said.strip()
     return out

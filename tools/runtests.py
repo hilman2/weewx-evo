@@ -142,6 +142,8 @@ def tests() -> list[Test]:
              "it restarts for what a restart fixes, and not more often"),
         Test("livedb", ["livedb_test.py"],
              "the live table hands a descriptor back when its thread ends"),
+        Test("livesource", ["livesource_test.py"],
+             "which console a live reading comes from"),
         Test("roles", ["roles_test.py"],
              "a second station is moved aside, and one notices nothing"),
         Test("adminfields", ["adminfields_test.py"],
