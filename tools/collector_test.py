@@ -170,6 +170,44 @@ channel = 3
         thread.join(timeout=2)
         store.close()
 
+        # -- what the running loop watches -----------------------------
+        # The endpoints above are claimed once, in `configure_drivers` at
+        # startup. So a collector created on the settings page delivered to
+        # a name nothing answered to and was refused with a 404 -- the same
+        # one a wrong token gets -- until somebody restarted the service,
+        # and nothing said so: a collector is a named section, and
+        # `needs_restart` only ever answers about the core options.
+        #
+        # `serve` compares this list every time the file changes and
+        # restarts itself when it moves. What has to hold is that it is the
+        # same list `register_names` works from -- the candidates, not the
+        # winners. A name that was declined is in here on purpose: renaming
+        # it is the fix, and the fix has to take effect.
+        from weewx_evo.cli import _collector_shape
+
+        print("\nwhat a running process has to restart for")
+        watched = _collector_shape(config)
+        check("every configured collector is watched, declined ones too",
+              watched, sorted(set(claimed) | {"json"}))
+
+        config["collectors"]["barn"] = {"kind": "weewx-driver"}
+        check("a collector added to the file changes it",
+              _collector_shape(config) != watched, True)
+
+        # Settings are read by the collector's own process when it starts,
+        # so changing one is none of this process's business. Restarting for
+        # it would take the station off the air to no purpose.
+        config["collectors"].pop("barn")
+        config["collectors"]["shed"]["conf"] = "/etc/weewx/elsewhere.conf"
+        check("but changing one's settings does not",
+              _collector_shape(config), watched)
+
+        # A kind nothing can run claims no endpoint, so it is not a reason
+        # to restart either. `register_names` skips it for the same reason.
+        config["collectors"]["ghost"] = {"kind": "something-else"}
+        check("and neither does a kind nothing recognises",
+              _collector_shape(config), watched)
+
     print()
     if failures:
         print(f"{failures} check(s) failed")

@@ -51,7 +51,7 @@ from ... import units, weewxconf
 from ...options import Group, Option
 from ...series import Reader
 from ...tags import Tags
-from .. import Produced
+from .. import Produced, archive_names
 
 log = logging.getLogger(__name__)
 
@@ -187,6 +187,13 @@ class CheetahFeed:
         #: Which places this instance was told to show, in that order. Empty
         #: means every one it was handed.
         self.shown: tuple[str, ...] = ()
+        #: Whether this feed was told to publish one place. Read instead of
+        #: the list above rather than alongside it: two settings that can
+        #: each decide how many places there are would otherwise say
+        #: something neither of them says alone -- a list naming two under a
+        #: switch that says one -- and nothing on the published site could
+        #: show which of the two had won.
+        self.solo = False
         #: Whether the *installation* keeps more than one series, as opposed
         #: to how many this feed shows. They are different questions and the
         #: chart files answer the first one: the JSON feed writes a
@@ -225,6 +232,15 @@ class CheetahFeed:
         # Remembered before the list is cut: what the chart feed did is
         # decided by the registry, not by this skin's own narrowing.
         self.many_series = self.many_series or len(self.places) > 1
+        if self.solo:
+            # Told on its own page that this feed is about one place, so the
+            # list is not consulted at all. Keeping the entry rather than
+            # emptying the list outright, because it carries that place's
+            # colour, its code and its own settings; `_home()` is the
+            # stand-in for a feed whose place was not among those handed in.
+            self.places = [one for one in self.places
+                           if one["name"] == self.archive]
+            return
         if not self.shown or not self.places:
             return
         by_name = {one["name"]: one for one in self.places}
@@ -1511,6 +1527,7 @@ class CheetahFeed:
         from ...options import installed_skins
 
         return [
+            *_shows_group(),
             Group("Live updates",
                   "A skin that can show live readings subscribes to an MQTT "
                   "broker from the visitor's browser. Which broker, the "
@@ -2019,6 +2036,57 @@ def _listed(value: Any) -> list[str]:
     return [one for one in str(value).replace(",", " ").split() if one]
 
 
+def _shows_group() -> list[Group]:
+    """How many places this feed is about, or nothing to ask.
+
+    Left out entirely where the installation keeps one series, which is
+    every installation that has not asked for a second: a choice between one
+    place and several, on a station that has one, is a question with one
+    answer. The precedent is the bundled skin, which leaves out its three
+    groups about places the same way.
+
+    Asked from inside the form builder, the way the dropdowns are, so it
+    sees the file the page is being built for rather than whichever one was
+    current when this module was imported.
+
+    It belongs to the feed and not to a skin because `narrow()` is what
+    reads it: a skin from outside is narrowed by it without shipping an
+    `options.py`, and the chart feed -- whose layout follows the registry
+    and must not follow this -- never shows it.
+    """
+    try:
+        several = len(archive_names()) > 1
+    except Exception:
+        # Wrong in the safe direction: a switch that is shown and does
+        # nothing is a question somebody can answer, one that is hidden and
+        # needed cannot be found at all.
+        log.debug("could not count the places for the feed", exc_info=True)
+        several = True
+    if not several:
+        return []
+    return [
+        Group("Places",
+              "A site can publish one place or several. This is the one "
+              "question that decides the shape of what goes out, so it is "
+              "asked before anything about pages or charts.", (
+                  Option("shows", "This feed publishes", kind="choice",
+                         default="many",
+                         choices=(("many", "Several places"),
+                                  ("one", "Only the place chosen above")),
+                         help="Several publishes an overview at the root "
+                              "and each place in a folder of its own. Only "
+                              "the one publishes the way a station with a "
+                              "single series always has: index.html, "
+                              "week.html and the rest at the root, no "
+                              "overview and no folders -- which is how two "
+                              "places are published as two separate sites, "
+                              "one feed and one export each. A list of "
+                              "places further down is then not read at "
+                              "all."),
+              ), prefix=""),
+    ]
+
+
 def _roster(archives: Any, settings: Any) -> list[dict[str, Any]]:
     """Every place this feed shows, in the order pages present them.
 
@@ -2231,6 +2299,11 @@ def from_settings(settings: Any, reader: Reader,
         feed.places_fold = 6
     feed.shown = tuple(
         one.strip() for one in _listed(option("places")) if one.strip())
+    # The feed's own switch, not the skin's, so a skin from outside is
+    # narrowed by it too. Read as a word rather than a truth value: "many"
+    # is the default and the state every existing feed is already in, so
+    # nothing that is not this word can turn a published site into one.
+    feed.solo = str(option("shows") or "").strip() == "one"
     feed.narrow()
     feed.display = _display(settings, prefix, skin, skins)
     return feed

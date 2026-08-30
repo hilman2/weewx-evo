@@ -542,6 +542,30 @@ def check_charts_build_themselves(page_html: str, out: Path) -> list[str]:
     if found.get("locale") in (None, "", "en"):
         problems.append(f"the charts are drawn in {found.get('locale')!r} "
                         f"rather than the language of the page")
+    # A comparison draws every place it names. Read off the first series of
+    # the first chart alone, a chart that lost its second line looked exactly
+    # like one that kept it -- and that is what happened once: a loop counter
+    # reused inside the series loop ended it after the first series.
+    comparison = next((names for names in found.get("seriesNames") or []
+                       if "Nordfeld" in names or "Kirchdorf" in names), None)
+    if comparison is None:
+        problems.append("the comparison chart was not drawn at all")
+    elif len(comparison) != 2:
+        problems.append(f"a comparison of two places drew {len(comparison)} "
+                        f"line(s): {comparison}")
+    else:
+        # The second place was added yesterday, so its line is one point.
+        # A line is drawn between two adjacent readings, so with nothing to
+        # join it draws nothing at all -- an empty panel beside a legend that
+        # names the place, which reads as a dead sensor and is not one.
+        where = (found["seriesNames"]).index(comparison)
+        symbols = (found.get("seriesSymbols") or [])[where]
+        if symbols and symbols[-1] is not True:
+            problems.append("a line with a single point does not show it, so "
+                            "the place it belongs to draws nothing")
+        if symbols and symbols[0] is not False:
+            problems.append("a full line shows a symbol at every reading, "
+                            "which hides the line underneath")
     if found["firstPoint"] is None:
         problems.append("the drawing got no points")
     else:

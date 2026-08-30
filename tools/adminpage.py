@@ -1073,6 +1073,41 @@ def main() -> int:
                               (written.get("shed") or {}).get("driver_file"),
                               "/opt/fousb.py")
 
+        # Every kind in the menu is explained under it. The list used to be
+        # written out by hand and described one of the two, so half of what
+        # the menu offered was unexplained -- and the command printed above
+        # it started the other half, which is the one this page does not
+        # mention. Both are read from the same table the menu is built from.
+        print("\nthe page explains everything it offers")
+        code, rendered = get(f"{base}/{TOKEN}/new-collector")
+        failures += not check("the add page renders", code, 200)
+        for kind, one in saved_defs.KINDS.items():
+            failures += not check(f"{kind}: its label is explained",
+                                  rendered.count(one.label), 2)
+            failures += not check(f"{kind}: with the command that starts it",
+                                  f"weewx-evo {one.command}" in rendered, True)
+
+        # And its own page says how to start it, because nothing else does:
+        # the schema's help becomes a comment in the configuration file and
+        # is never rendered, so landing here after creating one was a form
+        # with no hint that a process somewhere else had to be started.
+        code, rendered = get(f"{base}/{TOKEN}/collector:shed")
+        failures += not check("its own page says how to start it",
+                              "weewx-evo weewx-driver run --collector shed"
+                              in rendered, True)
+
+        # A collector could be created from the page and only ever removed
+        # by editing the file: `remove_collector` and its route were both
+        # here, and nothing rendered a button that called them.
+        print("\nand it can be taken away again")
+        failures += not check("its page offers a way to remove it",
+                              "collector:shed/remove" in rendered, True)
+        code, _ = post(f"{base}/{TOKEN}/collector:shed/remove", {})
+        failures += not check("removing it redirects", code, 303)
+        failures += not check(
+            "and the file no longer has it",
+            "shed" in saved_defs.configured(config_file.read(path)), False)
+
 
         server.stop()
     finally:

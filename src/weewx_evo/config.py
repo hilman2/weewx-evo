@@ -168,7 +168,12 @@ def render(config: dict, schemas: list[Schema]) -> str:
         lines.append("#" + "-" * 72)
         lines.append(f"# {heading}")
         if schema.help:
-            lines.append(f"# {schema.help}")
+            # Wrapped like an option's help is, and per line: a collector's
+            # help ends with the command that starts it, and a command is
+            # only useful unbroken. Written straight out it was one
+            # 150-character line in a file whose every other line stops at 74.
+            for paragraph in schema.help.splitlines():
+                lines.extend(f"# {line}" for line in _wrap(paragraph, 74))
         lines.append("#" + "-" * 72)
         lines.append("")
 

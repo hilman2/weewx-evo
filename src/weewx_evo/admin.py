@@ -1349,6 +1349,12 @@ def new_collector_page(admin: Admin, error: str = "",
                        form: dict | None = None) -> str:
     """A collector: a name and what it runs.
 
+    The page says what happens next, because most of it happens elsewhere.
+    Everything else on this site configures something this process runs; a
+    collector is a process somebody else has to start, possibly on another
+    machine, and creating one here does nothing visible at all. Without the
+    three steps written down, the page reads as a form that had no effect.
+
     The name is the field that matters and the page says so, because it is
     not cosmetic here the way a feed's name is. A collector's packets arrive
     under it, and a station is matched on the pair (driver, identity) -- so
@@ -1361,18 +1367,46 @@ def new_collector_page(admin: Admin, error: str = "",
     chosen = form.get("kind") or "weewx-driver"
     options = NEWLINE.join(
         f'<option value="{html.escape(kind)}"'
-        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
-        for kind, label in collector_defs.KINDS.items())
+        f'{" selected" if chosen == kind else ""}>'
+        f"{html.escape(one.label)}</option>"
+        for kind, one in collector_defs.KINDS.items())
+    # Both kinds, from the same table the menu is built from. Written out by
+    # hand, this list described the WeeWX driver and never mentioned the
+    # broker -- so half of what the menu offered was unexplained, and the
+    # command printed above it was the wrong one for that half.
+    explained = "".join(
+        f"<li><strong>{html.escape(one.label)}</strong>: "
+        f"{html.escape(one.reads)} Started with "
+        f"<code>weewx-evo {html.escape(one.command)}</code>.</li>"
+        for one in collector_defs.KINDS.values())
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
   <p class="lede">A collector goes and reads a console, rather than waiting
      for one to upload. It runs as its own process, where the hardware is --
-     a serial port, a USB device, a radio -- and delivers over the network
-     like any other station. It does not have to be on this machine.</p>
-  <p class="lede">This page configures it and does not start it. Run it with
-     <code>weewx-evo weewx-driver run --collector &lt;name&gt;</code>, or use
-     the unit file in <code>deploy/</code>.</p>
+     a serial port, a USB device, a radio, a broker -- and delivers over the
+     network like any other station. It does not have to be on this
+     machine.</p>
+  <p class="lede">Three things have to happen, and only the first is on this
+     page:</p>
+  <ol class="steps">
+    <li><strong>Here</strong>: a name and a kind. That writes it into the
+        configuration file and gives it an endpoint of its own at the
+        listener, so its readings can be told from another collector's.</li>
+    <li><strong>Its own page, next</strong>: which <code>weewx.conf</code>,
+        or which broker and topics. Nothing is delivered until that is filled
+        in.</li>
+    <li><strong>Then start it</strong>, where the hardware is. This page
+        never starts anything: it is a separate process, on purpose, so that
+        a serial port which stops answering cannot stop the archiver. The
+        command is under the menu below, and the unit file in
+        <code>deploy/</code> is the same thing for systemd.</li>
+  </ol>
+  <p class="lede">Its readings then arrive as
+     <code>driver = &lt;name&gt;</code>, and the console shows up on the
+     Stations page by itself. Announcing it there is what gives it an
+     archive, a role and a say over its indoor readings -- it is not needed
+     for the readings to be recorded.</p>
   {problem}
   <form method="post" action="./new-collector">
     <div class="field">
@@ -1388,12 +1422,41 @@ def new_collector_page(admin: Admin, error: str = "",
     <div class="field">
       <label for="f-kind">What it runs</label>
       <select id="f-kind" name="kind">{options}</select>
-      <ul class="kinds"><li><strong>A WeeWX driver</strong>: any of the
-        hundred-odd drivers written for WeeWX, unchanged. WeeWX itself does
-        not have to be installed -- point at the driver file.</li></ul>
+      <ul class="kinds">{explained}</ul>
     </div>
     <div class="actions"><button type="submit">Create</button></div>
   </form>
+</section>'''
+
+
+def _collector_note(schema: Any) -> str:
+    """How to start this collector, at the top of its own page.
+
+    Every other page on this site configures something this process runs, so
+    saving is the end of it. A collector is a process somebody has to start
+    somewhere else -- and its page, generated from the schema like all the
+    others, said so nowhere: `Schema.help` is written into the configuration
+    file as a comment and never rendered. Landing here after creating one
+    meant a form with no hint that anything further was required.
+    """
+    from . import collectors as collector_defs
+
+    name = schema.name.split(":", 1)[-1]
+    kind = ""
+    for group in schema.groups:
+        for option in group.options:
+            if option.name == "kind":
+                kind = str(option.default)
+    return f'''
+<section class="group">
+  <p class="lede">This page configures {html.escape(name)} and does not start
+     it. It is its own process, running where the hardware is -- so that a
+     serial port or a broker which stops answering cannot stop the archiver
+     -- and it does not have to be on this machine:</p>
+  <p><code>{html.escape(collector_defs.start_command(kind, name))}</code></p>
+  <p class="lede">Its readings arrive as
+     <code>driver = {html.escape(name)}</code>, and the console then shows up
+     on the Stations page by itself.</p>
 </section>'''
 
 
@@ -1862,8 +1925,10 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         # Where this thing sits in the chain, first. A page of FTP settings
         # with no hint of which feed it sends is one nobody can check
         # without opening a second tab.
-        body = [adminpublish.context(admin, active),
-                f'<nav class="jump" aria-label="Sections">{jump}</nav>']
+        body = [adminpublish.context(admin, active)]
+        if schema.kind == "collector":
+            body.append(_collector_note(schema))
+        body.append(f'<nav class="jump" aria-label="Sections">{jump}</nav>')
         body += [group_html(g, values, errors, moved, moved_names)
                  for g in schema.groups]
 
@@ -1930,6 +1995,27 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
      more.</p>
   <form method="post" action="./{html.escape(schema.name)}/remove"
         onsubmit="return confirm(\'Remove the upload {html.escape(name)}?\')">
+    <div class="actions"><button class="warn" type="submit">Remove</button></div>
+  </form>
+</section>'''
+
+    # Its own, because what removal means here is different: the collector
+    # is a process this one does not run, so nothing is stopped. The route
+    # and `remove_collector` were both here already and nothing called them
+    # -- a collector could be created from the page and only ever removed by
+    # editing the file.
+    if schema is not None and schema.kind == "collector" and not admin.read_only:
+        name = schema.name.split(":", 1)[-1]
+        extra += f'''
+<section class="group danger">
+  <h3>Remove</h3>
+  <p class="lede">Takes {html.escape(name)} out of the configuration. It does
+     not stop it: it is another process, very likely on another machine. What
+     this does is take its endpoint away, so a collector still running is
+     refused rather than recorded as something else. The readings it has
+     already delivered stay in the archive.</p>
+  <form method="post" action="./{html.escape(schema.name)}/remove"
+        onsubmit="return confirm('Remove the collector {html.escape(name)}?')">
     <div class="actions"><button class="warn" type="submit">Remove</button></div>
   </form>
 </section>'''
@@ -2260,6 +2346,13 @@ _PAGE = """<!doctype html>
       font-size: .8125rem; color: var(--dim); }}
   ul.kinds li {{ margin-bottom: .35rem; line-height: 1.5; }}
   ul.kinds strong {{ color: var(--ink); font-weight: 500; }}
+  /* Numbered, unlike ul.kinds: these are in order and the order is the
+     point -- the third step happens on another machine, and a reader who
+     takes them for alternatives leaves the collector unstarted. */
+  ol.steps {{ margin: .5rem 0 1rem; padding-left: 1.3rem;
+      font-size: .8125rem; color: var(--dim); }}
+  ol.steps li {{ margin-bottom: .35rem; line-height: 1.5; }}
+  ol.steps strong {{ color: var(--ink); font-weight: 500; }}
   a.button {{ display: inline-block; text-decoration: none; }}
   .hint {{ display: block; color: var(--dim); font-size: .75rem;
       margin-top: .25rem; line-height: 1.4; }}

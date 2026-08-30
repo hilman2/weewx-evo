@@ -83,6 +83,18 @@ def _several() -> bool:
         return True
 
 
+def _solo(settings: dict | None) -> bool:
+    """Whether this feed was told to publish one place.
+
+    The switch is the feed's own (`shows`, read by `CheetahFeed.narrow()`),
+    not one of this skin's, so a skin from outside is narrowed by it as
+    well. Read here so that the three groups about a place list, an overview
+    and comparison pages are left out on a feed that will render none of
+    them -- ten settings for pages that are not going to exist.
+    """
+    return str((settings or {}).get("shows") or "").strip() == "one"
+
+
 def _shape(settings: dict | None) -> str:
     """What this feed will actually publish, in the addresses it will use.
 
@@ -129,8 +141,8 @@ def _shape(settings: dict | None) -> str:
 def groups(settings: dict | None = None) -> list[Group]:
     """The skin's own settings, as the admin page and `--explain` see them.
 
-    The three groups about places are left out where there is one, which is
-    every installation that has not asked for a second. Ten settings about an
+    The three groups about places are left out where there is one, and where
+    the feed says it publishes one of several. Ten settings about an
     overview, a board and comparison pages that do not exist is a settings
     page that grew for everybody so that a few could configure something --
     and two of the three groups do not even say what they are for.
@@ -138,7 +150,7 @@ def groups(settings: dict | None = None) -> list[Group]:
     The precedent is on the archives page, which hides its own "Change" form
     until there is a file to change.
     """
-    several = _several()
+    several = _several() and not _solo(settings)
     return [
         *([Group("Also show these places",
               "This feed is about one place -- the one chosen under "

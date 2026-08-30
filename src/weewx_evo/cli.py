@@ -1346,6 +1346,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     #: repointed while running needs an archiver and a line in the live
     #: table's pending list, and neither can be handed to a running loop.
     series_was = _series_shape(args, cfg)
+    #: And which collectors. Each one claims an endpoint of its own at the
+    #: listener, and that happens in `configure_drivers` at startup -- so a
+    #: collector created on the settings page delivered to a name nothing
+    #: answered to, and was refused with the same 404 a wrong token gets,
+    #: until somebody restarted the service. Nothing said so anywhere: a
+    #: collector is a named section, so `needs_restart` never mentions it.
+    collectors_was = _collector_shape(cfg)
     # Set when only a fresh process can carry on: a setting that cannot be
     # applied to a running one, or the watchdog finding this one unwell. The
     # supervisor brings it back -- `restart: unless-stopped` in compose,
@@ -1388,6 +1395,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
                     if series_now != series_was:
                         series_was = series_now
                         hard = list(hard) + ["the measurement series"]
+                    collectors_now = _collector_shape(cfg)
+                    if collectors_now != collectors_was:
+                        collectors_was = collectors_now
+                        hard = list(hard) + ["the collectors"]
                     if hard:
                         # Some settings cannot be applied to a running
                         # process: a port already bound, a database already
@@ -2547,7 +2558,10 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
             continue
         schemas.append(option_defs.Schema(
             name=f"collector:{name}", label=f"Collector: {name} ({kind})",
-            kind="collector", help=collectors.describe(kind),
+            # Named, so the comment this becomes in the configuration file
+            # carries the command that starts this one. Somebody reading the
+            # file is the reader least likely to have the page open.
+            kind="collector", help=collectors.describe(kind, name),
             groups=tuple(replace_group(group, f"collectors.{name}")
                          for group in collectors.options(kind))))
 
@@ -3576,6 +3590,12 @@ def load_plots(args: argparse.Namespace, cfg: Settings) -> plot_defs.PlotSet:
     Only when the file is absent. A file that exists and is empty is an
     answer somebody gave, and putting a hundred charts back into it would be
     this function arguing with them.
+
+    The comparison charts are added on top and go nowhere near the file --
+    see `plots.implied`. Here rather than in the feed that draws them,
+    because the JSON feed writes the files and the pages read the manifest:
+    a set that differed between the two is a page linking to charts nothing
+    wrote.
     """
     where = plots_path(args, cfg)
     if not where.exists():
@@ -3584,7 +3604,17 @@ def load_plots(args: argparse.Namespace, cfg: Settings) -> plot_defs.PlotSet:
         said = starter.install_plots(where)
         if said:
             log.info("%s", said)
-    return plot_defs.load(where)
+    charts = plot_defs.load(where)
+    try:
+        registry = read_archives(args, cfg)
+        return plot_defs.implied(
+            charts, [one.name for one in registry.ordered()])
+    except Exception:
+        # The charts are what the publishing half of this program runs on,
+        # and an unreadable archives.toml must not take them with it: one
+        # place's pages are worth more than every place's comparison.
+        log.debug("could not work out the comparison charts", exc_info=True)
+        return charts
 
 
 #: What a station gets when nothing has been configured. Named the same as
@@ -4005,6 +4035,20 @@ def _repoint_stations(args: argparse.Namespace, cfg: Settings,
         log.info("stations changed: %s", "; ".join(moved))
 
 
+def _collector_shape(cfg: Settings) -> list[str]:
+    """Which collectors have an endpoint, for comparison.
+
+    The names alone. What a collector is configured *with* -- its weewx.conf,
+    its broker, its topics -- is read by the collector's own process when it
+    starts, so none of it is this process's business. The name is, because
+    the name is a registration in the driver registry and that is built once.
+    """
+    from . import collectors as collector_defs
+
+    return sorted(name for name, one in collector_defs.configured(cfg).items()
+                  if str(one.get("kind", "")).strip() in collector_defs.KINDS)
+
+
 def _series_shape(args: argparse.Namespace, cfg: Settings) -> list[tuple[str, str]]:
     """Which series there are and which file each is, for comparison.
 
@@ -4050,10 +4094,18 @@ def served_directories(args: argparse.Namespace,
     return out
 
 def cmd_plots_list(args: argparse.Namespace) -> int:
-    """What charts exist."""
+    """What charts exist.
+
+    Through `load_plots`, so this is the set the feeds draw and not just the
+    file: a site of several places has comparison charts nothing wrote, and
+    a listing that left them out would answer "there are no comparisons" on
+    a station whose comparison pages are full of them. They are marked, and
+    the mark says what to type to make them the file's.
+    """
     cfg = settings_for(args)
     path = plots_path(args, cfg)
-    charts = plot_defs.load(path)
+    charts = load_plots(args, cfg)
+    in_file = len(charts) - len(charts.implied)
     if not len(charts):
         print(f"No plots in {path}.")
         print()
@@ -4061,15 +4113,27 @@ def cmd_plots_list(args: argparse.Namespace) -> int:
         print("  weewx-evo plots import /etc/weewx/skins/Seasons/skin.conf")
         return 0
 
-    print(f"{len(charts)} plot(s) in {path}")
+    print(f"{in_file} plot(s) in {path}"
+          + (f", {len(charts.implied)} worked out from the places"
+             if charts.implied else ""))
     for span, group in sorted(charts.by_span().items()):
         print()
         print(f"  {span}  ({len(group)})")
         for plot in group:
+            # The series where a line names one. Without it a comparison
+            # prints "outTemp, outTemp, outTemp" and reads like three copies
+            # of one line rather than one reading at three places.
             readings = ", ".join(
-                f"{line.obs}" + (f"/{line.aggregate}" if line.aggregate else "")
+                f"{line.obs}" + (f"@{line.series}" if line.series else "")
+                + (f"/{line.aggregate}" if line.aggregate else "")
                 for line in plot.lines)
-            print(f"    {plot.name:<22} {readings}")
+            mark = " *" if plot.name in charts.implied else ""
+            print(f"    {plot.name:<22} {readings}{mark}")
+    if charts.implied:
+        print()
+        print("  * not in the file. `weewx-evo plots compare --write` puts "
+              "them there,")
+        print("    and from then on they are yours to edit.")
     if charts.labels:
         print()
         print(f"  {len(charts.labels)} label(s) for readings")

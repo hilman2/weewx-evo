@@ -45,6 +45,14 @@ const MANIFEST = {
      * a station whose last one was the day before. */
     { name: "dayET", group: "day", title: "Evapotranspiration",
       unit_label: "mm", obs_types: ["ET"] },
+    /* A comparison: one reading at two places, and the second place was
+     * added yesterday, so its line is a single point. Both cases have to
+     * survive -- the series has to be drawn at all, and a series with
+     * nothing to join has to show its points or it draws an empty panel
+     * beside a legend that names the place. */
+    { name: "daycmpoutTemp", group: "day", title: "Außentemperatur",
+      unit_label: "°C", obs_types: ["outTemp"],
+      archives: ["default", "nordfeld"] },
   ],
 };
 
@@ -60,6 +68,22 @@ function chartFile(name, aggregated) {
     };
   }
   const time = [NOW - 7200, NOW - 3600, NOW];
+  if (name === "daycmpoutTemp") {
+    return {
+      name: name, format: 1, generated: NOW, start: time[0], stop: NOW,
+      unit: "degree_C", unit_label: "°C", title: "Außentemperatur",
+      places: ["default", "nordfeld"],
+      note: "day Mittel · °C · Kirchdorf, Nordfeld",
+      series: [
+        { obs_type: "outTemp", label: "Kirchdorf", series: "default",
+          plot_type: "line", color: "#4282b4",
+          time: time, values: [19.5, 20.1, 21.4] },
+        { obs_type: "outTemp", label: "Nordfeld", series: "nordfeld",
+          plot_type: "line", color: "#d1642a",
+          time: [NOW], values: [12.2] },
+      ],
+    };
+  }
   return {
     name: name,
     format: 1,
@@ -157,6 +181,21 @@ setTimeout(() => {
     firstPoint: points.length ? points[0] : null,
     lastPoint: points.length ? points[points.length - 1] : null,
     seriesName: series.name || null,
+    /* Every chart's series, by name and by whether it shows its points.
+     *
+     * Reading only the first series of the first chart, a comparison that
+     * lost its second line looked exactly like one that kept it. That is
+     * what happened: a loop counter reused inside the series loop ended it
+     * after the first series, and a page whose whole subject is two places
+     * drew one, under a legend of one. */
+    seriesNames: drawn.map(function (option) {
+      return (option.series || []).map(function (one) { return one.name; });
+    }),
+    seriesSymbols: drawn.map(function (option) {
+      return (option.series || []).map(function (one) {
+        return one.showSymbol === undefined ? null : one.showSymbol;
+      });
+    }),
     /* A bucket's width, which a bar is drawn at. Taken from the next
      * bucket's start, because `aggregate_interval` is sometimes a word. */
     firstWidth: points.length > 1

@@ -36,7 +36,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "src"))
@@ -46,6 +46,7 @@ if hasattr(time, "tzset"):
     time.tzset()
 
 from weewx_evo import archives as archive_defs  # noqa: E402
+from weewx_evo import plots as plot_defs  # noqa: E402
 from weewx_evo.feeds import cheetah  # noqa: E402
 from weewx_evo.series import Reader  # noqa: E402
 
@@ -120,12 +121,13 @@ def base_values(room: Path, name: str) -> dict:
 
 
 def render(room: Path, into: Path, database: Path, places: list[dict],
-           home: str = "default", station: str = "Kirchdorf") -> object:
+           home: str = "default", station: str = "Kirchdorf",
+           extra: dict | None = None) -> object:
     conn = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     try:
         feed = cheetah.from_settings(
-            Settings(base_values(room, station)), Reader(conn), (),
-            prefix="feeds.deck", archive=home)
+            Settings(dict(base_values(room, station), **(extra or {}))),
+            Reader(conn), (), prefix="feeds.deck", archive=home)
         # As the runner does it: the roster is already in the shape the feed
         # keeps, so `from_settings` only normalises the older forms.
         feed.places = [dict(one) for one in places]
@@ -407,6 +409,169 @@ def the_settings_narrow_it(room: Path) -> None:
               [one["name"] for one in feed.places], ["default", "nordfeld"])
     finally:
         conn.close()
+
+
+def told_to_show_one_place(room: Path) -> None:
+    """Two places, and a feed publishing one of them as a site of its own.
+
+    This is how two places are published separately: one feed and one export
+    each, rather than one feed carrying both and an overview nobody wants.
+    Before the switch it took two settings agreeing with each other -- the
+    place at the top and the same name ticked in the list below -- and the
+    pair could disagree without anything on the published site showing it.
+
+    The one thing the tree may still carry is where the charts are. The
+    chart feed writes a subdirectory per place whenever the registry keeps
+    several and cannot know a skin was narrowed to one, so a narrowed page
+    still has to look inside it. That is `chartsArchive`, and it is checked
+    for rather than tolerated.
+    """
+    print("\na feed can be told to publish one of several places")
+    south, north = room / "south.sdb", room / "north.sdb"
+    both = [
+        place("default", south, "Kirchdorf", "KIR", "#4282b4",
+              Settings(base_values(room, "Kirchdorf"))),
+        place("nordfeld", north, "Nordfeld", "NOR", "#d1642a",
+              Settings(base_values(room, "Nordfeld"))),
+    ]
+    solo = room / "solo"
+    feed = render(room, solo, north, [dict(one) for one in both],
+                  home="nordfeld", station="Zwei Orte",
+                  extra={"feeds.deck.shows": "one"})
+
+    check("the feed shows one place", feed.several, False)
+    check("and it is the one chosen at the top",
+          [one["name"] for one in feed.places], ["nordfeld"])
+    check("no directory was made for either place",
+          sorted(p.name for p in solo.iterdir()
+                 if p.is_dir() and p.name in ("default", "nordfeld")), [])
+    check("and no comparison pages",
+          sorted(p.name for p in solo.glob("compare*.html")), [])
+
+    # The tree a single-place installation gets, rendered beside it. The
+    # claim is not that the two are byte for byte identical -- the chart path
+    # differs, on purpose -- but that the set of files is the same one: an
+    # overview, a place folder or a comparison page would show up here.
+    alone = room / "alone"
+    render(room, alone, north, [], home="nordfeld", station="Nordfeld")
+    check("the same files as a site that has only one place",
+          sorted(tree(solo)), sorted(tree(alone)))
+
+    # Against the reader, never against a typed figure. That is the
+    # forty-months rule: forty archived months all printed August under
+    # correct headings, and a test holding a number agreed with every one.
+    conn = sqlite3.connect(f"file:{north}?mode=ro", uri=True)
+    try:
+        reader = Reader(conn)
+        newest = conn.execute("SELECT outTemp FROM archive WHERE dateTime = ?",
+                              (reader.span()[1],)).fetchone()[0]
+    finally:
+        conn.close()
+    page = (solo / "index.html").read_text(encoding="utf-8", errors="replace")
+    marked, printed = tile_value(page, "outTemp")
+    check("a tile names no place, the way a single-place page does not",
+          marked, "")
+    check("and prints this place's own reading", printed, f"{newest:.1f}")
+    # Gated on the registry keeping several series, not on this feed showing
+    # several: narrowed without it, the page looks for the flat manifest,
+    # finds one listing no plots, and draws every chart grid empty -- with no
+    # message anywhere, because the file it read was there.
+    check("the charts are still looked for under this place's name",
+          'chartsArchive: "nordfeld"' in page, True)
+
+    # The list is not consulted at all while the switch says one place. Two
+    # settings that can each decide this must not add up to a third answer.
+    feed.places = [dict(one) for one in both]
+    feed.shown = ("default", "nordfeld")
+    feed.narrow()
+    check("a place list is not read while the switch says one",
+          [one["name"] for one in feed.places], ["nordfeld"])
+
+
+def comparison_charts_need_no_setup(room: Path) -> None:
+    """Two places, and the comparison charts are there without being asked for.
+
+    Worked out rather than written, so nothing reaches `plots.toml`: the same
+    rule as the colour a place was never given. Written into the file, a
+    later release's set -- another reading, a better bucket -- would reach no
+    installation that ever had two places.
+
+    Before this, a site that added a second place got four comparison pages
+    holding a table and the sentence "no comparison charts yet", and the way
+    out was a command nobody had a reason to know about.
+    """
+    print("\ntwo places bring their comparison charts with them")
+    line = plot_defs.Line(obs="outTemp")
+    mine = plot_defs.Plot(name="yearcmpoutTemp", span="year",
+                          lines=[line], title="Mine")
+    have = plot_defs.PlotSet([mine])
+
+    check("one place implies nothing",
+          len(plot_defs.implied(have, ["default"])), 1)
+
+    made = plot_defs.implied(have, ["default", "nordfeld"])
+    # One per reading per span, less the one the file already had.
+    check("two places imply a chart per reading and span",
+          len(made.implied), 4 * len(plot_defs.COMPARE_READINGS) - 1)
+    check("and every one of them draws every place",
+          sorted({len(p.lines) for p in made if p.name in made.implied}), [2])
+    check("each line naming the place it reads",
+          sorted(one.series for one in
+                 made.get("daycmpoutTemp").lines),  # type: ignore[union-attr]
+          ["default", "nordfeld"])
+
+    # A name already in the file is the operator's, whatever is in it. This
+    # is what `plots compare --write` is for: it puts them in the file, and
+    # from then on an edited axis or a removed line stays.
+    check("a chart already in the file is left alone",
+          made.get("yearcmpoutTemp").title, "Mine")  # type: ignore[union-attr]
+    check("and is not counted as implied",
+          "yearcmpoutTemp" in made.implied, False)
+    check("the set it was given is untouched", len(have), 1)
+
+    # Rain is a total, not a level: `avg` over an hour of rain counters is a
+    # number nobody wants. The rule lives in `_comparison`; this is the check
+    # that the implied set goes through it rather than around it.
+    check("rain is totalled, not averaged",
+          {one.aggregate for one in made.get("weekcmprain").lines},  # type: ignore[union-attr]
+          {"sum"})
+
+    _a_comparison_says_what_it_draws(room, made)
+
+
+def _a_comparison_says_what_it_draws(room: Path, made: Any) -> None:
+    """Four comparison cards, four headings, and none of them the places.
+
+    On a comparison a line's label is its *place*, so a renderer falling back
+    to the labels heads every card on the page with the same sentence --
+    "Kirchdorf, Testort" over the temperature, over the humidity and over the
+    rain. Measured on a real site before this: four cards, one heading.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    from weewx_evo import chartdata, units
+    from weewx_evo import series as series_module
+
+    south, north = room / "south.sdb", room / "north.sdb"
+    places = {
+        "default": chartdata.Place(name="default", title="Kirchdorf"),
+        "nordfeld": chartdata.Place(name="nordfeld", title="Nordfeld"),
+    }
+    headings = []
+    with (closing(sqlite3.connect(south)) as conn,
+          series_module.opened({"nordfeld": north}, {"nordfeld"}) as readers):
+        for name in ("daycmpoutTemp", "daycmpoutHumidity"):
+            chart = chartdata.build(
+                made.get(name), Reader(conn), time.time(),
+                unit_system=units.METRICWX, readers=readers,
+                places=places, place="default")
+            headings.append(chart.title if chart else None)
+
+    check("a comparison is headed by the reading it draws",
+          headings, ["Outside Temperature", "Outside Humidity"])
+    check("and two of them are not the same heading",
+          len(set(headings)), 2)
 
 
 def reserved_names(room: Path) -> None:
@@ -827,6 +992,8 @@ def main(argv: list[str]) -> int:
         a_place_with_no_records(room)
         a_place_taken_off_the_list(room)
         the_settings_narrow_it(room)
+        told_to_show_one_place(room)
+        comparison_charts_need_no_setup(room)
         reserved_names(room)
         colours_and_codes(room)
         narrowing_writes_no_dead_links(room)

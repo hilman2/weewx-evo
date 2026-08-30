@@ -384,10 +384,28 @@
         continue;
       }
 
+      /* A line is drawn between two adjacent readings, so a series that has
+         no two adjacent ones draws nothing at all: an empty panel beside a
+         legend naming the place, which reads as a dead sensor and is not
+         one. The case that meets everybody is a place added yesterday --
+         one point in a year chart, and the comparison somebody opened to
+         see the new place shows only the old one. `connectNulls` stays
+         false, because joining across a hole invents readings; the answer
+         is to show the points that are there. */
+      var drawn = points(rows);
+      var joined = false;
+      /* `at`, not `i`: the loop over the series above counts on `i`, and
+         `var` is function-scoped, so reusing the name here ended that loop
+         at the first series. Everything still rendered -- one place's line
+         under a legend of one, on a page whose whole subject is two. */
+      for (var at = 1; at < drawn.length && !joined; at++) {
+        joined = drawn[at][1] !== null && drawn[at - 1][1] !== null;
+      }
+
       series.push({
         name: one.label,
         type: "line",
-        data: points(rows),
+        data: drawn,
         yAxisIndex: one.axis || 0,
         // `natural` in the skin's config means a monotone spline: a curve
         // that never overshoots a reading it was given. `smooth: true`
@@ -395,10 +413,11 @@
         // station never recorded.
         smooth: spec.curve === "natural" ? 0.35 : false,
         smoothMonotone: "x",
-        showSymbol: false,
+        showSymbol: !joined,
         symbolSize: 6,
         // Points on hover only: at five-minute resolution a day is 288 of
-        // them and the line disappears underneath.
+        // them and the line disappears underneath. The exception is a series
+        // with nothing to join, which would otherwise draw nothing.
         emphasis: { focus: "series", scale: 1.6 },
         connectNulls: false,
         lineStyle: { color: colour, width: spec.lineWidth || 2 },
