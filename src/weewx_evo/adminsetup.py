@@ -456,7 +456,7 @@ def _done(admin: Any, now: dict, form: dict) -> str:
          identity to type into the console, or adopts one that has already
          started uploading.</p>
       <div class="actions">
-        <a class="button" href="./new-station">Add a station</a>
+        <a class="button" href="./new-station">Add a console</a>
       </div>
     </div>"""
 

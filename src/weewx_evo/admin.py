@@ -159,6 +159,12 @@ def forecast_kind_choices() -> list[tuple[str, str, str]]:
 #: things, or a partial request wipes what it did not mention.
 MARKER = "__present__"
 
+#: Prefix for the hidden field that says "the ordered picker was on the
+#: form, and it had this many boxes". Same job as `MARKER`: the boxes are
+#: named one per row, so the option's own name is sent by nothing at all and
+#: "emptied" and "not part of this request" would otherwise look identical.
+SLOTS = "__slots__"
+
 #: A newline, for joining inside an f-string.
 NEWLINE = chr(10)
 
@@ -177,6 +183,13 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 #: it is the path from an empty directory to a station recording.
 OWN_PAGES = ("overview", "stations", "archives", "publishing",
              "charts", "quality", "search", "setup")
+
+#: What a POST to the stations page may ask for. Named rather than inferred
+#: from the path: a path is whatever a browser resolved a relative link to,
+#: and the verb is what the button actually said.
+STATION_ACTIONS = frozenset({
+    "adopt", "ignore", "unignore", "fields", "set", "learn", "remove",
+})
 
 
 #: A name for something the operator adds -- an export, later a feed. It ends
@@ -645,17 +658,38 @@ class Admin:
         self.refresh()
         return ""
 
-    def columns(self) -> set[str]:
-        """The readings the archive has a column for.
+    def columns(self, archive: str = "") -> set[str]:
+        """The readings one place's archive has a column for.
 
         Asked of the database rather than of a schema: a station whose driver
         added its own columns should be able to chart them, and nothing here
         knows what those are called.
+
+        `archive` names a place. Empty is the settings' own file, which is
+        every installation with one series. It matters on a chart that draws
+        two: a sensor only the second site has would otherwise be reported as
+        a column that does not exist -- a warning that reads as a typo, on
+        the one line where the reading is real.
         """
         import sqlite3
 
-        archive = config_file.get(self.config(), "archive_db") or "data/weewx.sdb"
-        path = Path(archive)
+        where = config_file.get(self.config(), "archive_db") or "data/weewx.sdb"
+        if archive:
+            # Every name through `Register.get`, `default` included. Short
+            # circuiting on `default` read `archive_db` while the register
+            # read `[archives.default] file`, and the two are allowed to
+            # differ the moment anything writes that key: a line reading
+            # `default` was then told its reading is a column that does not
+            # exist -- the exact warning this parameter exists to prevent.
+            # With no `archives.toml` the register answers with the settings
+            # themselves, so a single-series installation gets the same file
+            # it got before.
+            try:
+                where = adminarchives.load(self).get(archive).file or where
+            except Exception:
+                log.debug("could not resolve the archive %r", archive,
+                          exc_info=True)
+        path = Path(where)
         if not path.is_absolute():
             path = self.path.parent / path
         if not path.exists():
@@ -698,29 +732,41 @@ class Admin:
         if self.read_only:
             return {"": "This admin page was started read-only."}
 
-        # An unticked checkbox sends nothing at all, so the form carries a
-        # hidden marker for each one. Present marker, absent box means off;
-        # no marker at all means the field was not part of this request and
-        # must be left alone.
-        form = dict(form)
-        for _group, option in schema:
-            if option.kind == "duration":
-                # The form sends a number and a unit in two fields. Put them
-                # back together before anything looks at them, so everything
-                # downstream sees one duration and not two halves.
-                amount = form.get(f"{option.name}__amount")
-                unit = form.get(f"{option.name}__unit", "s")
-                if amount is not None and str(amount).strip():
-                    form[option.name] = f"{str(amount).strip()}{unit}"
-                continue
-            if option.kind != "bool":
-                continue
-            if f"{MARKER}{option.name}" in form:
-                form.setdefault(option.name, "")
-
+        form = rejoined(schema, form)
         parsed, errors = schema.parse(form, only_present=True)
         if errors:
             return errors
+        for _group, option in schema:
+            if option.kind != "list" or f"{SLOTS}{option.name}" not in form:
+                continue
+            if str(form.get(option.name) or "").strip():
+                continue
+            if option.default in (None, ""):
+                # An option whose real value is not in this file at all. A
+                # skin declares `stat_tile_observations` so the page can
+                # offer the readings, and the thirty-five it actually shows
+                # are in its own `skin.conf` -- the schema has no default
+                # because there is nothing here to default to.
+                #
+                # The picker therefore renders empty on a page nobody has
+                # ever saved, and writing that emptiness down turned "the
+                # skin decides" into "show nothing": open the feed's page,
+                # change the one setting you came for, press Save, and every
+                # tile on every page is gone. Measured: eight tiles became
+                # none.
+                #
+                # So an empty control here means what an empty box has always
+                # meant -- nothing said. The cost is that such a list cannot
+                # be emptied from the page, which is exactly what was true
+                # before this control existed.
+                continue
+            # Every box emptied means an empty list, and `Option.parse`
+            # cannot say that: an empty string comes back as the option's
+            # default, `Schema.parse` drops a None, and `apply` then leaves
+            # the file exactly as it was -- so a list could be added to and
+            # never emptied. Said here and not in the parser, where it would
+            # change what an empty box means for every option there is.
+            parsed[option.name] = []
 
         with self._lock:
             current = self.config()
@@ -751,6 +797,57 @@ class Admin:
 
 # -- rendering -----------------------------------------------------------
 
+def rejoined(schema: Schema, form: dict[str, Any]) -> dict[str, Any]:
+    """One value per option, out of the fields the wire actually carried.
+
+    Three controls send something other than the option's own name: a
+    duration sends an amount and a unit, a checkbox sends a hidden marker
+    beside a box that sends nothing when it is unticked, and the ordered
+    picker sends one box per row plus a count.
+
+    Both the save and the re-render of a refused form have to put them back
+    the same way, which is why this is a function and not a loop inside
+    `Admin.save`. `page()` restores what was typed with
+    `values.update(... if k in values)`, and the picker posts
+    `places__slot0`, never `places`: nothing matched, so a refused save
+    re-rendered the stored value and everything typed into the picker was
+    gone. Retyping a form because one field was wrong is how people give up.
+    """
+    form = dict(form)
+    for _group, option in schema:
+        if option.kind == "duration":
+            # A number and a unit in two fields. Put back together before
+            # anything looks at them, so everything downstream sees one
+            # duration and not two halves.
+            amount = form.get(f"{option.name}__amount")
+            unit = form.get(f"{option.name}__unit", "s")
+            if amount is not None and str(amount).strip():
+                form[option.name] = f"{str(amount).strip()}{unit}"
+            continue
+        if option.kind == "list" and f"{SLOTS}{option.name}" in form:
+            # One box per row, in row order. Put back together here rather
+            # than in `Option.parse`, so the parser goes on taking exactly
+            # one string and the wire format stays this file's business.
+            # Same split as `duration`, for the same reason.
+            try:
+                count = int(str(form[f"{SLOTS}{option.name}"]) or 0)
+            except ValueError:
+                count = 0
+            picked = [str(form.get(f"{option.name}__slot{n}", "")).strip()
+                      for n in range(count)]
+            form[option.name] = NEWLINE.join(one for one in picked if one)
+            continue
+        if option.kind != "bool":
+            continue
+        # An unticked checkbox sends nothing at all, so the form carries a
+        # hidden marker for each one. Present marker, absent box means off;
+        # no marker at all means the field was not part of this request and
+        # must be left alone.
+        if f"{MARKER}{option.name}" in form:
+            form.setdefault(option.name, "")
+    return form
+
+
 def overridden(option: Option) -> str:
     """The environment variable outranking this setting, if there is one.
 
@@ -774,6 +871,85 @@ def overridden(option: Option) -> str:
         if os.environ.get(env_name):
             return env_name
     return ""
+
+
+#: How many empty boxes are offered past what is already chosen. Three, so
+#: adding one needs no script at all -- and the page still works for somebody
+#: with JavaScript off, which is the whole reason the buttons only reorder.
+SPARE_SLOTS = 3
+
+
+def slots(option: Option, shown: Any) -> str:
+    """A list of choices, in an order that is the value's order.
+
+    A `kind="list"` with candidates was rendered as a bare textarea: the
+    `choices` were built, declared and thrown away, so twenty-five readings a
+    station could put on a tile had to be typed from memory into a box with
+    no hint of what was allowed. This is that render bug fixed, not a new
+    control -- eight options ship declaring candidates today.
+
+    One box per row, each under a name of its own. Never a repeated name:
+    `_form` collapses `parse_qs` with `{k: v[-1]}`, so `places=a&places=b`
+    arrives as `"b"` and four picks of five are lost with no error anywhere.
+    That is the same trap that made the station role a `<select>` rather than
+    a checkbox, and sidestepping it here beats changing a function every page
+    in the product goes through.
+
+    The row order *is* the value order, which is what `stat_tile_observations`
+    has claimed in its own help since it was written ("One tile each, in this
+    order") and could not deliver from a textarea.
+    """
+    name = html.escape(option.name)
+    available = [(str(value), str(text)) for value, text in option.options()]
+    known = {value for value, _text in available}
+    chosen = [line.strip() for line in str(shown or "").splitlines()
+              if line.strip()]
+
+    out = []
+    # Load-bearing. Empty every box and the option's own name is sent by
+    # nothing, and `parse(only_present=True)` reads that as "not part of this
+    # request" rather than as "cleared". This says the control was here, and
+    # `Admin.save` turns "here, and empty" into an empty list.
+    out.append(f'<input type="hidden" name="{SLOTS}{name}" '
+               f'value="{len(chosen) + SPARE_SLOTS}">')
+    out.append(f'<datalist id="l-{name}">')
+    for value, text in available:
+        out.append(f'<option value="{html.escape(value)}">'
+                   f"{html.escape(text)}</option>")
+    out.append("</datalist>")
+
+    out.append(f'<ol class="slots" data-list="{name}">')
+    for n in range(len(chosen) + SPARE_SLOTS):
+        one = chosen[n] if n < len(chosen) else ""
+        # Kept and marked, never dropped. Dropping it would mean one
+        # unreadable file silently taking a place off a published site --
+        # the same discipline the `choice` branch already keeps with
+        # "(not installed)".
+        note = ('<span class="alt">not one of the ones offered</span>'
+                if one and one not in known else "")
+        # The field's `<label for>` has to reach something, and the first box
+        # is the one it means. A label pointing at nothing is a label that
+        # does not focus anything when clicked, which reads as a dead page.
+        first = f' id="f-{name}"' if n == 0 else ""
+        out.append(
+            f'<li><input class="slot"{first} name="{name}__slot{n}"'
+            f' list="l-{name}"'
+            f' value="{html.escape(one)}" autocomplete="off"'
+            f' spellcheck="false" aria-label="{html.escape(option.label)}'
+            f' {n + 1}">'
+            '<button type="button" class="quiet lift" aria-label="Move up">'
+            "&#9650;</button>"
+            '<button type="button" class="quiet drop" aria-label="Move down">'
+            f"&#9660;</button>{note}</li>")
+    out.append("</ol>")
+
+    spare = [text for value, text in available if value not in chosen]
+    if spare:
+        out.append('<p class="alt">not chosen: '
+                   + html.escape(", ".join(spare)) + "</p>")
+    out.append('<p class="hint">In this order. Empty a box to take it out; '
+               "the gaps close when this is saved.</p>")
+    return "\n".join(out)
 
 
 def field(option: Option, value: Any, error: str = "",
@@ -852,6 +1028,8 @@ def field(option: Option, value: Any, error: str = "",
                 out.append(f'<option value="{html.escape(choice)}"{selected}>'
                            f'{html.escape(text)}</option>')
             out.append("</select>")
+    elif option.kind == "list" and option.options():
+        out.append(slots(option, shown))
     elif option.kind == "list":
         out.append(f'<textarea id="f-{name}" name="{name}" rows="4" '
                    f'placeholder="{html.escape(option.placeholder)}">'
@@ -905,11 +1083,9 @@ def field(option: Option, value: Any, error: str = "",
             f'where it is set.</p>')
     if moved:
         out.append(
-            f'<p class="err">This moved to the archive when the second one '
-            f'was added. It is now set per series in '
-            f'<code>{html.escape(moved)}</code>, on the '
-            f'<a href="./archives">Archives</a> page, and nothing reads it '
-            f'here.</p>')
+            '<p class="err">This is set per place since the second one was '
+            'added, on the <a href="./archives">Places</a> page. Nothing '
+            'reads it here.</p>')
     if option.restart:
         out.append('<p class="note">Restarts the service when saved.</p>')
     out.append("</div>")
@@ -1399,6 +1575,37 @@ def _addresses() -> list[tuple[str, str]]:
     return found
 
 
+def _forecast_nav(admin: Any, active: str) -> list[str]:
+    """The forecast sources, and the way to add one when there are none.
+
+    Named children past the first, because the count said two and the link
+    reached one: the entry printed `len(forecasts)` and always went to
+    `forecasts[0]`. Two sources is the ordinary arrangement here -- one
+    service for the numbers, one for the warnings -- so the second one was
+    reachable from an Overview card and from nowhere else.
+    """
+    sources = [s for s in admin.schemas if s.kind == "forecast"]
+    here = active in ("forecast", "new-forecast") or active.startswith(
+        "forecast:")
+    current = " aria-current='page'" if here else ""
+    if not sources:
+        if admin.read_only:
+            return []
+        return [(f'<a class="add" href="./new-forecast"{current}>'
+                 "+ Add a forecast</a>")]
+    out = [(f'<a href="./{html.escape(sources[0].name)}"{current}>Forecast'
+            f'<span class="count">{len(sources)}</span></a>')]
+    if len(sources) > 1:
+        for one in sources:
+            on = " aria-current='page'" if active == one.name else ""
+            # The label is "Forecast: open-meteo"; under an entry already
+            # saying Forecast, the half after the colon is the whole name.
+            said = one.label.split(":", 1)[-1].strip() or one.name
+            out.append(f'<a class="sub" href="./{html.escape(one.name)}"'
+                       f'{on}>{html.escape(said)}</a>')
+    return out
+
+
 def _collector_nav(admin: Any, active: str) -> list[str]:
     """The collectors, and the way to add one when there are none.
 
@@ -1467,6 +1674,31 @@ def _driver_nav(admin: Any, active: str) -> list[str]:
     return out
 
 
+def sub_pages(admin: Admin) -> list[str]:
+    """Pages whose name carries an instance, so no fixed list can hold them.
+
+    `tools/adminpage.py` enumerates schemas + ADD_PAGES + OWN_PAGES, and
+    `plot:<name>` is in none of the three. So the chart editor -- the page
+    with a delete checkbox on every row, a Remove button of its own and now
+    a colour control per line -- has never been through the check that asks
+    which form each button landed in. That is the check that found Save
+    belonging to no form on every export, feed, upload and forecast page,
+    with every tag present and every one closed.
+
+    Nothing calls this yet: the tool still builds its own list, so the chart
+    editor is still unchecked. It is here rather than in the tool because
+    the page names are this file's business, and a second list of them in
+    `tools/` is how the first one came to be short.
+    """
+    try:
+        from . import adminplots
+
+        return [f"plot:{one.name}" for one in adminplots.load(admin)]
+    except Exception:
+        log.debug("could not list the charts for the page list", exc_info=True)
+        return []
+
+
 def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
@@ -1486,7 +1718,12 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # retyping a form because one field was wrong is how people give up.
     values = dict(admin.values(schema)) if schema else {}
     if form and schema:
-        values.update({k: v for k, v in form.items() if k in values})
+        # Through the same reassembly the save does. A duration and the
+        # ordered picker post under names of their own, so matching the raw
+        # form against `values` matched neither, and both came back as what
+        # is stored rather than as what was typed.
+        values.update({k: v for k, v in rejoined(schema, form).items()
+                       if k in values})
 
     # The pages whose content is a wide table rather than a form. Named
     # here: deciding it from the rendered body would mean a page changing
@@ -1501,29 +1738,35 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # on their section's page now.
     nav.extend(adminhome.nav(admin, active))
 
-    nav.append('<p class="navhead">Readings in</p>')
+    # Two rules hold this list together, and both were broken:
+    #
+    # A heading is never followed by another heading. "Kept" over "Archives"
+    # over a link called "Series" is three words for one destination, and the
+    # reader has to guess which of them names the thing.
+    #
+    # A link says what the page it opens is called. "Consoles" opened a page
+    # headed "Stations"; "Series" opened one headed "Archives". Reading the
+    # sidebar taught a vocabulary the pages then contradicted.
+    nav.append('<p class="navhead">Weather coming in</p>')
     nav.extend(adminstations.nav(admin, active))
+    # Beside the consoles, not under a heading of its own: where the readings
+    # are kept is the same question as where they come from. Its old home was
+    # a section called "Kept", below the publishing side, which put the two
+    # halves of one arrangement at opposite ends of the list.
+    nav.extend(adminarchives.nav(admin, active,
+                                 str((form or {}).get("_open") or "")))
+    # What a reading has to survive *before* it is kept, which is this half of
+    # the chain and not the publishing half it used to sit in.
+    nav.extend(adminquality.nav(admin, active))
     nav.extend(_driver_nav(admin, active))
     nav.extend(_collector_nav(admin, active))
 
-    nav.append('<p class="navhead">Readings out</p>')
+    nav.append('<p class="navhead">What it makes</p>')
     nav.extend(adminpublish.nav(admin, active))
     nav.extend(adminplots.nav(admin, active))
-    nav.extend(adminquality.nav(admin, active))
-    forecasts = [s for s in admin.schemas if s.kind == "forecast"]
-    current = " aria-current='page'" if active in (
-        "forecast", "new-forecast") or active.startswith("forecast:") else ""
-    if forecasts:
-        nav.append(f'<a href="./{html.escape(forecasts[0].name)}"{current}>'
-                   f'Forecast<span class="count">{len(forecasts)}</span></a>')
-    elif not admin.read_only:
-        nav.append(f'<a class="add" href="./new-forecast"{current}>'
-                   "+ Add a forecast</a>")
+    nav.extend(_forecast_nav(admin, active))
 
-    nav.append('<p class="navhead">Kept</p>')
-    nav.extend(adminarchives.nav(admin, active))
-
-    nav.append('<p class="navhead">System</p>')
+    nav.append('<p class="navhead">This computer</p>')
     for one in [s for s in admin.schemas if s.kind == "core"]:
         current = " aria-current='page'" if one.name == active else ""
         nav.append(f'<a href="./{html.escape(one.name)}"{current}>'
@@ -1549,8 +1792,16 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         step = active.split("/", 1)[1] if "/" in active else ""
         body = [adminsetup.page(admin, step, errors.get("", ""), form,
                                 said=message)]
+    elif active == "archives":
+        # The one standing page that takes the form back. A refused save
+        # re-renders the list, and without this everything typed into the
+        # row is gone -- retyping a form because one field was wrong is how
+        # people give up. The other five take no form yet and are not given
+        # one they would ignore.
+        body = [adminarchives.overview(admin, message, errors.get("", ""),
+                                       form)]
     elif standing:
-        pages = {"overview": adminhome, "archives": adminarchives,
+        pages = {"overview": adminhome,
                  "stations": adminstations, "publishing": adminpublish,
                  "charts": adminplots, "quality": adminquality}
         body = [pages[active].overview(admin, message, errors.get("", ""))]
@@ -1731,12 +1982,20 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "new-upload": "Add an upload",
                     "new-collector": "Add a collector",
                     "new-forecast": "Add a forecast",
-                    "new-station": "Add a station", "stations": "Stations",
-                    "new-archive": "Add an archive", "overview": "Overview",
-                    "archives": "Archives", "publishing": "Publishing",
-                    "charts": "Charts", "quality": "Quality control",
+                    "new-station": "Add a console", "stations": "Consoles",
+                    "new-archive": "Add a place", "overview": "Overview",
+                    "publishing": "Publishing",
+                    "charts": "Charts", "quality": "Sensor checks",
                     "search": "Find a setting"}
-        heading = schema.label if schema else headings.get(active, "Settings")
+        # The places page answers to two names -- with one place it is about
+        # the spot and never says the word -- so it is asked rather than
+        # listed. A name in the table would be the one the sidebar
+        # contradicts on every installation that ships.
+        if active == "archives":
+            heading = adminarchives.title_for(admin)
+        else:
+            heading = schema.label if schema else headings.get(active,
+                                                               "Settings")
 
     # The pages that render themselves write their own <h2>, and it carries
     # more than a name: "Publishing" with a line under it saying what a feed
@@ -1786,11 +2045,19 @@ _PAGE = """<!doctype html>
     --bg: #fbfaf8; --panel: #fff; --line: #e5e1da; --ink: #1d1b18;
     --dim: #6f6a62; --accent: #2f6f4e; --warn: #9a5b1e; --bad: #97321f;
     --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* The browser draws radios, checkboxes and number spinners itself, and
+       it draws them light unless told. Eight light radios on the dark
+       panel of the colour palette, which is the one control on that page. */
+    color-scheme: light;
   }}
   @media (prefers-color-scheme: dark) {{
     :root {{
       --bg: #17161a; --panel: #1f1e23; --line: #322f38; --ink: #eceaf0;
       --dim: #9a94a3; --accent: #79c79b; --warn: #e0a86a; --bad: #e08a76;
+      color-scheme: dark;
+      /* Consumed by the raw-upload box and defined nowhere, so it fell to
+         its literal fallback on both themes. */
+      --sunk: #00000033;
     }}
   }}
   /* Every link in the page body was the browser's own colour: #0000ee in
@@ -1952,6 +2219,13 @@ _PAGE = """<!doctype html>
   .row > label.tick > input {{ margin-right: .4rem; }}
   .row input[type=color] {{ padding: 0; height: 2.1rem; width: 3rem;
       display: inline-block; }}
+  /* A caption over a group of controls is a legend, never a label: a label
+     with no `for` claims the first control inside it, so clicking the word
+     would tick the first radio of a palette or open a colour picker. */
+  fieldset.colourfield {{ border: 0; padding: 0; margin: 0; min-width: 0; }}
+  fieldset.colourfield > legend {{ padding: 0; font-size: .8125rem;
+      color: var(--dim); }}
+  .row > fieldset.colourfield {{ flex: 1 1 13rem; }}
   .row > label > textarea {{ display: block; width: 100%; margin-top: .25rem;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: .8125rem; resize: vertical; }}
@@ -2070,7 +2344,11 @@ _PAGE = """<!doctype html>
 
   /* -- publishing: the flow ------------------------------------------ */
 
-  .actions {{ display: flex; gap: .5rem; margin: 0 0 1.25rem; }}
+  /* Not a second `.actions` rule. There was one, 170 lines below the first,
+     and its `margin: 0 0 1.25rem` reset the top margin on all 35 action
+     bars -- so a row of buttons sat against the paragraph above it
+     everywhere, and the rule that said otherwise looked correct. */
+  .actions.lead {{ margin-top: 0; margin-bottom: 1.25rem; }}
   a.button {{ display: inline-block; padding: .4rem .8rem; border-radius: .35rem;
               background: var(--accent); color: #fff; text-decoration: none;
               font-size: .8125rem; font-weight: 600; }}
@@ -2227,9 +2505,100 @@ _PAGE = """<!doctype html>
   details.sends summary:hover {{ color: var(--ink); }}
   details.sends[open] summary {{ margin-bottom: .4rem; }}
   textarea.rawupload {{ width: 100%; font-family: var(--mono);
-      font-size: .75rem; background: var(--sunk, #00000022);
+      font-size: .75rem; background: var(--sunk, #00000011);
       color: var(--dim); border: 1px solid var(--line); border-radius: .3rem;
       padding: .5rem; resize: vertical; }}
+
+  /* The ordered picker. A numbered list, because the number is the answer to
+     "in what order" and it is already what an <ol> draws. */
+  ol.slots {{ margin: .35rem 0 .25rem; padding-left: 1.6rem; }}
+  ol.slots li {{ display: flex; align-items: center; gap: .35rem;
+      margin: .25rem 0; }}
+  ol.slots input.slot {{ flex: 1 1 auto; min-width: 0; }}
+  ol.slots button {{ padding: .2rem .5rem; line-height: 1; }}
+  ol.slots .alt {{ margin: 0; flex: 0 0 auto; }}
+
+  /* A place's colour, wherever one is shown. A ring around it, so a colour
+     close to the panel's own is still a shape rather than a hole. */
+  .swatch {{ display: inline-block; width: .9rem; height: .9rem;
+      border-radius: 50%; vertical-align: -2px; margin-right: .35rem;
+      background: var(--c, var(--dim)); border: 1px solid var(--line); }}
+  .palette {{ display: flex; flex-wrap: wrap; gap: .35rem; margin: .25rem 0; }}
+  .palette label {{ display: inline-flex; align-items: center; gap: .25rem;
+      font-size: .75rem; color: var(--dim); margin: 0;
+      padding: .15rem .4rem; border: 1px solid var(--line);
+      border-radius: 1rem; cursor: pointer; }}
+  .palette label:has(input:checked) {{ border-color: var(--accent);
+      color: var(--ink); }}
+  .palette input {{ margin: 0; }}
+  .colourpick {{ display: inline-flex; align-items: center; gap: .4rem; }}
+
+  /* -- the chain ------------------------------------------------------ */
+
+  /* Where this page sits in the run of it. The settings knew the whole
+     arrangement -- which console writes where, which feed reads what -- and
+     said it on no page, so each one read as a heap of fields belonging to
+     nothing. Four steps and one sentence, at the top of every page in it. */
+  nav.chain {{ display: flex; flex-wrap: wrap; align-items: center;
+      gap: .15rem; margin: 0 0 .5rem; padding: 0; background: none;
+      border-right: 0; font-size: .8125rem; }}
+  nav.chain a, nav.chain .on {{ margin: 0; padding: .15rem .55rem;
+      border-radius: 1rem; white-space: nowrap; }}
+  nav.chain a {{ color: var(--dim); text-decoration: none; }}
+  nav.chain a:hover {{ color: var(--ink); text-decoration: underline; }}
+  /* The step you are on carries the weight. An arrow between them would be
+     one more glyph to read; the marked one already says which way it runs,
+     because the four are in order. */
+  nav.chain .on {{ color: var(--ink); font-weight: 600;
+      background: color-mix(in srgb, var(--accent) 14%, transparent); }}
+  nav.chain a::after {{ content: "\\203a"; color: var(--line);
+      margin-left: .55rem; }}
+  nav.chain > :last-child::after {{ content: none; }}
+
+  /* -- facts, checks and pills ---------------------------------------- */
+
+  /* Read-only truth beside a form: what writes into this place, what reads
+     out of it. A definition list, because that is what it is. */
+  dl.facts {{ display: grid; grid-template-columns: minmax(7rem, auto) 1fr;
+      gap: .3rem .9rem; margin: .5rem 0 0; font-size: .875rem; }}
+  dl.facts dt {{ color: var(--dim); }}
+  dl.facts dd {{ margin: 0; min-width: 0; overflow-wrap: anywhere; }}
+
+  /* The one check a person can actually run on a latitude: nobody knows
+     whether 48.4596 is right, everybody knows when the sun came up. */
+  .check {{ margin: .4rem 0 0; font-size: .8125rem; color: var(--dim); }}
+
+  /* A count of faults, beside a count of things. A different shape rather
+     than the same shape in another colour -- the two sat in one slot in the
+     sidebar with nothing but colour telling them apart. */
+  nav a .alarm {{ float: right; margin-left: .4rem; font-size: .6875rem;
+      font-weight: 700; min-width: 1.15rem; text-align: center;
+      border-radius: 1rem; padding: 0 .3rem; color: var(--bg);
+      background: var(--warn); font-variant-numeric: tabular-nums; }}
+  /* For the half of a label that is only there to be read aloud. */
+  .sr {{ position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip-path: inset(50%); white-space: nowrap; }}
+  /* A place in the sidebar, in its own colour. `nav a.sub` was in the
+     stylesheet and emitted by nothing. */
+  nav a.sub .swatch {{ width: .55rem; height: .55rem; margin-right: .45rem;
+      vertical-align: 0; }}
+
+  /* The edit form of a place, in a row under its own row. The generic
+     `details` rule puts a line above every disclosure, and here that line
+     fell between a place and its own form -- so the form read as a further
+     entry in the list rather than as part of the one above it. */
+  table.stations tr.foldrow > td {{ border-top: 0; padding-top: 0; }}
+  table.stations tr.foldrow details {{ border-top: 0; margin-top: 0;
+      padding-top: 0; }}
+  /* Shares of the page, so one long path cannot take the width from the
+     name beside it. Left to the browser, `data/dachterrasse.sdb` widened
+     its column until "Dachterrasse" wrapped in the column before it. The
+     same fix `table.fields` carries, for the same reason. */
+  table.stations.places {{ table-layout: fixed; }}
+  table.stations.places th:nth-child(1) {{ width: 26%; }}
+  table.stations.places th:nth-child(2) {{ width: 22%; }}
+  table.stations.places th:nth-child(3) {{ width: 26%; }}
+  table.stations td code {{ word-break: normal; overflow-wrap: anywhere; }}
 
   footer {{ margin-top: 2rem; font-size: .75rem; color: var(--dim); }}
   footer code {{ font-family: var(--mono); }}
@@ -2266,6 +2635,40 @@ _PAGE = """<!doctype html>
     box.addEventListener("change", function () {{
       var word = box.parentNode.querySelector("em");
       if (word) word.textContent = box.checked ? "on" : "off";
+    }});
+  }});
+
+  // Moving a row in the ordered picker, in the DOM only. A submit button
+  // here would be a second action sharing the save form's action, which is
+  // the shape `tools/admin_page_test.js` refuses -- so these move rows and
+  // the save carries the result. With scripting off the boxes are still
+  // boxes and picking still works; only the reordering goes.
+  document.querySelectorAll("ol.slots").forEach(function (list) {{
+    // Renumbering the `name` attributes is what makes the order real: the
+    // server reads `x__slot0`, `x__slot1` and so on, in that order, and a
+    // row that moved without its name taking the new position would look
+    // moved and save unmoved.
+    function renumber() {{
+      var field = list.getAttribute("data-list");
+      [].forEach.call(list.querySelectorAll("input.slot"), function (box, n) {{
+        box.name = field + "__slot" + n;
+      }});
+    }}
+    list.addEventListener("click", function (event) {{
+      var button = event.target.closest ? event.target.closest("button") : null;
+      if (!button || !list.contains(button)) return;
+      var row = button.parentNode;
+      if (button.classList.contains("lift") && row.previousElementSibling) {{
+        list.insertBefore(row, row.previousElementSibling);
+      }} else if (button.classList.contains("drop")
+                 && row.nextElementSibling) {{
+        list.insertBefore(row.nextElementSibling, row);
+      }} else {{
+        return;
+      }}
+      renumber();
+      var box = row.querySelector("input.slot");
+      if (box) box.focus();
     }});
   }});
 }})();
@@ -2459,6 +2862,11 @@ class _Handler(BaseHTTPRequestHandler):
         # you can link to and reload is worth more than a tidy POST.
         if said.get("q"):
             form = {"q": said["q"][0]}
+        # `?open=<place>` unfolds one archive's row. A link from anywhere
+        # else -- the search, the overview, a redirect after a save -- lands
+        # on the row it is about rather than on a table of closed triangles.
+        if said.get("open"):
+            form = dict(form or {}, _open=said["open"][0])
         self._reply(200, page(self.admin, self._which(parsed.path),
                               message=message, form=form))
 
@@ -2560,6 +2968,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._redirect(f"./plot:{form['name'].strip().lower()}")
             return
 
+        if action == "compare-plots":
+            said, error = adminplots.compare(self.admin, form)
+            self._reply(200, page(self.admin, "charts",
+                                  errors={"": error} if error else None,
+                                  message=said))
+            return
+
         if action == "import-plots":
             uploaded, pasted = form.get("upload", ""), form.get("pasted", "")
             said, error = adminplots.bring_over(
@@ -2601,7 +3016,14 @@ class _Handler(BaseHTTPRequestHandler):
         # The stations page. Its own verbs, because adopting a stranger and
         # creating a station are not the same act: one takes an identity off
         # the wire, the other hands one out.
-        if action == "new-station" or "stations" in parts:
+        #
+        # The verb has to be one of them, not merely the word "stations"
+        # somewhere in the path. Tested that way, any URL that had picked up
+        # an extra segment sent every POST here -- a feed's Save button
+        # included, which came back as "Unknown station action 'feed:wdc'"
+        # on a page two clicks away from the one that caused it.
+        if action == "new-station" or (
+                "stations" in parts and action in STATION_ACTIONS):
             self._station_action(action, parts, form)
             return
 
@@ -2698,17 +3120,37 @@ class _Handler(BaseHTTPRequestHandler):
             self._redirect("./archives?saved=1")
             return
 
-        if action == "set" and len(parts) >= 3:
-            error = adminarchives.configure(self.admin, parts[-2], form)
-        elif action == "remove" and len(parts) >= 3:
-            error = adminarchives.remove(self.admin, parts[-2])
+        name = parts[-2] if len(parts) >= 3 else ""
+        if action == "set" and name:
+            # While the settings still are the one place, a save writes
+            # `station.*` and must not create `archives.toml`. The moment
+            # that file exists `overriding()` is true and those seven values
+            # stop being read -- a switch that belongs to adding a second
+            # place and to nothing else.
+            alone = False
+            try:
+                alone = not adminarchives.load(self.admin).several()
+            except Exception:
+                log.debug("could not tell how many places there are",
+                          exc_info=True)
+            if alone:
+                error = adminarchives.configure_only(self.admin, form)
+            else:
+                error = adminarchives.configure(self.admin, name, form)
+        elif action == "remove" and name:
+            error = adminarchives.remove(self.admin, name)
         else:
             error = f"Unknown archive action {action!r}."
 
         if error:
-            self._reply(200, page(self.admin, "archives", errors={"": error}))
+            # With the form, and with the row it came from open. A refused
+            # save that comes back as a table of closed triangles has lost
+            # everything typed and does not say where.
+            self._reply(200, page(self.admin, "archives", errors={"": error},
+                                  form=dict(form, _open=name)))
             return
-        self._redirect("./archives?saved=1")
+        self._redirect(f"./archives?saved=1&open={quote(name)}"
+                       if name else "./archives?saved=1")
 
     def _place_fields(self, name: str, form: dict) -> str:
         """Where this station's readings go, and the column one of them needs.
@@ -2799,6 +3241,27 @@ class _Handler(BaseHTTPRequestHandler):
         self._redirect("./stations?saved=1")
 
     def _redirect(self, where: str) -> None:
+        """After a POST, to a page -- named from the token, not relatively.
+
+        `./stations?saved=1` looks right and is not: a browser resolves it
+        against the URL that was posted to, so from `/<token>/stations/garten/set`
+        it lands on `/<token>/stations/garten/stations`. That still renders
+        the stations page -- `_which` walks the segments backwards and finds
+        the last name it knows -- so nothing looks wrong, and every link
+        clicked from there inherits the extra segments.
+
+        Which is how saving a station made the *feed* page unsaveable: its
+        Save button posted to `/<token>/stations/garten/feed:wdc`, the router
+        saw `stations` among the segments and sent it to the station handler,
+        and the answer was "Unknown station action 'feed:wdc'". Two pages
+        apart, one wrong redirect.
+
+        Absolute under the token. The admin server owns the whole of its own
+        port and Caddy forwards the token path unchanged, so there is no
+        mount point to be relative to.
+        """
+        if where.startswith(("./", "../")):
+            where = f"/{self.admin.token}/{where.lstrip('./')}"
         self._reply(303, b"", "text/plain", {"Location": where})
 
     # -- the wizard -------------------------------------------------------

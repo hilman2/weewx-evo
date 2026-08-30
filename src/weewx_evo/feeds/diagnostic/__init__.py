@@ -92,9 +92,15 @@ class Diagnostic:
         out = []
         if not self.source.is_dir():
             return out
-        for path in sorted(self.source.glob("*.json")):
+        # `rglob`, not `glob`. With several places the JSON feed writes one
+        # subdirectory per place, and a non-recursive walk reported on the
+        # comparison charts alone -- a diagnostic page that says everything
+        # is fine because it looked at a tenth of it.
+        for path in sorted(self.source.rglob("*.json")):
             entry: dict[str, Any] = {
-                "name": path.name,
+                # Relative to the source, so two places' `daytempdew.json`
+                # are told apart on the page.
+                "name": path.relative_to(self.source).as_posix(),
                 "size": path.stat().st_size,
                 "faults": [],
                 "charts": [],

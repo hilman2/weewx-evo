@@ -81,6 +81,56 @@ where a set with sets in it belongs.
 Two skins called weewx-wdc, one of them changed, would be worse for
 everybody than two names. `SKIN_NAME` says `Deck`.
 
+### One skin, several places
+
+weewx-wdc renders one archive. Deck renders a *site*, and a site may stand
+in several places at once: an overview at the root, four comparison pages,
+and the whole skin again under each place's own name.
+
+The gate is how many places the feed shows, and where it shows one nothing
+below exists -- `$places` is empty, every new include renders nothing, no
+attribute is added, and no subdirectory is made. That is checked as a diff
+against the previous tree rather than by inspection.
+
+What came with it:
+
+- `overview.html.tmpl` -- the board. One row per place, one column per
+  reading, and above it a list of nought to four things that are not
+  ordinary. A table and not a grid of cards, because places down the side is
+  the only layout where "which place is coldest" costs no work at all and
+  the only one that still fits eight places on one screen.
+- `compare.html.tmpl` and its three siblings, each two lines around
+  `includes/compare-body.inc` -- the figures, then the charts, then a row of
+  chips that switches a place off on every chart at once. Four files rather
+  than four tabbed panels: a period is worth having in the URL, and tabs
+  load four times the charts for a reader looking at one quarter of them.
+- `includes/now-board.inc`, `unusual.inc`, `place-switch.inc`,
+  `compare-body.inc`, `compare-figures.inc`, and three icons.
+- `tags.py` gained `PlacesUtil` -- the ages, the three unusual rules and the
+  figures table -- and `GeneralUtil.difference_label`, because a Spread
+  column headed °C holding 4.2 names a temperature that does not exist.
+- `skin.conf` gained `[[Site]]`, one inherited `scope` word, and a
+  `place_page` word per section so an operator with five places can publish
+  four pages each instead of forty-five.
+- `options.py` gained three groups: which places, the board, the
+  comparisons.
+
+Three rules the markup keeps, each because breaking it has cost something
+here before:
+
+- **Never a mean across places.** Two thermometers reading 19 and 21 do not
+  make 20 anywhere. The only cross-place figure on the whole site is a
+  difference, and it names both of its ends.
+- **Nothing new inside `.stat-title-obs-value`.** The board says how old a
+  row is once, in its own cell. A badge inside a value cell would put
+  something a script writes inside the subtree the observer watches, and
+  paint -> mutation -> paint is a tab that stops responding a second after
+  it loads.
+- **`#set global` and loops, never a `#def` in an include.** An `#include`
+  is its own compilation unit and a `#def` in one is not callable from the
+  file that included it: the call falls through to the tag layer, which is
+  where three hundred `?'nav_link'?` in one run came from.
+
 ## Left alone on purpose
 
 The layout, the design, the TypeScript and the SCSS are as they were. The

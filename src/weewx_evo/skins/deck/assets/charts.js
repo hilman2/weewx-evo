@@ -26,6 +26,61 @@
 
   var charts = [];
 
+  /* ------------------------------------------------------------ places */
+
+  /* Which places the reader switched off. One press of a chip switches a
+   * place on every chart on the page at once, which is the question actually
+   * being asked -- "just the two gardens" -- rather than the same legend
+   * click repeated once per chart.
+   *
+   * The set lives here rather than in `deck.js` because it has to be built
+   * INTO the option. `redraw()` is `setOption(option, true)` -- merge false
+   * -- and so is the minute's refresh, so a filter applied with
+   * `dispatchAction` is wiped the moment the OS flips to dark at sunset.
+   * Built into `legend.selected`, every rebuild reconstructs it by
+   * construction and there is nothing to remember to reapply.
+   *
+   * Nothing here computes a number and nothing merges two files: a
+   * comparison chart is one document `chartdata.py` built from several
+   * readers over one span, and hiding a line hides a line. */
+  var PLACES_OFF = "deck-places-off";
+  var hiddenPlaces = new Set(remembered());
+
+  function remembered() {
+    /* A private window, a browser told to block site data and a thumbnailer
+     * all throw here rather than returning nothing, and none of them is a
+     * reason for the page not to render. */
+    try {
+      var said = window.localStorage.getItem(PLACES_OFF);
+      var list = said ? JSON.parse(said) : [];
+      return Array.isArray(list) ? list : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function remember() {
+    try {
+      window.localStorage.setItem(PLACES_OFF,
+        JSON.stringify(Array.from(hiddenPlaces)));
+    } catch (e) {
+      /* Nothing worth saying: the chips still work, they just will not be
+       * remembered next time. */
+    }
+  }
+
+  function hide(name, yes) {
+    if (!name) return;
+    if (yes) hiddenPlaces.add(name);
+    else hiddenPlaces.delete(name);
+    remember();
+    redraw();
+  }
+
+  function shown(name) {
+    return !hiddenPlaces.has(name);
+  }
+
   /* ------------------------------------------------------------ tokens */
 
   function token(name, fallback) {
@@ -385,17 +440,29 @@
     // A key only where it says something. With one line the heading above
     // the chart has already named it.
     if (spec.series.length > 1) {
-      option.legend = {
-        top: 0,
-        right: 0,
-        icon: "roundRect",
-        itemWidth: 9,
-        itemHeight: 9,
-        itemGap: 14,
-        textStyle: { color: colours.ink2, fontSize: 11 },
-        data: spec.series.map(function (one) { return one.label; }),
-      };
+      option.legend = legendShape(spec, colours);
       option.grid.top = 34;
+    }
+
+    // The chips, as part of the option and never as a dispatched action --
+    // see `hiddenPlaces`. Keyed on the label because that is what ECharts'
+    // legend keys on, and `chartdata` gives one label per place per chart.
+    //
+    // Only reaches a chart whose file names its places: `source` is the
+    // line's own `series`, which is empty on every chart of every
+    // single-place station, so nothing about those charts changes.
+    if (hiddenPlaces.size &&
+        spec.series.some(function (one) { return one.source; })) {
+      if (!option.legend) {
+        // One place left of two is still a chart with a key: without it
+        // there is nothing on screen saying which place is being looked at.
+        option.legend = legendShape(spec, colours);
+        option.grid.top = 34;
+      }
+      option.legend.selected = {};
+      spec.series.forEach(function (one) {
+        option.legend.selected[one.label] = !hiddenPlaces.has(one.source);
+      });
     }
     option.tooltip.formatter = function (params) {
       if (!params.length) return "";
@@ -437,6 +504,19 @@
     }
 
     return option;
+  }
+
+  function legendShape(spec, colours) {
+    return {
+      top: 0,
+      right: 0,
+      icon: "roundRect",
+      itemWidth: 9,
+      itemHeight: 9,
+      itemGap: 14,
+      textStyle: { color: colours.ink2, fontSize: 11 },
+      data: spec.series.map(function (one) { return one.label; }),
+    };
   }
 
   function fade(colour, alpha) {
@@ -834,9 +914,48 @@
    * written by the `json` feed out of `plots.toml` and published like any
    * other page. The skin has to be told where, because the two are separate
    * exports and only the operator knows how they sit on the host. */
+  /* One of the skin's translated strings, or empty. `deckConfig` carries
+   * them so a message written here is written in the page's language, the
+   * same way every other word on it is. */
+  function deckText(key) {
+    var words = (window.deckConfig || {}).translations || {};
+    return words[key] || "";
+  }
+
   function chartsPath() {
     var said = (window.deckConfig && window.deckConfig.chartsPath) || "/json/";
-    return said.charAt(said.length - 1) === "/" ? said : said + "/";
+    if (said.charAt(said.length - 1) !== "/") said += "/";
+    /* The place this page belongs to, when it belongs to one. This is the
+     * only place a subdirectory appears: `fromFile` and `fillGrid` both come
+     * through here and neither of them knows archives exist -- the directory
+     * IS the facet, so a page's grid finds its own plots and nothing else.
+     * Empty on a site page and on every single-place site, which is what
+     * keeps those addresses exactly as they were. */
+    var one = (window.deckConfig && window.deckConfig.chartsArchive) || "";
+    return one ? said + encodeURIComponent(one) + "/" : said;
+  }
+
+  /* One fetch, one place to say what went wrong with it. */
+  function readFile(where) {
+    return fetch(where, { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      });
+  }
+
+  /* Which charts exist, asked once per page.
+   *
+   * `fillGrid` fetched this per container, so a page with a grid per span
+   * asked for the same document three times -- and a site with several
+   * places multiplies whatever that costs. The promise is memoised rather
+   * than the answer, so two containers that start together still share the
+   * one request. */
+  var manifestAsked = null;
+
+  function manifest() {
+    if (!manifestAsked) manifestAsked = readFile(chartsPath() + "index.json");
+    return manifestAsked;
   }
 
   /* The file's own series, as the rows the builders read.
@@ -895,6 +1014,7 @@
   function fill(spec, found) {
     var series = found.series || [];
     var had = spec.series || [];
+    var hadUnits = spec.units || [];
     spec.series = series.map(function (one, index) {
       var was = had[index] || {};
       return {
@@ -904,10 +1024,38 @@
         axis: was.axis || 0,
         type: one.plot_type || was.type,
         width: one.width || was.width,
+        /* Which place drew it, so a chip can switch it off. Empty on every
+         * chart of every single-place station -- the core writes the key
+         * only when a line names a place. */
+        source: one.series || "",
       };
     });
-    if (found.unit_label && !(spec.units && spec.units.length)) {
-      spec.units = [found.unit_label];
+    /* One unit label per series rather than one for the whole chart, so a
+     * line whose own unit disagrees with the chart's can say so.
+     *
+     * The label is never composed here, and that is the whole constraint:
+     * turning `degree_F` into `°F` would be a second copy of the core's
+     * unit table, and two copies of that table differ in the third decimal
+     * the afternoon somebody edits one. So this reads a label and does not
+     * build one.
+     *
+     * **And the core does not write one yet.** `jsongenerator._document`
+     * puts `entry["unit"]` on a line that disagrees -- a unit *name*,
+     * `degree_C` -- and `unit_label` only at the document level. So today
+     * every element of `spec.units` is the chart's label repeated, which is
+     * exactly what the single-element array and the tooltip's own
+     * `|| spec.units[0]` fallback already produced: this is the seam, not
+     * the fix. The line whose unit really does differ still prints the
+     * chart's label, and it will go on doing that until `entry` carries
+     * `unit_label` beside `unit`. Printing `degree_C` on an axis in the
+     * meantime would be worse than printing the wrong symbol, and dropping
+     * the label instead would be a one-place change: the tooltip falls back
+     * to `units[0]`, so an empty string there changes what a two-unit chart
+     * prints on a single-place station. */
+    if (found.unit_label || hadUnits.length) {
+      spec.units = series.map(function (one) {
+        return one.unit_label || found.unit_label || hadUnits[0] || "";
+      });
     }
     if (found.daynight && !spec.daynight) spec.daynight = found.daynight;
     return spec;
@@ -919,66 +1067,113 @@
    * is under either. */
   var LOOK_AGAIN = 60000;
 
+  /* Every chart drawn from a file, and one timer for all of them.
+   *
+   * `fromFile` used to install its own `setInterval` AND its own
+   * never-removed `visibilitychange` listener per chart element: a day page
+   * with twenty charts was twenty timers and twenty fetches a minute, and a
+   * site showing several places multiplies that again. One tick, and each
+   * distinct address asked for once however many charts read it. */
+  var watched = [];
+  var ticking = false;
+
+  function lookAgain() {
+    if (document.hidden) return;
+    var byUrl = {};
+    watched.forEach(function (one) {
+      if (one.gone) return;
+      (byUrl[one.url] = byUrl[one.url] || []).push(one);
+    });
+    Object.keys(byUrl).forEach(function (url) {
+      readFile(url).then(function (found) {
+        byUrl[url].forEach(function (one) { one.apply(found, false); });
+      }).catch(function () {
+        /* Said once, on the first load. A console filling with the same line
+         * every minute is a console nobody reads. */
+      });
+    });
+  }
+
+  function watch(entry) {
+    watched.push(entry);
+    if (ticking) return;
+    ticking = true;
+    window.setInterval(lookAgain, LOOK_AGAIN);
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) lookAgain();
+    });
+  }
+
   function fromFile(element, spec) {
     var name = element.getAttribute("data-plot");
     var where = chartsPath() + encodeURIComponent(name) + ".json";
     var entry = null;
+    var seen = { url: where, apply: apply, gone: false };
 
-    function load(first) {
-      return fetch(where, { cache: "no-store" })
-        .then(function (response) {
-          if (!response.ok) throw new Error(String(response.status));
-          return response.json();
-        })
-        .then(function (found) {
-          if (!hasNumbers(found)) {
-            /* Taken off the page rather than emptied: an empty card in a
-               grid still holds a column open, so the ones that do have
-               something end up beside a gap. */
-            var card = element.closest(".diagram-tile");
-            var slot = card && card.parentElement;
-            if (slot && slot.parentElement) {
-              slot.parentElement.removeChild(slot);
-            } else if (card) {
-              card.parentElement.removeChild(card);
-            }
-            return;
-          }
-          fill(spec, found);
-          /* The heading, from the file rather than from the page. The tile
-           * renders it empty: a title written into the HTML would be a second
-           * answer to what this chart is called, and a page published over
-           * FTP cannot read the file to check. */
-          if (found.title) {
-            var card = element.closest(".diagram-tile");
-            var heading = card && card.querySelector("[data-plot-title]");
-            if (heading) heading.textContent = found.title;
-          }
-          if (first) {
-            entry = draw(element, spec);
-          } else if (entry) {
-            /* Not a rebuild: the same chart told to hold newer numbers, so
-             * the axis and anything the reader did to it stay put. */
-            entry.chart.setOption(entry.builder(spec, palette()), true);
-          }
-        })
-        .catch(function (why) {
-          if (!first) return;
-          element.textContent = "no chart data at " + where;
-          element.classList.add("muted");
-          if (window.console) {
-            console.info("deck: " + where + " (" + why.message + ")");
-          }
-        });
+    function apply(found, first) {
+      if (!hasNumbers(found)) {
+        /* Taken off the page rather than emptied: an empty card in a
+           grid still holds a column open, so the ones that do have
+           something end up beside a gap. */
+        var empty = element.closest(".diagram-tile");
+        var slot = empty && empty.parentElement;
+        if (slot && slot.parentElement) {
+          slot.parentElement.removeChild(slot);
+        } else if (empty) {
+          empty.parentElement.removeChild(empty);
+        }
+        /* And it is not asked for again. The tile is off the page and
+         * nothing puts it back -- `entry` is null, so a later file with
+         * numbers in it would be fetched and dropped on the floor. */
+        seen.gone = true;
+        return;
+      }
+      fill(spec, found);
+      var card = element.closest(".diagram-tile");
+      /* The heading, from the file rather than from the page. The tile
+       * renders it empty: a title written into the HTML would be a second
+       * answer to what this chart is called, and a page published over
+       * FTP cannot read the file to check. */
+      if (found.title && card) {
+        var heading = card.querySelector("[data-plot-title]");
+        if (heading) heading.textContent = found.title;
+      }
+      /* What is in this chart, in words: the aggregation, the unit and
+       * which places are drawn. Composed by the core and printed verbatim,
+       * for the same reason the title is -- prose built in a script cannot
+       * be translated by the skin's language files.
+       *
+       * Only for a document that names more than one place. A single-place
+       * chart never gains an empty <p> that nothing reads. */
+      if (card && found.note && (found.places || []).length > 1) {
+        var note = card.querySelector("[data-plot-note]");
+        if (!note) {
+          note = document.createElement("p");
+          note.className = "chart-note";
+          note.setAttribute("data-plot-note", "");
+          card.appendChild(note);
+        }
+        if (note.textContent !== found.note) note.textContent = found.note;
+      }
+      if (first) {
+        entry = draw(element, spec);
+      } else if (entry) {
+        /* Not a rebuild: the same chart told to hold newer numbers, so
+         * the axis and anything the reader did to it stay put. */
+        entry.chart.setOption(entry.builder(spec, palette()), true);
+      }
     }
 
-    load(true);
-    window.setInterval(function () {
-      if (!document.hidden) load(false);
-    }, LOOK_AGAIN);
-    document.addEventListener("visibilitychange", function () {
-      if (!document.hidden) load(false);
-    });
+    readFile(where)
+      .then(function (found) { apply(found, true); })
+      .catch(function (why) {
+        element.textContent = "no chart data at " + where;
+        element.classList.add("muted");
+        if (window.console) {
+          console.info("deck: " + where + " (" + why.message + ")");
+        }
+      });
+    watch(seen);
   }
 
   function draw(element, spec) {
@@ -1039,11 +1234,7 @@
       .split(",").map(function (one) { return one.trim(); })
       .filter(Boolean);
 
-    fetch(chartsPath() + "index.json", { cache: "no-store" })
-      .then(function (response) {
-        if (!response.ok) throw new Error(String(response.status));
-        return response.json();
-      })
+    manifest()
       .then(function (found) {
         var plots = (found.plots || []).filter(function (one) {
           return one.group === span;
@@ -1058,7 +1249,28 @@
           }).filter(Boolean);
         }
         if (!plots.length) {
-          container.textContent = "";
+          /* Empty is not the same as missing, and it used to look the same:
+           * nothing at all. A manifest that fetches and lists no chart for
+           * this grid is an ordinary, fixable state -- most often a site of
+           * several places whose comparison charts have never been
+           * generated -- and saying nothing about it leaves somebody
+           * looking at a blank half-page with no idea which end is wrong.
+           *
+           * Only for a grid that asked for comparisons, because that is the
+           * only case with an answer worth printing. Every other empty grid
+           * keeps the silence it has always had, which is what a station
+           * without that sensor should see. */
+          if (container.getAttribute("data-plots") &&
+              (window.deckConfig || {}).chartsArchive === "") {
+            container.textContent = (deckText("no_comparisons") ||
+              "No comparison charts yet. They are generated from the "
+              + "configured places: run `weewx-evo plots compare --write`, "
+              + "or press \u201cGenerate comparisons\u201d on the Charts "
+              + "settings page.");
+            container.classList.add("muted");
+          } else {
+            container.textContent = "";
+          }
           return;
         }
         plots.forEach(function (one) {
@@ -1179,5 +1391,14 @@
     drawAll();
   }
 
-  window.deckCharts = { redraw: redraw, relayout: relayout, all: charts };
+  /* `hide` and `shown` are the chips' half of the filter: `deck.js` owns the
+   * buttons, this file owns the state, because the state has to be built into
+   * the option rather than dispatched at it. */
+  window.deckCharts = {
+    redraw: redraw,
+    relayout: relayout,
+    all: charts,
+    hide: hide,
+    shown: shown,
+  };
 })();

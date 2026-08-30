@@ -724,8 +724,14 @@ def a_place_in_another_timezone_is_said_out_loud() -> None:
 # ---------------------------------------------------------------------------
 
 def an_archive_with(path: Path, temperatures: list[float],
-                    start: int = 1756308600, every: int = 300) -> Path:
-    """A small archive with one reading in it, so two can be compared."""
+                    start: int = 1756308600, every: int = 300,
+                    system: int = 17) -> Path:
+    """A small archive with one reading in it, so two can be compared.
+
+    `system` is what the file says it holds -- 17 is metricwx, 1 is US. It is
+    a parameter because two places in two systems is the ordinary case here,
+    not an odd one: one console replaced and one not.
+    """
     import sqlite3
     from contextlib import closing
 
@@ -735,7 +741,7 @@ def an_archive_with(path: Path, temperatures: list[float],
             "usUnits INTEGER, `interval` INTEGER, outTemp REAL)")
         conn.executemany(
             "INSERT INTO archive VALUES (?, ?, ?, ?)",
-            [(start + n * every, 17, every // 60, value)
+            [(start + n * every, system, every // 60, value)
              for n, value in enumerate(temperatures)])
         conn.commit()
     return path
@@ -752,7 +758,7 @@ def test_one_chart_draws_two_places() -> None:
     import sqlite3
     from contextlib import closing
 
-    from weewx_evo import chartdata
+    from weewx_evo import chartdata, units
     from weewx_evo import plots as plot_defs
     from weewx_evo import series as series_module
     from weewx_evo.series import Reader
@@ -776,7 +782,14 @@ def test_one_chart_draws_two_places() -> None:
           series_module.opened(paths, wanted) as readers):
         check("only what a plot named was opened", sorted(readers),
               ["nordfeld"])
+        # Both files hold metricwx, and the caller says so. Said wrongly,
+        # the home line would come back unconverted while the named one was
+        # converted from what its own reader holds -- two lines on one axis,
+        # in two units, under one label. That asymmetry is what the caller
+        # telling the truth prevents, and it is why both feeds now pass
+        # `reader.system` rather than a setting.
         chart = chartdata.build(plot, Reader(conn), 1756308600 + 1200,
+                                unit_system=units.METRICWX,
                                 readers=readers)
 
     check("both lines are drawn", len(chart.lines), 2)
@@ -787,6 +800,51 @@ def test_one_chart_draws_two_places() -> None:
     check("and it says where it came from", chart.lines[1].series, "nordfeld")
     check("while the first says nothing, as every single-series line does",
           chart.lines[0].series, "")
+
+
+def test_two_places_in_two_unit_systems() -> None:
+    """A console replaced and one not, on one axis.
+
+    Each line is converted from the system *its own archive* holds. Read from
+    the chart's instead, a place whose console sends Fahrenheit comes out
+    thirty degrees wrong on the one page built to compare it with its
+    neighbour -- and every number on that page is internally consistent, so
+    nothing about it looks odd.
+    """
+    import sqlite3
+    from contextlib import closing
+
+    from weewx_evo import chartdata, units
+    from weewx_evo import plots as plot_defs
+    from weewx_evo import series as series_module
+    from weewx_evo.series import Reader
+
+    where = Path(tempfile.mkdtemp())
+    # 10 C here, and the same weather over there reported as 50 F.
+    an_archive_with(where / "default.sdb", [10.0, 11.0], system=17)
+    an_archive_with(where / "nordfeld.sdb", [50.0, 51.8], system=1)
+
+    charts = plot_defs.from_dict({"plot": [{
+        "name": "both", "span": "day", "time_length": 86400,
+        "line": [{"obs": "outTemp"},
+                 {"obs": "outTemp", "series": "nordfeld"}],
+    }]})
+    paths = {"nordfeld": where / "nordfeld.sdb"}
+    with (closing(sqlite3.connect(where / "default.sdb")) as conn,
+          series_module.opened(paths, {"nordfeld"}) as readers):
+        chart = chartdata.build(charts.plots[0], Reader(conn),
+                                1756308600 + 600,
+                                unit_system=units.METRICWX,
+                                readers=readers)
+
+    check("both lines are drawn", len(chart.lines), 2)
+    check("and both come out in the same unit", chart.unit, "degree_C")
+    check("the Fahrenheit archive was converted, not copied",
+          [round(v, 1) for v in chart.lines[1].values if v is not None][:2],
+          [10.0, 11.0])
+    check("so the two places read the same weather the same way",
+          [round(v, 1) for v in chart.lines[0].values if v is not None][:2],
+          [round(v, 1) for v in chart.lines[1].values if v is not None][:2])
 
 
 def test_a_line_naming_an_archive_that_is_not_there_is_left_out() -> None:
@@ -948,6 +1006,7 @@ def main() -> int:
 
     # Two places on one chart, which is what n archives were missing.
     test_one_chart_draws_two_places()
+    test_two_places_in_two_unit_systems()
     test_a_line_naming_an_archive_that_is_not_there_is_left_out()
     test_a_series_survives_the_round_trip_through_the_file()
     test_nothing_is_opened_where_no_plot_names_one()

@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from weewx_evo import admin as admin_module
 from weewx_evo import config as config_file
 from weewx_evo.admin import ADD_PAGES, MARKER, OWN_PAGES, Admin, AdminServer
 from weewx_evo.cli import all_schemas
@@ -56,10 +57,22 @@ def post(url: str, form: dict) -> tuple[int, str]:
         with opener.open(request, timeout=5) as r:
             return r.status, r.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as exc:
+        _NoRedirect.last = exc.headers.get("Location", "")
         return exc.code, exc.read().decode("utf-8", "replace")
 
 
+def _location(_body: str) -> str:
+    """The Location of the last redirect `post` saw.
+
+    Kept on the handler rather than returned, so `post` keeps the two-value
+    shape every other caller here is written against.
+    """
+    return _NoRedirect.last
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    last = ""
+
     def redirect_request(self, *_args, **_kwargs):
         return None
 
@@ -248,9 +261,14 @@ def main() -> int:
         print("\nand that way leads to both, named as the two things they are")
         code, publishing = get(f"{base}/{TOKEN}/publishing")
         failures += not check("the page loads", code, 200)
+        # Against the constant, not against a form of words. The sentence
+        # that defines a feed and an export stands on all four pages of the
+        # chain now rather than on this one alone, and a test quoting half
+        # of it goes red the next time somebody rewords it -- while a page
+        # that quietly stopped saying it at all would still pass.
+        from weewx_evo.adminarchives import CHAIN_SAID
         for needle, what in (
-            ("A feed makes files", "it says what a feed is"),
-            ("An export moves them", "and what an export is"),
+            (CHAIN_SAID, "it says what a feed and an export are"),
             ("./new-feed", "and offers to add one of each"),
             ("./new-export", "the other one too"),
         ):
@@ -461,8 +479,17 @@ def main() -> int:
             # was added, so it shipped with all three inside the save form
             # and Remove doing nothing. That is the failure this check exists
             # for, missed because the list of pages was short.
+            # Plus the pages whose name carries an instance. `admin.sub_pages`
+            # is where those are listed, and it existed here unused: the
+            # chart editor -- a delete checkbox per row, its own Remove
+            # button and a colour control per line -- had never been through
+            # the check that asks which form each button landed in. That is
+            # the check that found Save belonging to no form on every export,
+            # feed, upload and forecast page, with every tag present and
+            # every one closed.
             pages = ([s.name for s in admin.schemas]
-                     + list(ADD_PAGES) + list(OWN_PAGES))
+                     + list(ADD_PAGES) + list(OWN_PAGES)
+                     + admin_module.sub_pages(admin))
             for where in pages:
                 code, rendered = get(f"{base}/{TOKEN}/{where}")
                 if code != 200:
@@ -692,6 +719,12 @@ def main() -> int:
                               True)
         failures += not check("and how far ahead", 'name="days"' in html_, True)
         failures += not check("a way to fetch once", "Fetch once" in html_, True)
+        # And the one question that is not the source's own: a forecast
+        # is an answer about a coordinate pair, so it belongs to a series.
+        # Asked here because a setting nobody can reach from the page is
+        # one that gets typed into the file by hand or not at all.
+        failures += not check("and which series it is for",
+                              'name="archive"' in html_, True)
 
         print("\na warning source is a second entry, not a setting")
         # No service does both the numbers and the warnings well, so two
@@ -708,10 +741,19 @@ def main() -> int:
 
         print("\nits settings save under its own name")
         post(f"{base}/{TOKEN}/forecast:ahead",
-             {"days": "10", "model": "icon_seamless"})
+             {"days": "10", "model": "icon_seamless",
+              "archive": "default"})
         saved = config_file.read(path)
         failures += not check("days",
                               config_file.get(saved, "forecast.ahead.days"), 10)
+        # The series reaches the file under this entry's own
+        # name. A value that never arrives where something reads
+        # it is the failure this whole page has had twice, and
+        # both times the page said "saved".
+        failures += not check(
+            "and the series it is for",
+            config_file.get(saved, "forecast.ahead.archive"),
+            "default")
         failures += not check("the other source is untouched",
                               config_file.get(saved, "forecast.warnings.kind"),
                               "meteoalarm")
@@ -885,6 +927,41 @@ def main() -> int:
 
         # Last, because it makes sixteen of everything, and every
         # list this test checks before here would be counting them.
+        print("\na save sends the browser to a page, not one level below it")
+        # `./stations?saved=1` looks right and is not: a browser resolves it
+        # against the URL that was posted to, so saving a station's
+        # properties landed on `/<token>/stations/<name>/stations`. That
+        # renders the stations page -- `_which` reads the segments backwards
+        # and finds the last name it knows -- so nothing looks wrong, and
+        # every link clicked from there keeps the extra segments.
+        #
+        # Which made the *feed* page unsaveable two clicks later: its Save
+        # posted to `/<token>/stations/<name>/feed:wdc`, the router saw
+        # `stations` among the segments, and the answer was "Unknown station
+        # action 'feed:wdc'".
+        # A station to save. Announced rather than assumed: this fixture
+        # has none, and a check that posts to a name nobody created measures
+        # the error path instead of the redirect.
+        post(f"{base}/{TOKEN}/new-station",
+             {"name": "kitchen", "driver": "wunderground"})
+        code, body = post(f"{base}/{TOKEN}/stations/kitchen/set",
+                          {"role": "main"})
+        where = _location(body) or ""
+        failures += not check("a station save redirects", code, 303)
+        failures += not check("to an absolute page under the token",
+                              where.startswith(f"/{TOKEN}/stations"), True)
+        failures += not check("and not one level deeper",
+                              "/stations/kitchen/stations" in where, False)
+
+        # And the guard behind it: the router asks what the verb is, not
+        # whether a word appears in the path. Somebody with the old deep URL
+        # in a bookmark has to be able to save too.
+        code, body = post(f"{base}/{TOKEN}/stations/kitchen/feed:site",
+                          {"enabled": "1"})
+        failures += not check("a schema save works from any path", code, 303)
+        failures += not check("and does not fall into the station handler",
+                              "Unknown station action" in body, False)
+
         print("\nevery kind can be made, and its page comes up")
         # The whole of what somebody does first: click add, choose a kind,
         # land on its settings. Two upload kinds shipped a default of ten

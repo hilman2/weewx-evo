@@ -117,12 +117,13 @@
     <title>$station.location - $gettext("Sensor Status")</title>
   </head>
 
-  <body class="theme-$layout">
+  <body class="theme-$layout"#if $places then ' data-units="' + $page_unit_system() + '"' else ''#>
     #include "includes/ui-shell.inc"
 
     <main class="main" id="main">
       <div class="wrap">
 <header class="page-head">
+#include "includes/place-switch.inc"
               <h1>$gettext("Sensor Status")</h1>
               <h2>$now</h2>
             </header>

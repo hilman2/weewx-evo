@@ -134,13 +134,32 @@ class Line:
     #: Nothing here reads it.
     binding: str = ""
 
-    def resolved(self, position: int = 0) -> Line:
-        """The same line with the colors WeeWX would have given it."""
+    def resolved(self, position: int = 0, place: str = "") -> Line:
+        """The same line with the colors WeeWX would have given it.
+
+        `place` is what `archives.toml` says the archive this line reads is
+        drawn in. It stands between the line's own colour and the positional
+        palette, and that order is the whole rule: somebody who typed a
+        colour meant it, a place that has one has to look the same on every
+        chart it appears on, and the palette is what is left.
+
+        Positional colour cannot do a place's job, and this is not taste.
+        `position` counts *within one plot*, so a place is the second colour
+        on a chart drawing two places and the first on a chart drawing only
+        it -- and a legend chip that says a place IS a colour would then be
+        lying on one of the two.
+        """
         if self.color and (self.kind != "bar" or self.fill_color):
             return self
         return replace(
             self,
-            color=self.color or LINE_COLORS[position % len(LINE_COLORS)],
+            color=(self.color or place
+                   or LINE_COLORS[position % len(LINE_COLORS)]),
+            # Deliberately not taken from the place: a bar's fill is the pale
+            # twin of its line colour, and deriving one from an arbitrary hex
+            # is arithmetic in a colour space nobody can check by looking. A
+            # bar chart across places is written by hand, and by somebody who
+            # then types both.
             fill_color=(self.fill_color
                          or (FILL_COLORS[position % len(FILL_COLORS)]
                              if self.kind == "bar" else "")))
@@ -180,11 +199,72 @@ class Plot:
     @property
     def drawn(self) -> list[Line]:
         """The lines with their colors filled in."""
-        return [line.resolved(i) for i, line in enumerate(self.lines)]
+        return self.drawn_with({})
+
+    def drawn_with(self, colors: dict[str, str]) -> list[Line]:
+        """The same, with each place's own colour where it has one.
+
+        `colors` is archive name -> hex, out of `archives.toml`, and the
+        empty string is the archive the chart is being drawn *for* -- a
+        comparison chart's home line carries a blank `series`, and without
+        an entry for it that line is the one on the chart drawn from the
+        positional palette while every other is drawn in its place's colour.
+
+        An empty map is the single-series case and every caller that has not
+        been told about places, and then this is `drawn` exactly -- byte for
+        byte, including the repeat past the fifth line. That matters:
+        stepping the palette past a collision would change the colours of
+        every existing plot with six lines in it, in a change about places.
+        """
+        if not colors:
+            return [line.resolved(i) for i, line in enumerate(self.lines)]
+
+        out: list[Line] = []
+        taken: set[str] = set()
+        for position, line in enumerate(self.lines):
+            wanted = colors.get(line.series or "", "")
+            if wanted and wanted in taken:
+                # Two lines of one place -- a plot mixing readings AND
+                # places. The place's colour is already on the chart, so the
+                # second falls back to the palette rather than being drawn
+                # twice in the same hue: two identical lines is a chart that
+                # cannot be read and cannot be complained about, because
+                # nothing about it looks wrong.
+                wanted = ""
+            became = line.resolved(position, wanted)
+            taken.add(became.color)
+            out.append(became)
+        return out
 
     def uses(self) -> set[str]:
         """Which readings this plot needs."""
         return {line.obs for line in self.lines}
+
+    def places(self) -> list[str]:
+        """The archives this chart names, in the order its lines do.
+
+        A list and not a set: it decides a legend's order and the sentence
+        under a chart, and a set would put them in a different order on
+        every process.
+        """
+        out: list[str] = []
+        for line in self.lines:
+            named = getattr(line, "series", "")
+            if named and named not in out:
+                out.append(str(named))
+        return out
+
+    def names_a_place(self) -> bool:
+        """Whether any reading here says which archive it comes from.
+
+        The whole of the filing rule, and it is deliberately not "draws more
+        than one place". A chart with a single line reading the north field
+        produces the same numbers whichever place's page it is on, so it is
+        written once; writing it under every place would be N identical
+        documents that change together, N uploads, and N chances for them to
+        disagree after a partial export.
+        """
+        return any(getattr(line, "series", "") for line in self.lines)
 
 
 def series_named(plots: Any) -> set[str]:
@@ -196,10 +276,10 @@ def series_named(plots: Any) -> set[str]:
     """
     out: set[str] = set()
     for plot in getattr(plots, "plots", ()) or ():
-        for line in getattr(plot, "lines", ()) or ():
-            named = getattr(line, "series", "")
-            if named:
-                out.add(str(named))
+        # Through `Plot.places()`, so the set and the list cannot disagree
+        # about what "names a place" means. `tools/` builds bare stand-ins
+        # for this function, hence the getattr.
+        out.update(getattr(plot, "places", list)())
     return out
 
 
@@ -416,6 +496,147 @@ def render(plots: PlotSet, note: str = "") -> str:
             lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
+
+#: How a comparison chart reduces each span. A year of five-minute readings
+#: is not a chart, it is a hundred thousand points drawn over each other --
+#: and N places multiplies that by N. These are the buckets the shipped
+#: Seasons set already uses for its own week, month and year plots, so a
+#: comparison and the per-place chart beside it are reduced the same way.
+COMPARE_BUCKETS: dict[str, tuple[str, int | str | None]] = {
+    "day": ("", None),
+    "week": ("avg", "hour"),
+    "month": ("avg", 10800),
+    "year": ("avg", "day"),
+}
+
+#: What "cmp" separates in a generated name. Not a hyphen or a dot: a
+#: manifest name is span-prefixed and a page matches `data-only` against
+#: either the name or the span plus the name, so a character that is not a
+#: letter or a digit in the middle of a name matches on one path and not the
+#: other.
+GENERATED = "cmp"
+
+#: Readings that wrap, and the aggregate that means something for each. A
+#: direction is not a quantity: `min`, `max` and `avg` all answer with a
+#: number that is not in the data.
+CIRCULAR = {"windDir": "vecdir", "windGustDir": "gustdir"}
+
+
+def comparisons(places: list[str], observations: list[str],
+                spans: list[str], existing: PlotSet | None = None,
+                labels: dict[str, str] | None = None
+                ) -> tuple[PlotSet, list[str]]:
+    """One chart per (span, reading), one line per place.
+
+    Generated rather than typed. Four readings by four spans by four places
+    is sixty-four lines, and asking somebody to write those into a file by
+    hand is the WeeWX arrangement this project removed -- the same argument
+    that made `plots import` part of the work rather than a convenience.
+
+    Returns `(plots, replaced)`. `plots` is the **whole set to write**:
+    everything in `existing`, in its own order, with each generated chart put
+    where the one it replaces stood and the rest appended in the order
+    (span, reading) were asked for. `replaced` is the names of the existing
+    plots the generated ones stood in for, so a caller can print them and
+    write nothing until somebody says `--write`.
+
+    Rewritten only where the name is one this function makes -- a span, then
+    `cmp`, then a reading -- **and** every line of the plot already names a
+    place. An overlay somebody wrote and edited is left exactly as it is, and
+    a generated name whose plot is no longer all-places is left alone too:
+    it keeps its place in the file, no chart is added under that name, and
+    the log says which.
+
+    Fewer than two places produces nothing. One place's chart of one place is
+    the chart that is already there, and filing it as a comparison would give
+    a single-series station a `series` key in its files and a place name over
+    its own line -- output that must not change where there is one place.
+    """
+    kept = list(existing.plots) if existing is not None else []
+    words = dict(existing.labels) if existing is not None else {}
+    words.update(labels or {})
+
+    if len(places) < 2:
+        log.info("a comparison needs two places to compare and there %s %d; "
+                 "nothing generated",
+                 "is" if len(places) == 1 else "are", len(places))
+        return PlotSet(kept, words), []
+
+    known = set(SPANS) | set(spans)
+    mine = {plot.name: position for position, plot in enumerate(kept)
+            if _is_generated(plot, known)}
+
+    replaced: list[str] = []
+    for span in spans:
+        for obs in observations:
+            plot = _comparison(span, obs, places)
+            standing = next((p for p in kept if p.name == plot.name), None)
+            if standing is not None and plot.name not in mine:
+                # A plot of this name that is not one of ours: somebody put a
+                # home line in it, or wrote it themselves. Never overwritten,
+                # and not added twice either -- a second [[plot]] under one
+                # name is a file where the winner depends on the reader.
+                log.warning("%r is already in the file and does not draw "
+                            "places only, so it is left as it is",
+                            plot.name)
+                continue
+            if standing is not None:
+                kept[mine[plot.name]] = plot
+                replaced.append(plot.name)
+            else:
+                kept.append(plot)
+    return PlotSet(kept, words), replaced
+
+
+def _is_generated(plot: Plot, spans: set[str]) -> bool:
+    """Whether this plot is one `comparisons()` wrote and may rewrite."""
+    head, sep, tail = plot.name.partition(GENERATED)
+    if not sep or not tail or head not in spans:
+        return False
+    # And every line names a place. This is the half that matters: the name
+    # is a convention and a person can type it, but a plot all of whose lines
+    # name a place is one nothing else produces.
+    return bool(plot.lines) and all(line.series for line in plot.lines)
+
+
+def _comparison(span: str, obs: str, places: list[str]) -> Plot:
+    """One reading at every place, over one span."""
+    from . import units
+
+    aggregate, interval = COMPARE_BUCKETS.get(span, ("avg", "day"))
+    if units.group_of(obs) == "group_rain":
+        # A total, not a level: `avg` over an hour of rain counters is a
+        # number nobody wants, and left un-aggregated a day chart draws the
+        # increments between records.
+        aggregate, interval = "sum", interval or "hour"
+
+    circular = obs in CIRCULAR
+    if circular and aggregate:
+        # Never `avg`: the arithmetic mean of 359 and 1 is 180, which is the
+        # opposite direction. `vecdir` is where the air actually went over
+        # the bucket, weighted by how hard it blew, and `gustdir` is the
+        # direction of the hardest gust in it. Over a day there is no bucket
+        # and the records are drawn as they are, which is what the shipped
+        # windDir plot does.
+        aggregate = CIRCULAR[obs]
+    return Plot(
+        name=f"{span}{GENERATED}{obs}",
+        span=span,
+        time_length=SPANS.get(span, SPANS["day"]),
+        # 0 to 360 fixed, because 358, 359, 1 is a fall through the whole
+        # height of a chart whose axis was fitted to the data. It is the same
+        # correction `grafana/style.py` carries, and the rest of it -- points
+        # rather than a connected line -- is the renderer's, because nothing
+        # in a plot definition can say it.
+        yscale=([0.0, 360.0, 45.0] if circular else [None, None, None]),
+        # Never shaded: a comparison has no single sun, and `chartdata`
+        # refuses it anyway. Never `skip_if_empty` either: a reading one
+        # place does not have is a line to leave out with a reason, and
+        # deleting the chart for it takes the comparison away from the two
+        # places that do have it.
+        lines=[Line(obs=obs, series=name, aggregate=aggregate,
+                    interval=interval) for name in places],
+    )
 
 # -- bringing plots over from WeeWX ----------------------------------------
 

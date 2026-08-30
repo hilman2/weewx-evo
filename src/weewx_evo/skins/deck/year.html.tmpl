@@ -13,12 +13,13 @@
     <title>$station.location - $gettext("Yearly Weather Conditions")</title>
   </head>
 
-  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')"#if $places then ' data-units="' + $page_unit_system() + '"' else ''#>
     #include "includes/ui-shell.inc"
 
     <main class="main" id="main">
       <div class="wrap">
 <header class="page-head">
+#include "includes/place-switch.inc"
               <h1>$gettext("Yearly Weather Conditions")</h1>
               <h2>
                 <!--prettier-ignore-->

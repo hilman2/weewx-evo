@@ -36,8 +36,13 @@ from typing import Any
 
 from .. import schedule
 from . import ForecastError, Place
+from . import store as store_module
 
 log = logging.getLogger(__name__)
+
+#: The series a forecast is for when nobody said. From the
+#: store, so the two cannot disagree about the word.
+DEFAULT_ARCHIVE = store_module.DEFAULT_ARCHIVE
 
 #: How far back to keep hours that have already happened. Enough for a page
 #: that draws the forecast against what actually occurred, little enough that
@@ -50,6 +55,7 @@ class Scheduled:
 
     __slots__ = (
         "_slot",
+        "archive",
         "blocked",
         "failures",
         "fetched",
@@ -65,11 +71,17 @@ class Scheduled:
     )
 
     def __init__(self, name: str, source: Any, place: Place, store: Any,
-                 fetched: Callable[[str], None] | None = None) -> None:
+                 fetched: Callable[[str], None] | None = None,
+                 archive: str = DEFAULT_ARCHIVE) -> None:
         self.name = name
         self.source = source
         self.place = place
         self.store = store
+        #: Which measurement series this forecast is for. The rows are keyed
+        #: on it, so a second place's run cannot replace the first's -- which
+        #: is what one key for two places would have done, alternating, every
+        #: hour, with every page reading whichever ran last.
+        self.archive = archive
         #: Called with this source's name after a run has been stored. The
         #: forecast is a second store's worth of data like the archive is,
         #: and whoever mirrors it needs to know when there is a new one.
@@ -116,13 +128,18 @@ class Scheduled:
         self.last = time.monotonic()
         try:
             reading = self.source.fetch(self.place)
-            reading.source = reading.source or self.name
-            self.store.store(reading, int(time.time()))
+            # The entry's name, not the provider's. Every bundled source sets
+            # `Reading.source` to its own kind, so `or self.name` never fired
+            # -- and the store's key, `$forecast.<name>`, and what the mirror
+            # asks the store for were all naming something not in the file.
+            # The provider is `kind` in the configuration, where it belongs.
+            reading.source = self.name
+            self.store.store(reading, int(time.time()), self.archive)
             self.runs += 1
             self.issued = reading.issued
             self.last_summary = reading.summary()
             log.info("forecast %s: %s", self.name, self.last_summary)
-            self._tell(self.name)
+            self._tell(self.name, self.archive)
         except ForecastError as exc:
             self.failures += 1
             self.last_summary = str(exc)
@@ -142,18 +159,23 @@ class Scheduled:
         finally:
             self.running = False
 
-    def _tell(self, name: str) -> None:
+    def _tell(self, name: str, archive: str = DEFAULT_ARCHIVE) -> None:
         """Say a new run has landed, without letting the listener stop this.
 
         The one listener today is the InfluxDB upload, and it reaches over
         the network. A source that fetched successfully has done its job
         whatever happens next, and the alternative is a forecast that stops
         updating because a database somewhere is down.
+
+        The series goes with the name. An upload writes under one `location`
+        tag, so it must be told which place this run is about -- without
+        that, two places' forecasts land under one set of tags and the pair
+        with the same timestamp overwrite each other.
         """
         if self.fetched is None:
             return
         try:
-            self.fetched(name)
+            self.fetched(name, archive)
         except Exception:
             log.warning("forecast %s: could not pass the new run on",
                         name, exc_info=True)
@@ -165,6 +187,8 @@ class Runner:
     def __init__(self, sources: list[Scheduled], store: Any = None) -> None:
         self.sources = sources
         self.store = store
+        #: Whether the one-off tidy has run. See `_tidy`.
+        self._tidied = False
         self._stopping = threading.Event()
         self._threads: list[threading.Thread] = []
         self._pruned = 0.0
@@ -202,6 +226,7 @@ class Runner:
         # Once at startup. A station restarted in the morning must not show
         # an empty forecast until the interval comes round.
         scheduled.run()
+        self._tidy()
         self._prune()
         while not self._stopping.is_set():
             # Waking every thirty seconds rather than sleeping the whole
@@ -217,6 +242,30 @@ class Runner:
             if scheduled.due(time.monotonic()):
                 scheduled.run()
                 self._prune()
+
+    def _tidy(self) -> None:
+        """Drop what nobody is configured for. Once, after the first round.
+
+        Two things end up here. A source taken out of the configuration:
+        `forget` was written for it and nothing ever called it, so its rows
+        went on answering `$forecast` for good. And, once per installation,
+        the rows a store made before its key named the configured entry
+        rather than the provider it uses.
+
+        After every source has had its first turn, not at start-up: a fetch
+        that fails because the network is not up yet must not cost the page
+        the forecast it had. And once, because a store with nothing stale in
+        it is the ordinary state and walking it every hour buys nothing.
+        """
+        if self.store is None or self._tidied:
+            return
+        if any(one.runs == 0 and not one.blocked for one in self.sources):
+            return
+        self._tidied = True
+        try:
+            self.store.keep({(one.archive, one.name) for one in self.sources})
+        except Exception:
+            log.debug("could not tidy the forecast store", exc_info=True)
 
     def _prune(self) -> None:
         """Drop what is in the past. Once an hour is plenty."""
@@ -234,6 +283,7 @@ class Runner:
     def status(self) -> list[dict]:
         return [{
             "name": s.name,
+            "archive": s.archive,
             "every": s.every,
             "runs": s.runs,
             "failures": s.failures,
@@ -245,7 +295,7 @@ class Runner:
 
 
 def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
-          place: Place, store: Any,
+          place: Place | Callable[[dict], tuple[str, Place]], store: Any,
           fetched: Callable[[str], None] | None = None) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
@@ -253,13 +303,22 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
     source must not stop the others, and it certainly must not stop the
     station: the readings are what matters, and a forecast is somebody
     else's opinion about tomorrow.
+
+    `place` is either one `Place` for every entry -- which is what an
+    installation with one series has and had -- or a callable answering
+    `(archive, place)` for an entry's settings. The callable is how a second
+    series gets its own coordinates rather than the first one's, and how an
+    entry naming a series that does not exist is left out instead of being
+    stored on somebody else's key.
     """
     ready = []
     for name, settings in sorted(configured.items()):
         try:
+            archive, where = (place(settings) if callable(place)
+                              else (DEFAULT_ARCHIVE, place))
             source = make(name, dict(settings))
         except Exception as exc:
             log.warning("forecast source %s is not usable: %s", name, exc)
             continue
-        ready.append(Scheduled(name, source, place, store, fetched))
+        ready.append(Scheduled(name, source, where, store, fetched, archive))
     return ready

@@ -213,10 +213,27 @@ def parse_duration(text: str, label: str = "value") -> int:
     return int(float(amount) * _DURATION_SCALE[suffix.lower()])
 
 
-def format_duration(seconds: float | None) -> str:
-    """The other way, choosing the largest unit that stays whole."""
-    if seconds is None:
+def format_duration(seconds: float | str | None) -> str:
+    """The other way, choosing the largest unit that stays whole.
+
+    A string that is already a duration comes back as it was written. An
+    `Option`'s default may be `"1h"` -- that is what a person writing the
+    schema types, and it is what `parse_duration` accepts -- and the file
+    writer formats every default in order to print it in a comment. Given a
+    number this had, it raised, and the page answered "Could not write
+    evo.toml: invalid literal for int()" and wrote nothing at all. Every
+    setting on every feed's page was unsaveable, and the message named a
+    conversion nobody had asked for.
+    """
+    if seconds is None or seconds == "":
         return ""
+    if isinstance(seconds, str):
+        try:
+            seconds = parse_duration(seconds)
+        except Exception:
+            # Not a duration at all. Shown as written rather than raised
+            # over: this is on the path that prints a comment.
+            return seconds
     amount, suffix = split_duration(seconds)
     return f"{amount}{suffix}"
 
@@ -690,6 +707,17 @@ def core_options() -> list[Group]:
             Option("port", "Port", kind="int", default=8000,
                    minimum=1, maximum=65535, restart=True,
                    help="Ports below 1024 need root, which this should not have."),
+            Option("reachable_at", "Address consoles reach it at", default="",
+                   placeholder="http://weather.example.org",
+                   help="Where the hardware sends its uploads, if that is not "
+                        "simply this machine on this port. Behind a reverse "
+                        "proxy, or in a container with a published port, it is "
+                        "not: the listener binds one address and the console "
+                        "has to be told another, and nothing in this process "
+                        "can work out which. Empty means it guesses, which is "
+                        "right on a home network. Scheme and port optional -- "
+                        "https://weather.example.org:8443 is a whole answer, "
+                        "so is weather.example.org."),
             Option("token", "Upload token", kind="secret", required=True,
                    help="A path segment every upload must carry. It is the "
                         "only thing between the open internet and the "

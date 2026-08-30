@@ -5,8 +5,13 @@
   "theme_color": "#161616",
   "background_color": "#1F40AF",
   "display": "standalone",
+  ## The service worker is root-scoped, so the scope is the root. The start
+  ## URL is not: this file is written once per place as well as once at the
+  ## root, and a place's copy that starts at "/" sends the reader who
+  ## installed *Nordfeld* to the overview. `$place_path` is `$get_base_path`
+  ## at one place, so nothing moves there.
   "scope": "$get_base_path(path='/')",
-  "start_url": "$get_base_path(path='/')",
+  "start_url": "$place_path(path='')",
   "name": "weewx WDC",
   "testing": "test",
   "short_name": "weewx WDC",
@@ -34,30 +39,58 @@
     }
   ],
   "shortcuts": [
+    ## A shortcut has to land on a file that exists. On a site of several
+    ## places the week page is `/<place>/week.html` and there is nothing at
+    ## `/week.html`, so the root's manifest offers the comparisons instead --
+    ## which is what its own page is about. `$place_path` is
+    ## `$get_base_path` at one place, so nothing here moves there.
+    #if $scope == 'site'
+    {
+      "name": "Comparison",
+      "url": "$get_base_path(path='compare.html')",
+      "description": "Every place, today"
+    },
     {
       "name": "Week",
-      "url": "$get_base_path(path='week.html')",
+      "url": "$get_base_path(path='compare-week.html')",
+      "description": "Every place, this week"
+    },
+    {
+      "name": "Month",
+      "url": "$get_base_path(path='compare-month.html')",
+      "description": "Every place, this month"
+    },
+    {
+      "name": "Year",
+      "url": "$get_base_path(path='compare-year.html')",
+      "description": "Every place, this year"
+    }
+    #else
+    {
+      "name": "Week",
+      "url": "$place_path(path='week.html')",
       "description": "Weekly weather conditions"
     },
     {
       "name": "Month",
-      "url": "$get_base_path(path='month.html')",
+      "url": "$place_path(path='month.html')",
       "description": "Monthly weather conditions"
     },
     {
       "name": "Year",
-      "url": "$get_base_path(path='year.html')",
+      "url": "$place_path(path='year.html')",
       "description": "Yearly weather conditions"
     },
     {
       "name": "All time",
-      "url": "$get_base_path(path='statistics.html')",
+      "url": "$place_path(path='statistics.html')",
       "description": "All time stats"
     },
     {
       "name": "Celestial",
-      "url": "$get_base_path(path='celestial.html')",
+      "url": "$place_path(path='celestial.html')",
       "description": "Almanac"
     }
+    #end if
   ]
 }

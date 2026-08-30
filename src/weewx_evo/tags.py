@@ -1686,6 +1686,17 @@ class Archives:
         # cannot be called `names` for exactly this reason, which costs one
         # word out of the namespace and is worth saying in the error.
         name = str(name)
+        # Cheetah's NameMapper probes a mapping with `has_key`, `keys`,
+        # `items` and `values` before it gives up, and a leading underscore
+        # is never a series: `_built` and `_open` are slots, so
+        # `getattr(type(self), "_built")` handed back the descriptor and the
+        # branch below returned this object's internals to the template.
+        # Refused rather than counted, because a probe is not a miss: counted,
+        # every page reports four unanswered tags about Cheetah rather than
+        # about the skin, and the report is worth having only while
+        # everything in it is somebody's mistake.
+        if name.startswith("_") or name in IGNORE:
+            raise KeyError(name)
         mine = getattr(type(self), name, None)
         if mine is not None:
             return getattr(self, name)

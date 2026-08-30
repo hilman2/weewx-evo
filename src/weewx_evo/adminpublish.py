@@ -226,6 +226,12 @@ def _block(admin: Any, state: adminhome.State, name: str, settings: dict,
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
+    # Imported here rather than at the top: `adminarchives` reaches for
+    # `adminhome`, which this module imports at the top, and a circle at
+    # import time is a settings page that will not start.
+    from . import adminarchives
+
+    chain = adminarchives.chain(admin, "feeds")
     feeds, exports, uploads = _rows_for(admin)
     state = adminhome.read(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
@@ -303,10 +309,14 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
 
     return f'''
 <h2>Publishing</h2>
+{chain}
+<p class="lede">{adminarchives.CHAIN_SAID}</p>
 {problem}{said}
-<p class="lede">A feed makes files. An export moves them. They are shown
-   together because that is how they run: an export set to "when the feed
-   above has finished" starts the moment its feed stops writing.</p>
+<p class="lede">Feeds and exports are shown together because that is how
+   they run: an export set to "when the feed above has finished" starts the
+   moment its feed stops writing. That order is the whole point -- a page
+   that goes up before the chart it draws is a broken page nobody can
+   reproduce.</p>
 <div class="actions">
   <a class="button" href="./new-feed">Add a feed</a>
   <a class="button quiet" href="./new-export">Add an export</a>
@@ -324,7 +334,12 @@ def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if active == "publishing" else ""
     # A count of both, because the point of the page is that they are one
     # arrangement. Two numbers under two headings is what it replaces.
-    count = f"{len(feeds)}&thinsp;/&thinsp;{len(exports)}"
+    # Spelled out. "2 / 1" is a ratio to anybody who has not been told
+    # otherwise, and the `title` the first fix used does not exist on a
+    # phone and is not read aloud.
+    count = (f"{len(feeds)}&thinsp;feed{'' if len(feeds) == 1 else 's'}"
+             f", {len(exports)}&thinsp;export"
+             f"{'' if len(exports) == 1 else 's'}")
     return [(f'<a href="./publishing"{current}>Publishing'
              f'<span class="count">{count}</span></a>')]
 

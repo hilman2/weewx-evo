@@ -167,6 +167,10 @@ Several stations may write into one archive; that is the multi-source case
 `sources.py` already resolves, per field and per interval. A station belongs
 to one archive.
 
+What is about a place follows the place. A [forecast](Forecast#a-forecast-is-for-a-place)
+is an answer about a coordinate pair, so an entry names the series it is for and
+a place with no entry has none — never its neighbour's.
+
 ### How WeeWX does it, and what that costs
 
 Several instances. It is the documented answer, in the
@@ -300,6 +304,31 @@ interval alone, so whichever archiver reached an interval first deleted the
 row and the second never saw it: two sites, and the slower one silently stops
 archiving. It is keyed on `(stop, archive)` now, and
 `tools/archives_test.py` checks that before it checks anything else.
+
+### And what step 6 left undone
+
+An archive had every number a page needs and nothing a page needs to *show*
+it beside another one. Three fields closed that: a colour, a short code and
+a presentation order, all in `archives.toml` and all optional.
+
+They are here rather than in a skin for the same reason plot definitions are:
+[Deck](Deck.md), the image generator and [Grafana](Grafana.md) would otherwise
+hold three copies of "what colour is the north field", and the day they
+disagree the same place is one colour on a page and another in the picture
+beside it.
+
+Nothing has to be chosen. `Register.presented()` fills in a colour by
+position in the file and a code from the label, deduplicated — and by
+position in the *file*, not in the display order, because dragging a place up
+a settings page must not repaint it. The values are never written back:
+"nobody chose one" has to stay sayable, or the next release's palette reaches
+no station that ever opened the page.
+
+**A place's name is a directory at the root of a published site**, so
+`why_not` refuses one that would collide with a page or an asset directory —
+and refuses a name that is only digits, because `live.php` decodes the live
+document into PHP, which has one array type, and `{"archives": {"0": …}}`
+comes back out as a list with every lookup on the page finding nothing.
 
 ## Open
 

@@ -39,8 +39,15 @@ from typing import Any
 from .. import units
 from ..tags import Unknown, Value
 from . import codes
+from . import store as store_module
 
 log = logging.getLogger(__name__)
+
+#: The series a forecast is about when nobody said, which is every
+#: installation that keeps one. Taken from the store rather than
+#: spelled again: the two have to agree about the word or a page
+#: reads rows nothing wrote.
+DEFAULT_ARCHIVE = store_module.DEFAULT_ARCHIVE
 
 
 class Entry:
@@ -265,11 +272,17 @@ class WarningTag:
 class SourceTag:
     """One forecast source. `$forecast.ahead`, or `$forecast` for all of them."""
 
-    __slots__ = ("language", "source", "store", "tags", "target")
+    __slots__ = ("archive", "language", "source", "store", "tags", "target")
 
     def __init__(self, store: Any, source: str, target: units.Target,
-                 language: Any = None, tags: Any = None) -> None:
+                 language: Any = None, tags: Any = None,
+                 archive: str = DEFAULT_ARCHIVE) -> None:
         self.store = store
+        #: Which measurement series this forecast is about. One file holds
+        #: every series' forecast, so a page that did not say would get its
+        #: neighbour's rows interleaved with its own in date order -- and
+        #: nothing on the page could tell.
+        self.archive = archive
         self.source = source
         self.target = target
         self.language = language
@@ -291,7 +304,7 @@ class SourceTag:
         """From today forward, today first."""
         start = _midnight(time.time())
         try:
-            found = self.store.days(self.source, start=start)
+            found = self.store.days(self.archive, self.source, start=start)
         except Exception:
             log.debug("could not read the forecast days", exc_info=True)
             return []
@@ -307,7 +320,7 @@ class SourceTag:
     def between(self, start: int, stop: int, step: int = 1) -> list[Entry]:
         """The hours in a span, one entry per `step` of them."""
         try:
-            found = self.store.hours(self.source, start=int(start),
+            found = self.store.hours(self.archive, self.source, start=int(start),
                                      stop=int(stop))
         except Exception:
             log.debug("could not read the forecast hours", exc_info=True)
@@ -355,7 +368,7 @@ class SourceTag:
 
     def _hours(self, start: int) -> list:
         try:
-            return self.store.hours(self.source, start=start)
+            return self.store.hours(self.archive, self.source, start=start)
         except Exception:
             log.debug("could not read the forecast hours", exc_info=True)
             return []
@@ -366,7 +379,7 @@ class SourceTag:
     def warnings(self) -> list[WarningTag]:
         """Every warning stored, worst first."""
         try:
-            found = self.store.warnings(self.source)
+            found = self.store.warnings(self.archive, self.source)
         except Exception:
             log.debug("could not read the warnings", exc_info=True)
             return []
@@ -382,7 +395,8 @@ class SourceTag:
     def active_warnings(self) -> list[WarningTag]:
         """Only what covers this moment."""
         try:
-            found = self.store.warnings(self.source, active_at=int(time.time()))
+            found = self.store.warnings(self.archive, self.source,
+                                        active_at=int(time.time()))
         except Exception:
             return []
         return [WarningTag(w, self.target) for w in found]
@@ -419,18 +433,19 @@ class SourceTag:
     @property
     def sources(self) -> list[str]:
         try:
-            return self.store.sources()
+            return self.store.sources(self.archive)
         except Exception:
             return []
 
     def _run(self) -> dict | None:
         try:
             if self.source:
-                return self.store.run(self.source)
+                return self.store.run(self.archive, self.source)
             # No source named: the most recently fetched one speaks for all
             # of them, which is what a page asking `$forecast.updated` with
             # one source configured means.
-            found = [self.store.run(name) for name in self.store.sources()]
+            found = [self.store.run(self.archive, name)
+                     for name in self.store.sources(self.archive)]
             found = [r for r in found if r]
             return max(found, key=lambda r: r.get("fetched") or 0) if found else None
         except Exception:
@@ -454,7 +469,7 @@ class SourceTag:
             raise AttributeError(name)
         if name in self.sources:
             return SourceTag(self.store, name, self.target, self.language,
-                             self.tags)
+                             self.tags, archive=self.archive)
         return self._missed(f"forecast.{name}")
 
     def __bool__(self) -> bool:
@@ -471,15 +486,22 @@ class SourceTag:
         return str(now) if not isinstance(now, Unknown) else ""
 
 
-def install(tags: Any, store: Any, language: Any = None) -> None:
-    """Give a `Tags` object its `$forecast`.
+def install(tags: Any, store: Any, language: Any = None,
+            archive: str = DEFAULT_ARCHIVE) -> None:
+    """Give a `Tags` object its `$forecast`, for one measurement series.
 
     Called by whatever built the tags and knows where the forecast database
     is. Nothing in `tags.py` imports this: a station with no forecast
     configured should not open a database it has no rows in, and the tag
     layer has no business knowing this package exists.
+
+    `archive` is which series the page is about. One file holds every
+    series' forecast, so a page that did not name one would print its
+    neighbour's days interleaved with its own -- tomorrow twice, in date
+    order, with nothing on the page able to tell them apart.
     """
-    tags.forecast = SourceTag(store, "", tags.target, language, tags)
+    tags.forecast = SourceTag(store, "", tags.target, language, tags,
+                              archive=archive)
 
 
 def _midnight(when: float) -> int:

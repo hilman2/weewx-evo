@@ -205,3 +205,24 @@ expected = "erwartet"
 about_forecast = "Was eine Vorhersagequelle erwartet, neben dem, was die Station gemessen hat. Beide treffen sich bei jetzt."
 about_week = "Aus der Tageszusammenfassung der Quelle, nicht aus den Stunden gerechnet: ein Maximum zwischen zwei Stundenwerten steht in der ersten und nicht in den zweiten."
 generated = "Erzeugt von `weewx-evo grafana provision` am {when}. Änderungen hier werden beim nächsten Lauf überschrieben; die Diagramme ändert man in `plots.toml` oder auf der Einstellungsseite."
+
+[chart]
+# The sentence under a chart that draws several places: which aggregate, in
+# which unit, of which places, and what was left out and why. Composed in
+# `chartdata.py` rather than in the browser, for the same reason the title and
+# the labels are -- a published chart file has to say what is in it, and
+# nothing on the far end has another source for it.
+#
+# `other_unit` carries a `{unit}` placeholder, substituted with `str.replace`
+# and not with `format`: a translator who writes a brace in a sentence would
+# otherwise get an exception about a field nobody asked for.
+records = "Messwerte"
+avg = "Mittel"
+min = "Minimum"
+max = "Maximum"
+sum = "Summe"
+count = "Anzahl"
+not_configured = "ist nicht eingerichtet"
+no_column = "zeichnet das nicht auf"
+other_unit = "misst in {unit}, dieses Diagramm ist in {chart}"
+no_unit = "gibt dafür keine Einheit an, dieses Diagramm ist in {chart}"

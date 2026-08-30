@@ -157,9 +157,92 @@ def last_seen(admin: Any, names: list[str]) -> dict[str, int]:
 
 # -- changing things ------------------------------------------------------
 
+def known_archives(admin: Any) -> list:
+    """Every measurement series, from the register that defines them.
+
+    From `archives.toml` and not from the stations: an archive nothing writes
+    into yet has to be offerable, or the second one can never be reached by
+    anything.
+    """
+    from . import adminarchives
+
+    try:
+        return list(adminarchives.load(admin).all())
+    except Exception:
+        log.debug("could not read the archives", exc_info=True)
+        return []
+
+
+def _readable(name: str) -> str:
+    """A console's name, or a plain word for it where the name is a MAC.
+
+    Adopting a stranger takes the name from the identity the hardware sent,
+    so a console that was never renamed is listed as
+    `00000000000000000000`. That is not wrong -- it is what the console
+    calls itself -- but as the first column of the first table it reads as a
+    fault in the software, and it is the same string as the identity two
+    columns along.
+    """
+    stripped = name.replace(":", "").replace("-", "")
+    if len(stripped) >= 12 and all(c in "0123456789abcdefABCDEF"
+                                   for c in stripped):
+        return f"unnamed console ({name[-4:]})"
+    return name
+
+
+def _archive_choice(admin: Any, chosen: str, label: str = "Place") -> str:
+    """Which series this console's readings go into.
+
+    **Nothing at all where there is one.** A dropdown with a single entry is
+    a question with one answer, on a page whose job is to say whether the
+    readings are arriving -- and it would change the one-archive page for no
+    reader.
+
+    A `<select>`, like the role beside it and for the same reason: two inputs
+    of one name send two values when a box is ticked, and which one arrives
+    depends on the parser.
+    """
+    found = known_archives(admin)
+    if len(found) < 2:
+        return ""
+    options = NEWLINE.join(
+        f'<option value="{html.escape(one.name)}"'
+        f'{" selected" if one.name == chosen else ""}>'
+        f"{html.escape(one.title)}</option>"
+        for one in found)
+    return (f'<label class="tick">{html.escape(label)}'
+            f'<select name="archive">{options}</select></label>')
+
+
+def _archive_refused(admin: Any, wanted: str) -> str:
+    """Why this series cannot be written into, or an empty string.
+
+    Refused rather than warned about, and this is a field where that is
+    right: `archives.Register.get` answers an unknown name with the default
+    rather than raising -- deliberately, so a feed pointed at a removed
+    archive still produces a page. A *station* pointed at one would quietly
+    write one site's readings into another site's series, and nothing
+    downstream could ever separate them again.
+
+    Only reachable by hand: the control above is a list of what exists. But
+    `stations.toml` says in its own header that editing it by hand is fine.
+    """
+    wanted = (wanted or "").strip()
+    found = known_archives(admin)
+    if not wanted or not found:
+        return ""
+    if any(one.name == wanted for one in found):
+        return ""
+    return (f"There is no series called {wanted!r}. There is: "
+            + ", ".join(sorted(one.name for one in found)) + ".")
+
+
 def adopt(admin: Any, driver: str, identity: str, name: str,
           archive: str = "") -> str:
     """Take a stranger into the register. Returns an error, or empty."""
+    refused = _archive_refused(admin, archive)
+    if refused:
+        return refused
     register = load(admin)
     station = station_defs.Station(
         name=(name or "").strip().lower(), driver=driver, identity=identity,
@@ -310,6 +393,9 @@ def configure(admin: Any, name: str, form: dict) -> str:
                        role=wanted, channel=channel,
                        max_behind=behind, max_ahead=ahead,
                        archive=str(form.get("archive") or station.archive))
+    refused = _archive_refused(admin, changed.archive)
+    if refused:
+        return refused
     if changed == station:
         return ""
     register.stations[register.stations.index(station)] = changed
@@ -334,11 +420,10 @@ def ignore(admin: Any, driver: str, identity: str, on: bool = True) -> str:
 
 def nav(admin: Any, active: str) -> list[str]:
     register = load(admin)
-    out = ['<p class="navhead">Stations</p>']
-    if not len(register):
-        out.append('<p class="navempty">None yet. A station is a console '
-                   'that uploads: it gets a name, an identity and the '
-                   'archive it writes into.</p>')
+    # No sub-heading. "Stations" over a link called "Consoles" opening a page
+    # headed "Stations" was three words for one destination, and the page's
+    # own first line has to explain that two of them mean the same thing.
+    out: list[str] = []
     # No "+ Add" here. An action in the navigation is an action you find
     # by looking for a place to put things rather than by being where the
     # things are, and it is one more line per section in a list whose whole
@@ -347,6 +432,11 @@ def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if here else ""
     out.append(f'<a href="./stations"{current}>Consoles'
                f'<span class="count">{len(register)}</span></a>')
+    if not len(register):
+        # Under the link, not above it. Above, the sentence explaining what
+        # a console is arrived before the word it explains.
+        out.append('<p class="navempty">None yet. A console is the box that '
+                   'sends the readings.</p>')
     return out
 
 
@@ -365,6 +455,12 @@ def _ago(when: int) -> str:
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
     """The three lists."""
+    # Imported here rather than at the top, the way `known_archives` does it:
+    # `adminarchives` reaches for `adminhome`, and a circle at import time is
+    # a settings page that will not start.
+    from . import adminarchives
+
+    chain = adminarchives.chain(admin, "stations")
     register = load(admin)
     seen = sightings_for(admin)
     when = last_seen(admin, [one.name for one in register])
@@ -375,6 +471,11 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     said = ""
 
     rows = []
+    # What each place is called, so the column can print the name a person
+    # gave it. It held the key out of the file -- `testort` beside a page
+    # that says Testort everywhere else -- and a lower-case key with no
+    # spaces reads like a fault rather than like a choice somebody made.
+    titles = {a.name: a.title for a in known_archives(admin)}
     for one in sorted(register, key=lambda s: s.name):
         waiting = one.identity.startswith(AWAITING)
         if waiting:
@@ -388,11 +489,11 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
                      f'<br><span class="note">{mark}</span>')
         rows.append(f'''
     <tr>
-      <td><strong>{html.escape(one.name)}</strong>
+      <td><strong>{html.escape(_readable(one.name))}</strong>
           {f'<br><span class="note">{html.escape(one.note)}</span>' if one.note else ""}</td>
       <td>{html.escape(one.driver)}</td>
       <td>{shown}</td>
-      <td>{html.escape(one.archive)}
+      <td>{html.escape(titles.get(one.archive, one.archive))}
           {_role_note(one)}</td>
       <td>{html.escape(_ago(when.get(one.name, 0)))}</td>
       <td class="act">
@@ -403,35 +504,41 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     <tr class="sendsrow"><td colspan="6">{_what_it_sends_html(admin, one)}</td></tr>''')
     announced = f'''
   <table class="stations">
-    <thead><tr><th>Name</th><th>Driver</th><th>Identity</th><th>Archive</th>
+    <thead><tr><th>Name</th><th>Driver</th><th>Identity</th><th>Place</th>
                <th>Last reading</th><th></th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
   </table>''' if rows else (
         '<p class="lede">None announced yet. Readings still arrive and are '
-        'recorded under whatever identity the hardware sends; announcing a '
-        'console gives it a name and an archive.</p>')
+        'recorded under whatever identity the hardware sends. Announcing a '
+        'console gives it a name, and says which place its readings '
+        'belong to.</p>')
 
     add = ""
     if not admin.read_only:
         add = ('<div class="actions">'
-               '<a class="button" href="./new-station">Add a station</a>'
+               '<a class="button" href="./new-station">Add a console</a>'
                "</div>")
     return f'''
-<h2>Stations</h2>
-<p class="lede">A station is a console that uploads. It has a name, an
-   identity that tells its packets apart, and the archive it writes into.
-   Two consoles measuring one garden are two stations in one archive; two
-   sites are two archives.</p>
+<h2>Consoles</h2>
+{chain}
+<p class="lede">A console is the box that sends the readings. Each one gets a
+   name, and the place its readings belong to. Two consoles in one garden
+   both feed that one place; a console at a second site needs a place of its
+   own, or its readings land in the first one's record.</p>
 {said}{problem}{add}
 <section class="group">
   {announced}
 </section>
-{_waiting(seen, register)}
+{_waiting(admin, seen, register)}
 {_folded(seen)}'''
 
 
-def _waiting(seen: Any, register: Any) -> str:
-    """Consoles that have uploaded and are not announced."""
+def _waiting(admin: Any, seen: Any, register: Any) -> str:
+    """Consoles that have uploaded and are not announced.
+
+    `admin` because adopting one has to say which series it writes into, and
+    what series there are is in a file this has to be able to read.
+    """
     waiting = seen.waiting()
     if not waiting:
         return '''
@@ -463,6 +570,7 @@ def _waiting(seen: Any, register: Any) -> str:
           <input type="text" name="name" required placeholder="a name"
                  value="{html.escape(suggested)}" autocomplete="off"
                  spellcheck="false">
+          {_archive_choice(admin, station_defs.DEFAULT_ARCHIVE, "into")}
           <button type="submit">Adopt</button>
         </form>
         <form method="post" action="./stations/ignore" class="inline">
@@ -475,10 +583,10 @@ def _waiting(seen: Any, register: Any) -> str:
 
     return f'''
 <section class="group">
-  <h3>Seen, not announced<span class="count">{len(waiting)}</span></h3>
+  <h3>Seen, not announced <span class="count">{len(waiting)}</span></h3>
   <p class="lede">These uploaded and are not in the list above. Their readings
      are being recorded under the identity the hardware sends. Adopting one
-     gives it a name and an archive; ignoring folds it away without losing
+     gives it a name and a place; ignoring folds it away without losing
      it.</p>
   <table class="stations">
     <thead><tr><th>Identity</th><th>Driver</th><th>Seen</th>
@@ -586,13 +694,21 @@ def new(admin: Any, error: str = "", form: dict | None = None,
 
 def _what_to_enter(admin: Any, station: Any) -> str:
     """The point of the whole wizard: what to type into the console."""
-    host = admin.config().get("host") or ""
-    port = admin.config().get("port") or 8000
     token = admin.config().get("token") or ""
-    if host in ("", "0.0.0.0", "::"):
-        host = _own_address()
+    host, port, guessed = _where_consoles_reach_us(admin)
 
     waiting = station.identity.startswith(AWAITING)
+    # Said out loud where it was worked out rather than told. A guessed
+    # address is right on a home network and wrong behind anything -- a
+    # published container port, a reverse proxy -- and the wrong one looks
+    # exactly like the right one. Somebody types it into a console, nothing
+    # arrives, and there is nothing anywhere to suspect.
+    caveat = "" if not guessed else (
+        '<p class="help warn">This address is what this machine sees of '
+        'itself. Behind a reverse proxy or a published container port it is '
+        'not the one a console can reach -- set <strong>Address consoles '
+        'reach it at</strong> under Listener, and this will say that '
+        'instead.</p>')
 
     if station.driver == "ecowitt":
         rows = [
@@ -620,7 +736,7 @@ def _what_to_enter(admin: Any, station: Any) -> str:
                 "so that is where it goes.")
     else:
         rows = [
-            ("Address", f"http://{host}:{port}/{token}/json/"),
+            ("Address", f"{_base(host, port)}/{token}/json/"),
             ("Source", station.identity),
         ]
         note = ("Post the envelope to that address, with `source` set to the "
@@ -659,8 +775,58 @@ def _what_to_enter(admin: Any, station: Any) -> str:
      announced. It has not sent anything yet.</p>
   <table class="stations enter">{table}</table>
   <p class="help">{html.escape(note)}</p>
+  {caveat}
   {after}
 </section>'''
+
+
+def _base(host: str, port: str) -> str:
+    """`http://host`, `https://host` or `http://host:1234`.
+
+    The port is left off where the scheme already says it. `:80` after a
+    hostname is not wrong and it is one more thing to mistype into a
+    console's little screen.
+    """
+    scheme = "https" if str(port) == "443" else "http"
+    if str(port) in ("80", "443"):
+        return f"{scheme}://{host}"
+    return f"{scheme}://{host}:{port}"
+
+
+def _where_consoles_reach_us(admin: Any) -> tuple[str, str, bool]:
+    """The address to type into a console. (host, port, was it guessed)
+
+    **This process cannot know it.** The listener binds one address; what a
+    console has to send to depends on port publishing, NAT and any reverse
+    proxy in front -- all of them outside this program. Asked of a socket, a
+    container answers with its bridge address and the port it binds, and the
+    page then prints something like `172.28.0.2:8000` with complete
+    confidence. It looks exactly like a real answer, the operator types it
+    into their console, and nothing ever arrives.
+
+    So it is a setting first, `reachable_at`, and only a guess where nobody
+    said. The guess is right on the ordinary home network, which is why it
+    stays -- but the caller is told it *is* a guess, because a wrong address
+    that says nothing about itself is the whole of this failure.
+    """
+    said = str(admin.config().get("reachable_at") or "").strip()
+    if said:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(said if "//" in said else f"//{said}")
+        if parsed.hostname:
+            # The scheme decides the port where the address does not say
+            # one: that is what a browser does with the same string, and an
+            # operator who typed an https address means 443.
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            return parsed.hostname, str(port), False
+        log.warning("reachable_at is %r, which has no hostname in it; "
+                    "falling back to this machine's own address", said)
+
+    host = str(admin.config().get("host") or "")
+    if host in ("", "0.0.0.0", "::"):
+        host = _own_address()
+    return host, str(admin.config().get("port") or 8000), True
 
 
 def _own_address() -> str:
@@ -923,6 +1089,7 @@ def _properties(admin: Any, station: Any) -> str:
       <label class="tick">Role
         {_role_choice(station)}
       </label>
+      {_archive_choice(admin, station.archive)}
       <button type="submit" class="quiet">Save</button>
       {_clock_fields(station)}
     </form>'''

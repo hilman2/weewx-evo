@@ -11,6 +11,13 @@ This is one thing, and it needs nothing opened:
 
     weewx-evo  --POST-->  live.php  --writes-->  live.json  --read by--> page
 
+One of each, per **site** -- not per page and not per place. A site standing
+in several places carries them all in one document (`uploads.webpush`
+nests them under `archives`): this script takes no filename from the
+request by design, and one derived token per station means two documents on
+one host could not be told apart anyway. A page in a subdirectory reads the
+one at the root, which is what `$live_file()` in the skin is for.
+
 `live.php` goes up with every export that has this switched on. The station
 posts its current readings to it every few seconds; it writes them to a file
 beside itself; the page reads that file. The connection is outbound, exactly
@@ -66,6 +73,20 @@ DATA_FILE = "live.json"
 #: routes into that file must not disagree about when a reading goes stale,
 #: or the same station reads live on one host and stale on another.
 STALE_AFTER = 300
+
+#: The largest body `live.php` will take, and the same figure it has in it
+#: (`MAX_BODY` there). Here as well because the *writer* has to stay under
+#: it, and there is nowhere else both halves of this can read it -- the same
+#: rule `STALE_AFTER` above already states. A document one byte over is
+#: refused with a 413 that reads as "the upload is broken", six times a
+#: minute, for ever.
+MAX_BODY = 65536
+
+#: What the writer builds up to. `live.php` stamps `_received` and
+#: `_stale_after` in *after* its size check, so this margin is not for those:
+#: it is so that renaming a place, or a console starting to report three more
+#: fields, is not the thing that tips a working site over.
+BUDGET = 60000
 
 #: Mixed into the hash so the derived token cannot be confused with the
 #: upload token itself, nor with anything else derived from it later.
@@ -154,6 +175,16 @@ def rendered_units(cfg: object, export: dict) -> str:
     station sending Fahrenheit published Fahrenheit into pages written in
     Celsius -- and the page cannot tell that 82.8 is not what it was about to
     print.
+
+    **One answer per export, and it stays one answer when the site stands in
+    several places.** This is what the *pages* are written in, and one feed
+    renders one site through one `units.Target` -- the Cheetah feed shares it
+    between the places by reference, so a per-place answer here could only
+    ever be the same answer N times. What genuinely differs per place is the
+    system its console *sends* in, and that is read off each record's
+    `usUnits` where the readings are shaped (`uploads.webpush._slice`), which
+    is why every slice declares its own `unit_system` and this does not have
+    to.
     """
     feeds = getattr(cfg, "config", {}).get("feeds") or {}
     feed = feeds.get(str(export.get("source") or "").strip())

@@ -484,13 +484,16 @@ def when_options(trigger: str = "record", every: int = 900,
                         "thousand requests at a free service -- which is why "
                         "an upload writing to the operator's own database "
                         "raises it."),
-            Option("archive", "Sends readings from", kind="choice",
+            Option("archive", "Place", kind="choice",
                    default=DEFAULT_ARCHIVE, choices_from=_archive_names,
                    advanced=True,
-                   help="Which measurement series. With one there is nothing "
-                        "to choose. With two, a station registered with a "
-                        "weather service belongs to one place, and the "
-                        "coordinates sent with it come from that place."),
+                   help="Whose readings get sent. With one place there is "
+                        "nothing to choose. With two, a registration with a "
+                        "weather service is for one spot, and the "
+                        "coordinates sent along with the readings come from "
+                        "that spot -- so an upload pointed at the wrong one "
+                        "publishes the allotment's weather under the "
+                        "garden's registration."),
             Option("live_source", "Live readings come from",
                    kind="choice", default="main", advanced=True,
                    choices=(

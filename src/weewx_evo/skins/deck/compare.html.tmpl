@@ -1,0 +1,10 @@
+#errorCatcher Echo
+#encoding UTF-8
+##
+## One comparison page. `#set global`, not `#attr` and not a `#def`: an
+## `#include` compiles as a unit of its own, `#attr` does not reach into it,
+## and a `#def` written in an include is not callable from the file that
+## included it -- the call falls through to the tag layer, which is where
+## three hundred `?'nav_link'?` in one run came from.
+#set global $compare_span = 'day'
+#include "includes/compare-body.inc"

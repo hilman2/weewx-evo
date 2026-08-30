@@ -42,6 +42,27 @@
 
 <!--prettier-ignore-->
 #set $diagramWindDirOrdinals = $to_int($to_bool($DisplayOptions.get('diagram_tile_winddir_ordinal', True)))
+## Which place's charts this page reads, and who the other places are. Both
+## only where there *are* places, so a one-place site's `deckConfig` is the
+## object it has always been.
+##
+## Every key here is written with a value or not written at all. A Python
+## bool where `skin.conf` had the string "False" once produced
+## `color_temperature: ,` and took the whole object with it -- the theme, the
+## translations and the charts.
+## Only the places that have ever written a record. `live-status.js` counts
+## this list -- "3 of 4 live" -- and it no longer looks in the DOM to decide
+## who belongs in it, so this is the only place that can say. A place with an
+## archive and no console has nothing to be late with: counted, it is quiet
+## for ever and the badge everybody looks at is amber on a healthy site,
+## which is the warning that stands everywhere and is therefore not one. It
+## still has its board row, and that row says "no readings yet" in words.
+#set $places_for_js = []
+#for $p in $places
+#if $p.has_data
+#silent $places_for_js.append({'name': $p.name, 'label': $p.label, 'code': $p.code, 'color': $p.color})
+#end if
+#end for
 <script>
   /*prettier-ignore*/
   window.deckConfig = {
@@ -53,6 +74,21 @@
     /* Where the plot files are published. A separate export from the pages,
        so only the operator knows how the two sit on the host. */
     chartsPath: "$Extras.get('charts_path', '/json/')",
+    #if $many_series
+    /* The place this page belongs to, and the only place a subdirectory
+       appears: `chartsPath()` in charts.js appends it, and neither `fromFile`
+       nor `fillGrid` knows archives exist. Empty on a site page.
+
+       Gated on the installation keeping several series, not on this skin
+       showing several. The chart feed decides the layout and it answers the
+       first question; a Deck narrowed to one place of two would otherwise
+       look for the flat manifest, find one listing no plots, and draw every
+       grid empty -- with no message, because the file is there. */
+    chartsArchive: "$charts_place",
+    #end if
+    #if $places
+    places: $jsonize($places_for_js),
+    #end if
     /* How this skin draws a chart, for the tiles built in the browser.
        What a chart *holds* is in its file; this is the rest -- and the
        language above all, or a German page gets AM and PM in its tooltips. */
@@ -61,6 +97,7 @@
       format: "%.1f"
     },
     translations: {
+      "no_comparisons": "$gettext('No comparison charts yet. Generate them on the Charts settings page, or with: weewx-evo plots compare --write')",
       "Daily": "$gettext('Daily')",
       "Hourly": "$gettext('Hourly')",
       "Forecast_for": "$gettext('Forecast for')",

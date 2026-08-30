@@ -35,7 +35,10 @@
     #else
       #include "includes/icons/deck.svg"
     #end if
-    <span class="header__station">$station.location</span>
+    ## `$station.location` is *this place's* label once `Placed` is in the
+    ## way, so a site page headed with it names one of the four sites it is
+    ## listing. On a place page it is right and is what it has always been.
+    <span class="header__station">#if $scope == 'site' then $site_title else $station.location#</span>
   </a>
 
 

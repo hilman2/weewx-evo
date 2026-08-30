@@ -502,8 +502,10 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
         current["exports"] = {"site": {"kind": "local", "directory": str(work),
                                        "live_push": False}}
         current["uploads"] = {"wu": {"kind": "wunderground"}}
-        # `kind` is the provider, and it is what the forecast store keys its
-        # `run` table on -- not the name of the entry.
+        # `kind` is the provider; the store keys its rows on the **entry's**
+        # name and on the series it is for. It used to key them on the
+        # provider, so two entries of one kind shared a row and this page had
+        # to guess the row back from `kind or name`.
         current["forecast"] = {"kirchdorf": {"kind": "open-meteo"}}
         admin.config = lambda: current  # type: ignore[method-assign]
 
@@ -522,8 +524,12 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
 
         store = ForecastStore(work / "data" / "forecast.sdb")
         try:
-            store.store(Reading(source="open-meteo", issued=int(time.time())),
-                        fetched=int(time.time() - 30))
+            # Under the entry's name and its series, which is what the
+            # runner writes. Stored under the provider it would be a row no
+            # page looks for -- which is what the card used to have to work
+            # around.
+            store.store(Reading(source="kirchdorf", issued=int(time.time())),
+                        fetched=int(time.time() - 30), archive="default")
         finally:
             store.close()
 
@@ -593,8 +599,13 @@ def the_page_renders_and_carries_the_numbers() -> None:
         html = adminhome.overview(admin)
         check("the station is on it", "kirchdorf" in html, True)
         check("so is the archive", "Kirchdorf" in html, True)
+        # Against the card grid, not against the first card's name. The
+        # anchor was "Arriving", and a test naming one card goes red the
+        # next time the cards are reworded while proving nothing about the
+        # order it exists to check.
         check("the concern is at the top",
-              html.index("to look at") < html.index("Arriving"), True)
+              html.index("to look at") < html.index('<div class="cards">'),
+              True)
         check("ages are words, not timestamps",
               "ago<" in html or "ago</" in html, True)
         check("and no unix timestamp leaked through",

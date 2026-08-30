@@ -62,13 +62,14 @@
     <title>$station.location - $gettext("Computer Monitor")</title>
   </head>
 
-  <body class="theme-$layout">
+  <body class="theme-$layout"#if $places then ' data-units="' + $page_unit_system() + '"' else ''#>
     #include "includes/ui-shell.inc"
 
     <main>
       <section class="main">
         <div>
           <header class="page-head">
+          #include "includes/place-switch.inc"
               <h1>$gettext("Computer Monitor")</h1>
               <h2>$now</h2>
             </header>

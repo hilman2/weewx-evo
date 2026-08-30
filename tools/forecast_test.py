@@ -428,30 +428,30 @@ def test_store_replaces(tmp: Path) -> None:
     store = ForecastStore(tmp / "forecast.sdb")
     first = openmeteo.OpenMeteo().read(OPEN_METEO)
     first.source = "open-meteo"
-    store.store(first, fetched=1787781600)
-    check("the hours are there", len(store.hours("open-meteo")), 3)
-    check("and the days", len(store.days("open-meteo")), 2)
+    store.store(first, fetched=1787781600, archive="default")
+    check("the hours are there", len(store.hours("default", "open-meteo")), 3)
+    check("and the days", len(store.days("default", "open-meteo")), 2)
 
     # A new run replaces the old one rather than adding to it. Nobody wants
     # yesterday's forecast for today, and keeping it makes the file grow
     # without ever gaining a reader.
     again = openmeteo.OpenMeteo().read(OPEN_METEO)
     again.source = "open-meteo"
-    store.store(again, fetched=1787785200)
+    store.store(again, fetched=1787785200, archive="default")
     check("a second run does not double them",
-          len(store.hours("open-meteo")), 3)
+          len(store.hours("default", "open-meteo")), 3)
 
-    run = store.run("open-meteo")
+    run = store.run("default", "open-meteo")
     check("the run is recorded", run["hours"], 3)
     check("with when it was fetched", run["fetched"], 1787785200)
 
     # Two sources side by side, each answering for itself.
     other = dwd.Mosmix(station="10870").read(MOSMIX)
-    store.store(other, fetched=1787785200)
-    check("the other source is separate", len(store.hours("dwd")), 3)
-    check("and the first is untouched", len(store.hours("open-meteo")), 3)
-    check("everything together", len(store.hours()), 6)
-    check("both are listed", store.sources(), ["dwd", "open-meteo"])
+    store.store(other, fetched=1787785200, archive="default")
+    check("the other source is separate", len(store.hours("default", "dwd")), 3)
+    check("and the first is untouched", len(store.hours("default", "open-meteo")), 3)
+    check("everything together", len(store.hours("default")), 6)
+    check("both are listed", store.sources("default"), ["dwd", "open-meteo"])
     store.close()
 
 
@@ -460,14 +460,14 @@ def test_store_warnings(tmp: Path) -> None:
     source = meteoalarm.MeteoAlarm(country="germany")
     reading = Reading(source="meteoalarm",
                       warnings=source.entries(METEOALARM))
-    store.store(reading, fetched=1787810400)
-    got = store.warnings("meteoalarm")
+    store.store(reading, fetched=1787810400, archive="default")
+    got = store.warnings("default", "meteoalarm")
     check("both stored", len(got), 2)
     # Most severe first: that is the order a page wants, and doing it in the
     # store means every reader gets it right.
     check("most severe first", got[0].event, "thunderstorms")
 
-    active = store.warnings("meteoalarm",
+    active = store.warnings("default", "meteoalarm",
                             active_at=meteoalarm.parse_time(
                                 "2026-08-27T10:00:00Z"))
     check("only what covers that moment", [w.event for w in active],
@@ -476,8 +476,8 @@ def test_store_warnings(tmp: Path) -> None:
     # This is the one that matters. An empty feed means the warnings have
     # ended, and leaving an expired storm warning on a page is the failure
     # this whole package is meant to avoid.
-    store.store(Reading(source="meteoalarm"), fetched=1787814000)
-    check("an empty feed clears them", len(store.warnings("meteoalarm")), 0)
+    store.store(Reading(source="meteoalarm"), fetched=1787814000, archive="default")
+    check("an empty feed clears them", len(store.warnings("default", "meteoalarm")), 0)
     store.close()
 
 
@@ -486,7 +486,7 @@ def test_a_failure_keeps_the_forecast(tmp: Path) -> None:
     store = ForecastStore(tmp / "keep.sdb")
     good = openmeteo.OpenMeteo().read(OPEN_METEO)
     good.source = "open-meteo"
-    store.store(good, fetched=1787781600)
+    store.store(good, fetched=1787781600, archive="default")
 
     class Broken:
         every = 3600
@@ -500,7 +500,7 @@ def test_a_failure_keeps_the_forecast(tmp: Path) -> None:
     check("the failure was counted", entry.failures, 1)
     ok("and not treated as permanent", not entry.blocked)
     check("but the forecast is still there",
-          len(store.hours("open-meteo")), 3)
+          len(store.hours("default", "open-meteo")), 3)
 
     class Refused:
         every = 3600
@@ -522,13 +522,13 @@ def test_prune(tmp: Path) -> None:
     reading.source = "open-meteo"
     reading.warnings = [Warning(identifier="old", event="gone",
                                 starts=1, ends=1787781000)]
-    store.store(reading, fetched=1787781600)
+    store.store(reading, fetched=1787781600, archive="default")
     dropped = store.prune(1787785200)
     ok("something was dropped", dropped >= 1)
     check("the hour that has passed is gone",
-          [m.dateTime for m in store.hours("open-meteo")],
+          [m.dateTime for m in store.hours("default", "open-meteo")],
           [1787785200, 1787788800])
-    check("and the warning that ended", len(store.warnings("open-meteo")), 0)
+    check("and the warning that ended", len(store.warnings("default", "open-meteo")), 0)
     store.close()
 
 
@@ -601,7 +601,7 @@ def test_tags(tmp: Path) -> None:
     reading.warnings.append(Warning(
         identifier="b", event="thunderstorms", severity="Severe",
         starts=now + 7200, ends=now + 14400, area="Kreis Freising"))
-    store.store(reading, fetched=now)
+    store.store(reading, fetched=now, archive="default")
 
     metric = units.Target(units.METRICWX)
     tag = forecast_tags.SourceTag(store, "", metric)
@@ -668,6 +668,145 @@ def test_tags_with_nothing(tmp: Path) -> None:
     store.close()
 
 
+def test_a_forecast_is_about_a_place(work: Path) -> None:
+    """Two places, two forecasts, and neither is the other's.
+
+    One file holds them all -- the path is a property of the installation,
+    and a file per place would separate nothing on the layout the settings
+    page offers, where every archive is proposed as `data/<name>.sdb` and
+    every one resolves to the same parent. So the rows carry the series, and
+    the key starts with it: a run replaces what its source had by deleting on
+    that key, and without the series in it the second place would erase the
+    first every hour, alternating, with every page reading whichever ran
+    last.
+    """
+    print("\na forecast is about a place")
+    from weewx_evo.forecast.store import ForecastStore
+
+    store = ForecastStore(work / "places.sdb")
+    try:
+        north = Reading(source="here", hours=[
+            Moment(dateTime=1787781600 + n * 3600, usUnits=17, outTemp=4.0 + n)
+            for n in range(3)])
+        south = Reading(source="here", hours=[
+            Moment(dateTime=1787781600 + n * 3600, usUnits=17, outTemp=20.0 + n)
+            for n in range(3)])
+        store.store(north, fetched=1787781600, archive="nordfeld")
+        store.store(south, fetched=1787781600, archive="default")
+
+        # The same source name for both, which is the case that breaks a
+        # store keyed on the source alone: one entry per place, and an
+        # operator may reasonably call both of them `here`.
+        check("the north keeps its own",
+              [m.outTemp for m in store.hours("nordfeld", "here")],
+              [4.0, 5.0, 6.0])
+        check("and the south keeps its own",
+              [m.outTemp for m in store.hours("default", "here")],
+              [20.0, 21.0, 22.0])
+        check("neither is asked for by accident",
+              store.hours("suedfeld", "here"), [])
+        check("and the file says which series it holds",
+              store.archives(), ["default", "nordfeld"])
+
+        # Storing again replaces only that place's rows.
+        store.store(Reading(source="here", hours=[
+            Moment(dateTime=1787781600, usUnits=17, outTemp=1.0)]),
+            fetched=1787785200, archive="nordfeld")
+        check("a fresh run replaces its own place",
+              [m.outTemp for m in store.hours("nordfeld", "here")], [1.0])
+        check("and leaves the other alone",
+              [m.outTemp for m in store.hours("default", "here")],
+              [20.0, 21.0, 22.0])
+
+        # What nobody is configured for goes, and an empty answer does not
+        # empty the store: that means the caller could not work out what is
+        # configured, and a tidy on a failed read is not a tidy.
+        check("an empty set drops nothing", store.keep(set()), 0)
+        check("the rows are still there",
+              len(store.hours("default", "here")), 3)
+        store.keep({("default", "here")})
+        check("what is configured stays",
+              len(store.hours("default", "here")), 3)
+        check("what is not is gone", store.hours("nordfeld", "here"), [])
+    finally:
+        store.close()
+
+
+def test_a_store_made_before_places_carries_over(work: Path) -> None:
+    """An existing file keeps its rows, under the name its one place had.
+
+    A forecast is a cache and dropping it costs one download -- but the
+    download happens in whichever process runs the poller, and on a split
+    deployment that is not the process that opens the file first. The web
+    process would empty the store and the archiver would not refetch until
+    its next slot: an hour of blank pages, for nothing.
+    """
+    print("\na store made before there were places")
+    import sqlite3
+
+    from weewx_evo.forecast.store import DAY_COLUMNS, HOUR_COLUMNS, ForecastStore
+
+    path = work / "old.sdb"
+    hours = ", ".join(f"{name} REAL" for name in HOUR_COLUMNS)
+    days = ", ".join(f"{name} REAL" for name in DAY_COLUMNS)
+    with sqlite3.connect(path) as conn:
+        conn.executescript(f"""
+            CREATE TABLE moment (source TEXT NOT NULL,
+                dateTime INTEGER NOT NULL, usUnits INTEGER NOT NULL, {hours},
+                PRIMARY KEY (source, dateTime));
+            CREATE TABLE day (source TEXT NOT NULL,
+                dateTime INTEGER NOT NULL, usUnits INTEGER NOT NULL, {days},
+                PRIMARY KEY (source, dateTime));
+            CREATE TABLE warning (source TEXT NOT NULL,
+                identifier TEXT NOT NULL, event TEXT, severity TEXT,
+                urgency TEXT, certainty TEXT, starts INTEGER, ends INTEGER,
+                issued INTEGER, headline TEXT, description TEXT,
+                instruction TEXT, area TEXT, kind TEXT, language TEXT,
+                PRIMARY KEY (source, identifier));
+            CREATE TABLE run (source TEXT PRIMARY KEY, issued INTEGER,
+                fetched INTEGER, note TEXT, hours INTEGER, days INTEGER,
+                warnings INTEGER);
+            CREATE INDEX moment_time ON moment (dateTime);
+            CREATE INDEX warning_span ON warning (starts, ends);
+            INSERT INTO moment (source, dateTime, usUnits, outTemp)
+                VALUES ('open-meteo', 1787781600, 17, 11.5);
+            INSERT INTO day (source, dateTime, usUnits, tempMax)
+                VALUES ('open-meteo', 1787781600, 17, 18.0);
+            INSERT INTO run (source, issued, fetched, note, hours, days,
+                             warnings)
+                VALUES ('open-meteo', 1787781000, 1787781600, '', 1, 1, 0);
+        """)
+    conn.close()
+
+    store = ForecastStore(path)
+    try:
+        check("the rows came over",
+              [m.outTemp for m in store.hours("default", "open-meteo")], [11.5])
+        check("and so did the days",
+              [d.tempMax for d in store.days("default", "open-meteo")], [18.0])
+        check("under the name the one place had", store.archives(), ["default"])
+        # `ALTER TABLE ... RENAME TO` carries the indexes and `DROP TABLE`
+        # takes them with it. A store that lost `moment_time` still answers
+        # every query, by scan -- the sort of thing nobody notices for a year.
+        made = {row[1] for row in
+                store.conn.execute("PRAGMA index_list(moment)")}
+        check("the index survived", "moment_time" in made, True)
+        check("and nothing was left behind",
+              [row[0] for row in store.conn.execute(
+                  "SELECT name FROM sqlite_master WHERE type='table' "
+                  "AND name LIKE '%_one_series'")], [])
+    finally:
+        store.close()
+
+    # Opening it again is a no-op rather than a second rebuild.
+    again = ForecastStore(path)
+    try:
+        check("a second open changes nothing",
+              [m.outTemp for m in again.hours("default", "open-meteo")], [11.5])
+    finally:
+        again.close()
+
+
 def main() -> int:
     test_open_meteo()
     test_open_meteo_asks_for_what_it_reads()
@@ -682,6 +821,8 @@ def main() -> int:
     test_zip_handling()
     with tempfile.TemporaryDirectory() as tmp:
         test_store_replaces(Path(tmp))
+        test_a_forecast_is_about_a_place(Path(tmp))
+        test_a_store_made_before_places_carries_over(Path(tmp))
         test_store_warnings(Path(tmp))
         test_a_failure_keeps_the_forecast(Path(tmp))
         test_prune(Path(tmp))

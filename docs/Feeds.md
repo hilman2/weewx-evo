@@ -63,6 +63,24 @@ mobile connection that is the difference.
 `archive` is a **read-only** view: a feed reports history, it does not write it.
 Whatever it raises is logged and holds nothing up.
 
+### One feed, several places
+
+`Produced.directory` is still one directory, and that is deliberate. An
+installation with more than one [archive](Stations-and-Archives.md) publishes
+one *site*, and a site of several places is a tree inside that one directory:
+an overview at the root and a subdirectory per place. One export moves it,
+one upload writes its `live.json`, and nothing about `Produced` had to grow.
+
+Two feeds would have been the other answer and it is the wrong one: neither
+could link to the other, and every skin setting would be written out once per
+place — the WeeWX arrangement this project removed.
+
+Which places a feed shows is `feeds.<name>.places`; which archive it *reads*
+is `feeds.<name>.archive`, singular, and stays what it was. The two are one
+letter apart on purpose and do different jobs: `archive` gates
+`record_written`, chooses the `Reader` and is the place the pages are wrapped
+in. A feed that names places still reads one.
+
 ## The registry
 
 | | |
@@ -144,6 +162,26 @@ one reading over a span at a resolution, with its unit and its label.
 > anything. This exists so that a skin can be a skin.
 
 ### What it writes
+
+With one place, one flat directory — unchanged. With several:
+
+```
+<charts>/index.json            the site manifest: the comparison charts
+<charts>/<plot>.json           a chart whose lines name their places
+<charts>/<place>/index.json    that place's manifest
+<charts>/<place>/<plot>.json   that place's charts
+```
+
+**The directory is the facet.** A place's page fetches its own directory and
+finds only its own charts; a comparison page fetches the root and finds only
+comparisons. Nothing carries a flag that could disagree with where the file
+actually is.
+
+Every key this adds is optional and written only when it has something to
+say, and `format` stays 1: bumping it would make every chart file on every
+station compare unequal exactly once, and the next export would upload the
+whole directory for no reader.
+
 
 ```
 <target>/daytempdew.json

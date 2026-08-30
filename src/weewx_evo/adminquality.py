@@ -288,7 +288,10 @@ def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if active == "quality" else ""
     count = (f'<span class="count">{len(policy.limits)}</span>'
              if policy.limits else "")
-    return [f'<a href="./quality"{current}>Quality{count}</a>']
+    # The link says what the page it opens is called. It said "Quality" and
+    # opened a page headed "Quality control", which is the same defect the
+    # rest of this sidebar had four times over.
+    return [f'<a href="./quality"{current}>Sensor checks{count}</a>']
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
@@ -315,10 +318,14 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
 
     return f'''
 <section class="group">
-  <h3>Quality control</h3>
-  <p class="lede">What a reading has to survive before it reaches the
-     archive. A refused reading is dropped, not zeroed -- zero is a
-     measurement. Nothing is configured until you configure it.</p>
+  <h3>Sensor checks</h3>
+  <p class="lede">What a reading has to survive before it is kept. A sensor
+     with a flat battery reports -40, a rain gauge being hosed down reports
+     300 mm/h, and a radio sensor at the edge of its range repeats the same
+     number for a quarter of an hour. A refused reading is dropped, not
+     zeroed -- zero is a measurement, and a rain gauge reading 0.0 because
+     its value was thrown away is a dry afternoon. Nothing is checked until
+     you say so.</p>
   {problem}
   {_dry_run(dropped, records)}
   <div class="actions">

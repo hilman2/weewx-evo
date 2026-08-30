@@ -443,6 +443,11 @@ class WebServer:
         self.server.daemon_threads = True
         self.host, self.port = self.server.server_address[:2]
         self.site = site
+        #: The same object the handler holds. Kept here so a reload can put
+        #: a new series into it: the map is built once at startup, and a
+        #: place added on the settings page was answered with a 404 by the
+        #: one part of this program whose job is to say what series exist.
+        self.api = api
 
     def serve_forever(self) -> None:  # pragma: no cover - a loop
         self.server.serve_forever()

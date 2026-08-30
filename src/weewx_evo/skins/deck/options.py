@@ -24,6 +24,23 @@ working site. Anything set here goes on top of it.
 
 from ...options import Group, Option
 
+
+def _archive_names():
+    """Every measurement series this installation keeps, for a dropdown.
+
+    Deferred rather than imported at the top: this file is also loaded
+    straight off disk by `feeds.cheetah.skin_options`, and a skin's settings
+    module has no business dragging the feed package in at import time.
+
+    Called once per `all_schemas()`, from inside the form builder, so it sees
+    the file the page is being built for. A list built outside that moment
+    offers another file's places -- silently, because the value is then
+    refused at startup as naming something that does not exist.
+    """
+    from ...feeds import archive_names
+
+    return archive_names()
+
 #: Readings a tile can be built for. Not a closed list -- a station with
 #: `extraTemp9` names it and gets it -- but it is what the choice widget
 #: offers, so the common case is clicking rather than typing.
@@ -36,9 +53,170 @@ COMMON = (
 )
 
 
-def groups() -> list[Group]:
-    """The skin's own settings, as the admin page and `--explain` see them."""
+#: The pages this skin publishes for a place, one word each. They are the
+#: words `place_page` carries in `skin.conf`, and an operator narrowing a
+#: five-place site to four pages picks from these.
+PLACE_PAGES = (
+    ("today", "Today"), ("yesterday", "Yesterday"), ("week", "Week"),
+    ("month", "Month"), ("year", "Year"), ("statistics", "Statistics"),
+    ("celestial", "Celestial"), ("sensors", "Sensor status"),
+    ("monitor", "Computer monitor"),
+    ("archive", "The month and year archive, and the NOAA reports"),
+    ("app", "The offline page and the web app manifest"),
+)
+
+
+def _several() -> bool:
+    """Whether this installation keeps more than one series.
+
+    Asked the same way the dropdown asks it, from inside the form builder, so
+    it sees the file the page is being built for.
+
+    Wrong in the safe direction: where it cannot tell, it says yes and the
+    settings appear. A setting that is shown and does nothing is a question
+    somebody can answer; one that is hidden and needed cannot be found at
+    all.
+    """
+    try:
+        return len(_archive_names()) > 1
+    except Exception:
+        return True
+
+
+def _shape(settings: dict | None) -> str:
+    """What this feed will actually publish, in the addresses it will use.
+
+    Read the way `CheetahFeed.narrow()` reads it, and for the same reason a
+    place's colour is kept in `archives.toml` rather than in a skin: anything
+    else here would be a second implementation of the rule that decides the
+    published addresses, and the two would disagree on the day somebody
+    changed one of them.
+
+    The one sentence on this page that answers "what is this feed for". Two
+    settings decide it, they sit far apart, and neither could say what the
+    pair of them adds up to.
+    """
+    try:
+        every = [name for name, _label in _archive_names()]
+        home = str((settings or {}).get("archive") or "") or (
+            every[0] if every else "")
+        said = (settings or {}).get("places") or []
+        if isinstance(said, str):
+            said = [x.strip() for x in said.split(",") if x.strip()]
+        shown = [str(x) for x in said if str(x) in every] or list(every)
+        if home in shown:
+            shown.remove(home)
+        if home:
+            shown.insert(0, home)
+        if len(shown) < 2:
+            return ("This feed publishes one place, at the root of its "
+                    "directory: index.html, week.html, month.html and the "
+                    "rest.")
+        folders = ", ".join(f"/{one}/" for one in shown)
+        return (f"As it stands this feed publishes {len(shown)} places: an "
+                "overview and the comparison pages at the root of its "
+                f"directory, then {folders}, each with the whole set of "
+                "pages under it.")
+    except Exception:
+        # Rendered from inside form building, where an unguarded parse has
+        # already taken a whole settings page down with a 500 -- and it was
+        # the page holding the value that caused it.
+        return ("This feed can carry several places: an overview at the "
+                "root, comparison pages beside it, and each place in a "
+                "folder of its own.")
+
+
+def groups(settings: dict | None = None) -> list[Group]:
+    """The skin's own settings, as the admin page and `--explain` see them.
+
+    The three groups about places are left out where there is one, which is
+    every installation that has not asked for a second. Ten settings about an
+    overview, a board and comparison pages that do not exist is a settings
+    page that grew for everybody so that a few could configure something --
+    and two of the three groups do not even say what they are for.
+
+    The precedent is on the archives page, which hides its own "Change" form
+    until there is a file to change.
+    """
+    several = _several()
     return [
+        *([Group("Also show these places",
+              "This feed is about one place -- the one chosen under "
+              "“Place” at the top of this page. It can carry the "
+              "others as well. " + _shape(settings), (
+            Option("places", "Places on this site", kind="list",
+                   choices_from=_archive_names,
+                   help="In this order, and the place at the top of this "
+                        "page always comes first whether or not it is "
+                        "ticked here. Empty means all of them, in the order "
+                        "the places page lists. Leave it empty and add a "
+                        "second place later, and this site starts showing "
+                        "it."),
+            Option("site_title", "What to call the site", kind="text",
+                   help="The heading on the overview. Empty means the "
+                        "station name from the settings -- not the name of "
+                        "any one place, because an overview headed "
+                        "\"Kirchdorf\" listing four places is a lie the "
+                        "page cannot spot."),
+            Option("place_pages", "Pages each place gets", kind="list",
+                   choices=PLACE_PAGES, advanced=True,
+                   help="Empty means all of them. Five places with every "
+                        "page each is what goes up the FTP link every run."),
+            Option("places_fold", "Fold the place list past", kind="int",
+                   default=6, minimum=1, maximum=64, advanced=True,
+                   unit="places",
+                   help="Past this many, the side panel keeps them in a "
+                        "closed disclosure so the sidebar stays four lines "
+                        "tall."),
+        ))] if several else []),
+
+
+        *([Group("The overview page",
+              "One row per place and one column per reading, at the root of "
+              "the site. Rows rather than a grid of cards: places one under "
+              "another is the layout where “where is it coldest” "
+              "costs no work. There is no total row -- two thermometers "
+              "reading 19 and 21 do not make 20 anywhere.", (
+            Option("board_observations", "Columns", kind="list",
+                   choices=tuple((n, n) for n in COMMON),
+                   default=("outTemp", "outHumidity", "windSpeed", "rain",
+                            "barometer"),
+                   help="One column each, in this order. A column no place "
+                        "records is left out rather than filled with "
+                        "dashes."),
+            Option("board_primary", "The reading everything else is about",
+                   kind="choice", choices=tuple((n, n) for n in COMMON),
+                   default="outTemp",
+                   help="The one chart on the overview draws it, and the "
+                        "spread rule below watches it."),
+            Option("unusual_spread", "Say so when two places differ by",
+                   kind="float", default=2.0, minimum=0.1,
+                   help="In the unit the pages are shown in. A threshold "
+                        "converted the wrong way is amber at 79 on a "
+                        "Fahrenheit page and silent at 26."),
+            Option("unusual_max", "At most this many lines", kind="int",
+                   default=4, minimum=1, maximum=12, advanced=True,
+                   help="Past four the list stops reading as news and "
+                        "starts reading as a log."),
+        ))] if several else []),
+
+
+        *([Group("The comparison pages",
+              "One page per period -- today, this week, this month, this "
+              "year -- each putting the places side by side, figures above "
+              "and charts below.", (
+            Option("compare_spans", "Periods", kind="list",
+                   choices=(("day", "Today"), ("week", "Week"),
+                            ("month", "Month"), ("year", "Year")),
+                   default=("day", "week", "month", "year"),
+                   help="One page each. A period left out here still has "
+                        "its charts; nothing links to them."),
+            Option("compare_observations", "Readings", kind="list",
+                   choices=tuple((n, n) for n in COMMON),
+                   default=("outTemp", "outHumidity", "windSpeed", "rain"),
+                   help="One row of the figures table and one chart each."),
+        ))] if several else []),
+
         Group("Layout", "How a page is put together.", (
             Option("layout", "Layout", kind="choice", default="alternative",
                    choices=(("alternative", "Alternative -- tiles in a grid"),

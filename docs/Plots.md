@@ -37,10 +37,32 @@ is something you want to be able to diff and pass on.
 | `marker`, `marker_size` | |
 | `gap_fraction` | The distance at which a gap is a gap |
 | `rotate` | |
-| `binding` | |
+| `series` | Which [archive](Stations-and-Archives.md) this line reads. Empty is the one the chart is being drawn for, which is every line on every station with one series |
+| `binding` | WeeWX's `data_binding`, carried through an import and back out again. Read by nothing here |
+
+`series` is what "outTemp at all five locations on one axis" is: five lines,
+one plot, each naming its own place. It is **not** `binding`, which sits
+beside it and means something else — `wx_binding` names a *schema*, not a
+place, and one field with two meanings holds until somebody names an archive
+`wx_binding`.
+
+Two consequences worth knowing:
+
+- **A line naming an archive that is not configured is left out**, not read
+  from the default. Silently drawing one location's temperature under another
+  location's label is the one outcome worse than a chart with a line missing,
+  and nothing on the page could show it.
+- **A plot whose lines name places is filed once, for the site**; every other
+  plot is drawn once per place. The directory is what says which, so nothing
+  downstream needs a flag that could disagree with it.
 
 `resolved(position)` returns the same line with the colours WeeWX would have
 given it — `LINE_COLORS` and `FILL_COLORS`, in the same order.
+`drawn_with(colors)` is the same thing with each place's own colour where it
+has one, out of `archives.toml`. That is not taste: `resolved` cycles five
+colours modulo the index *within one plot*, so the same place would come out
+blue on the temperature chart and red on the humidity chart — and a legend
+that says a place *is* a colour would then be lying on one of the two.
 
 ### `Plot` — one plot
 
@@ -56,7 +78,11 @@ given it — `LINE_COLORS` and `FILL_COLORS`, in the same order.
 | `skip_if_empty` | A **timespan**, not a boolean. See [below](#two-pitfalls-in-the-importer) |
 
 `drawn()` returns the lines with their colours filled in. `uses()` says which
-readings this plot needs.
+readings this plot needs. `places()` is the archives its lines name, in the
+order they name them, and `names_a_place()` is the filing rule — deliberately
+not "draws more than one place", because a single line reading the north field
+produces the same numbers whichever place's page it is on and is therefore
+written once.
 
 ### `PlotSet` — the plots there are
 

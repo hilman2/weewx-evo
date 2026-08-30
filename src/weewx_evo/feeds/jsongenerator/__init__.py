@@ -25,6 +25,23 @@ Each file is one chart's worth of data. The manifest says what exists, so a
 client can lay out its page before fetching anything and never asks for a
 sensor this station does not have.
 
+Where a station keeps several archives and this feed is told which places to
+write for, the directory is the facet:
+
+    <destination>/index.json          the site manifest: comparisons only
+    <destination>/daycmpoutTemp.json  a chart whose lines name their places
+    <destination>/nordfeld/index.json one place's manifest
+    <destination>/nordfeld/daytemp.json
+
+A chart that names no place is the same chart wherever it is drawn, so it is
+drawn once per place out of that place's own archive. A chart whose lines name
+places is drawn once, at the top. Nothing about that is written into
+`plots.toml`: a hundred plots stay a hundred entries and become a hundred
+files per place, and the day somebody adds a place no file needs editing.
+
+With one place there is no subdirectory and no new key anywhere -- that is the
+layout above, unchanged.
+
 ## The shape
 
     {
@@ -61,7 +78,7 @@ from ... import chartdata, units
 from ...options import Group, Option
 from ...plots import Plot, PlotSet
 from ...series import Reader
-from .. import Produced
+from .. import Produced, archive_names
 
 log = logging.getLogger(__name__)
 
@@ -95,7 +112,10 @@ class JSONGenerator:
                  manifest: bool = True,
                  twilight: bool = True,
                  rewrite_unchanged: bool = False,
-                 archives: dict | None = None) -> None:
+                 archives: dict | None = None,
+                 archive: str = "",
+                 places: dict | None = None,
+                 shown: tuple[str, ...] = ()) -> None:
         self.reader = reader
         self.plots = plots
         self.target = target or units.Target(unit_system)
@@ -117,6 +137,21 @@ class JSONGenerator:
         #: nothing is being drawn, which is the shape of the leak that took
         #: an instance down at 477 of them.
         self.archives = dict(archives or {})
+        #: Which archive `reader` is. Not decoration: a comparison chart's
+        #: home line carries a blank `series`, so without this it is the one
+        #: line on the chart with no colour, no title and no place -- and it
+        #: is the page's own place.
+        self.archive = str(archive or "")
+        #: What each place is called and drawn in, as `chartdata.Place`. From
+        #: `archives.toml`, so the PNG, the JSON and Grafana draw one place in
+        #: one colour.
+        self.places = dict(places or {})
+        #: The places that get a directory of their own this run. Empty is
+        #: the flat layout, which is every single-series station and is
+        #: today's output byte for byte. The same shape as `spans`, and for
+        #: the same reason: it narrows what a run produces without any other
+        #: feed having to know.
+        self.shown = tuple(shown)
         #: Open only while `produce` runs.
         self._readers: dict = {}
         #: Which groups to produce. Empty means all of them.
@@ -136,8 +171,15 @@ class JSONGenerator:
         from ... import series as series_module
         from ...plots import series_named
 
-        wanted = series_named(self.plots)
+        # Every archive a plot names, plus every place this run writes a
+        # directory for. Not the feed's own: `self.reader` is already open,
+        # handed in by the runner, and opening it again by name would be a
+        # second connection to a file we are already reading.
+        wanted = series_named(self.plots) | set(self.shown)
+        wanted.discard(self.archive)
         with series_module.opened(self.archives, wanted) as readers:
+            if self.archive:
+                readers[self.archive] = self.reader
             self._readers = readers
             try:
                 return self._produce(into, now)
@@ -150,21 +192,95 @@ class JSONGenerator:
         into = Path(into)
         into.mkdir(parents=True, exist_ok=True)
 
-        span = self.reader.span()
-        if span is None:
+        generated = self._generated(now)
+        if generated is None:
             log.info("nothing in the archive yet, so nothing to draw")
             return Produced(directory=into, note="the archive is empty")
-        generated = int(now if now is not None else span[1])
 
         files: list[Path] = []
-        manifest: list[dict[str, Any]] = []
         self.written = self.skipped = self.unchanged = 0
 
-        for plot in self.plots:
+        if not self.shown:
+            # One archive, or a feed nobody told about places: today's path,
+            # flat filenames and a manifest with no `archives` key.
+            files += self._pass(into, generated, list(self.plots),
+                                self.reader, self.archive)
+            note = self._note(started)
+            log.info("wrote %s", note)
+            return Produced(directory=into, files=files, note=note)
+
+        # A chart that names a place is drawn once, out of the archives it
+        # names, at the top. A chart that names none is drawn once per place,
+        # out of THAT place's archive -- because a blank `series` has always
+        # meant "the archive this chart is being drawn for", and a per-place
+        # pass is that sentence with a different archive handed in.
+        comparisons = [p for p in self.plots if p.names_a_place()]
+        own = [p for p in self.plots if not p.names_a_place()]
+
+        files += self._pass(into, generated, comparisons,
+                            self.reader, self.archive, roster=True)
+        for name in self.shown:
+            source = (self.reader if name and name == self.archive
+                      else self._readers.get(name))
+            if source is None:
+                # An archive configured for a place that has not written a
+                # record yet. Named and skipped: a directory that is not
+                # there is a page that says so, and an empty one is a page
+                # full of charts of nothing.
+                log.info("no archive open for the place %r, so it gets no "
+                         "charts this run", name)
+                continue
+            files += self._pass(into / name, generated, own, source, name)
+
+        note = self._note(started)
+        log.info("wrote %s", note)
+        return Produced(directory=into, files=files, note=note)
+
+    def _generated(self, now: float | None) -> int | None:
+        """The moment every chart in this run stops at, or None if nothing.
+
+        One stop for the whole run, not one per pass. Two charts on one page
+        whose x-axes end an hour apart is the thing a comparison must not do,
+        and sub-day buckets step from the span *start*, so two places given
+        spans a second apart come back on grids a second offset for the whole
+        chart. `_same()` ignores `generated`, so taking the latest costs no
+        uploads.
+        """
+        newest = None
+        seen: list[int] = []
+        for one in (self.reader, *self._readers.values()):
+            # By identity: `_readers[self.archive]` IS `self.reader`, so the
+            # home archive would otherwise be asked for its span twice on
+            # every produce.
+            if id(one) in seen:
+                continue
+            seen.append(id(one))
+            span = one.span()
+            if span and (newest is None or span[1] > newest):
+                newest = span[1]
+        if newest is None:
+            return None
+        return int(now if now is not None else newest)
+
+    def _pass(self, into: Path, generated: int, plots: list[Plot],
+              reader: Reader, place: str,
+              roster: bool = False) -> list[Path]:
+        """One directory: its charts and its own manifest.
+
+        `roster` is the root of a site with several places, the only manifest
+        that lists them -- a place's own directory has one place in it and
+        saying so again would be a key every reader has to learn to ignore.
+        """
+        into.mkdir(parents=True, exist_ok=True)
+        files: list[Path] = []
+        manifest: list[dict[str, Any]] = []
+
+        for plot in plots:
             if self.spans and plot.span not in self.spans:
                 continue
             try:
-                payload = self.build(plot, generated)
+                payload = self.build(plot, generated, reader=reader,
+                                     place=place)
             except Exception:
                 # One broken plot must not cost the other ninety-nine. A
                 # station with a sensor that stopped reporting should still
@@ -186,27 +302,39 @@ class JSONGenerator:
             except OSError as exc:
                 log.error("could not write %s: %s", path, exc)
                 continue
-            manifest.append({
+            entry = {
                 "name": plot.name,
                 "group": plot.span,
                 "title": plot.title or ", ".join(
                     s["label"] for s in payload["series"] if s["label"]),
                 "unit_label": payload["unit_label"],
                 "obs_types": [s["obs_type"] for s in payload["series"]],
-            })
+            }
+            # Never in `name`. A manifest name is span-prefixed and a page
+            # matches `data-only` against either the name or the span plus
+            # the name; a place folded into the string breaks that match and
+            # with it every hand-listed chart on every page.
+            if payload.get("places"):
+                entry["archives"] = list(payload["places"])
+            manifest.append(entry)
 
         if not self.manifest:
-            note = self._note(started)
-            log.info("wrote %s", note)
-            return Produced(directory=into, files=files, note=note)
+            return files
 
         index = into / "index.json"
-        listing = {
+        listing: dict[str, Any] = {
             "format": FORMAT,
             "generated": generated,
-            "spans": self.plots.spans(),
+            # The spans of the plots written into THIS directory, not of the
+            # whole set. A compare page lays a grid out per span, and a root
+            # manifest advertising `year` when no comparison covers a year
+            # is an empty grid on a published page. With one place the two
+            # are the same list, so nothing moves there.
+            "spans": PlotSet(plots).spans(),
             "plots": manifest,
         }
+        if roster:
+            listing["archives"] = self._roster()
         try:
             # Held to the same rule as the plots: an unchanged manifest that
             # gets rewritten every interval is one file an export uploads
@@ -216,10 +344,26 @@ class JSONGenerator:
                 files.append(index)
         except OSError as exc:
             log.error("could not write %s: %s", index, exc)
+        return files
 
-        note = self._note(started)
-        log.info("wrote %s", note)
-        return Produced(directory=into, files=files, note=note)
+    def _roster(self) -> list[dict[str, Any]]:
+        """The places this run wrote a directory for, in that order.
+
+        Their names, labels, codes and colours, so a page can draw a legend
+        and a switcher without a second file. `shown` decides the order,
+        because that is the order the operator put them in.
+        """
+        out = []
+        for name in self.shown:
+            known = self.places.get(name)
+            out.append({
+                "name": name,
+                "label": getattr(known, "title", "") or name,
+                "code": getattr(known, "code", "") or "",
+                "color": getattr(known, "color", "") or "",
+                "path": f"{name}/",
+            })
+        return out
 
     def _note(self, started: float) -> str:
         return (f"{self.written} plot(s) in {time.time() - started:.2f}s"
@@ -257,19 +401,34 @@ class JSONGenerator:
 
     # -- one plot ---------------------------------------------------------
 
-    def build(self, plot: Plot, generated: float) -> dict[str, Any] | None:
+    def build(self, plot: Plot, generated: float,
+              reader: Reader | None = None,
+              place: str = "") -> dict[str, Any] | None:
         """One plot's payload, or None if there is nothing in it.
 
         The numbers come from `chartdata`, which the image feed reads too.
         Working them out here as well is how two renderers of the same plot
         come to disagree in the third decimal place.
+
+        `reader` and `place` are which archive this pass is drawing for. They
+        default to the feed's own, which is every station with one place.
         """
+        source = reader or self.reader
+        # What the archive THIS pass reads holds. `self.unit_system` is the
+        # feed's own archive's, and a per-place pass is handed a different
+        # one: the north field's console may still be sending Fahrenheit
+        # while the home archive is metric, and converting its records out
+        # of the home archive's system is a silent thirty degrees on that
+        # place's own pages.
+        held = (self.unit_system if source is self.reader
+                else source.system)
         chart = chartdata.build(
-            plot, self.reader, generated, target=self.target,
-            unit_system=self.unit_system, extra_groups=self.extra_groups,
+            plot, source, generated, target=self.target,
+            unit_system=held, extra_groups=self.extra_groups,
             labels=self.labels, rounding=self.rounding,
             latitude=self.latitude, longitude=self.longitude,
-            twilight=self.twilight, readers=self._readers)
+            twilight=self.twilight, readers=self._readers,
+            places=self.places, place=place or self.archive)
         if chart is None:
             return None
         return _document(chart, generated)
@@ -333,6 +492,24 @@ class JSONGenerator:
                             "what you want on a live site. 2 makes them "
                             "readable while you are working out why a "
                             "chart looks wrong."),
+                # A list and not a text box: `choices_from` is read for a
+                # choice and for a list, and nowhere else. Declared as text
+                # it rendered as a free-typed field whose only suggestion
+                # was the empty string -- the archive names were built,
+                # handed over and thrown away, and the one thing an operator
+                # needs here is the list of names they may type.
+                Option("places", "Only these places", kind="list",
+                       advanced=True,
+                       choices_from=archive_names,
+                       help="One per row. Empty writes a directory of "
+                            "charts for every place, which is the safe "
+                            "side: a directory nothing links to costs disk, "
+                            "and a directory a page links to and that is "
+                            "not there is a broken page. Narrow it where a "
+                            "metered link makes a hundred files per place "
+                            "worth thinking about. Not the same setting as "
+                            "a skin's: that says which places a site shows, "
+                            "this says which a chart directory covers."),
                 Option("spans", "Only these groups",
                        default="",
                        advanced=True,
@@ -429,6 +606,22 @@ def _document(chart: chartdata.Chart, generated: float) -> dict[str, Any]:
         # the wire once for nothing.
         if line.unit != chart.unit:
             entry["unit"] = line.unit
+        if line.series:
+            entry["series"] = line.series
+        if line.series and line.stored_unit and line.stored_unit != line.unit:
+            # What a page would print as "Nordfeld records in degrees F and
+            # was converted". Twenty bytes. No skin reads it yet, and that is
+            # the point of writing it: a document that carries the unit its
+            # numbers were stored in can answer the question later without
+            # every published file having to be produced again.
+            #
+            # Only on a line that names a place. Every station that publishes
+            # in a unit its console does not send has a line disagreeing with
+            # its archive -- that is the ordinary case and the document says
+            # its unit at the top. Written unconditionally it would be a new
+            # key in most files on most stations, for a sentence only a
+            # comparison can print.
+            entry["stored_unit"] = line.stored_unit
         entry["time"] = line.time
         entry["values"] = line.values
         if line.fill_color:
@@ -480,13 +673,23 @@ def _document(chart: chartdata.Chart, generated: float) -> dict[str, Any]:
         payload["yscale"] = list(chart.yscale)
     if chart.daynight:
         payload["daynight"] = chart.daynight
+    # What makes a chart a comparison: more than one place in it. No separate
+    # marking, and nothing is written on a chart that draws one place -- so a
+    # single-series station's files are byte-identical and `_same` reports
+    # nothing changed.
+    if len(chart.places) > 1:
+        payload["places"] = list(chart.places)
+        payload["note"] = chart.note
     return payload
 
 
 def from_settings(settings: Any, reader: Reader, plots: PlotSet,
                   extra_groups: dict[str, str] | None = None,
                   prefix: str = "feeds.json",
-                  archives: dict | None = None) -> JSONGenerator:
+                  archives: dict | None = None,
+                  archive: str = "",
+                  places: dict | None = None,
+                  shown: tuple[str, ...] = ()) -> JSONGenerator:
     """Build the generator from the configuration.
 
     `prefix` names the configured feed, so two of them can be set up
@@ -497,7 +700,14 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         found = settings.get(f"{prefix}.{name}")
         return fallback if found is None else found
 
-    stored = units.system_from(settings.get("station.units") or units.US)
+    # What the archive holds, read from the archive. `station.units` is not
+    # an option this program declares anywhere -- it was read here and
+    # nowhere else, so every installation converted as though its records
+    # were in US units. A German station writing metricwx had every chart
+    # off by a Fahrenheit-to-Celsius conversion, and nothing said so because
+    # each number was internally consistent. The image and Cheetah feeds
+    # both ask the reader; so does this one now.
+    stored = reader.system
     indent = int(option("indent") or 0)
 
     # A group named on its own wins over the system. Somebody wanting Celsius
@@ -529,6 +739,28 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
     spans = tuple(s.strip() for s
                   in str(option("spans") or "").split(",")
                   if s.strip())
+    # Narrowed by the setting, and only ever narrowed: a name nobody handed
+    # in is a directory the pages would link to and that would not be there.
+    narrowed = _names(option("places"))
+    if narrowed:
+        kept = tuple(one for one in shown if one in narrowed)
+        unknown = [one for one in narrowed if one not in shown]
+        if kept:
+            shown = kept
+        elif shown:
+            # An empty intersection is a typo, and it must not be obeyed: `()`
+            # is the flag for "one place, today's flat layout", so a narrowing
+            # that matches nothing would silently remove every place directory
+            # and 404 every place page -- the opposite of narrowing, under a
+            # setting whose empty value means "every place". Ignored and said
+            # out loud instead.
+            log.error("the places setting names %s, and this feed was handed "
+                      "%s; ignoring it and writing every place",
+                      ", ".join(narrowed) or "nothing", ", ".join(shown))
+        if unknown and kept:
+            log.warning("the places setting names %s, which this feed was "
+                        "not handed; writing %s",
+                        ", ".join(unknown), ", ".join(shown))
 
     return JSONGenerator(
         reader=reader,
@@ -546,7 +778,27 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         rewrite_unchanged=_truth(
             option("rewrite_unchanged"), False),
         archives=archives,
+        archive=archive,
+        places=places,
+        shown=shown,
     )
+
+
+def _names(value: Any) -> tuple[str, ...]:
+    """The names in a list setting, however it came to be written.
+
+    A `kind="list"` option arrives as a list from the settings page and as a
+    line-per-entry string from `render`, but this file is meant to be edited
+    by hand and the help text asked for commas for as long as it was a text
+    box. Splitting on both is one line and saves a setting that matches
+    nothing -- which here would take every place directory away.
+    """
+    if isinstance(value, (list, tuple)):
+        items = [str(one) for one in value]
+    else:
+        items = [part for row in str(value or "").splitlines()
+                 for part in row.split(",")]
+    return tuple(one.strip() for one in items if one.strip())
 
 
 def _truth(value: Any, default: bool) -> bool:

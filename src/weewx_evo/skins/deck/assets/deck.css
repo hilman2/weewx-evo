@@ -53,6 +53,12 @@
   --warn: hsl(32 88% 46%);
   --bad: hsl(2 72% 50%);
 
+  /* A place with no colour of its own. Grey and not `--accent`: eight
+   * uncoloured places all painted in the UI accent read as eight *selected*
+   * rows. The colours themselves are never tokens -- they live in
+   * archives.toml and arrive as an inline `--place`. */
+  --place-fallback: hsl(var(--hue) 12% 52%);
+
   --shadow-1: 0 1px 2px hsl(var(--hue) 30% 20% / 0.06),
               0 1px 1px hsl(var(--hue) 30% 20% / 0.04);
   --shadow-2: 0 2px 4px hsl(var(--hue) 30% 20% / 0.05),
@@ -141,6 +147,8 @@
     --warn: hsl(34 88% 58%);
     --bad: hsl(4 76% 62%);
 
+    --place-fallback: hsl(var(--hue) 10% 68%);
+
     --shadow-1: 0 1px 2px hsl(0 0% 0% / 0.4);
     --shadow-2: 0 2px 4px hsl(0 0% 0% / 0.3), 0 8px 24px -8px hsl(0 0% 0% / 0.5);
     --shadow-3: 0 2px 6px hsl(0 0% 0% / 0.4), 0 20px 48px -16px hsl(0 0% 0% / 0.6);
@@ -176,6 +184,12 @@
   --good: hsl(148 48% 52%);
   --warn: hsl(34 88% 58%);
   --bad: hsl(4 76% 62%);
+
+  /* The same value as the media block above, because there are three theme
+   * states and the default stamps no attribute. A token added to one block
+   * and not the other is right on the toggle and wrong at sunset, and no
+   * test reads CSS. */
+  --place-fallback: hsl(var(--hue) 10% 68%);
 
   --shadow-1: 0 1px 2px hsl(0 0% 0% / 0.4);
   --shadow-2: 0 2px 4px hsl(0 0% 0% / 0.3), 0 8px 24px -8px hsl(0 0% 0% / 0.5);
@@ -1588,4 +1602,288 @@ tr.summary td {
 @media (prefers-reduced-motion: reduce) {
   .live-badge--live::before,
   .live-indicator--live .live-indicator__dot { animation: none; }
+}
+
+/* ============================================================== places ==
+ *
+ * Everything below is for a site that shows several measurement series. At
+ * one place none of this markup is produced, so none of it applies.
+ *
+ * **A place's own colour is never a token.** It arrives as an inline
+ * `style="--place: #d1642a"` on the row, the chip, the link. Two reasons,
+ * both load-bearing: `token()` in charts.js reads computed style off
+ * `document.documentElement` only, so a container-scoped place colour would
+ * be invisible to `palette()` and the chart would draw one colour while the
+ * row beside it showed another; and the colours live in `archives.toml`, so
+ * a stylesheet holding a copy is a second place to keep in step.
+ */
+
+/* --------------------------------------------------------- place mark */
+
+/* One shape in three places: the board row, the switcher and the chips. A
+ * place looks the same everywhere it appears, which is what makes its colour
+ * on the comparison chart already familiar by the time somebody gets there. */
+.place-dot {
+  display: inline-block;
+  width: .65em;
+  height: .65em;
+  border-radius: var(--r-full);
+  background: var(--place, var(--place-fallback));
+  flex: none;
+  /* A ring, not a second colour for dark mode. A dark place colour on a dark
+   * card is a hole without it, and computing a lightened twin in Python is
+   * arithmetic nobody can check by looking. The charts already run every line
+   * through `visible()`, which does the same job at that end. */
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+/* ------------------------------------------------------------- board */
+
+.now-board { width: 100%; border-collapse: collapse; }
+.now-board tbody tr {
+  border-inline-start: 3px solid var(--place, var(--place-fallback));
+}
+
+.board-place { white-space: nowrap; }
+.board-place a { font-weight: 620; color: var(--ink); text-decoration: none; }
+.board-place a:hover { text-decoration: underline; }
+.board-code {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--ink-3);
+  margin-inline: var(--s-2) var(--s-1);
+}
+.board-where {
+  display: block;
+  color: var(--ink-3);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.board-cell { text-align: end; }
+
+/* Tabular figures on every number here. A column whose values jitter by a
+ * digit's width as they update is a column the eye cannot run down, which is
+ * the only thing this table is for. */
+.board-now {
+  display: block;
+  font-size: var(--step-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.board-range {
+  display: block;
+  color: var(--ink-3);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.board-range .hi { color: var(--warm); }
+.board-range .lo { color: var(--cool); }
+
+.board-age {
+  text-align: end;
+  color: var(--ink-3);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.board-age[data-stale] { color: var(--warn); }
+/* A console that has records and has stopped. Not one that has never
+ * written a record: that row carries no flag, keeps the ordinary muted
+ * colour and says "no readings yet" in words. Red for an unconfigured place
+ * is a check that goes off because somebody else's hardware was never
+ * plugged in, and `live-status.js` sets and clears this same attribute from
+ * the live document by the same rule the renderer used. */
+.board-age[data-silent] { color: var(--bad); font-weight: 560; }
+
+/* A board in a sideways scroll box hides its values behind a gesture nobody
+ * performs on a weather page. Below 46rem each row becomes a card and each
+ * cell a labelled line instead -- in CSS alone, no script and no breakpoint
+ * anybody has to keep in step with a font size.
+ *
+ * `display: block` drops the implicit table roles in some engines, which is
+ * why `role=` is written into the markup unconditionally: redundant at full
+ * width, load-bearing here. */
+@media (max-width: 46rem) {
+  .now-board thead { display: none; }
+  .now-board tbody tr {
+    display: block;
+    margin-bottom: var(--s-4);
+    border: 1px solid var(--line);
+    border-inline-start: 3px solid var(--place, var(--place-fallback));
+    border-radius: var(--r-3);
+    background: var(--surface);
+  }
+  .now-board tbody td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s-3);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .now-board tbody td::before {
+    content: attr(data-label);
+    color: var(--ink-3);
+    font-size: var(--step--1);
+    text-align: start;
+  }
+  .now-board tbody th.board-place { display: block; }
+}
+
+/* ----------------------------------------------------------- unusual */
+
+/* Deliberately not `.notice`. A framed, tinted, icon-bearing alert per line
+ * turns four lines into a wall and makes the fourth look as urgent as the
+ * first. Flat lines with the figure in colour is a newspaper's answer and it
+ * stays readable at four. */
+.unusual { list-style: none; margin: 0 0 var(--s-5); padding: 0; }
+.unusual li {
+  display: flex;
+  gap: var(--s-3);
+  align-items: baseline;
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.unusual li:last-child { border-bottom: none; }
+.unusual__figure {
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
+  color: var(--warn);
+  white-space: nowrap;
+}
+.unusual--silent .unusual__figure { color: var(--bad); }
+.unusual__place {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-weight: 560;
+  color: var(--ink);
+}
+
+/* ---------------------------------------------------------- switcher */
+
+/* Built from the tabs' look, but as links, so nothing about it needs a
+ * script -- the same argument the unit switch already carries. `flex-wrap`,
+ * not `overflow-x: auto`: eight places must wrap, not hide the eighth. */
+.place-switch {
+  display: flex;
+  gap: var(--s-1);
+  margin-top: var(--s-3);
+  padding: var(--s-1);
+  background: var(--bg-sunk);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-full);
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+.place-switch a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-full);
+  color: var(--ink-2);
+  font-weight: 560;
+  font-size: var(--step--1);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.place-switch a:hover { color: var(--ink); background: var(--surface-hover); }
+.place-switch a[aria-current="page"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+.place-switch__all { color: var(--ink-3); }
+
+/* ------------------------------------------------------------- chips */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  margin-bottom: var(--s-5);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  background: var(--surface);
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 560;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Off: the dot hollows out and the label strikes through. Opacity alone is a
+ * state that low-contrast screens and colour-blind readers lose, and the
+ * question being asked is "which two are on". */
+.chip[aria-pressed="false"] { color: var(--ink-3); }
+.chip[aria-pressed="false"] .place-dot {
+  background: none;
+  box-shadow: inset 0 0 0 2px var(--place, var(--place-fallback));
+}
+.chip[aria-pressed="false"] span:last-child { text-decoration: line-through; }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* -------------------------------------------------- comparison figures */
+
+.compare-figures { margin-bottom: var(--s-5); }
+.compare-figures thead th .place-dot { margin-inline-end: var(--s-1); }
+.compare-value, .compare-spread {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Which aggregate a row is, said rather than assumed: a mean and a total are
+ * different questions and a column of numbers does not say which it
+ * answered. */
+.compare-how { color: var(--ink-3); margin-inline-start: var(--s-2); }
+.compare-spread__figure { font-weight: 620; }
+.compare-spread__ends {
+  display: block;
+  color: var(--ink-3);
+  font-size: var(--step--1);
+  font-family: var(--font-mono);
+}
+
+/* --------------------------------------------------------- chart note */
+
+/* What a comparison chart holds, written by `chartdata` into the file: the
+ * aggregation, the unit, the places drawn and anything left out. A chart
+ * drawn from records beside a tile drawn from `archive_day_*` looks like a
+ * bug unless the chart says which it is. */
+.chart-note { margin-top: var(--s-2); font-size: var(--step--1);
+              color: var(--ink-3); }
+
+/* ------------------------------------------------------ live, wrong */
+
+/* A console sending Fahrenheit into a page written in Celsius. Its own state
+ * because "wrong unit" and "nothing arriving" are different things to do
+ * about, and one text in one colour for both is the warning that stands
+ * everywhere and is therefore not one. */
+.live-badge--wrong { background: var(--warn); color: var(--bg); }
+
+/* ---------------------------------------------------- places in the nav */
+
+/* `.sidenav svg { fill: currentColor }` already covers every icon in the
+ * panel. This one overrides it so a place's mark carries the place's own
+ * colour -- and it has to exist, because an SVG with no `fill` of its own is
+ * black, which on a dark page is nothing at all. */
+.sidenav__places > summary svg,
+.sidenav__places a[style*="--place"] svg {
+  fill: var(--place, var(--place-fallback));
+}
+
+@media print {
+  .place-switch, .chips { display: none; }
+  .now-board tbody tr { break-inside: avoid; }
 }

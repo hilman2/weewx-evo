@@ -66,6 +66,37 @@ BATTERY_FIELDS = ("txBatteryStatus", "outTempBatteryStatus",
 FAILURES = 3
 
 
+def measured_rhythm(conn: Any, source: str, now: float) -> float | None:
+    """The median gap between one station's packets, or None where there
+    are too few to say.
+
+    Split out from `rhythm` below so the live document can publish the same
+    figure the alarms judge by. One measurement, two callers: a second median
+    over the same packets would be two numbers disagreeing about one console,
+    and the disagreement would be between the badge on a page and the message
+    in somebody's inbox.
+
+    None rather than a default, because the two callers want different things
+    from "cannot say": the alarm wants a threshold it can still use, and the
+    page wants to publish nothing rather than publish a constant dressed as a
+    measurement.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT dateTime FROM packet WHERE source = ? "
+            "AND dateTime > ? ORDER BY dateTime DESC LIMIT 30",
+            (source, now - 6 * 3600)).fetchall()
+    except Exception:
+        log.debug("could not measure the rhythm of %r", source, exc_info=True)
+        return None
+
+    stamps = [float(row[0]) for row in rows]
+    if len(stamps) < 4:
+        return None
+    gaps = sorted(a - b for a, b in pairwise(stamps))
+    return max(1.0, gaps[len(gaps) // 2])
+
+
 def rhythm(live: Any, source: str, now: float) -> float:
     """How often this station usually sends, in seconds.
 
@@ -77,20 +108,8 @@ def rhythm(live: Any, source: str, now: float) -> float:
     this morning would otherwise look like one that reports hourly, and would
     then be given an hour of silence before anybody heard about it.
     """
-    try:
-        rows = live.conn.execute(
-            "SELECT dateTime FROM packet WHERE source = ? "
-            "AND dateTime > ? ORDER BY dateTime DESC LIMIT 30",
-            (source, now - 6 * 3600)).fetchall()
-    except Exception:
-        log.debug("could not measure the rhythm of %r", source, exc_info=True)
-        return DEFAULT_RHYTHM
-
-    stamps = [float(row[0]) for row in rows]
-    if len(stamps) < 4:
-        return DEFAULT_RHYTHM
-    gaps = sorted(a - b for a, b in pairwise(stamps))
-    return max(1.0, gaps[len(gaps) // 2])
+    found = measured_rhythm(live.conn, source, now)
+    return DEFAULT_RHYTHM if found is None else found
 
 
 def stations_silent(live: Any, stations: Any, floor: float = 900.0,

@@ -254,6 +254,60 @@ class Live:
         return Live(self.path, sources, pick or self.pick,
                     main if main is not None else self.main, self.policy)
 
+    def rhythm(self, now: float | None = None) -> float | None:
+        """How often this place's consoles report, in seconds, or None.
+
+        The mean over the consoles this reader speaks for, each measured the
+        way the alarms measure it -- `notify.rules.measured_rhythm`, so the
+        badge on a page and the message in somebody's inbox cannot disagree
+        about one console.
+
+        **The mean, not the slowest**, and that is a decision rather than an
+        oversight: consoles on one site report somewhere between ten seconds
+        and five minutes, and one extreme mixed with the other is rare enough
+        to think about when somebody reports it. With one console -- which is
+        nearly every place -- the mean is that console's own figure and the
+        question does not arise.
+
+        The measurable ones only. Averaging a measurement with a fallback
+        constant publishes a number that is partly invented, and nothing
+        downstream can tell which part.
+
+        `None` where nothing could be measured. The page then falls back to
+        its own fixed window, which is what every site had before this was
+        published at all.
+        """
+        import time
+
+        from ..notify.rules import measured_rhythm
+
+        when = float(now) if now else time.time()
+        try:
+            conn = self._conn()
+        except Exception:
+            log.debug("could not open the live table to measure a rhythm",
+                      exc_info=True)
+            return None
+
+        mine = self.sources
+        if not mine:
+            # Nobody named this place's consoles, so every console in the
+            # table is its own -- which is exactly true of an installation
+            # with one series, and is already what this reader does for
+            # readings.
+            try:
+                mine = [row[0] for row in conn.execute(
+                    "SELECT DISTINCT source FROM packet WHERE dateTime > ?",
+                    (when - 6 * 3600,)).fetchall() if row[0]]
+            except Exception:
+                log.debug("could not list the consoles", exc_info=True)
+                return None
+
+        found = [one for one in
+                 (measured_rhythm(conn, name, when) for name in mine)
+                 if one]
+        return sum(found) / len(found) if found else None
+
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
         if conn is None:

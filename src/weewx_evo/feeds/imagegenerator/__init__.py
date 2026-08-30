@@ -78,7 +78,10 @@ class ImageGenerator:
                  titles: bool = True, twilight: bool = True,
                  rose_label: str = "",
                  language: Any = None,
-                 archives: dict | None = None) -> None:
+                 archives: dict | None = None,
+                 archive: str = "",
+                 places: dict | None = None,
+                 shown: tuple[str, ...] = ()) -> None:
         self.reader = reader
         self.plots = plots
         self.target = target or units.Target(unit_system)
@@ -115,6 +118,17 @@ class ImageGenerator:
         #: feed's whole life is a descriptor kept for the 99% of the time
         #: nothing is being drawn.
         self.archives = dict(archives or {})
+        #: Which archive `reader` is. A comparison chart's home line carries
+        #: a blank `series`, so without this it is the one line drawn out of
+        #: the positional palette while the others carry their place's
+        #: colour -- and one plot drawn two ways by two renderers is the
+        #: fault `chartdata` exists to prevent.
+        self.archive = str(archive or "")
+        #: What each place is called and drawn in, as `chartdata.Place`.
+        self.places = dict(places or {})
+        #: The places that get a directory of their own this run. Empty is
+        #: the flat layout, which is every single-series station.
+        self.shown = tuple(shown)
         #: Open only while `produce` runs.
         self._readers: dict = {}
 
@@ -125,8 +139,13 @@ class ImageGenerator:
         from ... import series as series_module
         from ...plots import series_named
 
-        with series_module.opened(self.archives,
-                                  series_named(self.plots)) as readers:
+        # Every archive a plot names, plus every place this run draws a
+        # directory for. Not the feed's own: `self.reader` is already open.
+        wanted = series_named(self.plots) | set(self.shown)
+        wanted.discard(self.archive)
+        with series_module.opened(self.archives, wanted) as readers:
+            if self.archive:
+                readers[self.archive] = self.reader
             self._readers = readers
             try:
                 return self._produce(into, now)
@@ -150,11 +169,46 @@ class ImageGenerator:
 
         generated = float(now if now is not None else time.time())
         files: list[Path] = []
-        for plot in self.plots:
+        if not self.shown:
+            # One archive, or a feed nobody told about places: today's path,
+            # every chart flat in one directory.
+            files += self._pass(into, generated, list(self.plots),
+                                self.reader, self.archive)
+        else:
+            # The same filing rule as the JSON feed, and it has to be the
+            # same: a chart naming places is one document wherever it is
+            # drawn, and a chart naming none is that place's own.
+            comparisons = [p for p in self.plots if p.names_a_place()]
+            own = [p for p in self.plots if not p.names_a_place()]
+            files += self._pass(into, generated, comparisons,
+                                self.reader, self.archive)
+            for name in self.shown:
+                source = (self.reader if name and name == self.archive
+                          else self._readers.get(name))
+                if source is None:
+                    log.info("no archive open for the place %r, so it gets "
+                             "no charts this run", name)
+                    continue
+                files += self._pass(into / name, generated, own, source, name)
+
+        note = (f"{self.written} chart(s) in "
+                f"{time.time() - started:.2f}s"
+                + (f", {self.skipped} with no data" if self.skipped else "")
+                + (f", {len(self.failed)} failed" if self.failed else ""))
+        log.info("%s", note)
+        return Produced(directory=into, files=files, note=note)
+
+    def _pass(self, into: Path, generated: float, plots: list,
+              reader: Reader, place: str) -> list[Path]:
+        """One directory of charts, drawn out of one archive."""
+        into.mkdir(parents=True, exist_ok=True)
+        files: list[Path] = []
+        for plot in plots:
             if self.spans and plot.span not in self.spans:
                 continue
             try:
-                image = self.build(plot, generated)
+                image = self.build(plot, generated, reader=reader,
+                                   place=place)
             except Exception as exc:
                 # One broken chart must not cost the other ninety-nine. A
                 # station with a sensor that stopped reporting should still
@@ -177,22 +231,31 @@ class ImageGenerator:
                 continue
             files.append(path)
             self.written += 1
+        return files
 
-        note = (f"{self.written} chart(s) in "
-                f"{time.time() - started:.2f}s"
-                + (f", {self.skipped} with no data" if self.skipped else "")
-                + (f", {len(self.failed)} failed" if self.failed else ""))
-        log.info("%s", note)
-        return Produced(directory=into, files=files, note=note)
+    def build(self, plot: Any, generated: float,
+              reader: Reader | None = None, place: str = "") -> Any:
+        """One chart as an image, or None if there is nothing in it.
 
-    def build(self, plot: Any, generated: float) -> Any:
-        """One chart as an image, or None if there is nothing in it."""
+        `reader` and `place` are which archive this pass is drawing for, and
+        default to the feed's own -- which is every station with one place.
+        """
+        source = reader or self.reader
+        # What the archive THIS pass reads holds. `self.unit_system` is the
+        # feed's own archive's, and a per-place pass is handed a different
+        # one: the north field's console may still be sending Fahrenheit
+        # while the home archive is metric, and converting its records out
+        # of the home archive's system is a silent thirty degrees on that
+        # place's own pages.
+        held = (self.unit_system if source is self.reader
+                else source.system)
         chart = chartdata.build(
-            plot, self.reader, generated, target=self.target,
-            unit_system=self.unit_system, extra_groups=self.extra_groups,
+            plot, source, generated, target=self.target,
+            unit_system=held, extra_groups=self.extra_groups,
             labels=self.labels, latitude=self.latitude,
             longitude=self.longitude, twilight=self.twilight,
-            readers=self._readers)
+            readers=self._readers, places=self.places,
+            place=place or self.archive)
         if chart is None or chart.empty:
             return None
         return self.draw(chart)
@@ -658,7 +721,10 @@ class ImageGenerator:
 def from_settings(settings: Any, reader: Reader, plots: PlotSet,
                   extra_groups: dict[str, str] | None = None,
                   prefix: str = "feeds.images",
-                  archives: dict | None = None) -> ImageGenerator:
+                  archives: dict | None = None,
+                  archive: str = "",
+                  places: dict | None = None,
+                  shown: tuple[str, ...] = ()) -> ImageGenerator:
     """Build the generator from the configuration.
 
     `prefix` names the configured feed, so two of them can be set up
@@ -706,6 +772,9 @@ def from_settings(settings: Any, reader: Reader, plots: PlotSet,
         rose_label=str(option("rose_label") or ""),
         language=spoken,
         archives=archives,
+        archive=archive,
+        places=places,
+        shown=shown,
     )
 
 

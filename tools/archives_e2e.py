@@ -498,27 +498,55 @@ def main() -> int:
 
 
 def _compare_feeds(south: Path, north: Path) -> None:
-    """What the two feeds wrote, and whether it is two different series."""
-    def series(folder: Path) -> dict:
-        for one in sorted(folder.rglob("*.json")):
+    """What the feeds wrote, and whether it really is two series.
+
+    The question has not changed and the place it is measured has. A chart
+    feed now writes one subdirectory per place, because a site of several
+    places draws each of them -- so both feeds legitimately hold both places,
+    and comparing "the first JSON in each folder" compares two copies of the
+    same manifest and calls agreement a fault.
+
+    Asked where it is still a question: within one feed's output, the two
+    place directories must hold different numbers. Identical numbers there
+    would mean one archive read twice under two names, which is the failure
+    this whole file exists to catch.
+    """
+    def numbers(folder: Path) -> dict[str, list]:
+        """Every chart in a directory, by name, as its list of values."""
+        out: dict[str, list] = {}
+        for one in sorted(folder.glob("*.json")):
+            if one.name == "index.json":
+                continue
             try:
                 loaded = json.loads(one.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            if isinstance(loaded, dict) and loaded:
-                return loaded
-        return {}
+            values = [v for entry in (loaded.get("series") or [])
+                      for v in (entry.get("values") or []) if v is not None]
+            if values:
+                out[one.name] = values
+        return out
 
-    s, n = series(south), series(north)
-    check("the south feed produced something", bool(s), True)
-    check("the north feed produced something", bool(n), True)
-    if s and n:
-        # Not a deep comparison of the numbers: what is being asked is
-        # whether the two feeds read two files. Identical output from two
-        # feeds pointed at two archives means one of them read the other's.
-        check("and the two are not the same document",
-              json.dumps(s, sort_keys=True) != json.dumps(n, sort_keys=True),
-              True)
+    check("the south feed produced something",
+          any(south.rglob("*.json")), True)
+    check("the north feed produced something",
+          any(north.rglob("*.json")), True)
+
+    for feed, where in (("sued", south), ("nord", north)):
+        mine = numbers(where / "default")
+        theirs = numbers(where / "nordfeld")
+        if not mine or not theirs:
+            # One place with no records yet is an ordinary state, not a
+            # fault -- and it is reported rather than passed over, because a
+            # check that quietly measures nothing is worse than none.
+            print(f"  -- {feed}: only one place has charts yet "
+                  f"({len(mine)} and {len(theirs)}); nothing to compare")
+            continue
+        shared = sorted(set(mine) & set(theirs))
+        check(f"{feed} drew both places", bool(shared), True)
+        differ = [name for name in shared if mine[name] != theirs[name]]
+        check(f"and {feed}'s two places hold different numbers",
+              bool(differ), True)
 
 
 def _live_per_site(work: Path) -> None:

@@ -3,10 +3,23 @@
 `grafana/` and `uploads/influx.py`. Dashboards for an installation with more
 than one console, generated out of what is already configured.
 
-A rendered page belongs to **one** archive. "All five locations on one axis"
-is the question that makes somebody install Grafana, and no template answers
-it however well it is written — not a shortcoming of Cheetah but of what a
-page is. Everything here exists for that question.
+A rendered **page** belongs to one place. A published **site** may carry
+several: [Deck](Deck) draws an overview of every place, a page for each of
+them, and comparison charts across all of them, and an FTP export puts the
+whole thing on a web host.
+
+That is a narrowing of what this page used to say, and it is worth being
+plain about. "All five locations on one axis" turned out to be answerable by
+a template after all -- the obstacle was never Cheetah, it was that a chart
+line could not name its own archive. It can (`series` in
+[plots.toml](Plots)), so it does.
+
+What is left for Grafana is the part that is still true, and it is the part
+worth having: **a question nobody wrote a chart for.** A published page can
+only answer what somebody defined in advance; Grafana answers what somebody
+thinks of at the time, over any span, with any filter left off. So the split
+stands, with a sharper edge: **Grafana is where questions are asked, Deck is
+what gets published.**
 
 ```
 weewx-evo ──influx upload──> InfluxDB <──reads── Grafana
@@ -39,6 +52,13 @@ out of each other's way ([roles](Stations-and-Archives)), so a record has no
 station and tagging one on would invent a fact. One upload per archive, each
 with its own `location`, all into the same bucket — which is what lets a
 single query draw all of them.
+
+That holds for the [forecast](Forecast#a-forecast-is-for-a-place) too: an
+upload sends the forecast of the series it is for and no other. Sending the
+whole store through one upload would not be a fuller picture — every point
+carries that upload's `location`, so a second place's hours land on the first
+place's tags at the same timestamps, and InfluxDB keeps whichever arrived
+last.
 
 **The units are set, not inherited.** InfluxDB stores numbers without meaning.
 Readings convert on the way out into the system named here, and changing it
@@ -205,11 +225,21 @@ every minute. A changed dashboard needs no restart; a new datasource does.
 program is that publishing needs nothing reachable: a feed writes files and an
 [export](Exports) puts them on a web host. Grafana cannot be uploaded.
 
-So the split is deliberate. **Grafana is the operator's cockpit; [Deck](Deck)
-is the published page.** An installation that wants dashboards on the open
+So the split is deliberate. **Grafana is where a question is asked; [Deck](Deck)
+is what gets published.** An installation that wants dashboards on the open
 internet puts Grafana behind a reverse proxy and uses its shared dashboards,
 which needs a domain and a certificate — the two things the rest of this
-program is built to avoid needing.
+program is built to avoid needing. An installation that wants its places
+compared *on its own website* configures a Deck feed to show them and points
+an export at it, which needs neither.
+
+**A comparison plot is left out of the per-location dashboards**, and that is
+not an omission. Every panel there is filtered to `${location}`, so a plot
+whose lines name their own archives would draw all of them out of the one
+location the reader picked: N identical curves under N different place names,
+which is a wrong picture rather than a missing one. The `compare` dashboard
+already asks that question the way the data can answer it — one reading,
+every location, from the tag, with the filter left off.
 
 Rendering panels to PNG through Grafana's render API and letting the FTP
 export carry them was considered and **decided against**: it needs a

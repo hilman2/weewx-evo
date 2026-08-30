@@ -26,6 +26,14 @@ Three things this buys over a broker:
     a minute rather than once per visitor. A hundred people watching a storm
     cost nothing.
 
+**One document, however many places the site stands in.** `live.php` takes no
+filename from the request by design, and one derived token per station means
+two documents on one host could not be told apart -- so a site showing several
+measurement series carries them all in one file: the home series at the top
+level, exactly where it always was, and the rest nested under `archives` with
+each slice declaring its own units, timestamp and name. `carry` is how they
+get here; `_document` is the shape.
+
 What it is not is push all the way to the browser. The page polls the file,
 so the readings are as fresh as the interval here -- ten seconds by default,
 which is thirty times better than an archive record and not the sub-second
@@ -37,11 +45,13 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from .. import units
-from ..exports.livepush import DATA_FILE, STALE_AFTER
+from ..exports.livepush import BUDGET, DATA_FILE, STALE_AFTER
 from . import BaseUpload, Posted, Rejected, request, when_options
 from .mqtt import NEVER, topic_name
 
@@ -51,6 +61,38 @@ log = logging.getLogger(__name__)
 #: How long `live.php` may keep answering 404 before it is taken to mean a
 #: wrong token rather than an export that has not run yet.
 NOT_YET = 3600.0
+
+
+@dataclass(frozen=True, slots=True)
+class Place:
+    """One measurement series this document carries, and how to read it.
+
+    Callables, not readers. This module has no business holding a database
+    handle -- the same rule `uploads.runner.Scheduled` states about
+    `records` -- and it is what lets a test hand this a lambda returning a
+    dict rather than a live table.
+
+    Built where the live table already is (`cli.with_station`), and handed
+    over with `WebPushUpload.carry`.
+    """
+
+    name: str
+    label: str
+    #: This place's newest live packet, or None. Called once per document,
+    #: so the slices are read microseconds apart -- which is exactly why
+    #: each one carries its own `dateTime` and why nothing about a place may
+    #: be inferred from the document's.
+    packet: Callable[[], dict | None]
+    code: str = ""
+    #: How often this place actually reports, in seconds, or None where it
+    #: cannot be measured. Not a setting, and not a second measurement:
+    #: `notify.rules.measured_rhythm` is the one implementation of this in
+    #: the tree, and what a caller binds here has to be that function. Two
+    #: medians over the same packets are two numbers disagreeing about one
+    #: console, and the one that is wrong is whichever the reader is looking
+    #: at. `_rhythm_of` refuses that function's un-measured answer rather
+    #: than publish a fixed figure as if it had been measured.
+    rhythm: Callable[[], float | None] | None = None
 
 
 class WebPushUpload(BaseUpload):
@@ -67,6 +109,14 @@ class WebPushUpload(BaseUpload):
     #: was not given its own. See `from_exports`.
     inferred = False
 
+    #: The measurement series this one document carries, in the order the
+    #: pages present them. Attached after construction with `carry` and
+    #: never through `settings`: `Schema.parse` keeps only what `options()`
+    #: declares, which is why `inferred` above has never once been True in a
+    #: running service. Empty on every single-place station, which is what
+    #: keeps the document byte for byte what it was.
+    carries_places: tuple[Place, ...] = ()
+
     def __init__(self, url: str = "", token: str = "",
                  directories: list | str | None = None,
                  unit_system: str = "", append_units: bool = True,
@@ -74,6 +124,9 @@ class WebPushUpload(BaseUpload):
                  catch_up: int = 0, timeout: int = 20,
                  _inferred: bool = False) -> None:
         self.inferred = bool(_inferred)
+        #: The places the size limit last pushed out, so the warning is said
+        #: once per change rather than six times a minute.
+        self._left_out: list[str] = []
         # Directories to write the same document into, for sites this machine
         # serves itself. No PHP and no request: the web server hands out
         # `live.json` like any other file, and the page reads it exactly as it
@@ -125,6 +178,18 @@ class WebPushUpload(BaseUpload):
 
     # -- shaping ---------------------------------------------------------
 
+    def _systems(self, record: dict) -> tuple[int, int]:
+        """What this record is in, and what it will be written in.
+
+        One expression rather than two, because `_slice` *declares* the
+        system `document()` converted to. Recomputed there they can drift,
+        and the drift is a page told it is reading Celsius while the numbers
+        are Fahrenheit -- which is the one fault `unit_system` exists to
+        make detectable.
+        """
+        stored = units.system_from(record.get("usUnits"), default=units.US)
+        return stored, (self.unit_system or stored)
+
     def document(self, record: dict) -> dict[str, object]:
         """The record as the names and values that go into the file.
 
@@ -132,8 +197,7 @@ class WebPushUpload(BaseUpload):
         reads `weather/loop` reads this, and switching a station from one to
         the other changes no template.
         """
-        stored = units.system_from(record.get("usUnits"), default=units.US)
-        wanted = self.unit_system or stored
+        stored, wanted = self._systems(record)
         shaped: dict[str, object] = {}
         for obs, value in record.items():
             if obs in NEVER or value is None:
@@ -151,11 +215,217 @@ class WebPushUpload(BaseUpload):
             shaped[topic_name(obs, target or unit, self.append_units)] = value
         return shaped
 
+    def carry(self, places: Sequence[Place]) -> None:
+        """The other series this one document is to carry.
+
+        A method rather than a constructor argument, because anything that
+        is not a declared `Option` is dropped on the way in: `build_upload`
+        runs the settings through `Schema.parse`, which keeps only what
+        `options()` names. `_inferred` is the proof -- it has a constructor
+        argument, and it has never once arrived.
+
+        One fact in one place: no separate boolean saying whether there are
+        any. A boolean and a tuple are two things that can disagree, and the
+        disagreement would be an `archives` key holding nothing.
+
+        Two things are settled here rather than at the writing end, because
+        this is where the list -- and its length -- is known.
+        """
+        # A name that is nothing but digits is refused before it can be
+        # written. `live.php` decodes the body into PHP, which has one array
+        # type: `{"archives":{"0":{...}}}` comes back out as
+        # `{"archives":[{...}]}` and then *every* place's lookup on the page
+        # finds nothing, not just that one's. `archives.why_not` refuses such
+        # a name on the settings page; `_read` does not, so a hand-edited
+        # `archives.toml` still reaches here. One place left out beats every
+        # place's live values going dead.
+        refused = [one.name for one in places if one.name.isdigit()]
+        if refused:
+            log.warning(
+                "%s cannot be carried in the live document: a place whose "
+                "name is only digits becomes a numeric key, which the web "
+                "host rewrites as a position. Rename it on the archives "
+                "page.", ", ".join(refused))
+        kept = [one for one in places if not one.name.isdigit()]
+        # Fewer than two places is a single-place site, and a single-place
+        # site's document has to stay byte for byte what it was: an
+        # `archives` key holding one slice that repeats the top level is
+        # exactly the change that rule forbids. The gate is here and not in
+        # `_document` so that `check()` and `status()` say the same thing.
+        self.carries_places = tuple(kept) if len(kept) > 1 else ()
+
+    def _slice(self, place: Place, record: dict) -> dict[str, object]:
+        """One place's readings, plus the three things naming them costs.
+
+        Through the same `document()` as the top level, deliberately: a
+        second shaping path is a second set of names, and the names are the
+        whole contract between this and the cards on the page.
+        """
+        shaped = self.document(record)
+        # Which units the numbers in THIS slice are in, by name. The key
+        # suffix carries it too (`outTemp_C`), but only while `append_units`
+        # is on -- so it is not something a page may rely on, and this is
+        # the field that lets one notice it is about to print 68.2 under a
+        # heading that says Celsius. That failure has shipped once, and no
+        # page could then detect it.
+        #
+        # Per slice and not per document because with no `Send in` set each
+        # place declares whatever its own console reports, and one console
+        # replaced while the other was not is the ordinary case here -- a
+        # single declaration would then be right about one of them. With
+        # `Send in` set every slice says the same thing, which costs a few
+        # bytes and keeps one rule for reading this.
+        #
+        # Lower case: `deck/tags.py:page_unit_system` writes `data-units`
+        # lower and `live-poll.js:unitsAgree` compares the two as strings.
+        # Upper case here made every slice look like a unit mismatch, so no
+        # value was written and every badge went red on a healthy site.
+        # `unitsAgree` now folds the case as well -- an agreement that holds
+        # only because both ends happen to spell it the same way breaks the
+        # next time either end is touched.
+        shaped["unit_system"] = units.name(self._systems(record)[1]).lower()
+        # Travelling with the slice, so a page rendered before somebody
+        # renamed a place can still name it.
+        shaped["label"] = place.label
+        if place.code:
+            shaped["code"] = place.code
+        every = self._rhythm_of(place)
+        if every:
+            # How often this place reports. Underscore-prefixed like
+            # `_received`: it is a fact about the transport rather than a
+            # reading, and the page matches cards on a name prefix -- a bare
+            # `every` would be found by a card for a column called `every`,
+            # which is a column somebody's driver is allowed to have.
+            shaped["_every"] = int(every)
+        return shaped
+
+    def _document(self, record: dict, *,
+                  places: bool = True) -> dict[str, object]:
+        """The whole document: the top level, then the places under it.
+
+        The top level is this upload's own series, shaped exactly as it was
+        before there were any others. A page published last year, a skin
+        from outside and `tools/deck_live_test.py` all keep working with no
+        branch in any of them.
+
+        That is also why the duplication below is worth its bytes -- this
+        series appears at the top *and* as a slice. A board row for the home
+        place carries `data-archive` like every other row, and a reader that
+        fell back to the top level for a named place would publish one
+        place's readings under another's heading the first time a slice was
+        missing: wrong, and it looks live.
+        """
+        document = self.document(record)
+        if not places or not self.carries_places:
+            # No key at all, not an empty one. Two reasons, both
+            # load-bearing: the single-place document stays byte for byte
+            # what it was, and PHP has one array type, so `{}` would come
+            # back out of `live.php` as `[]` and a page indexing it would
+            # find nothing where it expected a slice.
+            return document
+
+        archives: dict[str, object] = {}
+        # Measured as it is built, rather than assumed. `live.php` refuses a
+        # body over MAX_BODY with a 413, and a 413 six times a minute reads
+        # as "the upload is broken" -- so the writer stays under the limit
+        # instead of discovering it. Never a truncated slice and never a
+        # truncated document: half a JSON document is a parse error in every
+        # browser, and that is the fault nobody can reproduce.
+        #
+        # The 14 is `,"archives":{}`, the wrapper the slices go into. Each
+        # slice is then costed as `{"name":{...}}`, whose two braces pay for
+        # the comma that will separate it from the next one.
+        room = BUDGET - len(json.dumps(document, separators=(",", ":"))) - 14
+        left_out: list[str] = []
+        for place in self.carries_places:
+            packet = self._packet_of(place)
+            if not packet:
+                # A place that has never reported, or one whose consoles are
+                # not announced yet. No slice at all: the page then leaves
+                # that row alone, which is what a place added five minutes
+                # ago should look like. An empty slice would be `[]` after
+                # `live.php`, and a green badge over nothing.
+                continue
+            one = self._slice(place, packet)
+            cost = len(json.dumps({place.name: one}, separators=(",", ":")))
+            if cost > room:
+                left_out.append(place.name)
+                continue
+            archives[place.name] = one
+            room -= cost
+        if archives:
+            document["archives"] = archives
+        if left_out != self._left_out:
+            self._left_out = left_out
+            if left_out:
+                # Said once per change and not once per push: six times a
+                # minute for ever is a log nobody reads, which costs the
+                # lines that do matter. And the first few by name, not all
+                # of them -- seventy names on one line is the same problem
+                # in a different shape.
+                named = ", ".join(left_out[:6])
+                if len(left_out) > 6:
+                    named += f", and {len(left_out) - 6} more"
+                log.warning(
+                    "the live document is at its size limit; %s left out of "
+                    "it. Show fewer places on this site, or split it in two.",
+                    named)
+        return document
+
+    def _packet_of(self, place: Place) -> dict | None:
+        """That place's newest reading, or None if it cannot be had.
+
+        Wrapped, because the callable reaches a database. One place's table
+        being locked must not take the whole document down: the document is
+        keyed on the top-level place's clock, so a failure here would freeze
+        every other place's slice as well -- which is precisely the reading
+        the per-slice timestamp exists to prevent.
+        """
+        try:
+            return place.packet()
+        except Exception:
+            # Not `log.exception`: the traceback is the same one every ten
+            # seconds. The name is what somebody acts on.
+            log.warning("could not read the live readings for %r; its "
+                        "slice is left out of this document", place.name)
+            return None
+
+    def _rhythm_of(self, place: Place) -> float | None:
+        """How often that place reports, or None if nobody can say.
+
+        Guarded for the same reason as the packet, and separately from it:
+        a cadence that cannot be measured is a page falling back to the one
+        fixed freshness window, which is what every site had before this.
+        Losing the readings over it would be the worse trade by far.
+
+        There is one measurement of this in the tree,
+        `notify.rules.measured_rhythm`, and the callable a caller binds has
+        to end in it -- a second median over the same packets is two numbers
+        disagreeing about one console, and the disagreement is between a
+        badge on a page and a message in somebody's inbox.
+
+        `None` is the only "cannot say", and that is why this no longer
+        refuses `DEFAULT_RHYTHM`. It did, on the reasoning that a fixed 300
+        published as a measurement is indistinguishable from a real one --
+        true of the old function, which answered 300 where it could not
+        measure. It is also the commonest real answer there is: a console
+        reporting every five minutes measures exactly 300.0, and refusing it
+        threw away the cadence of most of the stations this exists for.
+        """
+        if not place.rhythm:
+            return None
+        try:
+            measured = place.rhythm()
+        except Exception:
+            log.warning("could not measure how often %r reports; its slice "
+                        "goes without a cadence", place.name)
+            return None
+        return None if measured is None else float(measured)
+
     # -- sending ---------------------------------------------------------
 
-    def _send(self, record: dict) -> int:
-        body = json.dumps(self.document(record),
-                          separators=(",", ":")).encode("utf-8")
+    def _send(self, document: dict[str, object]) -> int:
+        body = json.dumps(document, separators=(",", ":")).encode("utf-8")
         status, text = request(
             self.host, self.path, method="POST", body=body,
             headers={
@@ -192,20 +462,30 @@ class WebPushUpload(BaseUpload):
             raise Rejected(f"{self.host} answered {status}: {text[:120]}")
         return len(body)
 
-    def _body(self, record: dict) -> str:
+    def _body(self, document: dict[str, object]) -> str:
         """The document as it goes into the file, both ways round.
 
         The two fields `live.php` adds are added here too, so a page cannot
         tell the routes apart and needs no second way of reading this one.
+
+        The document is built once per push by the caller and handed to both
+        routes, so they carry the same places read at the same moment. Two
+        builds is two reads of every place's live table, and a `dateTime`
+        that differs between the file this machine serves and the file on the
+        web host is precisely the difference this method exists to deny.
+
+        Stamped on a copy: `live.php` writes its own `_received` from the
+        host's clock, and stamping the shared object would post this
+        machine's clock as the host's.
         """
         import time
 
-        document = self.document(record)
-        document["_received"] = int(time.time())
-        document["_stale_after"] = STALE_AFTER
-        return json.dumps(document, separators=(",", ":"))
+        stamped = dict(document)
+        stamped["_received"] = int(time.time())
+        stamped["_stale_after"] = STALE_AFTER
+        return json.dumps(stamped, separators=(",", ":"))
 
-    def _write(self, record: dict) -> list[str]:
+    def _write(self, document: dict[str, object]) -> list[str]:
         """The same document, into each directory this machine serves.
 
         Written beside and renamed: half a JSON document is a parse error in
@@ -215,7 +495,7 @@ class WebPushUpload(BaseUpload):
         One directory failing does not stop the others. A skin on a full disk
         must not take the live readings off the site next to it.
         """
-        body = self._body(record)
+        body = self._body(document)
         failures = []
         for one in self.directories:
             try:
@@ -234,8 +514,15 @@ class WebPushUpload(BaseUpload):
         record = records[-1]
         result.skipped = len(records) - 1
 
+        # Built once and handed to both routes. Every place's slice reaches a
+        # live table, so building it per route read each of them twice a push
+        # -- and, worse, the file this machine serves and the one on the web
+        # host would then hold packets read at two different moments, which
+        # is the one difference between the routes a page must never see.
+        document = self._document(record)
+
         if self.directories:
-            trouble = self._write(record)
+            trouble = self._write(document)
             for why in trouble:
                 result.failures.append((str(record.get("dateTime")), why))
             if len(trouble) < len(self.directories):
@@ -243,7 +530,7 @@ class WebPushUpload(BaseUpload):
 
         if self.url:
             try:
-                self._send(record)
+                self._send(document)
                 result.sent = 1
             except Rejected as exc:
                 if exc.permanent:
@@ -261,9 +548,16 @@ class WebPushUpload(BaseUpload):
         sample = {"dateTime": int(time.time()), "usUnits": units.METRICWX,
                   "outTemp": 0.0}
         said = []
+        # `places=False`, and built once for both routes. This answers "can
+        # I reach the destination", and a check that also queried four live
+        # tables would be slow, and would write a document mixing this
+        # made-up reading at the top with four real ones under it -- on the
+        # one button somebody presses to find out whether their host is
+        # reachable.
+        document = self._document(sample, places=False)
 
         if self.directories:
-            trouble = self._write(sample)
+            trouble = self._write(document)
             written = len(self.directories) - len(trouble)
             if written:
                 said.append(f"wrote {DATA_FILE} into "
@@ -273,7 +567,7 @@ class WebPushUpload(BaseUpload):
 
         if self.url:
             try:
-                self._send(sample)
+                self._send(document)
                 where = self.path.rsplit("/", 1)[0] or ""
                 said.append(f"{self.host}{self.path} accepted a reading; the "
                             f"page reads it back from {where}/{DATA_FILE}")
@@ -282,11 +576,27 @@ class WebPushUpload(BaseUpload):
             except Exception as exc:
                 said.append(f"could not reach {self.host}: {exc}")
 
+        if self.carries_places:
+            # Named, not read -- see the note on `places=False` above.
+            how_many = len(self.carries_places)
+            said.append(f"carries {how_many} "
+                        f"place{'' if how_many == 1 else 's'}: "
+                        + ", ".join(one.name
+                                    for one in self.carries_places[:6])
+                        + (" and more" if how_many > 6 else ""))
+
         return ". ".join(said) if said else "nothing is configured to send to."
 
     def status(self) -> dict:
+        # The places are in here because `cli._uploads_differ` compares
+        # exactly this dict to decide whether a running upload has to be
+        # rebuilt. Without them, a place added on the settings page reaches
+        # the live document only at the next restart -- the failure mode
+        # this project has written down twice, arriving in the one subsystem
+        # whose whole job is to say that something has stopped.
         return {"host": self.host, "path": self.path,
-                "directories": self.directories}
+                "directories": self.directories,
+                "places": [one.name for one in self.carries_places]}
 
     @staticmethod
     def from_exports(settings: object) -> tuple[str, str, list[str], str]:
@@ -307,6 +617,10 @@ class WebPushUpload(BaseUpload):
         meant. Posting to a second web host is a second connection over
         somebody else's network, and that is a decision -- so it wants a
         second upload with its own `url`.
+
+        Not the places. Which series the document carries is resolved once,
+        by the feed, and attached with `carry` -- see there for why nothing
+        that is not a declared `Option` can travel in through `settings`.
         """
         from ..exports.livepush import rendered_units, token_for, url_for
 

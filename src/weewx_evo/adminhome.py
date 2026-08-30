@@ -42,11 +42,12 @@ import html
 import logging
 import sqlite3
 import time
+from contextlib import closing
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import adminarchives
+from . import adminarchives, series, units
 from . import archives as archive_defs
 from . import config as config_file
 from . import stations as station_defs
@@ -323,32 +324,113 @@ def _last_from(path: Path, source: str) -> float | None:
         conn.close()
 
 
-def _archive_state(admin: Any, state: State) -> None:
-    register = adminarchives.load(admin)
+@dataclass
+class Series:
+    """One place, as every page that asks about places sees it.
+
+    One pass and one shape, because the overview and the archives page want
+    the same handful of numbers about the same file, and two implementations
+    of "how many records" is two chances for the two pages to print
+    different figures about it.
+    """
+
+    archive: Any                       # archives.Archive
+    path: Path
+    exists: bool = False
+    count: int = 0
+    newest: float | None = None
+    size: float = 0.0
+    #: "metricwx", "us", or empty where nothing has been recorded. A fact,
+    #: and the fact behind the failure that already shipped: 68.2 printed on
+    #: a page that said Celsius, and nothing anywhere said which unit the
+    #: file held. Read the way `series.Reader` reads it, from the oldest
+    #: record: a second answer to that question is how the page and the
+    #: charts come to disagree about the same file.
+    system: str = ""
+    history: list[int] = field(default_factory=list)
+    #: Set when the file cannot be read at all, as distinct from holding
+    #: nothing yet. "no records" is a fact about the weather station;
+    #: "no such table" is a fact about the file.
+    unreachable: str = ""
+
+
+def archives_state(admin: Any, register: Any = None) -> list[Series]:
+    """Every place, read once.
+
+    One read-only connection per place, opened and closed. Never kept on
+    `admin`: that object lives as long as the process, and a map of open
+    handles hanging off it is the same leak under a nicer name -- the one
+    the store had against the live table, one connection per answered
+    upload, until the watchdog was built to notice it.
+
+    `contextlib.closing` as well as `with`: the context manager on a
+    connection commits and leaves the connection *open*. And the close has
+    to be a `finally` rather than a line after the statements, because the
+    first statement raises on a file that exists with no `archive` table --
+    which is exactly the state a place is in between being added and its
+    first record, on a page somebody reloads after every save. One leaked
+    descriptor per reload per empty place.
+
+    `register` is passed in by a caller that already has one, so the archives
+    page does not read and parse `archives.toml` twice per request.
+    """
+    register = register if register is not None else adminarchives.load(admin)
+    found: list[Series] = []
     for one in register.all():
         path = _under(admin, one.file, "data/weewx.sdb")
-        if not path.exists():
-            state.archives.append(Link(
-                one.title, unreachable=f"no file at {path} yet",
-                href="./archives"))
+        row = Series(archive=one, path=path, exists=path.exists())
+        if not row.exists:
+            found.append(row)
             continue
         try:
-            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-            count, newest = conn.execute(
-                "SELECT count(*), max(dateTime) FROM archive").fetchone()
-            history = _hourly(conn, "archive")
-            conn.close()
-        except sqlite3.Error as exc:
-            state.archives.append(Link(one.title, unreachable=str(exc),
+            row.size = path.stat().st_size / 1e6
+        except OSError:
+            pass
+        try:
+            with closing(sqlite3.connect(f"file:{path}?mode=ro",
+                                         uri=True)) as conn:
+                row.count, row.newest = conn.execute(
+                    "SELECT count(*), max(dateTime) FROM archive").fetchone()
+                if row.count:
+                    # `series.Reader.system`, and not a query of this page's
+                    # own. Every renderer takes the system from the *oldest*
+                    # record, "which is what WeeWX's manager does"; reading
+                    # the newest one here made this page print `metricwx`
+                    # for a file every chart was converting as `us` -- on
+                    # the one database where the question is interesting,
+                    # which is the one whose station changed system.
+                    row.system = units.name(
+                        series.Reader(conn).system).lower()
+                row.history = _hourly(conn, "archive")
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            # Not just `sqlite3.Error`: SQLite is dynamically typed, so a
+            # `usUnits` holding 'US' raises out of `int()` here, and this
+            # function answers both the overview and the archives page --
+            # the two pages somebody would use to find that out.
+            row.unreachable = str(exc)
+        found.append(row)
+    return found
+
+
+def _archive_state(admin: Any, state: State) -> None:
+    register = adminarchives.load(admin)
+    for row in archives_state(admin, register):
+        one = row.archive
+        if not row.exists:
+            state.archives.append(Link(
+                one.title, unreachable=f"no file at {row.path} yet",
+                href="./archives"))
+            continue
+        if row.unreachable:
+            state.archives.append(Link(one.title, unreachable=row.unreachable,
                                        href="./archives"))
             continue
-        size = path.stat().st_size / 1e6
         state.archives.append(Link(
-            one.title, f"{count:,} records · {size:.1f} MB",
-            when=newest, href="./archives", history=history))
-        if newest and (state.newest_record is None
-                       or newest > state.newest_record):
-            state.newest_record = newest
+            one.title, f"{row.count:,} records · {row.size:.1f} MB",
+            when=row.newest, href="./archives", history=row.history))
+        if row.newest and (state.newest_record is None
+                           or row.newest > state.newest_record):
+            state.newest_record = row.newest
     state.concerns.extend(
         f"Archive {name!r}: {said}"
         for name, said in register.concerns().items())
@@ -591,10 +673,13 @@ def _forecast_state(admin: Any, state: State) -> None:
     configured = current.get("forecast") or {}
     if not configured:
         return
-    # Beside the archive rather than a setting of its own, which is where
-    # `cli.forecast_db` puts it.
-    path = _setting(admin, "archive_db",
-                    "data/weewx.sdb").parent / "forecast.sdb"
+    # Beside the archive rather than a setting of its own. Derived by the
+    # one function that owns the rule rather than by a fourth spelling of
+    # it: two of the earlier three stopped agreeing the day `archive_db`
+    # briefly became a per-place setting.
+    from .forecast import store_path
+
+    path = store_path(_setting(admin, "archive_db", "data/weewx.sdb"))
     if not path.exists():
         for name in sorted(configured):
             state.forecasts.append(Link(name, unreachable="not fetched yet",
@@ -605,26 +690,40 @@ def _forecast_state(admin: Any, state: State) -> None:
     except sqlite3.Error:
         return
     try:
+        # Which series there are, so a card can say which place a forecast
+        # is for -- and only where there is more than one, because naming it
+        # on a station that keeps one is a word that answers nothing.
+        try:
+            from . import adminarchives
+
+            places = [one.name for one in adminarchives.load(admin).all()]
+        except Exception:
+            log.debug("could not read the archives for the forecast card",
+                      exc_info=True)
+            places = []
+
         for name in sorted(configured):
-            # `run` is keyed on the provider, not on the name somebody gave
-            # this entry: [forecast.kirchdorf] with kind = "open-meteo" is
-            # stored under "open-meteo". Two entries against one provider
-            # therefore share a row, which is the store's business and not
-            # something to correct from here.
+            # Keyed on the entry's own name now, and on the series it is
+            # for. It used to be keyed on the *provider*, so two entries of
+            # one kind shared a row and this had to guess the row back from
+            # `kind or name`; the runner writes the entry name, so the guess
+            # is gone.
             settings = configured.get(name) or {}
-            provider = str(settings.get("kind") or name) if isinstance(
-                settings, dict) else name
+            archive = str((settings.get("archive") if isinstance(settings, dict)
+                           else "") or "default")
             row = conn.execute(
-                "SELECT fetched, hours, days FROM run WHERE source = ?",
-                (provider,)).fetchone()
+                "SELECT fetched, hours, days FROM run "
+                "WHERE archive = ? AND source = ?",
+                (archive, name)).fetchone()
+            where = f" for {archive}" if len(places) > 1 else ""
             if row is None:
                 state.forecasts.append(Link(
-                    name, unreachable="configured, not fetched yet",
+                    name, unreachable=f"configured{where}, not fetched yet",
                     href=f"./forecast:{name}"))
                 continue
             fetched, hours, days = row
             state.forecasts.append(Link(
-                name, f"{hours or 0} hours, {days or 0} days",
+                name, f"{hours or 0} hours, {days or 0} days{where}",
                 when=fetched, href=f"./forecast:{name}"))
     except sqlite3.Error:
         log.exception("could not read the forecast state")
@@ -742,6 +841,22 @@ def read(admin: Any) -> State:
 # -- the page ----------------------------------------------------------
 
 
+def _places_called(admin: Any) -> str:
+    """What the places page is called, so the link says where it goes.
+
+    It said "Archives", which is a word the settings no longer use anywhere
+    -- and on a single-place installation the page it opens is not called
+    that either.
+    """
+    try:
+        from . import adminarchives
+
+        return adminarchives.title_for(admin)
+    except Exception:
+        log.debug("could not name the places page", exc_info=True)
+        return "Places"
+
+
 def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if active == "overview" else ""
     state = read(admin)
@@ -823,21 +938,23 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     return f'''
 <h2>Overview</h2>
 {problem}{said}{trouble}
-<p class="lede">Readings move left to right. A step that is old while the one
-   before it is fresh is the one that stopped.</p>
+<p class="lede">Readings move down this page in the order they travel: in
+   from a console, held for a day, kept for good, built into pages, sent
+   out. A card that is old while the one above it is fresh is the step that
+   stopped.</p>
 <div class="cards">
-{_card("Arriving", state.stations,
-       "No station announced yet.",
-       '<a href="./new-station">Add a station</a>')}
-{_card("Held", live, "No live table here.")}
-{_card("Archived", state.archives, "No archive.",
-       '<a href="./archives">Archives</a>')}
-{_card("Produced", state.feeds,
+{_card("Consoles sending", state.stations,
+       "No console announced yet.",
+       '<a href="./new-station">Add a console</a>')}
+{_card("Held for today", live, "No live table here.")}
+{_card("Kept for good", state.archives, "Nothing kept yet.",
+       f'<a href="./archives">{html.escape(_places_called(admin))}</a>')}
+{_card("Pages built", state.feeds,
        "No feed is configured, so nothing is being written.",
        '<a href="./new-feed">Add a feed</a>')}
-{_card("Sent", state.exports, "No export is configured.",
+{_card("Sent out", state.exports, "No export is configured.",
        '<a href="./new-export">Add an export</a>')}
-{_card("Posted", state.uploads, "No upload is configured.",
+{_card("Posted to a service", state.uploads, "No upload is configured.",
        '<a href="./new-upload">Add an upload</a>')}
 {_card("Forecast", state.forecasts, "No forecast is configured.",
        '<a href="./new-forecast">Add a forecast</a>')}

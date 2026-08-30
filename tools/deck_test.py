@@ -170,7 +170,7 @@ def with_forecast(database: Path, into: Path, language: str = "de") -> tuple:
                           description="Sturmboeen um 70 km/h.",
                           instruction="Achten Sie auf herabfallende Aeste.",
                           area="Landkreis Freising", source="open-meteo",
-                          kind="wind")]), fetched=now)
+                          kind="wind")]), fetched=now, archive="default")
 
     pages = into / "pages"
     conn = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)

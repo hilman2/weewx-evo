@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from ... import language as language_module
+from ... import series as series_module
 from ... import units, weewxconf
 from ...options import Group, Option
 from ...series import Reader
@@ -119,6 +120,9 @@ class CheetahFeed:
         #: averages says the same thing at ten past as at ten o'clock.
         self.stale_ok = stale_ok
         self.rendered = 0
+        #: Every pass together, for the one line the runner logs. `rendered`
+        #: stays per pass, because `_scope` resets it and the sweep reads it.
+        self.rendered_all = 0
         self.skipped = 0
         self.failed: list[tuple[str, str]] = []
         #: Which "SummaryBy" files exist, for `$SummaryByMonth` in a template.
@@ -136,24 +140,200 @@ class CheetahFeed:
         #: and cleared at the start of the next, so an edit is picked up
         #: without stat-ing the whole skin forty times per run.
         self._skin_mtime: float | None = None
+        #: Which series this feed reads, by name. `$archives.<name>` for
+        #: this one hands back `self.tags` rather than a second connection
+        #: to the file already open.
+        self.archive: str = ""
+        #: Every place this feed shows, in the order pages present them.
+        #: One dict each: name, label, code, colour, url, its own settings,
+        #: its file, and -- filled by `_bind` at the top of a run -- its
+        #: reader, its Tags and the span its own archive covers.
+        #:
+        #: A plain dict and not a dataclass, because a template walks it and
+        #: Cheetah's NameMapper tries `obj[name]` before the attribute:
+        #: anything mapping-shaped has to *be* a mapping. That is the trap
+        #: that made `$obs.label` hand back the string "label".
+        #:
+        #: Empty on every installation with one series, and that is the gate
+        #: everything else hangs off: no site pass, no subdirectory, no new
+        #: tag with anything in it.
+        self.places: list[dict[str, Any]] = []
+        #: Which pass is being rendered: "place" or "site".
+        self.scope = "place"
+        #: The roster entry of the place being rendered, or None on a site
+        #: page. Set by `_scope` and read by `_search_list`.
+        self.here: dict[str, Any] | None = None
+        #: What the pass being rendered covers. Read instead of
+        #: `self.reader.span()` so that one place's empty archive does not
+        #: decide another place's pages.
+        self.span: tuple[int, int] | None = None
+        #: Every Tags this run built, so the skin's words reach all of them
+        #: and one report covers the page.
+        self.every_tags: list[Tags] = [tags]
+        #: What each pass wrote and how it went, for a sweep that consults
+        #: its own failures rather than somebody else's.
+        self.passes: list[tuple[str, Path, list[Path], list]] = []
+        #: What the site is called, when it is more than one place. Empty
+        #: means the installation's own `station.name` -- which is not
+        #: `$station.location` on a site page, because under `Placed` that
+        #: is the *default place's* label, and an overview headed
+        #: "Kirchdorf" listing four places is the forty-months lie again.
+        self.site_title = ""
+        #: Which of the skin's pages each place gets. Empty means all of
+        #: them, which is what one place has always had.
+        self.place_pages: tuple[str, ...] = ()
+        #: How many places the sidebar shows before it folds them away.
+        self.places_fold = 6
+        #: Which places this instance was told to show, in that order. Empty
+        #: means every one it was handed.
+        self.shown: tuple[str, ...] = ()
+        #: Whether the *installation* keeps more than one series, as opposed
+        #: to how many this feed shows. They are different questions and the
+        #: chart files answer the first one: the JSON feed writes a
+        #: subdirectory per place whenever the registry has several, and it
+        #: has no way of knowing that a skin was narrowed to one of them.
+        #:
+        #: Narrowed without this, a Deck showing one place of two looked for
+        #: the flat manifest, found one listing no plots, and rendered every
+        #: chart grid empty -- with no message, because the file was there.
+        self.many_series = False
+        #: The forecast store, when this station keeps one. Opened once for
+        #: the feed and shared by every place: the rows name the series they
+        #: are for, so one file answers all of them.
+        self.forecast_store: Any = None
+        #: What building another place's tags needs. Kept rather than closed
+        #: over, because they are built *after* the skin's configuration has
+        #: been read, and that happens in `produce`.
+        self._settings: Any = None
+        self._spoken: Any = None
+        self._plots: Any = ()
+        self._extra_groups: dict[str, str] = {}
+
+    def narrow(self) -> None:
+        """Keep only the places this instance was told to show.
+
+        In the operator's order, and this feed's own place first whatever
+        they said: a site whose overview links to places but not to the one
+        its own pages are built from would publish an archive nothing on it
+        can reach. Put first and kept rather than refused, because a
+        hand-edited file has to stay fixable from the page it is edited on.
+
+        A name that is not a place is dropped and said once. Silently
+        keeping it would mean a directory nothing writes and a link that
+        404s on somebody else's web host.
+        """
+        # Remembered before the list is cut: what the chart feed did is
+        # decided by the registry, not by this skin's own narrowing.
+        self.many_series = self.many_series or len(self.places) > 1
+        if not self.shown or not self.places:
+            return
+        by_name = {one["name"]: one for one in self.places}
+        unknown = [name for name in self.shown if name not in by_name]
+        if unknown:
+            log.warning("%s is set to show %s, which %s not a series here; "
+                        "left out", self.skin.name, ", ".join(unknown),
+                        "are" if len(unknown) > 1 else "is")
+        picked = [by_name[name] for name in self.shown if name in by_name]
+        home = by_name.get(self.archive)
+        if home is not None:
+            if home in picked:
+                picked.remove(home)
+            picked.insert(0, home)
+        self.places = picked
+
+    @property
+    def several(self) -> bool:
+        """Whether this feed shows more than one place.
+
+        The gate for every difference in this file, and it is *how many this
+        feed renders* rather than `Register.several()`. A one-entry
+        `archives.toml` is `overriding()` -- the settings page correctly says
+        `station.*` has moved -- and is not several, and that is the case
+        nothing would otherwise be tested at.
+        """
+        return len(self.places) > 1
+
+    @property
+    def archive_files(self) -> dict[str, Path]:
+        return {one["name"]: one["file"] for one in self.places}
 
     # -- the feed ---------------------------------------------------------
 
     def produce(self, into: Path, now: float | None = None) -> Produced:
+        """Every place this feed shows, one pass each, into one directory.
+
+        A loop around what this already did. The alternative -- one whole
+        `CheetahFeed` per place -- shares nothing, *including* the things
+        that have to be shared: the skin's configuration, the moment the run
+        is for, the one scan of the skin's timestamps and the tally of
+        unanswered tags. Each of those would then have to be handed back one
+        at a time, which is more places to get it wrong rather than fewer.
+        One instance shares everything by default and has to name what
+        resets, and that list is short: it is exactly what this function
+        resets today, and it lives in `_scope` where it reads in one screen.
+
+        With one place there is one pass, into the directory it was given,
+        and nothing below behaves differently.
+        """
         started = time.time()
         into = Path(into)
         into.mkdir(parents=True, exist_ok=True)
-        self.rendered = self.skipped = 0
-        self.failed = []
-        # Asked again this run: a template edited between two runs has to
-        # be seen, and stat-ing the skin once per run is the price.
+        # Asked again this run, and once for the run rather than once per
+        # place: a forty-page skin already stats its own directory once, and
+        # three places must not make that three.
         self._skin_mtime = None
-        self.summaries = {name: [] for name in SUMMARIES}
+        self.passes = []
+        self.rendered_all = 0
 
         conf = self._skin_conf()
         if conf is None:
             return Produced(directory=into,
                             note=f"no skin.conf in {self.skin}")
+
+        # Every other place, open for the length of this run and closed by
+        # the context manager on the way out.
+        #
+        # `$archives.<name>` used to open a connection on demand and never
+        # close it, and the runner rebuilds this feed every pass -- four
+        # places at five minutes is about eleven hundred descriptors a day.
+        # That is the shape of the incident that took an instance down at
+        # 477 of them, and it surfaces as a feed unable to read plots.toml,
+        # nowhere near the leak.
+        wanted = {one["name"] for one in self.places
+                  if one["name"] != self.archive}
+        with series_module.opened(self.archive_files, wanted=wanted) as opened:
+            # This feed's own is already open, on the runner's thread and for
+            # this pass. `series.opened` never sees it, so nothing here closes
+            # a connection the runner still owns.
+            if self.archive:
+                opened[self.archive] = self.reader
+            files = self._run(conf, into, opened)
+
+        swept = self._sweep_all() + self._orphans(into)
+
+        note = (f"{self.rendered_all} page(s) in {time.time() - started:.2f}s"
+                + (f", {self.skipped} still fresh" if self.skipped else "")
+                + (f", {len(self.failed)} failed" if self.failed else "")
+                + (f", {swept} removed" if swept else ""))
+        if self.several:
+            note += f"; {len(self.passes)} pass(es)"
+        # Every series the run touched, not just this one. A page built out
+        # of another place put all of its unanswered tags in that place's own
+        # tally, where nothing ever printed them -- so an overview naming a
+        # reading no station records looked perfect.
+        count, unanswered = self.report()
+        if count:
+            # The whole reason this is worth building rather than guessing at:
+            # a list of what a skin asked for and did not get.
+            log.warning("%s: %s", self.skin.name, unanswered)
+            note += f"; {count} tag(s) unanswered"
+        log.info("%s: %s", self.skin.name, note)
+        return Produced(directory=into, files=files, note=note)
+
+    def _run(self, conf: dict[str, Any], into: Path,
+             readers: dict[str, Any]) -> list[Path]:
+        """The passes, in order, with every reader already open."""
+        self._bind(readers)
 
         # The skin's own words and units first, its own code second. The
         # other way round, an extension is handed a formatter that has not
@@ -162,33 +342,299 @@ class CheetahFeed:
         # captioned in Fahrenheit on a page that says Celsius everywhere
         # else, with nothing anywhere saying why.
         self._extras(conf)
-        self.contributed = self._extensions(conf)
 
         files: list[Path] = []
-        section = conf.get("CheetahGenerator") or conf.get("FileGenerator")
-        if isinstance(section, dict):
-            files += self._generate(section, "", into, conf)
-        else:
-            log.warning("%s has no [CheetahGenerator]; nothing to render",
-                        self.skin)
+        if self.several:
+            # The pages about the site rather than about one place, at the
+            # root. Rendered through this feed's own place, which is the one
+            # it reads; an overview reaches the others by name.
+            files += self._scope(conf, "site", into, self._home())
+        for place in self.places or [self._home()]:
+            files += self._scope(
+                conf, "place",
+                into / place["name"] if self.several else into, place)
 
         if self.copy_static:
+            # Once, at the root. Eight copies of a charting library is eight
+            # megabytes up the FTP link every time an asset changes.
             files += self._copy(conf, into)
+        return files
 
-        swept = self._sweep(into, files)
+    # -- the places -------------------------------------------------------
 
-        note = (f"{self.rendered} page(s) in {time.time() - started:.2f}s"
-                + (f", {self.skipped} still fresh" if self.skipped else "")
-                + (f", {len(self.failed)} failed" if self.failed else "")
-                + (f", {swept} removed" if swept else ""))
-        missing = self.tags.report()
-        if self.tags.missing:
-            # The whole reason this is worth building rather than guessing at:
-            # a list of what a skin asked for and did not get.
-            log.warning("%s: %s", self.skin.name, missing)
-            note += f"; {len(self.tags.missing)} tag(s) unanswered"
-        log.info("%s: %s", self.skin.name, note)
-        return Produced(directory=into, files=files, note=note)
+    def _language(self) -> Any:
+        """The language this feed renders in, for a second place's forecast."""
+        return self._spoken
+
+    def _home(self) -> dict[str, Any]:
+        """This feed's own place, or a stand-in where it shows only one."""
+        for one in self.places:
+            if one["name"] == self.archive:
+                return one
+        return {"name": self.archive, "label": "", "code": "", "color": "",
+                "url": "", "settings": self._settings, "file": None,
+                "reader": self.reader, "tags": self.tags,
+                "covers": self.reader.span(), "has_data": True,
+                "path": "", "here": False}
+
+    def _bind(self, readers: dict[str, Any]) -> None:
+        """Give every place its reader, its tags and its span, before a page.
+
+        Before, because two things need it and both are per page: the place
+        switcher on `month-2026-05.html` has to know which places *have* a
+        May 2026 before it writes a link into a directory this run may never
+        create, and a place with no records at all must not get one.
+        """
+        home = None
+        for one in self.places:
+            one["reader"] = readers.get(one["name"])
+            one["covers"] = one["reader"].span() if one["reader"] else None
+            one["has_data"] = one["covers"] is not None
+            if one["name"] == self.archive:
+                home = one
+
+        # One moment for every place. Without it "today" is a different
+        # calendar day per place the moment one console is behind, and an
+        # overview compares Tuesday with Wednesday in adjacent columns.
+        #
+        # At one place this is that reader's own last record, which is
+        # exactly what `Tags.__init__` works out for itself -- so a
+        # single-place page is unchanged to the second.
+        seen = [one["covers"][1] for one in self.places if one["covers"]]
+        when = max(seen) if seen else self.tags.when
+
+        for one in self.places:
+            if one is home:
+                # The feed's own place keeps the tags it was built with. The
+                # runner builds this feed with that place's settings already
+                # wrapped in `archives.Placed`, so they are the same object
+                # this loop would make -- and it has to be the *same* one,
+                # because `_extras` configures it and every other place
+                # shares its dictionaries by reference.
+                one["tags"] = self.tags
+            elif one["reader"] is None:
+                # Stays None, and is not given somebody else's tags. Handing
+                # back another place's readings under this place's heading is
+                # the exact failure archives exist to prevent, and an empty
+                # Tags cannot be built without a connection to nothing. Every
+                # reader guards on `has_data`; `$archives.<that name>` records
+                # a named miss and answers `Unknown`, as it does today.
+                one["tags"] = None
+            else:
+                one["tags"] = _tags_for(
+                    one["settings"] or self._settings, one["reader"],
+                    plots=self._plots, extra_groups=self._extra_groups,
+                    when=when, like=self.tags)
+                # Its own forecast, out of the one file, keyed on its own
+                # name. Sharing the store rather than opening a second: the
+                # rows are what separate the places, not the file.
+                if self.forecast_store is not None:
+                    _install_forecast(one["tags"], one["settings"],
+                                      self._language(), archive=one["name"],
+                                      store=self.forecast_store)
+        self.tags.when = when
+
+        by_name = {one["name"]: one["tags"] for one in self.places
+                   if one["tags"] is not None}
+        for one in by_name.values():
+            # `$archives.<name>` is now a lookup into readers this run opened
+            # and this run closes, not an opener. That is the whole of the
+            # leak fix -- and it makes `$archives.<this place>` the *same*
+            # object `$day` comes out of, so the two cannot disagree.
+            one.open_archive = by_name.get
+            one.archive_names = tuple(by_name)
+            # One tally for the run.
+            one.missing = self.tags.missing
+        self.every_tags = list(dict.fromkeys(
+            [self.tags, *by_name.values()]))
+
+    def _scope(self, conf: dict[str, Any], scope: str, into: Path,
+               place: dict[str, Any]) -> list[Path]:
+        """One pass over the generator tree, for one place or for the site.
+
+        Everything a run counts is reset here and nowhere else, and the
+        reason is the forty-months bug in its other shape. There, a span was
+        bound above the pages that varied it, so forty archived months all
+        printed August under correct headings. A place bound above the pass
+        that varies it has the identical shape and the identical symptom: it
+        renders, it is plausible, and nothing on the page can tell.
+
+        `summaries` is not bookkeeping either: it is the month list a
+        template loops over to build its own archive menu, so a place that
+        leaks it publishes its neighbour's months as its own.
+        """
+        if place["tags"] is None:
+            log.info("%s: %s has no records yet, so no pages for it",
+                     self.skin.name, place["name"])
+            return []
+        self.scope = scope
+        self.here = place
+        self.tags = place["tags"]
+        self.reader = place["reader"]
+        self.span = place["covers"]
+        self.rendered = self.skipped = 0
+        self.failed = []
+        self.summaries = {name: [] for name in SUMMARIES}
+        # Rebuilt per pass, not once per run. A skin's extensions capture the
+        # reader and the tags when they are constructed, and Deck's rain tags
+        # walk the whole archive there for the last rain and the longest dry
+        # spell. Built once, every place's pages print the home place's rain.
+        self.contributed = self._extensions(conf)
+
+        into.mkdir(parents=True, exist_ok=True)
+        made: list[Path] = []
+        section = conf.get("CheetahGenerator") or conf.get("FileGenerator")
+        if isinstance(section, dict):
+            made += self._generate(section, "", into, conf)
+        elif scope == "place":
+            log.warning("%s has no [CheetahGenerator]; nothing to render",
+                        self.skin)
+        self.rendered_all += self.rendered
+        self.passes.append((scope if scope == "site" else place["name"],
+                            into, made, list(self.failed)))
+        return made
+
+    def _sweep_all(self) -> int:
+        """Each pass sweeps its own directory, on its own failures.
+
+        One broken template anywhere used to sweep nothing anywhere. With
+        places that means one bad page at one site leaving every stale page
+        at every other -- and the site that broke is the one nobody is
+        looking at.
+        """
+        removed = 0
+        for _label, where, made, failed in self.passes:
+            removed += self._sweep(where, made, failed)
+        return removed
+
+    def _orphans(self, into: Path) -> int:
+        """A place this feed no longer shows keeps publishing until told.
+
+        The same charter as `_sweep`, one level down: `.html` only, `NOAA/`
+        and `day-archive/` left alone, the directory removed only when it
+        ends up empty, and every removal named.
+
+        Only for a name that *is* a place -- one this run was handed and did
+        not render, which is what unticking a place on the settings page
+        produces. Never for an arbitrary directory at the root: guessing that
+        an unknown one used to be a place is how a feed deletes somebody's
+        photographs.
+
+        The limit that follows is real and is worth writing down: a place
+        deleted from `archives.toml` outright is no longer a name this feed
+        is handed, so its directory stays. The Archives page says so when it
+        removes one; this cannot, because by then there is nothing left to
+        recognise it by.
+        """
+        if not self.several or any(failed for *_rest, failed in self.passes):
+            return 0
+        written = {where.name for _label, where, _made, _failed in self.passes}
+        removed = 0
+        for one in self.places:
+            if one["name"] in written:
+                continue
+            where = into / one["name"]
+            if not where.is_dir():
+                continue
+            gone = []
+            for path in where.glob("*.html"):
+                try:
+                    path.unlink()
+                    gone.append(path.name)
+                except OSError as exc:
+                    log.warning("could not remove %s: %s", path, exc)
+            if gone:
+                log.info("%s: %s is no longer shown; removed %d page(s)",
+                         self.skin.name, one["name"], len(gone))
+                removed += len(gone)
+            try:
+                where.rmdir()
+            except OSError:
+                # Something else is in there -- NOAA reports, a person's own
+                # file. Left alone, on purpose.
+                pass
+        return removed
+
+    # -- the other series -------------------------------------------------
+
+    def _reach(self, readers: dict[str, Any]) -> None:
+        """Give every series' tags to every series' tags.
+
+        Three things are shared on purpose, and each of them was wrong
+        before:
+
+        - **The skin's configuration.** `_extras` and `_units` had run over
+          this feed's own tags alone, so `$archives.x.day.outTemp.max` beside
+          `$day.outTemp.max` came out of a different `Target`: different
+          decimals, different unit, different language, on one line of one
+          table, with every number correct.
+        - **The moment.** Each series defaulted `when` to its *own* last
+          record, so with one console an hour behind, "today" was Tuesday in
+          one column and Wednesday in the next.
+        - **The tally.** One list, so one report covers the page.
+
+        Sharing the objects rather than copying them is what makes the first
+        of those true for good: `_extras` runs once, over `self.tags`, and
+        every series is looking at the same dictionaries.
+        """
+        if not self.places:
+            return
+        built: dict[str, Any] = {self.archive: self.tags}
+        for name, (_where, placed) in sorted(self.places.items()):
+            if name in built:
+                continue
+            reader = readers.get(name)
+            if reader is None:
+                # Configured but not written yet, which is the ordinary
+                # state of a place somebody added five minutes ago. Left
+                # out, so `$archives.<name>` reports it as unanswered.
+                continue
+            built[name] = _tags_for(placed or self._settings, reader,
+                                    plots=self._plots,
+                                    extra_groups=self._extra_groups,
+                                    like=self.tags)
+        # The run's moment: the newest record anywhere. At one series this
+        # is that reader's own last record, which is what it already was.
+        latest = [one.when for one in built.values()]
+        when = max(latest) if latest else self.tags.when
+        names = tuple(sorted(built))
+        for one in built.values():
+            one.when = when
+            one.open_archive = built.get
+            one.archive_names = names
+
+    def report(self) -> tuple[int, str]:
+        """How many tags went unanswered across every series, and which.
+
+        Worded exactly as `Tags.report`, and at one series it *is*
+        `Tags.report` -- a page's log line must not change because the code
+        behind it learned to count a second place.
+        """
+        asked = 0
+        seen: dict[str, int] = {}
+        counted: set[int] = set()
+        for one in self._every_tags():
+            asked += one.asked
+            # By identity: `_bind` gives every place the *same* dict, so
+            # adding each up would multiply every miss by the number of
+            # places and report four hundred unanswered tags on a page that
+            # had a hundred.
+            if id(one.missing) in counted:
+                continue
+            counted.add(id(one.missing))
+            for tag, count in one.missing.items():
+                seen[tag] = seen.get(tag, 0) + count
+        if not seen:
+            return (0, f"{asked} tag(s), all answered")
+        worst = sorted(seen.items(), key=lambda kv: -kv[1])
+        named = ", ".join(f"{name} ({count})" for name, count in worst[:8])
+        more = "" if len(worst) <= 8 else f", and {len(worst) - 8} more"
+        said = f"{asked} tag(s), {len(seen)} not answered: {named}{more}"
+        return (len(seen), said)
+
+    def _every_tags(self) -> list[Tags]:
+        """Every tag layer this run built, this feed's own first."""
+        return self.every_tags or [self.tags]
 
     # -- reading the skin -------------------------------------------------
 
@@ -237,26 +683,38 @@ class CheetahFeed:
         are what things are called. All of it belongs to the skin, in the
         skin's language.
         """
+        # Every place, not just this feed's own. Otherwise a page prints one
+        # place's numbers with another place's words -- and only the words
+        # would be wrong, which is the sort of thing that survives a review.
+        # `_tags_for` shares the dictionaries, so in the ordinary case these
+        # loops write the same object several times and cost nothing.
+        every = self._every_tags()
         labels = conf.get("Labels")
         if isinstance(labels, dict):
             generic = labels.get("Generic")
             source = generic if isinstance(generic, dict) else labels
-            self.tags.labels.update({k: str(v) for k, v in source.items()
-                                     if isinstance(v, str)})
+            words = {k: str(v) for k, v in source.items()
+                     if isinstance(v, str)}
+            for tags in every:
+                tags.labels.update(words)
         almanac = conf.get("Almanac")
         if isinstance(almanac, dict) and almanac.get("moon_phases"):
             phases = almanac["moon_phases"]
-            self.tags.moon_phases = tuple(phases if isinstance(phases, list)
-                                          else [phases])
+            named = tuple(phases if isinstance(phases, list) else [phases])
+            for tags in every:
+                tags.moon_phases = named
         texts = conf.get("Texts")
         if isinstance(texts, dict):
-            self.tags.text.update({k: str(v) for k, v in texts.items()
-                                   if isinstance(v, str)})
+            said = {k: str(v) for k, v in texts.items()
+                    if isinstance(v, str)}
+            for tags in every:
+                tags.text.update(said)
         for name, into in (("Extras", "extras"),
                            ("DisplayOptions", "display")):
             found = conf.get(name)
             if isinstance(found, dict):
-                getattr(self.tags, into).update(found)
+                for tags in every:
+                    getattr(tags, into).update(found)
         # What the operator set on the skin's own page, over what the skin
         # says itself. A skin of ours declares those as `Option`s; one from
         # outside declares none and this does nothing.
@@ -264,7 +722,8 @@ class CheetahFeed:
             block = conf.setdefault("DisplayOptions", {})
             if isinstance(block, dict):
                 block.update(self.display)
-            self.tags.display.update(self.display)
+            for tags in every:
+                tags.display.update(self.display)
         # The broker, from the upload that already knows it. Before the
         # operator's own settings below, so anything they said by hand still
         # wins -- see `_broker_extras`.
@@ -272,7 +731,8 @@ class CheetahFeed:
             self._broker_extras(conf)
         # The operator's own, last: they are the reason this setting exists.
         if self.extras:
-            self.tags.extras.update(self.extras)
+            for tags in every:
+                tags.extras.update(self.extras)
             block = conf.setdefault("Extras", {})
             if isinstance(block, dict):
                 block.update(self.extras)
@@ -281,7 +741,8 @@ class CheetahFeed:
             self._units(block)
         language = conf.get("lang") or conf.get("Language")
         if isinstance(language, str):
-            self.tags.language = language
+            for tags in every:
+                tags.language = language
         # Whatever the skin wrote at the top of its own file, `$SKIN_NAME`
         # and `$SKIN_VERSION` among them. A page prints them in its footer,
         # and only the skin knows what they say.
@@ -317,7 +778,7 @@ class CheetahFeed:
         # somebody downloaded.
         if any(not name.startswith("weewx_evo.") for name in wanted):
             skinkit.install_weewx_names()
-        span = self.reader.span()
+        span = self.span or self.reader.span()
         timespan = (skinkit.TimeSpan(span[0], span[1]) if span
                     else skinkit.TimeSpan(0, 0))
         generator = skinkit.Generator(conf, {}, self.reader,
@@ -515,8 +976,12 @@ class CheetahFeed:
                 # two are eighteen degrees apart.
                 if isinstance(said, (list, tuple)) and len(said) >= 2:
                     try:
-                        self.tags.degree_day_bases[reading] = (
-                            float(said[0]), str(said[1]))
+                        # On every place: `target` is one shared object for
+                        # the run, so its overrides and formats are applied
+                        # once above, but these are read off each Tags.
+                        for tags in self._every_tags():
+                            tags.degree_day_bases[reading] = (
+                                float(said[0]), str(said[1]))
                     except (TypeError, ValueError):
                         log.warning("%s: %s = %r is not a temperature",
                                     self.skin.name, key, said)
@@ -553,16 +1018,58 @@ class CheetahFeed:
     def _render(self, options: dict[str, Any], name: str,
                 into: Path) -> list[Path]:
         """One template, over one span or over many."""
+        # Which pass this section belongs to. One inherited word, so
+        # `[[Site]] scope = site` covers everything under it and a skin that
+        # says nothing gets what it has always had. A skin with no `[[Site]]`
+        # section is still multi-place: its pages are rendered once per place
+        # and its site simply has no overview.
+        wanted = str(options.get("scope") or "place").strip().lower()
+        if wanted == "solo":
+            # Rendered only where this feed shows one place. The mirror of
+            # `site`, and it exists for the pair a site may have exactly one
+            # of: the web app manifest and the offline page. A `scope = site`
+            # section is not rendered at all at one place -- it cannot be, or
+            # the overview would be written over that place's own index -- so
+            # the pair has to exist twice, and without this word the
+            # place-scoped copy is also written N times on a site that
+            # already has the one at its root. Under one origin two manifests
+            # give a browser competing install identities, and nothing links
+            # the extra copies anyway.
+            if self.several or self.scope != "place":
+                return []
+        elif wanted != self.scope:
+            return []
+
+        # Which pages a place gets, where the operator has narrowed them. The
+        # skin names its own pages, one word per section, inherited -- so the
+        # core learns nothing about any particular skin, and a skin from
+        # outside that names none is untouched. Five places with every page
+        # each is what goes up the FTP link every run.
+        page_tag = str(options.get("place_page") or "").strip()
+        if page_tag and self.place_pages and page_tag not in self.place_pages:
+            return []
+
         template = self.skin / str(options["template"])
         if not template.is_file():
             log.warning("no such template: %s", template)
             self.failed.append((str(options["template"]), "not found"))
             return []
 
-        span = self.reader.span()
+        span = self.span
         if span is None:
             return []
         summarize = str(options.get("summarize_by") or "").strip()
+        if self.scope == "site" and summarize in SUMMARIES:
+            # A site summary page would be frozen by the finished-month rule
+            # below the moment this place's month ended, while another
+            # place's month was still moving -- it would work, and then
+            # quietly stop, which is the worst of the three behaviours
+            # available. Named rather than rendered.
+            log.warning("%s: %s summarises a span and is marked "
+                        "scope = site; a site page cannot summarise a span "
+                        "that means something different at each place. "
+                        "Leaving it out.", self.skin.name, name)
+            return []
         encoding = str(options.get("encoding")
                        or self.encoding).strip().lower().replace("-", "")
 
@@ -572,8 +1079,17 @@ class CheetahFeed:
             # to-date file after the end, because one is "August" and the
             # other is "as of now".
             stamp = start if summarize in SUMMARIES else stop
-            relative = Path(str(options["template"])).parent / _filename(
-                template.name, stamp)
+            # A section may say what its file is called. WeeWX takes the name
+            # from the template and nothing else, which cannot express the one
+            # thing a site of several places needs: the root's `index.html`
+            # and each place's `index.html` are different pages, and two
+            # templates in one skin directory cannot both be called
+            # `index.html.tmpl`. Given a name it is used as written, dated the
+            # same way a template name is so a summary can still name itself.
+            named = str(options.get("filename") or "").strip()
+            relative = Path(str(options["template"])).parent / (
+                time.strftime(named, time.localtime(stamp)) if named
+                else _filename(template.name, stamp))
             target = into / relative
 
             if summarize in SUMMARIES:
@@ -610,7 +1126,8 @@ class CheetahFeed:
             return list(self.reader.buckets(span[0], span[1], unit))
         return [(span[0], span[1])]
 
-    def _sweep(self, into: Path, made: list[Path]) -> int:
+    def _sweep(self, into: Path, made: list[Path],
+               failed: list | None = None) -> int:
         """Remove pages this skin no longer produces.
 
         A template that is deleted leaves its page behind, and the export
@@ -624,8 +1141,13 @@ class CheetahFeed:
 
         Not at all after a failed page: a template that raises produces
         nothing this run, and its page must not be swept away for that.
+
+        `failed` says *whose* failures decide. Left out it is this feed's
+        own, which is what it has always been; `_sweep_all` hands in each
+        pass's, because one broken template at one place must not leave every
+        stale page standing at all the others.
         """
-        if self.failed:
+        if self.failed if failed is None else failed:
             return 0
         keep = {path.resolve() for path in made}
         removed = []
@@ -775,6 +1297,19 @@ class CheetahFeed:
             "page": page,
             "filename": relative.as_posix(),
         }
+        # Which places there are, which one this page is for, and how to
+        # reach the others. In `about` rather than in `[Extras]`: every key
+        # under Extras becomes a top-level tag and Extras is searched
+        # *before* the tag layer, which is how a section called `forecast`
+        # once shadowed `$forecast` itself and turned every `$forecast.days`
+        # into "cannot find 'days'". `about` is first in the list below, so
+        # it also wins over the Deck option of the same name arriving through
+        # `[DisplayOptions]`.
+        #
+        # Every one of them is *always* defined, empty rather than absent:
+        # `$varExists` is true for anything the tag layer sees, so a name
+        # that is only sometimes set is a trap rather than a convenience.
+        about.update(self._about(span))
         # A "SummaryBy" template lists its own siblings: `#for $m in
         # $SummaryByMonth`.
         summaries = {name: list(dates)
@@ -807,6 +1342,93 @@ class CheetahFeed:
         return [about, summaries, here, *self.contributed,
                 self.skin_values, dict(self.tags.display),
                 dict(self.tags.extras), self.tags]
+
+    def _about(self, span: tuple[int, int]) -> dict[str, Any]:
+        """The places, as a page sees them.
+
+        Empty everywhere at one place, so every guarded include renders
+        nothing and a single-place site is unchanged.
+        """
+        if not self.several:
+            base = str(self.tags.extras.get("base_path") or "/")
+            return {
+                "places": [], "places_here": [], "here_place": None,
+                # Whether the *installation* keeps several series, which is
+                # a different question from how many this feed shows -- and
+                # it is the one the chart files answer. The JSON feed writes
+                # a subdirectory per place whenever the registry has
+                # several, and cannot know a skin was narrowed to one.
+                "many_series": self.many_series,
+                "charts_place": self.archive if self.many_series else "",
+                # Which of the skin's pages are being written. A skin builds
+                # its own menu and cannot ask the generator what it skipped,
+                # so it has to be told: narrowed without this, every entry
+                # the filter removed stayed in the sidebar as a link to a
+                # file nobody wrote -- twenty dead links on a two-place site,
+                # five on a one-place one, from a setting offered precisely
+                # to the operator about to push it all over FTP.
+                #
+                # Empty means all of them, which is what it means everywhere
+                # else, so a skin that ignores this is unaffected.
+                "place_pages": list(self.place_pages),
+                "scope": self.scope, "place_prefix": "",
+                "place_path": lambda path="": _joined(base, path),
+                "live_file": lambda: str(
+                    self.tags.extras.get("live_push_file") or "live.json"),
+                "site_title": self.site_title or self._station_name(),
+                "open_places": True,
+            }
+        here = self.here if self.scope == "place" else None
+        prefix = f"{here['name']}/" if here else ""
+        # `base_path` is read the way a skin's own `get_base_path` reads it:
+        # one lookup, one fallback. The test asserts on a rendered page that
+        # `$place_path(path='x')` is `$get_base_path(path=$place_prefix+'x')`,
+        # so the two cannot drift apart unnoticed.
+        base = str(self.tags.extras.get("base_path") or "/")
+        return {
+            "many_series": True,
+            "charts_place": here["name"] if here else "",
+            "place_pages": list(self.place_pages),
+            "places": [_shown(one, here) for one in self.places],
+            # Those whose own archive covers *this page's* span. Computed
+            # per page and only here: it is what stops the switcher on
+            # `month-2026-05.html` offering a May 2026 that another place
+            # does not have -- and the same test decides whether that place's
+            # file was written at all.
+            "places_here": [_shown(one, here) for one in self.places
+                            if one["has_data"] and _overlaps(one["covers"],
+                                                             span)],
+            "here_place": _shown(here, here) if here else None,
+            "scope": self.scope,
+            "place_prefix": prefix,
+            "place_path": lambda path="", _p=prefix, _b=base: _joined(
+                _b, f"{_p}{path}"),
+            # `live_push_file` is "live.json", relative. From
+            # `/nordfeld/index.html` a browser resolves that to
+            # `/nordfeld/live.json`, which does not exist -- live values dead
+            # on every place page, reading as a live-values bug and having
+            # nothing whatever to do with live values. Not made absolute
+            # unconditionally, because that would change the one-place output
+            # for no reader at all.
+            "live_file": lambda _b=base: _joined(
+                _b, str(self.tags.extras.get("live_push_file")
+                        or "live.json")),
+            "site_title": self.site_title or self._station_name(),
+            "open_places": len(self.places) <= self.places_fold,
+        }
+
+    def _station_name(self) -> str:
+        """What the installation calls itself, not what this place is called.
+
+        `$station.location` is the *place's* label once `Placed` is in the
+        way, so an overview headed with it names one of the four sites it is
+        listing. That is the forty-months lie in a heading.
+        """
+        raw = getattr(self._settings, "settings", self._settings)
+        try:
+            return str(raw.get("station.name") or "")
+        except Exception:
+            return ""
 
     # -- everything that is not a template --------------------------------
 
@@ -866,8 +1488,13 @@ class CheetahFeed:
     # -- what the settings page asks for ----------------------------------
 
     @staticmethod
-    def skin_options(skin: str, skins_dir: Any = None) -> list:
+    def skin_options(skin: str, skins_dir: Any = None,
+                     settings: Any = None) -> list:
         """What the chosen skin lets an operator set, for the feed's page.
+
+        `settings` is this feed's own section, so a group can say what this
+        instance will actually publish rather than what the skin can do in
+        general.
 
         A skin of ours ships an `options.py` next to its templates, the way
         a driver ships one next to its parser. One entry there makes the
@@ -877,7 +1504,7 @@ class CheetahFeed:
         `skin.conf` -- where its author put them, and where its own
         documentation says they are.
         """
-        return skin_options(skin, skins_dir)
+        return skin_options(skin, skins_dir, settings)
 
     @staticmethod
     def options() -> list:
@@ -1329,6 +1956,49 @@ def _filename(template: str, when: float) -> str:
     return time.strftime(name, time.localtime(when))
 
 
+def _joined(base: str, path: str) -> str:
+    """A path under the site's own root, however the root was written."""
+    root = base if base.endswith("/") else base + "/"
+    return f"{root}{str(path).lstrip('/')}"
+
+
+def _overlaps(covers: tuple[int, int] | None,
+              span: tuple[int, int] | None) -> bool:
+    """Whether a place's archive reaches into the span a page is about."""
+    if covers is None or span is None:
+        return False
+    return covers[0] <= span[1] and covers[1] >= span[0]
+
+
+def _shown(one: dict[str, Any] | None,
+           here: dict[str, Any] | None) -> dict[str, Any]:
+    """One place, as a template sees it.
+
+    A plain dict, and every value a string or a number: Cheetah's NameMapper
+    tries `obj[name]` before it tries an attribute, so anything that looks
+    like a mapping has to be one. That is the trap `$obs.label` fell into,
+    where a class with a `__getitem__` handed back the string "label".
+
+    `tags` is in here on purpose -- it is how an overview asks a place for
+    its readings -- and it is the one value that is not a plain type.
+    """
+    if one is None:
+        return {}
+    return {
+        "name": one["name"],
+        "label": one["label"] or one["name"],
+        "code": one["code"],
+        "color": one["color"],
+        "url": one["url"],
+        "path": f"{one['name']}/",
+        "here": bool(here is not None and one["name"] == here["name"]),
+        "has_data": bool(one["has_data"]),
+        "start": one["covers"][0] if one["covers"] else 0,
+        "stop": one["covers"][1] if one["covers"] else 0,
+        "tags": one["tags"],
+    }
+
+
 def _encode(text: str, encoding: str) -> bytes:
     """The rendered page as bytes, the way the skin asked for."""
     if encoding == "html_entities":
@@ -1340,10 +2010,141 @@ def _encode(text: str, encoding: str) -> bytes:
     return text.encode(encoding or "utf8")
 
 
+def _listed(value: Any) -> list[str]:
+    """A list option, however the file spelled it."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(one) for one in value]
+    return [one for one in str(value).replace(",", " ").split() if one]
+
+
+def _roster(archives: Any, settings: Any) -> list[dict[str, Any]]:
+    """Every place this feed shows, in the order pages present them.
+
+    Handed in rather than worked out here: which files there are is the
+    runner's knowledge, and a tag layer that opened databases would be one
+    that can open the wrong one.
+
+    Kept, not opened. They are opened at the top of `produce` and closed at
+    the bottom of it -- a connection opened on demand inside a render is one
+    nothing closes, and the runner rebuilds this feed every pass.
+
+    Three shapes are accepted, because two of them are already in the tree
+    and one of those is what `skins/overview` and the end-to-end test are
+    written against:
+
+        {name: path}
+        {name: (path, that place's own settings)}
+        [Archive, ...]              -- the register's own objects
+
+    The second is what an installation with two places sends today: each
+    series' own settings, so each keeps its own coordinates. Given this
+    page's instead, the readings would be right and the sun wrong by minutes.
+    """
+    if not archives:
+        return []
+    out: list[dict[str, Any]] = []
+    if isinstance(archives, dict):
+        for name, value in archives.items():
+            if isinstance(value, tuple):
+                where, mine = Path(value[0]), value[1]
+            else:
+                where, mine = Path(value), settings
+            out.append(_place(str(name), where, mine))
+    else:
+        for one in archives:
+            out.append(_place(one.name, Path(one.file), settings,
+                              label=one.label, code=one.code,
+                              color=one.color, url=one.url))
+    return out
+
+
+def _place(name: str, where: Path, mine: Any, label: str = "",
+           code: str = "", color: str = "", url: str = "") -> dict[str, Any]:
+    """One entry, with the fields `_bind` fills left empty."""
+    return {
+        "name": name, "file": where, "settings": mine,
+        # What to print. Read off the place's own settings where the caller
+        # did not say, which is what `archives.Placed` answers `station.name`
+        # with -- so a place always has a name to print even when the
+        # register was not handed in whole.
+        "label": label or _said(mine, "station.name"),
+        "code": code, "color": color,
+        "url": url or _said(mine, "station.url"),
+        "reader": None, "tags": None, "covers": None, "has_data": False,
+    }
+
+
+def _said(settings: Any, name: str) -> str:
+    try:
+        return str(settings.get(name) or "")
+    except Exception:
+        return ""
+
+
+def _tags_for(settings: Any, reader: Reader, plots: Any = (),
+              extra_groups: dict[str, str] | None = None,
+              target: units.Target | None = None, language: str = "",
+              when: float | None = None, like: Tags | None = None) -> Tags:
+    """One series' tag layer.
+
+    Two callers: the feed's own, built here, and every other place, built in
+    `CheetahFeed._reach` once the skin's configuration has been read.
+
+    `like` is what makes the second of those right. The skin's units,
+    decimals, labels, translated strings, moon phases, `[Extras]`,
+    `[DisplayOptions]` and degree-day bases are *shared objects*, not copies:
+    `_extras` and `_units` run once, over the feed's own tags, and every
+    place is then looking at the same dictionaries. Copied instead, the two
+    would have to be kept in step by hand, and the failure is a page that
+    renders perfectly with one column in Fahrenheit to one decimal and the
+    next in Celsius to two.
+    """
+    tags = Tags(
+        reader=reader,
+        when=when,
+        target=target if like is None else like.target,
+        unit_system=reader.system,
+        extra_groups=extra_groups,
+        station={
+            "location": settings.get("station.name") or "",
+            "latitude": settings.get("station.latitude"),
+            "longitude": settings.get("station.longitude"),
+            "altitude": settings.get("station.altitude"),
+            "station_url": settings.get("station.url") or "",
+            # What the readings come from. WeeWX prints it in a footer, and
+            # here it is whichever driver the listener is running.
+            "hardware": settings.get("driver") or "",
+            "version": _version(),
+            # Who is rendering. A skin that prints a version wants to say
+            # whose: deck's footer read "WeeWX version 0.0.1", which is the
+            # name of a different program and a version number that is not
+            # its. A skin running under WeeWX itself gets WeeWX's own value
+            # for this, so the line is right either way.
+            "software": f"weewx-evo {_version()}",
+        },
+        rain_year_start=int(settings.get("station.rain_year_start") or 1),
+    )
+    tags.plots = plots
+    tags.language = language or (like.language if like else "en")
+    if like is not None:
+        tags.labels = like.labels
+        tags.text = like.text
+        tags.extras = like.extras
+        tags.display = like.display
+        tags.moon_phases = like.moon_phases
+        tags.degree_day_bases = like.degree_day_bases
+        tags.rain_year_start = like.rain_year_start
+        tags.week_start = like.week_start
+    return tags
+
+
 def from_settings(settings: Any, reader: Reader,
                   plots: Any = (), prefix: str = "feeds.cheetah",
                   extra_groups: dict[str, str] | None = None,
-                  archives: dict[str, Any] | None = None) -> CheetahFeed:
+                  archives: Any = None,
+                  archive: str = "") -> CheetahFeed:
     """Build the feed, and the tag layer it renders through.
 
     The tags are built here rather than handed in because they carry the
@@ -1369,82 +2170,14 @@ def from_settings(settings: Any, reader: Reader,
         log.error("%s -- showing the readings as stored instead", exc)
         target, chosen = units.Target(stored, language=spoken), ""
 
-    tags = Tags(
-        reader=reader,
-        target=target,
-        unit_system=stored,
-        extra_groups=extra_groups,
-        station={
-            "location": settings.get("station.name") or "",
-            "latitude": settings.get("station.latitude"),
-            "longitude": settings.get("station.longitude"),
-            "altitude": settings.get("station.altitude"),
-            "station_url": settings.get("station.url") or "",
-            # What the readings come from. WeeWX prints it in a footer, and
-            # here it is whichever driver the listener is running.
-            "hardware": settings.get("driver") or "",
-            "version": _version(),
-            # Who is rendering. A skin that prints a version wants to say
-            # whose: deck's footer read "WeeWX version 0.0.1", which is the
-            # name of a different program and a version number that is not
-            # its. A skin running under WeeWX itself gets WeeWX's own value
-            # for this, so the line is right either way.
-            "software": f"weewx-evo {_version()}",
-        },
-        rain_year_start=int(settings.get("station.rain_year_start") or 1),
-    )
-    tags.plots = plots
-    tags.language = spoken.code
+    tags = _tags_for(settings, reader, plots=plots,
+                     extra_groups=extra_groups, target=target,
+                     language=spoken.code)
 
-    # How this page reaches another series, for `$archives.<name>`. Handed
-    # in rather than worked out here: which files there are is the runner's
-    # knowledge, and a tag layer that opened databases would be one that can
-    # open the wrong one.
-    #
-    # Opened on demand and kept, so a page that never names a second series
-    # costs nothing and one that names it in fifty places opens it once.
-    if archives:
-        # {name: path} or {name: (path, settings)}. The second form is what
-        # an installation with two places sends: each series' own settings,
-        # so each keeps its own coordinates.
-        paths, mine = {}, {}
-        for name, value in archives.items():
-            if isinstance(value, tuple):
-                paths[name], mine[name] = value
-            else:
-                paths[name] = value
-        made: dict[str, Any] = {}
-
-        def reach(name: str) -> Any:
-            if name in made:
-                return made[name]
-            path = paths.get(name)
-            if path is None:
-                return None
-            try:
-                import sqlite3
-
-                conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-                other = Reader(conn)
-            except Exception:
-                log.exception("could not open the %r series at %s", name, path)
-                return None
-            # Each series' own settings, so each brings its own place:
-            # `$archives.nordfeld`'s sunrise is the north field's. The
-            # caller hands them in already wrapped in `archives.Placed`,
-            # which is the same wrapper the archiver and every feed get --
-            # given this page's settings instead, the readings would be
-            # right and the sun would be wrong by minutes.
-            theirs = from_settings(
-                mine.get(name) or settings, other,
-                plots=plots, prefix=prefix, extra_groups=extra_groups)
-            made[name] = theirs.tags
-            return theirs.tags
-
-        tags.open_archive = reach
-        tags.archive_names = tuple(sorted(paths))
+    places = _roster(archives, settings)
     tags.moon_phases = spoken.moon_phases()
-    _install_forecast(tags, settings, spoken)
+    forecast_store = _install_forecast(tags, settings, spoken,
+                                       archive=archive)
 
     skins = Path(str(option("skins_dir") or "skins"))
     skin = str(option("skin") or "").strip()
@@ -1475,11 +2208,36 @@ def from_settings(settings: Any, reader: Reader,
     # An explicit choice on the feed's page beats what the skin asked for.
     # Left empty, the skin decides, which is the point of running it at all.
     feed.skin_units = not chosen
+    feed.archive = str(archive or option("archive")
+                       or settings.get("archive") or "")
+    #: The forecast, open for the life of this feed. Kept so the other
+    #: places' tags can share it -- four places must not open one file four
+    #: times -- and so `produce` can close it.
+    feed.forecast_store = forecast_store
+    feed.places = places
+    feed._settings = settings
+    feed._spoken = spoken
+    feed._plots = plots
+    feed._extra_groups = dict(extra_groups or {})
+    # What the operator narrowed this instance to, from the skin's own
+    # options. A skin that declares none leaves every one of these empty and
+    # behaves exactly as it did.
+    feed.site_title = str(option("site_title") or "").strip()
+    feed.place_pages = tuple(
+        one.strip() for one in _listed(option("place_pages")) if one.strip())
+    try:
+        feed.places_fold = int(option("places_fold") or 6)
+    except (TypeError, ValueError):
+        feed.places_fold = 6
+    feed.shown = tuple(
+        one.strip() for one in _listed(option("places")) if one.strip())
+    feed.narrow()
     feed.display = _display(settings, prefix, skin, skins)
     return feed
 
 
-def skin_options(skin: str, skins_dir: Any = None) -> list[Group]:
+def skin_options(skin: str, skins_dir: Any = None,
+                 settings: Any = None) -> list[Group]:
     """What the named skin lets an operator set, or nothing.
 
     A skin of ours ships an `options.py` next to its templates, the way a
@@ -1510,7 +2268,13 @@ def skin_options(skin: str, skins_dir: Any = None) -> list[Group]:
             module = importlib.import_module(module_name)
         else:
             module = _module_from(where / "options.py", f"skin_{skin}_options")
-        return list(module.groups())
+        try:
+            return list(module.groups(settings))
+        except TypeError:
+            # A skin from outside, whose `groups()` takes nothing. Its
+            # settings do not depend on how many places there are, so
+            # there is nothing to hand it.
+            return list(module.groups())
     except Exception as exc:  # a skin's own file, so anything can be in it
         log.warning("could not read the settings of skin %r: %s", skin, exc)
         return []
@@ -1620,8 +2384,9 @@ def _derived(settings: Any) -> tuple[str, ...]:
                         if choice in ("software", "prefer_hardware")))
 
 
-def _install_forecast(tags: Any, settings: Any, spoken: Any) -> None:
-    """Give the skin `$forecast`, if this station fetches one.
+def _install_forecast(tags: Any, settings: Any, spoken: Any,
+                      archive: str = "", store: Any = None) -> Any:
+    """Give the skin `$forecast` for one series, if this station fetches one.
 
     Opened here rather than in `tags.py` for two reasons. A station with no
     forecast configured should not open a database it has no rows in -- and
@@ -1630,21 +2395,44 @@ def _install_forecast(tags: Any, settings: Any, spoken: Any) -> None:
 
     The file not being there is the ordinary case and is not an error: a
     template asking `#if $forecast` gets a no and renders around it.
+
+    One file holds every series' forecast and the rows name the series they
+    are for, so `archive` is what makes `$forecast` this page's rather than
+    the neighbour's. A place with no source configured gets no rows and
+    `#if $forecast` is a no -- never the neighbour's forecast under its
+    heading, which is the whole reason the rows carry the name.
+
+    `store` is handed in when the caller already has one open: a run that
+    renders four places must not open the same file four times and leave
+    four handles behind. Returns the store it used, or None.
     """
-    archive = str(settings.get("archive_db") or "data/weewx.sdb")
-    path = Path(archive).parent / "forecast.sdb"
-    if not path.exists():
-        return
+    from ...forecast import store_path
+
+    if store is None:
+        path = store_path(settings.get("archive_db"))
+        if not path.exists():
+            return None
     try:
         from ...forecast.store import ForecastStore
         from ...forecast.tags import install
 
-        install(tags, ForecastStore(path), spoken)
+        made = store if store is not None else ForecastStore(path)
+        install(tags, made, spoken,
+                archive=archive or forecast_default_archive())
+        return made
     except Exception:
         # A forecast nobody can read must not take a page down. The skin
         # asking for it gets a miss, which the report names.
-        log.warning("could not open the forecast at %s; the pages will render "
-                    "without it", path, exc_info=True)
+        log.warning("could not open the forecast; the pages will render "
+                    "without it", exc_info=True)
+        return store
+
+
+def forecast_default_archive() -> str:
+    """What a series is called when nobody said, from the store that owns it."""
+    from ...forecast.store import DEFAULT_ARCHIVE
+
+    return DEFAULT_ARCHIVE
 
 
 def _version() -> str:

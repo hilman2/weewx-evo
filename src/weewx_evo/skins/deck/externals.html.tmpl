@@ -9,13 +9,14 @@
     <title>$station.location - $gettext("Webcams/Externals")</title>
 </head>
 
-  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')"#if $places then ' data-units="' + $page_unit_system() + '"' else ''#>
     #include "includes/ui-shell.inc"
 
     <!--@see https://github.com/carbon-design-system/carbon/blob/v10/packages/type/scss/modules/_styles.scss#L628-->
     <main class="main" id="main">
       <div class="wrap">
 <header class="page-head">
+#include "includes/place-switch.inc"
               <h1>$gettext($get_static_page_title("externals"))</h1>
             </header>
 

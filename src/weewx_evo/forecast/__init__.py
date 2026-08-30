@@ -51,11 +51,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 log = logging.getLogger(__name__)
 
 ENTRY_POINT_GROUP = "weewx_evo.forecast"
+
+#: The series a forecast is for when nobody said. From the
+#: store, so nothing here spells the word a second time.
+DEFAULT_ARCHIVE = "default"
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +222,51 @@ class Reading:
         if self.note:
             parts.append(self.note)
         return ", ".join(parts)
+
+
+def place_options() -> list:
+    """Which series a forecast is for. Added to every source's page.
+
+    Separate from a source's own settings because it is the same question
+    for all of them, and the same question feeds and uploads already ask in
+    the same word. A source's settings say *where to ask* -- a station id, a
+    region, nothing at all for the two that take coordinates; this says
+    *which of this installation's places the answer is about*, which is what
+    keys the rows and what a page filters on.
+    """
+    from ..feeds import archive_names
+    from ..options import Group, Option
+
+    return [
+        Group("Which place",
+              "A forecast is an answer about a pair of coordinates, so it "
+              "belongs to one place.", (
+            Option("archive", "Place", kind="choice",
+                   default=DEFAULT_ARCHIVE, choices_from=archive_names,
+                   help="The coordinates come from the place; a station id "
+                        "or a warning region is typed per entry, because "
+                        "neither can be worked out from a latitude. Two "
+                        "places want two entries here. A place with no "
+                        "entry gets no forecast -- never its "
+                        "neighbour's."),
+        ), prefix=""),
+    ]
+
+
+def store_path(archive_db: object = None, base: object = None) -> Path:
+    """Where the forecast is kept: beside the archive, never in it.
+
+    One file for the whole installation whatever the archive, because the
+    rows name the series they are for.
+
+    Derived here because it was derived in three places, and two of them
+    stopped agreeing the day `archive_db` briefly became a per-place setting:
+    the feed opened a file nothing writes, and said nothing about it.
+    """
+    found = Path(str(archive_db or "data/weewx.sdb"))
+    if not found.is_absolute() and base is not None:
+        found = Path(base) / found
+    return found.parent / "forecast.sdb"
 
 
 class ForecastError(Exception):

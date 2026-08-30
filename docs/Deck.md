@@ -31,6 +31,89 @@ feeds.en.lang  = "en"
 feeds.en.units = "US"
 ```
 
+## Several places on one site
+
+An installation with more than one [archive](Stations-and-Archives.md) keeps
+several measurement series, each for its own place. One Deck feed publishes
+all of them as **one site**:
+
+```
+one place                   several places
+/index.html                 /index.html            the overview
+/week.html                  /compare.html          the comparisons
+/…                          /compare-week.html
+                            /kirchdorf/index.html  each place, the pages above
+                            /nordfeld/index.html
+```
+
+One feed, one directory, one export, one `live.json`. Separate feeds could not
+link to one another, and every skin setting would be written out once per
+place — which is the WeeWX arrangement this project removed.
+
+**With one place nothing changes.** No overview, no subdirectory, no
+comparison pages, and the output is what it has always been, file for file.
+The gate is how many places *this feed shows*: a one-entry `archives.toml`
+makes the settings page correctly say that `station.*` has moved, and is
+still one place.
+
+### What the operator sets
+
+| | |
+|---|---|
+| `feeds.<name>.places` | which archives this instance shows, in that order. Empty is every one of them. This feed's own place is always first, whatever the list says: a site linking to places but not to the one its own pages are built from would publish an archive nothing on it can reach |
+| `feeds.<name>.site_title` | what to head the overview with. Empty is the installation's own `station.name` — **not** `$station.location`, which under `archives.Placed` is the *default place's* label, so an overview headed "Kirchdorf" listing four places is a lie the page cannot detect |
+| `feeds.<name>.place_pages` | which of the pages below each place gets. Empty is all of them |
+| `feeds.<name>.places_fold` | how many places the sidebar lists before folding them into one entry |
+
+The rest — which readings the board shows, which are compared, what counts as
+unusual — is in `[DisplayOptions]` beside every other Deck setting.
+
+### The overview
+
+Two questions, in that order: **is anything unusual**, and **what is it like
+at each place right now**. The second is what people came for; the first is
+printed above it because an anomaly you have to look for is one you miss.
+
+The unusual list has a closed set of three rules — two places' current
+readings far apart, a place quiet for longer than its own rhythm, a place
+past its own year's record — and **renders nothing at all when there is
+nothing**. A warning that stands everywhere is not one, and that is exactly
+why a line here can be trusted.
+
+The board is a table, one row per place. Places down the side is the only
+layout where "which place is coldest" costs no work, and the only one that
+still fits eight places on a screen. **No summary row**: two thermometers
+reading 19 and 21 do not make 20 anywhere. The one cross-place figure on the
+page is a *difference*, and it names both of its ends.
+
+### Comparing
+
+`compare.html` and one file per span. Above the charts, a table of figures —
+one row per reading, one column per place, and a Spread column carrying the
+difference and both places it is between. Below, one chart per reading with
+every place on one axis, each in its own colour.
+
+The chips at the top switch a place off on every chart at once, which is the
+question actually being asked ("just the two gardens") rather than the same
+legend click repeated four times. With scripting off every place is on every
+chart, and the table above is complete either way — it is server-rendered,
+it prints, and it is the answer; the charts are the *shape* of the answer.
+
+The comparison charts are ordinary [plots](Plots.md) whose lines name their
+archive, so the image generator draws the same overlays. They are generated
+rather than typed:
+
+```bash
+weewx-evo plots compare --write
+```
+
+Four readings by four spans by four places is sixty-four lines in a file.
+
+**A comparison chart shades no night.** `sun.day_night` takes one place, and
+one place's darkness drawn under four places' lines is minutes wrong on
+numbers that are right — the exact failure per-archive coordinates exist to
+prevent.
+
 ## Where the charts come from
 
 **`plots.toml`, not the skin.** The page writes an empty grid naming a span;
@@ -79,6 +162,12 @@ none of them. They were removed rather than left to look configurable.
 | Computer Monitor | the same, for `computer_monitor_*`: what [weewx-cmon](https://github.com/matthewwall/weewx-cmon) records |
 | Webcams / Externals | `[[externals]]` names at least one |
 | A month or a year of the archive | one per month and year with records |
+| Overview, Comparison | only when this feed shows more than one place |
+
+With several places every row above is written once per place, into that
+place's own directory, and a place with no records yet gets no directory and
+nothing links to it — a link into a directory the feed did not write is a 404
+on somebody's web host.
 
 ### Webcams and other externals
 

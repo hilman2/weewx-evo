@@ -1,0 +1,95 @@
+#errorCatcher Echo
+#encoding UTF-8
+##
+## The overview: the one page a site of several places opens on.
+##
+## Two questions, in this order: **is anything unusual**, then **what is it
+## like at each place right now**. The second is what people came for; the
+## first is printed above it because an anomaly you have to find is an
+## anomaly you miss.
+##
+## Below the chart is the footer. No gauges (four places by six readings is
+## twenty-four dials and no comparability), no sparkline per row (eight
+## ECharts instances for pictures two centimetres wide), no map (it needs
+## tiles off somebody else's server, which is what removing 658 KB of Carbon
+## was for -- the coordinates and the altitude in the place column are the
+## honest substitute), and no second overlay chart (that is what
+## `compare.html` is, one click away).
+##
+## Rendered once, at the root, and only when this feed shows more than one
+## place: `[[Site]] scope = site` in skin.conf decides it. At one place this
+## file is not rendered at all.
+#attr $context = 'day'
+#attr $daily_archive = False
+#attr $use_parameter_month = False
+#attr $use_parameter_year = False
+
+## The newest record anywhere on the site. Every age on the board is measured
+## against it, so a whole site behind by an hour does not report itself as
+## eight silent consoles -- and the site's own clock is the comparison a
+## reader is making anyway.
+#set global $freshest = 0
+#for $p in $places
+#if $p.stop > $freshest
+#set global $freshest = $p.stop
+#end if
+#end for
+## Nothing anywhere yet: this page is written all the same, and dating it
+## 1970 would be the only wrong thing on it.
+#if not $freshest
+#set global $freshest = $current.dateTime.raw
+#end if
+
+#set global $board_primary = $DisplayOptions.get('board_primary', 'outTemp')
+#set global $unusual = $unusual_list($places, $board_primary, $DisplayOptions.get('unusual_spread', 2.0), $DisplayOptions.get('unusual_max', 4), $freshest)
+
+<!DOCTYPE html>
+<html lang="$lang">
+  <head>
+    #include "includes/html-head.inc"
+    <title>$site_title</title>
+  </head>
+
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')" data-units="$page_unit_system()">
+    #include "includes/ui-shell.inc"
+
+    <main class="main" id="main">
+      <div class="wrap">
+        <header class="page-head">
+          <!--prettier-ignore-->
+          ## `$site_title`, not `$station.location`: under `Placed` that is
+          ## the *default place's* label, and an overview headed "Kirchdorf"
+          ## listing four places is the same class of lie as the forty
+          ## identical month pages.
+          <h1>$site_title</h1>
+          <h2>$gettext("as of") $spell($freshest, $get_time_format_dict['current'])</h2>
+        </header>
+
+        #include "includes/unusual.inc"
+
+        <div class="card">
+          <div class="card__body">
+            #include "includes/now-board.inc"
+          </div>
+        </div>
+
+        <!--prettier-ignore-->
+        ## One chart: the primary reading over the last day, one line per
+        ## place, each in the place's own colour, out of one file that
+        ## `chartdata.build` drew from every archive at once. The browser
+        ## merges nothing and computes nothing.
+        ##
+        ## Named through the grid rather than placed by hand, so the card,
+        ## the heading, the refresh and the "no charts at ..." message are
+        ## the same ones every other chart on this site gets.
+        <div class="grid" data-plots="day" data-only="cmp$board_primary"></div>
+
+    <!--prettier-ignore-->
+    ## `ui-shell.inc` opened `<div class="layout">`, this opened `<main>` and
+    ## `.wrap`, and `footer.inc` closes all three. Copying only part of that
+    ## frame gives HTML mis-nested in a way no text-level test sees.
+    #include "includes/footer.inc"
+
+#include "includes/live-scripts.inc"
+  </body>
+</html>

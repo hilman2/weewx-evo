@@ -1102,20 +1102,29 @@ def cmd_forecast_show(args: argparse.Namespace) -> int:
     store = ForecastStore(path)
     try:
         target = units.Target(units.system_from(cfg.get("units") or "METRICWX"))
-        for source in store.sources():
-            run = store.run(source) or {}
+        # Every series the file holds, not every source. One file holds them
+        # all, so walking sources alone would print two places' days one
+        # after another under one heading.
+        stored = store.archives()
+        for archive in stored:
+          # Named only where there is more than one, so a station with one
+          # series sees exactly what it saw before.
+          if len(stored) > 1:
+            print(f"[{archive}]")
+          for source in store.sources(archive):
+            run = store.run(archive, source) or {}
             when = time.strftime("%Y-%m-%d %H:%M",
                                  time.localtime(run.get("fetched") or 0))
             print(f"{source} -- fetched {when}"
                   f"{', ' + run['note'] if run.get('note') else ''}")
 
-            for warning in store.warnings(source)[:10]:
+            for warning in store.warnings(archive, source)[:10]:
                 starts = time.strftime("%a %H:%M",
                                        time.localtime(warning.starts))
                 print(f"  ! {warning.severity:<9} {warning.event} "
                       f"from {starts}  {warning.area[:40]}")
 
-            for day in store.days(source)[:7]:
+            for day in store.days(archive, source)[:7]:
                 when = time.strftime("%a %d %b", time.localtime(day.dateTime))
                 low = _shown(day.tempMin, "outTemp", day.usUnits, target)
                 high = _shown(day.tempMax, "outTemp", day.usUnits, target)
@@ -1124,7 +1133,8 @@ def cmd_forecast_show(args: argparse.Namespace) -> int:
 
             if args.hours:
                 now = int(time.time())
-                for hour in store.hours(source, start=now)[:args.hours]:
+                for hour in store.hours(archive, source,
+                                        start=now)[:args.hours]:
                     when = time.strftime("%a %H:%M",
                                          time.localtime(hour.dateTime))
                     temp = _shown(hour.outTemp, "outTemp", hour.usUnits, target)
@@ -1326,7 +1336,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, lambda *_: stopping.set())
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
 
-    watcher = _Watcher(getattr(args, "config", None))
+    beside = (Path(args.config).parent if getattr(args, "config", None)
+              else Path("."))
+    watcher = _Watcher(getattr(args, "config", None),
+                       beside / archives_module.FILENAME,
+                       beside / stations_module.FILENAME,
+                       plots_path(args, cfg))
+    #: Which series existed when this process started. A place added or
+    #: repointed while running needs an archiver and a line in the live
+    #: table's pending list, and neither can be handed to a running loop.
+    series_was = _series_shape(args, cfg)
     # Set when only a fresh process can carry on: a setting that cannot be
     # applied to a running one, or the watchdog finding this one unwell. The
     # supervisor brings it back -- `restart: unless-stopped` in compose,
@@ -1358,8 +1377,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     try:
         while not stopping.is_set():
             try:
-                if watcher.changed() and cfg.reload():
+                if watcher.changed():
+                    # Reloaded first, then asked. `reload()` answers about
+                    # the core options alone, and three of the four files
+                    # watched here hold none -- so a run gated on its answer
+                    # was a run that never happened for archives or charts.
+                    cfg.reload()
                     hard = cfg.needs_restart()
+                    series_now = _series_shape(args, cfg)
+                    if series_now != series_was:
+                        series_was = series_now
+                        hard = list(hard) + ["the measurement series"]
                     if hard:
                         # Some settings cannot be applied to a running
                         # process: a port already bound, a database already
@@ -1376,7 +1404,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         stopping.set()
                         continue
                     apply_live(args, cfg, web, runner, uploader, forecaster,
-                               feeds, notifier)
+                               feeds, notifier, series)
 
                 if dog is not None:
                     dog.beats()
@@ -2434,8 +2462,12 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         # the feed that runs it -- there is no separate skin page, because a
         # skin is only ever configured through the feed it belongs to.
         if hasattr(factory, "skin_options"):
+            # This feed's own section as well, so a group can state what
+            # this instance publishes -- which places, at which addresses --
+            # rather than what the skin is capable of.
             groups += factory.skin_options(str(settings.get("skin") or ""),
-                                           settings.get("skins_dir"))
+                                           settings.get("skins_dir"),
+                                           settings)
         schemas.append(option_defs.Schema(
             name=f"feed:{name}", label=f"Feed: {name} ({kind})", kind="feed",
             help=feed_registry.describe(kind),
@@ -2534,8 +2566,13 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
             label=f"Forecast: {name} ({kind})", kind="forecast")
         if schema is None:
             continue
+        # The source's own settings, plus the one question that is the same
+        # for all of them. Appended rather than declared per kind: five
+        # sources with five copies of one dropdown is how a setting comes to
+        # mean two things.
         schema.groups = tuple(
-            replace_group(group, f"forecast.{name}") for group in schema.groups)
+            replace_group(group, f"forecast.{name}")
+            for group in (*schema.groups, *forecast_registry.place_options()))
         schemas.append(schema)
     return schemas
 
@@ -2739,6 +2776,11 @@ def configured_uploads(args: argparse.Namespace) -> dict[str, dict]:
 def build_upload(name: str, settings: dict) -> object:
     """Make one upload from its settings. Raises with a usable message."""
     kind = str(settings.pop("kind", "")).strip()
+    # A setting *about* a source rather than *for* it, like `kind` above and
+    # like a feed's `archive`. Dropped here rather than left in: the schema
+    # discards it today by luck, and the day a provider declares an option of
+    # that name it becomes a TypeError said once at warning and never again.
+    settings.pop("archive", None)
     if not kind:
         raise ValueError(f"upload {name!r} does not say what kind it is. "
                          f'Add kind = "wunderground" or one of: '
@@ -2890,10 +2932,18 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
             station.name for station in mine
             if getattr(station, "role", "main") == "main")
 
+    # Every series, in the order pages present them, with the label and the
+    # short code a page prints. `presented()`, so a place nobody coloured or
+    # named still has a code -- an overview with a blank column heading is a
+    # row nobody can identify.
+    places = [(one.name, one.title, one.code)
+              for one in registry.presented()] if registry.several() else []
+
     return upload_runner.build(configured, with_station, progress, records,
                                packets, by_archive=by_archive,
                                consoles=consoles,
-                               main_consoles=main_consoles)
+                               main_consoles=main_consoles,
+                               places=places)
 
 
 def live_readings_locally(cfg: Settings,
@@ -3016,7 +3066,15 @@ def forecast_db(args: argparse.Namespace, cfg: Settings) -> Path:
 
 
 def forecast_place(cfg: Settings) -> ForecastPlace:
-    """Where the station is, which is what a forecast is for."""
+    """Where a forecast is for.
+
+    `cfg` is the settings **as one archive sees them** where there is more
+    than one -- `archives.Placed`, the same wrapper the archiver, the feeds
+    and the uploads already get. Read off the raw settings it answered
+    `station.*` for every source, so two places got one forecast: the
+    default's, printed under both headings, and nothing on either page could
+    tell.
+    """
     return ForecastPlace(
         latitude=float(cfg.get("station.latitude") or 0.0),
         longitude=float(cfg.get("station.longitude") or 0.0),
@@ -3046,7 +3104,7 @@ def build_forecast_source(name: str, settings: dict) -> object:
     return factory(**settings)
 
 
-def mirror_forecast(uploader: Any, store: Any) -> Callable[[str], None]:
+def mirror_forecast(uploader: Any, store: Any) -> Callable[..., None]:
     """A callback that copies a fresh forecast into every InfluxDB upload.
 
     Only InfluxDB. Every other upload in that package sends readings to a
@@ -3057,16 +3115,29 @@ def mirror_forecast(uploader: Any, store: Any) -> Callable[[str], None]:
     On the forecast thread rather than a new one. That thread is asleep for
     an hour at a time, and a database that stops answering holds up one
     source's next fetch and nothing else.
+
+    An upload writes everything under its own `location`, so it takes the
+    forecast of the series it is for and no other. Sending it all would not
+    be a fuller picture: the second place's hours land on the first place's
+    tags with the same timestamps and overwrite them, and the panel that
+    reads them cannot tell.
     """
-    def send(name: str) -> None:
+    def send(name: str, archive: str = "") -> None:
         if uploader is None or store is None:
             return
+        wanted = archive or forecast_registry.DEFAULT_ARCHIVE
         for scheduled in getattr(uploader, "uploads", []):
             upload = getattr(scheduled, "upload", None)
             if not hasattr(upload, "post_forecast"):
                 continue
+            # An upload that names no series is the default one's, the same
+            # way it reads the default archive's records.
+            mine = (getattr(scheduled, "archive", "")
+                    or forecast_registry.DEFAULT_ARCHIVE)
+            if mine != wanted:
+                continue
             try:
-                points = upload.post_forecast(store, (name,))
+                points = upload.post_forecast(store, (name,), wanted)
                 log.info("forecast %s: %d point(s) to upload %s",
                          name, points, scheduled.name)
             except Exception as exc:
@@ -3077,19 +3148,49 @@ def mirror_forecast(uploader: Any, store: Any) -> Callable[[str], None]:
 
 def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
                             store: Any, uploader: Any = None) -> list:
-    """What the forecast sources are, right now."""
+    """What the forecast sources are, right now, and which series each is for.
+
+    One entry, one archive. Not one source fetched for several places: three
+    of the five kinds have no coordinate to be fetched *for* -- the DWD takes
+    a station id, its warnings and MeteoAlarm take a region -- so "this
+    source, over there" would have to reconcile a typed geography with a
+    place's coordinates, and where the two disagree there is no fact to pick.
+    Two places wanting a forecast are two entries, and each says where it is
+    for in the same word feeds and uploads already use.
+    """
     configured = configured_forecasts(args)
     if not configured:
         return []
+    registry = read_archives(args, cfg)
+    several = registry.several()
+
+    def place_of(settings: dict) -> tuple[str, ForecastPlace]:
+        """Which series this entry is for, and where that is."""
+        wanted = str(settings.get("archive") or archives_module.DEFAULT)
+        if not several:
+            return wanted, forecast_place(cfg)
+        known = {one.name for one in registry.all()}
+        if wanted not in known:
+            # Not `Register.get`'s fallback. That answers an unknown name
+            # with the default deliberately, so a feed pointed at a removed
+            # archive still renders a page. Here it would put the wrong
+            # point's forecast on the default's key, beside the default's own
+            # entry, and the two would erase each other every hour.
+            raise ValueError(
+                f"names the series {wanted!r}, which does not exist. "
+                f"There is: {', '.join(sorted(known))}.")
+        return wanted, forecast_place(
+            archives_module.placed(cfg, registry.get(wanted)))
+
     return forecast_runner.build(configured, build_forecast_source,
-                                 forecast_place(cfg), store,
+                                 place_of, store,
                                  mirror_forecast(uploader, store))
 
 
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
                runner: Any, uploader: Any = None,
                forecaster: Any = None, feeds: Any = None,
-               notifier: Any = None) -> None:
+               notifier: Any = None, series: Any = None) -> None:
     """Apply a changed configuration to a running process.
 
     Everything that can be rebuilt in place, in one function. Scattering
@@ -3111,6 +3212,9 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             notifier.replace(fresh.channels if fresh else [])
             log.info("%d notification channel(s) running", len(names))
 
+    if series is not None:
+        _repoint_stations(args, cfg, series)
+
     if runner is not None:
         fresh = build_schedule(args, cfg)
         if _differs(fresh, runner):
@@ -3129,8 +3233,17 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
         charts = load_plots(args, cfg)
         if len(charts):
             made = build_feeds(args, cfg, charts)
-            if [n for n, _b, _i in made] != [n for n, _b, _i in feeds.feeds]:
-                feeds.replace(made, feed_schedule(args))
+            # Rebuilt every time, compared only for the log line. The names
+            # are not what changes most often: a skin swapped, a series
+            # repointed, a chart edited and every unit on the page all leave
+            # the list identical, and comparing it was a feed that went on
+            # producing yesterday's configuration while everything logged
+            # success. The builders are closures over the settings; making
+            # them again costs one read of plots.toml.
+            before = [n for n, _b, _i in feeds.feeds]
+            feeds.replace(made, feed_schedule(args),
+                          archives=_archive_files(cfg, args))
+            if [n for n, _b, _i in made] != before:
                 log.info("%d feed(s) producing", len(made))
 
     if uploader is not None:
@@ -3148,6 +3261,14 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
         if before != after:
             forecaster.replace(fresh)
             log.info("%d forecast source(s) running", len(fresh))
+
+    if web is not None and getattr(web, "api", None) is not None:
+        # The API's map of series is built once, at startup. A place added
+        # on the settings page was then answered with a 404 by the one part
+        # of this program whose whole job is to say what series there are.
+        fresh = build_api(args, cfg, None)
+        if fresh is not None:
+            web.api.archives = fresh.archives
 
     if web is not None and web.site.update(
             served_directories(args, cfg),
@@ -3592,15 +3713,24 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
         # right place. A page for the north field prints the north field's
         # altitude and works out its own sunrise, without any feed having
         # been told that there is more than one series.
-        placed = archives_module.placed(
-            cfg, registry.get(settings.get("archive")))             if registry.several() else cfg
+        #
+        # `cfg` stays raw beside it, and both are handed on. A builder that
+        # only had the placed copy wrapped it a second time, so a place with
+        # a blank latitude fell back to *this feed's* archive rather than to
+        # the settings -- and the number it fell back to looked entirely
+        # ordinary.
+        home = str(settings.get("archive") or archives_module.DEFAULT)
+        placed = (archives_module.placed(cfg, registry.get(home))
+                  if registry.several() else cfg)
         if kind == "json":
-            made.append((name, _json_feed(placed, name, charts, args),
-                         where[name]))
+            made.append((name, _json_feed(cfg, placed, name, charts, args,
+                                          home), where[name]))
         elif kind == "images":
-            made.append((name, _image_feed(placed, name, args), where[name]))
+            made.append((name, _image_feed(cfg, placed, name, args, home),
+                         where[name]))
         elif kind == "cheetah":
-            made.append((name, _cheetah_feed(placed, name, args), where[name]))
+            made.append((name, _cheetah_feed(cfg, placed, home, name, args),
+                         where[name]))
         elif kind == "diagnostic":
             reads = str(settings.get("source") or "json")
             made.append((name, _diagnostic_feed(cfg, name,
@@ -3633,50 +3763,148 @@ def _archive_files(cfg: Settings, args: argparse.Namespace) -> dict[str, Path]:
     return out
 
 
-def _json_feed(cfg: Settings, name: str, charts: plot_defs.PlotSet,
-               args: argparse.Namespace):
+def _coord(value: Any) -> float | None:
+    """One coordinate, or None where nothing said.
+
+    None rather than zero: nought degrees is a place in the Atlantic, and a
+    chart shading its night would be shading the wrong half of the day.
+    """
+    try:
+        return None if value in (None, "") else float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _archive_places(cfg: Settings, args: argparse.Namespace) -> dict:
+    """Every place, as far as drawing is concerned: title, code, colour, sky.
+
+    Separate from `_archive_files` because the two have different lifetimes.
+    A file is opened for the length of one run and closed; this comes out of
+    `archives.toml` and outlives it, and one map holding both would either
+    keep a descriptor for the 99% of the time nothing is being drawn -- the
+    shape of the leak that took an instance down at 477 of them -- or reread
+    the file every pass.
+
+    The coordinates come through `archives.Placed`, not off the dataclass:
+    a place added for its file alone leaves them blank, and `Placed` is what
+    falls back to the settings. Read straight off the record, a comparison
+    chart would shade a night computed from no coordinates at all.
+
+    Empty where there is one series, which is every station that has not
+    written a second one down.
+    """
+    from . import chartdata
+
+    registry = read_archives(args, cfg)
+    if not registry.several():
+        return {}
+    out: dict[str, Any] = {}
+    for one in registry.presented():
+        place = archives_module.placed(cfg, one)
+        out[one.name] = chartdata.Place(
+            name=one.name, title=one.title, code=one.code, color=one.color,
+            latitude=_coord(place.get("station.latitude")),
+            longitude=_coord(place.get("station.longitude")))
+    return out
+
+
+def _archive_shown(cfg: Settings, args: argparse.Namespace) -> tuple[str, ...]:
+    """Which places get a directory of their own this run.
+
+    Gated on the registry holding more than one, never on `overriding()`: a
+    one-entry `archives.toml` makes the settings page correctly say that
+    `station.*` has moved, and is still one place. Empty is byte-for-byte
+    today's flat layout, and that is the case nothing would otherwise be
+    tested at.
+    """
+    registry = read_archives(args, cfg)
+    if not registry.several():
+        return ()
+    return tuple(one.name for one in registry.ordered())
+
+
+def _json_feed(cfg: Settings, placed: Any, name: str,
+               charts: plot_defs.PlotSet, args: argparse.Namespace,
+               home: str = ""):
     from .feeds import jsongenerator
 
     return lambda reader: jsongenerator.from_settings(
-        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
-        archives=_archive_files(cfg, args))
+        placed, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
+        archives=_archive_files(cfg, args),
+        archive=home or archives_module.DEFAULT,
+        places=_archive_places(cfg, args),
+        shown=_archive_shown(cfg, args))
 
 
-def _image_feed(cfg: Settings, name: str, args: argparse.Namespace):
+def _image_feed(cfg: Settings, placed: Any, name: str,
+                args: argparse.Namespace, home: str = ""):
     from .feeds import imagegenerator
 
     return lambda reader: imagegenerator.from_settings(
-        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
-        archives=_archive_files(cfg, args))
+        placed, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
+        archives=_archive_files(cfg, args),
+        archive=home or archives_module.DEFAULT,
+        places=_archive_places(cfg, args),
+        shown=_archive_shown(cfg, args))
 
 
-def _cheetah_feed(cfg: Settings, name: str, args: argparse.Namespace):
-    """One skin, and the other series it may name.
+def _cheetah_feed(cfg: Settings, placed: Any, home: str, name: str,
+                  args: argparse.Namespace):
+    """One skin, every place it shows, into one directory.
 
     A page reads one archive -- its own -- and that is the whole point of
-    archives being separate. `$archives.<name>` is the deliberate way past
-    it, for an overview page showing several sites at once, and this is what
-    puts the other files within reach.
+    archives being separate. What is published, though, is a *site*, and a
+    site may stand in several places: an overview at the root, one directory
+    per place under it, and comparison pages that draw them together. One
+    feed, one directory, one export, one `live.json`; several feeds could
+    not link to each other, and every skin setting would be written out once
+    per place.
 
-    Each comes with its own settings, wrapped in `archives.Placed`, so
+    Each place comes with its own settings, wrapped in `archives.Placed`, so
     `$archives.nordfeld` has the north field's coordinates. Given this
     page's, its readings would be right and its sunrise wrong by minutes.
     """
     from .feeds import cheetah
 
     registry = read_archives(args, cfg)
-    others: dict[str, Any] = {}
+    places: list[dict[str, Any]] = []
     if registry.several():
+        # Every place, its own included: a template naming its own series by
+        # name is asking a reasonable question, and answering it with a
+        # second database handle would be the leak this stopped being.
+        #
+        # `presented()` rather than `all()`: it is the display order, with a
+        # colour and a short code filled in for anything nobody named. `all()`
+        # stays the storage order, because `cmd_serve` takes its first entry
+        # as the default archive.
         base = Path(args.config).parent if getattr(args, "config", None) else None
-        for one in registry.all():
+        for one in registry.presented():
             where = Path(one.file)
             if not where.is_absolute() and base is not None:
                 where = base / where
-            others[one.name] = (where, archives_module.placed(cfg, one))
+            places.append({
+                "name": one.name, "file": where,
+                "settings": archives_module.placed(cfg, one),
+                "label": one.title, "code": one.code, "color": one.color,
+                "url": one.url,
+                "reader": None, "tags": None, "covers": None,
+                "has_data": False,
+            })
 
-    return lambda reader: cheetah.from_settings(
-        cfg, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
-        archives=others)
+    def build(reader):
+        feed = cheetah.from_settings(
+            placed, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
+            archive=home)
+        if places:
+            # Assigned rather than handed to `from_settings`, because the
+            # entries are already in the shape the feed keeps them in --
+            # `from_settings` only normalises the two older shapes that
+            # `skins/overview` and the end-to-end test are written against.
+            feed.places = [dict(one) for one in places]
+            feed.narrow()
+        return feed
+
+    return build
 
 
 def _diagnostic_feed(cfg: Settings, name: str, reads: Path):
@@ -3687,23 +3915,36 @@ def _diagnostic_feed(cfg: Settings, name: str, reads: Path):
 
 
 class _Watcher:
-    """Notices that the configuration file has been written.
+    """Notices that one of the files this process reads has been written.
 
     `Settings.reload()` was built for exactly this and nothing called it, so
     a setting changed on the admin page did nothing at all until somebody
     restarted -- with no message anywhere saying so. Checking a timestamp
     once a tick costs a stat.
+
+    Several files, not one, and that is the second half of the same bug:
+    archives, stations, charts and the readings' limits are all edited on the
+    settings page and none of them is in the configuration file. A place
+    added there reached nothing at all -- the page said saved, every
+    subsystem logged success, and the second site did not exist until
+    somebody restarted the container.
     """
 
-    def __init__(self, path: Any) -> None:
-        self.path = Path(path) if path else None
+    def __init__(self, *paths: Any) -> None:
+        self.paths = [Path(one) for one in paths if one]
         self.seen = self._stamp()
 
-    def _stamp(self) -> float:
-        try:
-            return self.path.stat().st_mtime if self.path else 0.0
-        except OSError:
-            return 0.0
+    def _stamp(self) -> tuple[float, ...]:
+        out = []
+        for one in self.paths:
+            try:
+                out.append(one.stat().st_mtime)
+            except OSError:
+                # Not there is a state, not an error: `archives.toml` appears
+                # the moment somebody adds a second place, and its appearing
+                # is precisely the change worth noticing.
+                out.append(0.0)
+        return tuple(out)
 
     def changed(self) -> bool:
         now = self._stamp()
@@ -3711,6 +3952,80 @@ class _Watcher:
             return False
         self.seen = now
         return True
+
+
+def _repoint_stations(args: argparse.Namespace, cfg: Settings,
+                      series: Any) -> None:
+    """Which consoles each archiver takes, after `stations.toml` changed.
+
+    An archiver filters the live table by station name, and that list was
+    read once at startup. So a console adopted afterwards -- or moved to
+    another series on the stations page -- went on being archived exactly
+    where it was, or nowhere at all, until somebody restarted the process.
+
+    Measured on the beta instance: the container started, logged "archive
+    'testort' has no stations, so nothing will be written", and the console
+    was adopted into that archive fifty seconds later. Its packets reached
+    the live table every sixteen seconds, the settings page showed it
+    correctly, and its series stayed an empty file. Nothing anywhere said
+    why. That is the failure this project has written down twice, arriving
+    through the control that was built to invite the change.
+
+    Swapped whole, all of them together, for the reason `exports.runner`
+    gives: a caller that updates some of a set leaves the rest describing an
+    arrangement that no longer exists.
+
+    Only the *mapping* is applied here. A change to the set of archives is a
+    different thing -- there is one `Archiver` per series and that cannot be
+    handed to a running loop -- and `_series_shape` restarts the process for
+    it.
+    """
+    try:
+        announced, _sightings = read_stations(args, cfg)
+        registry = read_archives(args, cfg)
+    except Exception:
+        log.exception("could not re-read the stations; leaving the archivers "
+                      "as they are")
+        return
+
+    several = registry.several()
+    moved = []
+    for archive, _store, archiver in series:
+        # None means every console, which is what one archive wants and has
+        # always had. Recomputed rather than left alone: an installation that
+        # went from two archives to one would otherwise keep filtering.
+        mine = (sorted(one.name for one in announced.for_archive(archive.name))
+                if several else None)
+        if mine == archiver.stations:
+            continue
+        archiver.stations = mine
+        moved.append(f"{archive.name} <- "
+                     + (", ".join(mine) if mine else "every console"))
+    if moved:
+        log.info("stations changed: %s", "; ".join(moved))
+
+
+def _series_shape(args: argparse.Namespace, cfg: Settings) -> list[tuple[str, str]]:
+    """Which series there are and which file each is, for comparison.
+
+    Only the two things a running process cannot be handed: there is one
+    `Archiver` per series, built at startup, and the live table is told the
+    names once so it can mark an interval pending for each. A place added
+    while running would be marked by nobody and archived by nobody, and the
+    only sign of it would be a page that stays empty.
+
+    A label, a colour or a coordinate is *not* in here on purpose -- those
+    the feeds pick up on their next run, and restarting a station to change
+    the colour of a line would be a worse cure than the disease.
+    """
+    try:
+        registry = read_archives(args, cfg)
+        return sorted((one.name, str(one.file)) for one in registry.all())
+    except Exception:
+        # A file being written as it is read. Reported as "no change" rather
+        # than as a restart: the next tick sees the finished file.
+        log.exception("could not read the archives to compare them")
+        return []
 
 def served_directories(args: argparse.Namespace,
                        cfg: Settings) -> dict[str, Path]:
@@ -3853,6 +4168,69 @@ def cmd_plots_import(args: argparse.Namespace) -> int:
     plot_defs.save(path, written, f"Imported from {args.source}.")
     print(f"Written to {path}.")
     return 0
+
+def cmd_plots_compare(args: argparse.Namespace) -> int:
+    """One chart per reading per span, drawing every place on one axis.
+
+    Read, reported, and only written when asked -- the shape `plots import`
+    already has, for the same reason: a set of charts somebody tuned must not
+    be replaced by a command they ran to see what it would do.
+
+    Generated rather than typed. Four readings by four spans by four places is
+    sixty-four lines in a file, and asking somebody to write those is the
+    WeeWX arrangement this project removed.
+    """
+    cfg = settings_for(args)
+    registry = read_archives(args, cfg)
+    named = [one.strip() for one in str(args.places or "").split(",")
+             if one.strip()]
+    if named:
+        known = set(registry.names())
+        missing = [one for one in named if one not in known]
+        if missing:
+            print(f"There is no series called {', '.join(missing)}. "
+                  f"There is: {', '.join(sorted(known))}.", file=sys.stderr)
+            return 1
+        places = named
+    else:
+        places = [one.name for one in registry.ordered()]
+
+    if len(places) < 2:
+        # Said rather than written as an empty result: somebody who typed
+        # this wants a comparison, and "nothing to compare" is the answer.
+        print("A comparison needs two places. This installation keeps "
+              f"{len(places)}; add another on the Archives page.",
+              file=sys.stderr)
+        return 1
+
+    readings = [one.strip() for one in str(args.obs).split(",") if one.strip()]
+    spans = [one.strip() for one in str(args.span).split(",") if one.strip()]
+
+    path = plots_path(args, cfg)
+    existing = plot_defs.load(path)
+    written, replaced = plot_defs.comparisons(
+        places, readings, spans, existing=existing)
+
+    made = len(written) - len(existing) + len(replaced)
+    print(f"{made} chart(s) for {len(places)} places: "
+          f"{', '.join(places)}.")
+    for plot in written.plots:
+        if plot.name in replaced or existing.get(plot.name) is None:
+            drawn = ", ".join(line.series or "this one" for line in plot.lines)
+            print(f"  {plot.name:<24} {plot.span:<6} {drawn}")
+    if replaced:
+        print(f"  {len(replaced)} of them replace charts of the same name "
+              "that this command wrote before.")
+
+    if not args.write:
+        print()
+        print("Nothing was changed. Keep them with --write.")
+        return 0
+
+    plot_defs.save(path, written, "Comparisons across the configured places.")
+    print(f"Written to {path}.")
+    return 0
+
 
 def cmd_plots_remove(args: argparse.Namespace) -> int:
     """Delete a chart."""
@@ -5013,6 +5391,20 @@ def main(argv: list[str] | None = None) -> int:
                    help="start from nothing instead of adding to what is there")
     q.add_argument("--plots", default=None)
     q.set_defaults(func=cmd_plots_import)
+
+    q = plots_sub.add_parser(
+        "compare", help="one chart per reading, drawing every place at once")
+    add_common(q)
+    q.add_argument("--obs", default="outTemp,outHumidity,windSpeed,rain",
+                   help="which readings, comma separated")
+    q.add_argument("--span", default="day,week,month,year",
+                   help="which spans, comma separated")
+    q.add_argument("--places", default="",
+                   help="which series; the default is every one of them")
+    q.add_argument("--write", action="store_true",
+                   help="keep them; without this it only says what it would do")
+    q.add_argument("--plots", default=None)
+    q.set_defaults(func=cmd_plots_compare)
 
     q = plots_sub.add_parser("remove", help="delete a chart")
     add_common(q)

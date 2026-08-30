@@ -229,6 +229,9 @@ def tests() -> list[Test]:
         Test("deck-live", ["deck_live_test.py"],
              "live readings: the document, live.php, and the page run in jsdom",
              needs=("Cheetah",)),
+        Test("deck-places", ["deck_places_test.py"],
+             "one site, several places -- and one place unchanged",
+             needs=("Cheetah",)),
 
         # -- the driver's own suite --------------------------------------
         Test("push", ["-m", "pytest", "tests/push", "-q"],

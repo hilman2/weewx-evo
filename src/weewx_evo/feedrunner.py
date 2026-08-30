@@ -125,7 +125,8 @@ class Runner:
             self.live.set()
 
     def replace(self, feeds: list[tuple[str, Callable, Path]],
-                schedule: dict[str, dict] | None = None) -> None:
+                schedule: dict[str, dict] | None = None,
+                archives: dict[str, Path] | None = None) -> None:
         """Swap in a new set, after the configuration changed.
 
         A feed deleted on the settings page kept being produced, and a new
@@ -142,6 +143,15 @@ class Runner:
         self.feeds = list(feeds)
         if schedule is not None:
             self.schedule = dict(schedule)
+        if archives is not None:
+            # The third of the three, and the one that was missed. `schedule`
+            # says which series a feed reads and this says where that series
+            # is; swapping one without the other leaves a feed correctly
+            # pointed at a name that resolves to the old file -- and
+            # `path_for` falls back to the default rather than failing, so
+            # the pages come out full of the wrong place's readings.
+            self.archives = {DEFAULT_ARCHIVE: self.archive_path}
+            self.archives.update({k: Path(v) for k, v in archives.items()})
         # A feed that is gone should not keep a due time, and one that is new
         # should be due at once rather than an interval from now.
         known = {name for name, _build, _into in self.feeds}

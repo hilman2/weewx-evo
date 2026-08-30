@@ -361,8 +361,11 @@ def the_wizard_reopens(base: str) -> None:
           "Kirchdorf an der Amper" in html, True)
     code, html = get(f"{base}/setup/done")
     check("the last page says what is set up", code, 200)
+    # "Add a console" since the page and the button stopped disagreeing:
+    # the sidebar said Consoles, the heading said Stations, and the button
+    # said a third thing.
     check("and names the one thing left",
-          "One thing left" in html or "Add a station" in html, True)
+          "One thing left" in html or "Add a console" in html, True)
 
 
 def what_ships() -> None:

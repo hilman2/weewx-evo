@@ -701,8 +701,9 @@ def test_no_resend_leaves_the_marks_alone() -> None:
 # The forecast.
 # ---------------------------------------------------------------------------
 
-def a_store(tmp: Path, name: str = "forecast") -> object:
-    """A forecast store with one run of hours and days in it."""
+def a_store(tmp: Path, name: str = "forecast",
+            archive: str = "default") -> object:
+    """A forecast store with one run of hours and days in it, for one series."""
     from weewx_evo.forecast import Day, Moment, Reading
     from weewx_evo.forecast.store import ForecastStore
 
@@ -719,7 +720,7 @@ def a_store(tmp: Path, name: str = "forecast") -> object:
                   sunset=base + 86400 * n + 72000, code=3)
               for n in range(3)])
     store = ForecastStore(tmp / f"{name}.sdb")
-    store.store(reading, base)
+    store.store(reading, base, archive)
     return store
 
 
@@ -808,8 +809,8 @@ def test_one_source_at_a_time(tmp: Path) -> None:
     base = 1756308600
     store.store(Reading(source="dwd", issued=base,
                         hours=[Moment(dateTime=base, usUnits=units.METRICWX,
-                                        outTemp=9.0)]), base)
-    check("both are in the store", sorted(store.sources()),
+                                        outTemp=9.0)]), base, "default")
+    check("both are in the store", sorted(store.sources("default")),
           ["dwd", "openmeteo"])
 
     one = upload().forecast_lines(store, ("dwd",))
@@ -856,11 +857,79 @@ def test_a_fetch_reaches_the_upload(url: str, tmp: Path) -> None:
     source = Scheduled("test", Source(), None, store,
                        cli.mirror_forecast(Holder(), store))
     source.run()
-    check("the run was stored", len(store.hours("test")), 1)
+    check("the run was stored", len(store.hours("default", "test")), 1)
     check("and it reached the database", len(Fake.seen), 1)
     check("as a forecast point",
           "weather_forecast" in Fake.seen[0][2], True)
     store.close()
+
+
+def test_each_place_reaches_its_own_upload(url: str, tmp: Path) -> None:
+    """Two places, two uploads, and neither gets the other's forecast.
+
+    Everything an upload writes carries its own `location`. So a forecast
+    sent through the wrong one is not merely surplus: it lands on the right
+    place's measurement, with the right place's tags, on the same timestamps
+    -- and InfluxDB keeps the last write. The panel shows one place's hours
+    labelled as the other's, and nothing in the data says which happened.
+
+    The reads were already keyed on the series when this was written. Only
+    the sending was not, which is why it read as correct.
+    """
+    from weewx_evo import cli
+    from weewx_evo.forecast import Moment, Reading
+    from weewx_evo.forecast.runner import Scheduled
+    from weewx_evo.forecast.store import ForecastStore
+
+    base = 1756308600
+
+    def source_of(temp: float) -> object:
+        class Source:
+            every = 3600
+
+            def fetch(self, _place):
+                # The same entry name for both, which the store allows on
+                # purpose: somebody with two fields calls both of them
+                # `here`. Tagged only by source, the two would be one series.
+                return Reading(source="here", issued=base,
+                               hours=[Moment(dateTime=base,
+                                             usUnits=units.METRICWX,
+                                             outTemp=temp, code=3)])
+        return Source()
+
+    def upload_for(place: str) -> object:
+        return type("S", (), {"name": f"influx-{place}", "archive": place,
+                              "upload": upload(url=url, location=place)})()
+
+    class Holder:
+        uploads: ClassVar[list] = [upload_for("default"),
+                                   upload_for("nordfeld")]
+
+    Fake.status, Fake.message, Fake.seen = 204, "", []
+    store = ForecastStore(tmp / "two-places.sdb")
+    try:
+        for place, temp in (("default", 11.0), ("nordfeld", 4.0)):
+            Scheduled("here", source_of(temp), None, store,
+                      cli.mirror_forecast(Holder(), store),
+                      archive=place).run()
+
+        # Line by line rather than body by body: a body carrying two points
+        # is the fault itself, and reading one body as one point turns a
+        # measurable answer into an unpacking error that names nothing.
+        points = [parse(line) for _, _, body in Fake.seen
+                  for line in body.splitlines() if line.strip()]
+        check("one point per place, and no more", len(points), 2)
+        check("each under its own location",
+              sorted(tags.get("location", "") for _, tags, _, _ in points),
+              ["default", "nordfeld"])
+
+        # And the numbers went with the labels rather than beside them.
+        got = {tags.get("location"): fields.get("outTemp")
+               for _, tags, fields, _ in points}
+        check("the north's reading is the north's", got.get("nordfeld"), 4.0)
+        check("and the default's is its own", got.get("default"), 11.0)
+    finally:
+        store.close()
 
 
 def test_an_unreachable_database_does_not_stop_the_forecast(tmp: Path) -> None:
@@ -897,7 +966,8 @@ def test_an_unreachable_database_does_not_stop_the_forecast(tmp: Path) -> None:
     source = Scheduled("dead", Source(), None, store,
                        cli.mirror_forecast(Broken(), store))
     source.run()
-    check("the forecast was stored anyway", len(store.hours("dead")), 1)
+    check("the forecast was stored anyway",
+          len(store.hours("default", "dead")), 1)
     check("the source is not blocked", source.blocked, "")
     check("nor counted as a failure", source.failures, 0)
     store.close()
@@ -937,6 +1007,8 @@ def main() -> int:
         test_counting_without_a_location_asks_for_all(url)
         with tempfile.TemporaryDirectory() as raw:
             test_a_fetch_reaches_the_upload(url, Path(raw))
+        with tempfile.TemporaryDirectory() as raw:
+            test_each_place_reaches_its_own_upload(url, Path(raw))
     finally:
         server.shutdown()
         server.server_close()

@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -89,6 +89,33 @@ class Archive:
     url: str = ""
     rain_year_start: int = 1
 
+    #: What this place is drawn in wherever two are drawn together: a line
+    #: on a comparison chart, the rule down its row on an overview, its chip
+    #: in a sidebar. Here rather than in a skin, for the reason plot
+    #: definitions are not in a skin either -- Deck, the image generator and
+    #: Grafana would hold three copies, and the day they disagree the same
+    #: place is one colour on a page and another in the picture beside it.
+    #:
+    #: Empty means the renderer picks, and that is the honest default: a
+    #: place created for its file alone should not be handed a colour
+    #: nobody chose and cannot tell from one they did.
+    color: str = ""
+
+    #: Up to four characters, for a chip beside a value and a legend where
+    #: the label will not fit. Truncating the label instead gives two places
+    #: called "Kirc" the day somebody adds "Kirchdorf Sued".
+    code: str = ""
+
+    #: Where this place stands in a list that has no order of its own: the
+    #: overview, the compare legend, the sidebar.
+    #:
+    #: Not the file's line order, and `Register.all()` is deliberately left
+    #: alone. `cmd_serve` takes `all()[0]` as the default archive, which is
+    #: only correct because `add()` inserts the fallback first -- sorting
+    #: that list would move the drivers' state, the `status` command and
+    #: every feed naming nothing to a different series, silently.
+    order: int = 0
+
     @property
     def title(self) -> str:
         """What to print. The label if there is one, else the name."""
@@ -100,10 +127,7 @@ class Archive:
                 "altitude": self.altitude}
 
     def as_dict(self) -> dict[str, Any]:
-        return {"file": self.file, "label": self.label,
-                "latitude": self.latitude, "longitude": self.longitude,
-                "altitude": self.altitude, "url": self.url,
-                "rain_year_start": self.rain_year_start}
+        return {name: getattr(self, name) for name, _read_as in FIELDS}
 
 
 def _number(value: Any) -> float | None:
@@ -113,6 +137,71 @@ def _number(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _int_or(fallback: int) -> Any:
+    """Read a whole number, or the value that means "nothing said"."""
+    def read(value: Any) -> int:
+        found = _number(value)
+        return fallback if found is None else int(found)
+    return read
+
+
+#: Every field of an `Archive` beyond its name, and how to read one out of
+#: the file. One table rather than three hand-written walkers, because the
+#: failure when the three disagree is silent and delayed: the value is
+#: accepted, shown back once from the form, and gone at the next save. That
+#: is exactly how `url` and `rain_year_start` came to be readable by the
+#: settings page and written back by nothing.
+FIELDS: tuple[tuple[str, Any], ...] = (
+    ("file", str),
+    ("label", str),
+    ("latitude", _number),
+    ("longitude", _number),
+    ("altitude", _number),
+    ("url", str),
+    ("rain_year_start", _int_or(1)),
+    ("color", str),
+    ("code", str),
+    ("order", _int_or(0)),
+)
+
+#: Eight hues a place can be given when nobody chose one, mid-lightness so
+#: each reads on both the light and the dark ground. Assigned by position.
+#:
+#: `plots.LINE_COLORS` cannot do this job and it is worth saying why: it
+#: cycles five colours modulo the index *within one plot*, so the same place
+#: comes out blue on the temperature chart and red on the humidity chart --
+#: and a chip saying a place *is* a colour would then be lying on every
+#: second card.
+PLACE_COLORS = ("#4282b4", "#d1642a", "#3d8f5c", "#8a5cc4",
+                "#b44242", "#2f9ba6", "#a67c22", "#c4569a")
+
+#: Names a place may not take, because its pages are published in a
+#: directory of that name at the root of a site.
+#:
+#: Deck's page names are listed in the core, and that is a layering
+#: inversion taken deliberately: asking a skin would mean importing one in
+#: order to check a name, which fails on an installation that has no skin --
+#: and the failure would be silent permission to create the collision.
+#: `tools/archives_test.py` keeps the list honest by measuring what the
+#: bundled skins actually write.
+#:
+#: Two of them are nobody's skin. `api` is matched by the web server
+#: *before* the feeds, so a place called `api` would be reachable and then
+#: not be. `names` is a method on `tags.Archives`, and a place called
+#: `names` takes the word out of the template namespace -- every
+#: `$archives.names()` becomes "cannot find 'names'".
+RESERVED = frozenset({
+    "api", "names", "data", "json", "assets", "vendor", "lang", "includes",
+    "icons", "noaa", "day-archive",
+    "index", "week", "month", "year", "yesterday", "statistics",
+    "celestial", "sensor-status", "computer-monitor", "externals",
+    "offline", "manifest", "compare", "places", "overview",
+})
+
+_HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_CODE = re.compile(r"^[A-Za-z0-9]{1,4}$")
 
 
 def from_settings(cfg: Any) -> Archive:
@@ -289,6 +378,41 @@ class Register:
         return self.get(DEFAULT) if wanted != DEFAULT else (
             self.fallback or Archive(DEFAULT, "data/weewx.sdb"))
 
+    def ordered(self) -> list[Archive]:
+        """Every place, in the order pages present them.
+
+        Separate from `all()` on purpose, and the docstring on `Archive.order`
+        says why: `all()` is the storage order with the default first, and
+        three things depend on that.
+        """
+        found = self.all()
+        return sorted(found, key=lambda one: (one.order, found.index(one)))
+
+    def presented(self) -> list[Archive]:
+        """The same list with a colour and a short code filled in.
+
+        For renderers, never for saving. Writing these back would turn "the
+        renderer picks" into a choice somebody appears to have made, and the
+        next release's palette would then not reach any station that had
+        ever opened the page.
+        """
+        # The colour comes from where a place sits in the *file*, not from
+        # where it sits in the list. Dragging a place up a settings page
+        # must not repaint it: the colour is how somebody recognises it on
+        # the chart they were looking at a minute ago.
+        stored = [one.name for one in self.all()]
+        out: list[Archive] = []
+        taken: set[str] = set()
+        for one in self.ordered():
+            code = one.code or _short(one.title or one.name, taken)
+            taken.add(code.casefold())
+            position = stored.index(one.name) if one.name in stored else 0
+            out.append(replace(
+                one,
+                color=one.color or PLACE_COLORS[position % len(PLACE_COLORS)],
+                code=code))
+        return out
+
     def several(self) -> bool:
         """Whether anything has to be told apart at all.
 
@@ -360,6 +484,35 @@ class Register:
                     "underscores, up to 64 of them")
         if not (archive.file or "").strip():
             return "an archive needs a file to keep its readings in"
+        if archive.name.lower() in RESERVED:
+            # Named as a collision rather than as a rule. "Invalid name"
+            # sends somebody looking for a syntax; this sends them to a
+            # different name, which is what they actually need.
+            return (f"a place's pages are published in a directory of its "
+                    f"own name, and {archive.name!r} is already a page or a "
+                    f"directory of a published site. Try "
+                    f"{archive.name}feld, or {archive.name}-nord.")
+        if archive.name.isdigit():
+            # A place name is three things at once: a directory at the root
+            # of a published site, a key in `live.json`, and a `data-archive`
+            # attribute. PHP has one array type, so `{"archives": {"0": ...}}`
+            # comes back out of `live.php` as `{"archives": [...]}` and every
+            # lookup on the page finds nothing -- one place called `0` is
+            # enough, the names do not have to run 0..n.
+            return ("a place cannot be called by a number alone: it becomes "
+                    "a key in a file that a web host rewrites, and a numeric "
+                    "key comes back as a position. Try "
+                    f"feld{archive.name}.")
+        if archive.color and not _HEX.match(archive.color):
+            # Refused rather than warned about: an unreadable colour renders
+            # as black, and black is already what "nobody said" looks like
+            # in this skin's icon set -- so the two would be
+            # indistinguishable on the one page that exists to tell them
+            # apart.
+            return (f"{archive.color!r} is not a colour. Write it as "
+                    "#2f6f4e, or leave it empty to have one picked.")
+        if archive.code and not _CODE.match(archive.code):
+            return "a short code is one to four letters or digits"
         for one in self.all():
             if one.name == replacing:
                 continue
@@ -369,6 +522,21 @@ class Register:
                 return (f"{one.name!r} already keeps its readings in "
                         f"{archive.file!r}, and two series in one file is one "
                         "series with the readings mixed")
+            if archive.code and one.code.casefold() == archive.code.casefold():
+                # A chip that means two places is worse than no chip: it is
+                # read as an answer.
+                return (f"{one.name!r} already goes by {one.code!r}")
+            if (archive.label
+                    and one.label.casefold() == archive.label.casefold()):
+                # The label is what a legend prints, and a chart's legend is
+                # keyed on it: two places called "Garten" become one legend
+                # entry, and pressing one chip removes the other place's
+                # line. Refused here rather than made unique when drawn --
+                # a legend reading "Garten" and "Garten (2)" answers nobody's
+                # question about which garden.
+                return (f"{one.name!r} is already called {one.label!r}. "
+                        "Two places with one name make one line on a "
+                        "comparison chart.")
         return ""
 
     # -- writing -------------------------------------------------------
@@ -384,19 +552,22 @@ class Register:
             "# Written by the settings page. Editing it by hand is fine.",
             "",
         ]
+        blank = Archive("", "")
         for one in self.all():
             lines.append(f"[archives.{one.name}]")
-            lines.append(f'file = "{_escape(one.file)}"')
-            if one.label:
-                lines.append(f'label = "{_escape(one.label)}"')
-            for field_name in ("latitude", "longitude", "altitude"):
+            for field_name, _read_as in FIELDS:
                 value = getattr(one, field_name)
-                if value is not None:
-                    lines.append(f"{field_name} = {value}")
-            if one.url:
-                lines.append(f'url = "{_escape(one.url)}"')
-            if one.rain_year_start != 1:
-                lines.append(f"rain_year_start = {one.rain_year_start}")
+                # Written only where it says something. `file` is the
+                # exception: an archive without one is not an archive, and a
+                # file that silently went missing is the failure this whole
+                # module exists to make impossible.
+                if field_name != "file" and (
+                        value in (None, "")
+                        or value == getattr(blank, field_name)):
+                    continue
+                lines.append(f'{field_name} = "{_escape(value)}"'
+                             if isinstance(value, str)
+                             else f"{field_name} = {value}")
             lines.append("")
         return "\n".join(lines)
 
@@ -410,6 +581,25 @@ class Register:
         self.path = where
         self._mtime = where.stat().st_mtime
         return where
+
+
+def _short(title: str, taken: set[str]) -> str:
+    """A code for a place that did not give itself one.
+
+    Letters and digits from the name, three of them, then a digit if that is
+    already somebody else's. Deduplicated because the whole point of a code
+    is telling two places apart, and two places called NOR is worse than no
+    code at all.
+    """
+    letters = [c for c in str(title) if c.isalnum()]
+    stem = ("".join(letters[:3]).upper() or "S")
+    if stem.casefold() not in taken:
+        return stem
+    for n in range(2, 100):
+        tried = f"{stem[:3]}{n}"[:4]
+        if tried.casefold() not in taken:
+            return tried
+    return stem
 
 
 def _escape(value: str) -> str:
@@ -426,16 +616,11 @@ def _read(path: Path) -> list[Archive]:
         if not isinstance(entry, dict):
             log.warning("%s: [archives.%s] is not a table; skipped", path, name)
             continue
-        found.append(Archive(
-            name=str(name),
-            file=str(entry.get("file") or ""),
-            label=str(entry.get("label") or ""),
-            latitude=_number(entry.get("latitude")),
-            longitude=_number(entry.get("longitude")),
-            altitude=_number(entry.get("altitude")),
-            url=str(entry.get("url") or ""),
-            rain_year_start=int(entry.get("rain_year_start") or 1),
-        ))
+        made = {"name": str(name)}
+        for field_name, read_as in FIELDS:
+            raw = entry.get(field_name)
+            made[field_name] = read_as("" if raw is None else raw)
+        found.append(Archive(**made))
     return found
 
 
@@ -460,6 +645,14 @@ class Placed:
     #: Which names this answers for. `station.name` is here because a page
     #: prints it, and with two sites printing the same one is the clearest
     #: possible way to publish the wrong field's readings.
+    #: `archive_db` is deliberately **not** here, and it was for a while.
+    #: The reason it was: the forecast store is derived from it, so a placed
+    #: `archive_db` looked like the way to give each place its own forecast.
+    #: The reason it is not: there is one forecast file for the whole
+    #: installation and its rows name the series they are for, so a placed
+    #: `archive_db` sent every page but the default's to a file nothing
+    #: writes -- measured on a live two-place instance, where the second
+    #: place's pages carried no forecast section at all.
     PLACE: ClassVar[dict[str, str]] = {
         "station.latitude": "latitude",
         "station.longitude": "longitude",

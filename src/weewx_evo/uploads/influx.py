@@ -420,22 +420,31 @@ class InfluxUpload(BaseUpload):
 
     # -- the forecast -----------------------------------------------------
 
-    def forecast_lines(self, store: Any, sources: tuple[str, ...] = ()
-                       ) -> list[str]:
+    def forecast_lines(self, store: Any, sources: tuple[str, ...] = (),
+                       archive: str = "") -> list[str]:
         """The hours and the days of every configured source, as lines.
 
         Written under `<measurement>_forecast` with `kind=hour` or `kind=day`
         and the source as a tag, so a panel can ask for one source and a
         second one configured beside it does not double every point.
+
+        `archive` is which series to send. Everything this upload writes
+        carries its one `location` tag, so sending more than one series
+        through it is not a wider answer but a wrong one: two places' hours
+        land on the same measurement with the same tags and the same
+        timestamps, and the pair overwrite each other. Empty means the whole
+        store, which is what a single-series installation has.
         """
         lines: list[str] = []
-        for source in (sources or tuple(store.sources())):
-            for kind, rows in (("hour", store.hours(source)),
-                               ("day", store.days(source))):
-                for row in rows:
-                    line = self._forecast_line(row, source, kind)
-                    if line:
-                        lines.append(line)
+        wanted = [archive] if archive else list(store.archives())
+        for one in wanted:
+            for source in (sources or tuple(store.sources(one))):
+                for kind, rows in (("hour", store.hours(one, source)),
+                                   ("day", store.days(one, source))):
+                    for row in rows:
+                        line = self._forecast_line(row, source, kind)
+                        if line:
+                            lines.append(line)
         return lines
 
     def _forecast_line(self, row: Any, source: str, kind: str) -> str | None:
@@ -473,14 +482,15 @@ class InfluxUpload(BaseUpload):
         return (f"{_measurement(self.measurement + '_forecast')}{tags} "
                 f"{','.join(fields)} {readings.ts}")
 
-    def post_forecast(self, store: Any, sources: tuple[str, ...] = ()) -> int:
+    def post_forecast(self, store: Any, sources: tuple[str, ...] = (),
+                      archive: str = "") -> int:
         """Send the current forecast. Returns how many points went.
 
         Called after a source has fetched rather than on every record: the
         points would be identical, and identical points are a write the far
         end still has to do.
         """
-        lines = self.forecast_lines(store, sources)
+        lines = self.forecast_lines(store, sources, archive)
         for start in range(0, len(lines), BATCH):
             self._post(NEWLINE.join(lines[start:start + BATCH]))
         return len(lines)
@@ -526,7 +536,8 @@ class InfluxUpload(BaseUpload):
                        help="The table, in InfluxDB's language. Leave it "
                             "alone unless something else already writes "
                             "weather into this bucket."),
-                Option("location", "Location tag", kind="text", default="",
+                Option("location", "Place, as InfluxDB is told it",
+                       kind="text", default="",
                        placeholder="kirchdorf",
                        help="The tag every point carries, and what a Grafana "
                             "query groups by to draw several places on one "

@@ -226,6 +226,11 @@
     document.querySelectorAll("main table").forEach(function (table) {
       var parent = table.parentElement;
       if (parent && parent.classList.contains("table-scroll")) return;
+      // A table that says it must not be in a scroll box. The overview's
+      // board reflows to one card per place below 46rem, in CSS alone;
+      // wrapped, it would instead hide half its columns behind a sideways
+      // gesture nobody performs on a weather page.
+      if (table.hasAttribute("data-no-scroll")) return;
       var box = document.createElement("div");
       box.className = "table-scroll";
       table.replaceWith(box);
@@ -326,6 +331,40 @@
     });
   }
 
+  /* -------------------------------------------------------- the places */
+
+  /* The chips over the comparison charts. One press switches a place on
+   * every chart on the page at once, which is the question actually being
+   * asked -- "just the two gardens" -- rather than the same legend click
+   * repeated once per chart.
+   *
+   * The state itself lives in `charts.js`, because it has to be built INTO
+   * the chart option: `redraw()` is `setOption(option, true)`, so a filter
+   * applied from outside is wiped the moment the OS flips to dark at sunset.
+   * This half is the buttons and nothing else.
+   *
+   * With scripting off the chips are inert and every place is on every
+   * chart, which is complete and correct. */
+  function wireChips() {
+    var chips = document.querySelectorAll("[data-place-toggle]");
+    if (!chips.length) return;
+    var charts = window.deckCharts;
+
+    chips.forEach(function (chip) {
+      var name = chip.getAttribute("data-place-toggle");
+      // What was remembered from last time. The markup says pressed,
+      // because that is the right answer when nothing runs.
+      if (charts && charts.shown) {
+        chip.setAttribute("aria-pressed", charts.shown(name) ? "true" : "false");
+      }
+      chip.addEventListener("click", function () {
+        var on = chip.getAttribute("aria-pressed") !== "true";
+        chip.setAttribute("aria-pressed", on ? "true" : "false");
+        if (charts && charts.hide) charts.hide(name, !on);
+      });
+    });
+  }
+
   /* -------------------------------------------------- temperature tint */
 
   /* Optional -- `outTemp_stat_tile_color` on the feed's settings page.
@@ -384,6 +423,7 @@
     wireTabs();
     wireSorting();
     wireDialogs();
+    wireChips();
     tintTemperature();
   }
 

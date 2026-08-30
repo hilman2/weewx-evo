@@ -12,12 +12,13 @@
     <title>$station.location - $gettext("Yesterdays Weather Conditions")</title>
   </head>
 
-  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')"#if $places then ' data-units="' + $page_unit_system() + '"' else ''#>
     #include "includes/ui-shell.inc"
 
     <main class="main" id="main">
       <div class="wrap">
 <header class="page-head">
+#include "includes/place-switch.inc"
               <h1>$gettext("Yesterdays Weather Conditions")</h1>
               <h2>
                 $yesterday.dateTime.format($get_time_format_dict['month'])

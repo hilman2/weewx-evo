@@ -259,6 +259,18 @@ def charts(server: Any, plots: Any, weight: bool = False) -> dict[str, dict]:
     words = server.words
     by_span: dict[str, list] = {}
     for plot in plots:
+        # A plot whose lines name their own archive is left out, and it is
+        # not an omission. Every panel here is filtered to `${location}`, so
+        # a comparison plot would draw its N lines all out of the *one*
+        # location the reader picked -- N identical curves under N different
+        # place names, which is a wrong picture rather than a missing one.
+        #
+        # Grafana already answers that question its own way, and better: the
+        # `compare` dashboard is one reading across every location, from the
+        # tag, with the filter left off. That is the same question asked
+        # where the data can answer it.
+        if getattr(plot, "names_a_place", None) and plot.names_a_place():
+            continue
         by_span.setdefault(plot.span or "day", []).append(plot)
 
     boards: dict[str, dict] = {}

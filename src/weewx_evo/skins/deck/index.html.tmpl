@@ -15,12 +15,13 @@
     #end if
   </head>
 
-  <body class="theme-$DisplayOptions.get('layout', 'alternative')">
+  <body class="theme-$DisplayOptions.get('layout', 'alternative')"#if $places then ' data-units="' + $page_unit_system() + '"' else ''#>
     #include "includes/ui-shell.inc"
 
     <main class="main" id="main">
       <div class="wrap">
 <header class="page-head">
+#include "includes/place-switch.inc"
               <h1>$gettext("Current Weather Conditions")</h1>
               <h2>$current.dateTime</h2>
             </header>
@@ -121,35 +122,6 @@
     #include "includes/footer.inc"
 
 
-## Live readings. The station POSTs them to live.php, which writes them
-## beside itself; this reads that file. Nothing is opened anywhere for it --
-## same web server as the page, same https, same origin.
-#if $to_bool($Extras.get('live_push', 1))
-    <script>
-      window.deckLivePoll = {
-        url: "$Extras.get('live_push_file', 'live.json')",
-        every: $Extras.get('live_push_every', 15)
-      };
-      window.deckLiveStrings = {
-        live: "$gettext('LIVE')",
-        stale: "$gettext('LIVE')",
-        offline: "$gettext('OFFLINE')",
-        waiting: "…",
-        connecting: "$gettext('connecting')",
-        justNow: "$gettext('just now')",
-        secondsAgo: "$gettext('s ago')",
-        minutesAgo: "$gettext('min ago')",
-        hoursAgo: "$gettext('h ago')",
-        daysAgo: "$gettext('d ago')",
-        liveSince: "$gettext('Updated')",
-        lastSeen: "$gettext('Last live reading')",
-        noBroker: "$gettext('No connection to the live feed.')",
-        waitingFor: "$gettext('Waiting for the first reading.')",
-        neverSent: "$gettext('The station does not publish this reading live.')"
-      };
-    </script>
-    <script src="$asset('assets/live-poll.js')" defer></script>
-    <script src="$asset('assets/live-status.js')" defer></script>
-    #end if
+#include "includes/live-scripts.inc"
   </body>
 </html>

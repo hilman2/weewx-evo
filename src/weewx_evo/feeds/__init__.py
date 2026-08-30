@@ -231,12 +231,10 @@ def archive_names() -> list[tuple[str, str]]:
     second one was unreachable until a station had been pointed at it.
     """
     from .. import archives as archive_defs
-    from .. import settings as settings_module
 
     try:
-        running = settings_module.running()
         register = archive_defs.Register.load(
-            _config_dir() / archive_defs.FILENAME, running)
+            _config_dir() / archive_defs.FILENAME, _said())
         found = [(one.name, one.title if one.title != one.name else one.name)
                  for one in register.all()]
     except Exception:
@@ -245,13 +243,63 @@ def archive_names() -> list[tuple[str, str]]:
     return found
 
 
-def _config_dir() -> Path:
-    """Where the configuration lives, as the running process sees it."""
+class _Said:
+    """The seven settings the default archive is made of, however they came.
+
+    `Register.load` needs somewhere to read them from, and it was handed
+    `settings.running()` -- which is None whenever the form is being built
+    for a *file* rather than by the running service, and `None.get` then
+    raised into the catch-all below. Every list of archives came back holding
+    one name, so the second place could not be clicked and typing it
+    correctly got it marked as a mistake.
+    """
+
+    def __init__(self, values: dict) -> None:
+        self.values = values
+
+    def get(self, name: str, default: object = None) -> object:
+        found: object = self.values
+        for part in name.split("."):
+            if not isinstance(found, dict) or part not in found:
+                return default
+            found = found[part]
+        return default if found in (None, "") else found
+
+
+def _said() -> object:
+    """The settings the form is being built against."""
+    from .. import options as options_module
     from .. import settings as settings_module
 
     running = settings_module.running()
-    where = getattr(running, "path", None) if running else None
-    return Path(where).parent if where else Path(".")
+    if running is not None and options_module._config_path() is None:
+        return running
+    return _Said(options_module._current_config() or {})
+
+
+def _config_dir() -> Path:
+    """Where the configuration lives, as the page building this form sees it.
+
+    `options.building_for()` first, which is what every other choice list
+    reads and what `all_schemas()` sets for exactly this. Only then the
+    running settings, and there the attribute is `_path` -- `path` is not one
+    `Settings` has, so this silently answered the process's working directory
+    and the archive list came back holding one name.
+
+    That is not a small miss. `places` and `Reads from` both hang off it, so
+    on a two-place installation the second place could not be clicked, and
+    typing it correctly got it marked as a mistake: the page told the
+    operator the truth was a typo.
+    """
+    from .. import options as options_module
+    from .. import settings as settings_module
+
+    where = options_module._config_path()
+    if where:
+        return Path(where).parent
+    running = settings_module.running()
+    said = getattr(running, "_path", None) if running else None
+    return Path(said).parent if said else Path(".")
 
 
 def schedule_options() -> list:
@@ -265,9 +313,10 @@ def schedule_options() -> list:
     from ..options import Group, Option
 
     return [
-        Group("When it runs",
-              "A feed produces files. This says what sets it going and which "
-              "measurement series it reads.", (
+        Group("What it is about, and when it runs",
+              "A feed builds files -- pages, charts, a JSON document -- out "
+              "of the readings kept for one place. This says which place, "
+              "and what sets it going.", (
                   Option("trigger", "Produce", kind="choice", default="record",
                          choices=CHOOSABLE_TRIGGERS,
                          help="With the archive is right for anything built "
@@ -282,13 +331,21 @@ def schedule_options() -> list:
                               "the clock, so an hourly feed produces on the "
                               "hour rather than an hour after the service "
                               "started."),
-                  Option("archive", "Reads from", kind="choice",
+                  Option("archive", "Place", kind="choice",
                          default=DEFAULT_ARCHIVE,
-                         choices=((DEFAULT_ARCHIVE, DEFAULT_ARCHIVE),),
+                         # No literal fallback beside `choices_from`: the two
+                         # are concatenated, so the default appeared twice in
+                         # the list -- both marked selected -- the moment the
+                         # register could be read at all. `archive_names`
+                         # already answers with the default alone where there
+                         # is nothing else.
                          choices_from=archive_names,
-                         help="Which measurement series this feed reports on. "
-                              "With one archive there is nothing to choose; "
-                              "with a station at each of two sites, this is "
-                              "which site the page is about."),
+                         help="The spot these pages are about. With one "
+                              "place there is nothing to choose. With two, "
+                              "this is the one whose today, whose week and "
+                              "whose records the pages print -- and it is "
+                              "always the first of the places under "
+                              "“Also show” below, whether or not "
+                              "it is named there."),
               ), prefix=""),
     ]

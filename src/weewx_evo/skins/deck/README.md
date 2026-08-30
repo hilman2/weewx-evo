@@ -35,6 +35,32 @@ Building them needs node and yarn, and nothing here does: a weather station
 should not need a JavaScript toolchain to publish a page, so `dist/` is
 checked in.
 
+## One skin, several places
+
+Where weewx-evo keeps more than one measurement series, one Deck feed shows
+all of them: an overview at the root, comparison pages beside it, and the
+whole skin again under each place's own name.
+
+    one place                several places
+    /index.html              /index.html            the board
+    /week.html               /compare.html          the comparisons
+    /...                     /compare-week.html
+                             /kirchdorf/index.html  each place, in full
+                             /nordfeld/index.html
+
+One directory, one export, one upload -- so the whole thing goes up an FTP
+link like any other set of pages, and the comparison is a file before it
+leaves. Nothing on a published page asks a server anything.
+
+Where there is one series none of it exists: the overview is not rendered,
+no subdirectory is made, and the output is what it was, file for file.
+
+A place's colour, its short code and its order are `archives.toml`'s, so
+every renderer paints the same place the same colour. Which places this
+Deck instance shows, which pages each gets and what the board holds are
+this skin's own settings, on its page in the admin interface. Which
+readings are drawn on one axis is `plots.toml`'s.
+
 ## Its settings
 
 Three kinds, in three places, and the split is the point.

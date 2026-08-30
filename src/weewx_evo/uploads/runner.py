@@ -73,6 +73,7 @@ class Scheduled:
         "_runs_since",
         "_sent_since",
         "_slot",
+        "archive",
         "blocked",
         "failures",
         "last",
@@ -90,10 +91,18 @@ class Scheduled:
 
     def __init__(self, name: str, upload: Any, progress: Progress,
                  records: Callable[[int, int], list[dict]],
-                 packets: Callable[[int, int], list[dict]] | None = None) -> None:
+                 packets: Callable[[int, int], list[dict]] | None = None,
+                 archive: str = "") -> None:
         self.name = name
         self.upload = upload
         self.progress = progress
+        #: Which measurement series this upload publishes. Empty is the
+        #: default one, which is what `records` already resolves to. Kept
+        #: rather than looked up again because the forecast has to be handed
+        #: to the upload it belongs to: everything here goes out under one
+        #: `location` tag, and a second place's rows sent through it would
+        #: overwrite the first place's, timestamp for timestamp.
+        self.archive = archive
         #: The live table, for `trigger = "live"`. None when this
         #: installation has no live database to read.
         self.packets = packets
@@ -453,6 +462,7 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
           by_archive: dict[str, Callable[[int, int], list[dict]]] | None = None,
           consoles: dict[str, list[str]] | None = None,
           main_consoles: dict[str, list[str]] | None = None,
+          places: list[tuple[str, str, str]] | None = None,
           ) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
@@ -465,6 +475,13 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
     stays the answer for an upload that names a series nobody defined --
     posting the default site's readings beats posting nothing while somebody
     works out why the name is wrong.
+
+    `places` is every series, as `(name, label, code)`, in the order pages
+    present them. Only a live-readings upload uses it, and only where there
+    is more than one: one document carries every place, so one page can show
+    them all. Built here rather than in `cli` because everything it needs is
+    already here -- the live table, each site's consoles, and which of them a
+    reading is taken from.
     """
     ready = []
     for name, settings in sorted(configured.items()):
@@ -493,7 +510,90 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         named = (consoles or {}).get(wanted) if wanted else None
         main = (main_consoles or {}).get(wanted or "") or []
         pick = str(settings.get("live_source") or "main")
-        if (named or main) and hasattr(packets, "for_sources"):
+        # `is not None`, not truthiness. An empty list is a place whose
+        # stations are known and are none of them -- which is every place
+        # between "add it on the Archives page" and pointing a console at
+        # it. Read as "nobody said", that place was fed the whole
+        # installation's live table, so a site with nothing behind its
+        # second place published its first place's readings under the
+        # second one's name and counted it as reporting.
+        if (named is not None or main) and hasattr(packets, "for_sources"):
             mine = packets.for_sources(named, pick, main)
-        ready.append(Scheduled(name, upload, progress, source, mine))
+
+        # One document, every place, for a site that publishes several. The
+        # page reads one file and finds a slice per place; without this an
+        # overview showed the same reading in every row, taken from whichever
+        # console reported last.
+        #
+        # Only where the upload can carry them, so nothing here has to know
+        # which kind it is: `carry` exists on the live-readings upload and
+        # nowhere else, and it is `carry` that refuses a one-place list.
+        if places and len(places) > 1 and hasattr(upload, "carry"):
+            upload.carry(_places_for(wanted, places, packets, consoles,
+                                     main_consoles, pick))
+        ready.append(Scheduled(name, upload, progress, source, mine,
+                               wanted))
     return ready
+
+
+def _places_for(home: str, places: list[tuple[str, str, str]],
+                packets: Any,
+                consoles: dict[str, list[str]] | None,
+                main_consoles: dict[str, list[str]] | None,
+                pick: str) -> list[Any]:
+    """Every series, as the live document wants them, this one's first.
+
+    First because the document has a size limit and drops from the end: the
+    place whose pages this upload belongs to is the one that must never be
+    the one left out.
+
+    Each place's reader is bound now, in a default argument. A lambda closing
+    over the loop variable hands every place the last one's reader, and every
+    slice then comes out identical -- which reads as a document that is
+    working.
+    """
+    from .webpush import Place
+
+    ordered = sorted(places, key=lambda one: one[0] != home)
+    out = []
+    for name, label, code in ordered:
+        reader = packets
+        named = (consoles or {}).get(name)
+        main = (main_consoles or {}).get(name) or []
+        if named is not None and not named and not main:
+            # Known, and none: a place somebody added on the Archives page
+            # before pointing a console at it. Left out of the document
+            # entirely.
+            #
+            # Not filtered to an empty list, which is the obvious move and
+            # does not work: `Live.__init__` reads an empty list as "nobody
+            # said" and hands back every console in the table. The slice
+            # would then carry another place's readings under this place's
+            # name and code -- wrong data, labelled, on the page built to
+            # compare places. Its board row says "no readings yet" and goes
+            # on saying it, which is the truth.
+            log.debug("no console writes into %r yet; it carries no live "
+                      "readings", name)
+            continue
+        if (named or main) and hasattr(packets, "for_sources"):
+            reader = packets.for_sources(named, pick, main)
+        if reader is None:
+            # A split deployment where the live table is on another machine.
+            # Left out rather than carried empty: a slice with no reading is
+            # a place the page will draw as silent, which is a different
+            # claim from one it does not draw at all.
+            continue
+        out.append(Place(
+            name=name, label=label or name, code=code,
+            packet=lambda source=reader: (source.after(0, 1) or [None])[-1],
+            # How often this place reports, measured, so the page can tell
+            # "late" from "stopped" per place. A console reporting every
+            # sixteen seconds and one reporting every five minutes stand on
+            # the same site, and one threshold is wrong for one of them.
+            #
+            # Without it the page falls back to a single fixed window, and
+            # the state that says "this station has stopped" is unreachable
+            # in a browser: a dead console reads as amber "a bit late" for
+            # ever.
+            rhythm=getattr(reader, "rhythm", None)))
+    return out

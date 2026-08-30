@@ -48,6 +48,54 @@ the basis that it is expendable.
 Every row carries the name of its source, so two can run side by side and a page
 can say which it means.
 
+## A forecast is for a place
+
+A forecast is an answer about a coordinate pair. Two [archives](Stations-and-Archives)
+are two coordinate pairs, so they are two forecasts — and a forecast for the
+wrong one is worse than none, because nothing on the page says so.
+
+So an entry names the series it is for:
+
+```toml
+[forecast.ahead]
+kind = "open-meteo"
+archive = "nordfeld"
+```
+
+The coordinates come from that series. A station identifier or a warning region
+is still typed per entry, because those are not derivable from a latitude.
+
+**Still one file.** A file per place would separate nothing on the layout the
+settings page offers: it proposes `data/<name>.sdb` for every archive, and every
+one of those resolves to the same directory. The path is a property of the
+installation. What separates the places is the rows.
+
+**The series is the first part of every key**, and that is the part that matters.
+A run replaces what its source had by deleting on the key. Keyed on the source
+alone, two places would erase each other on the hour, alternating, and every page
+would print whichever ran last — with the right numbers in the right shape and
+the wrong place's weather.
+
+The source name is per entry, so two entries may share one. Somebody who runs
+two fields will reasonably call both of them `here`.
+
+**A place with no entry has no forecast.** `#if $forecast` is a no on its pages
+and the templates render around it, which is the same answer a station that
+fetches nothing at all has always got. It is never the neighbour's forecast under
+its heading.
+
+**An existing file carries over** under the name the one place had, `default`.
+Dropping it would cost one download, which is what a cache is for — but the
+download happens in whichever process runs the poller, and on a
+[split deployment](Deployment) that is not the process that opens the file first.
+The web process would empty the store, and the archiver would not fetch again
+until its next slot: an hour of blank forecast sections, for nothing.
+
+Rows belonging to entries nobody has configured any more are dropped once, after
+the first round of fetches. An empty set of configured entries drops nothing:
+that means the caller could not work out what is configured, and a tidy on a
+failed read is not a tidy.
+
 ## Two kinds of failure, and they are not the same
 
 **A failed fetch keeps the old forecast.** Not an empty one. A source that could
@@ -190,6 +238,9 @@ country = "germany"
 region = "Kreis Freising"
 minimum = "Moderate"
 ```
+
+With more than one archive, each entry also takes `archive`. See
+[A forecast is for a place](#a-forecast-is-for-a-place).
 
 ## Commands
 

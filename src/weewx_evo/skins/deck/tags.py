@@ -626,6 +626,25 @@ class GeneralUtil(SearchList):
             else:
                 return ""
 
+    def difference_label(self, unit):
+        """The unit a *difference* between two readings is in.
+
+        Two thermometers 4.2 apart are 4.2 kelvin apart, not 4.2 degrees
+        Celsius: a Spread column headed "°C" holding 4.2 names a temperature
+        that does not exist, and somebody will read it as one. The number
+        needs no conversion -- a 5 °C difference is 5 K -- so this is the
+        label alone.
+
+        Fahrenheit keeps its own name because a degree Fahrenheit *is* its
+        own interval; there is no separate word for it the way there is for
+        Celsius. Everything else is its own difference already.
+        """
+        if unit in ("degree_C", "degree_K"):
+            # A non-breaking space, as the unit labels themselves carry, so
+            # "4.2 K" never wraps between the figure and its unit.
+            return "\u00a0K"
+        return self.get_unit_label(unit)
+
     def get_unit_for_obs(
         self, observation, observation_key, context, combined=None, combined_key=None
     ):
@@ -3081,3 +3100,354 @@ class TableUtil(SearchList):
         carbon_values.sort(key=lambda item: datetime.datetime.fromisoformat(item["time"]))
 
         return carbon_values
+
+
+class PlacesUtil(SearchList):
+    """What a site of several places asks, and one archive never had to.
+
+    Every method here takes the roster -- `$places`, the list the feed puts
+    in the search list -- rather than reaching for it. At one place that list
+    is empty, so each of these answers with nothing and the includes that
+    call them render nothing, which is how the one-place output stays exactly
+    what it was.
+
+    None of it composes a sentence. The facts come out of here and the
+    template writes the words, so the wording stays in `lang/*.conf` beside
+    every other string this skin prints -- the same split as `codes.symbol()`
+    in the core, which names the weather and leaves the drawing to the skin.
+    """
+
+    #: What a place's cadence falls back to when the archive will not say --
+    #: five minutes, the interval a fresh installation runs on. A fallback is
+    #: needed at all because the alternative is calling every place silent,
+    #: and a warning that stands everywhere is not a warning.
+    FALLBACK_CADENCE = 300
+
+    #: How many of its own record spacings a place may miss before the board
+    #: calls it silent. Three, because two is one late upload.
+    SILENT_AFTER = 3
+
+    def __init__(self, generator):
+        SearchList.__init__(self, generator)
+        #: The same object the stat tiles ask, so "sum, maximum or mean" is
+        #: decided once for this skin and not twice.
+        self.stats_util = StatsUtil(generator)
+        #: One measurement per place per run. `place_age` is called once per
+        #: board row and again by the unusual list, and each of those would
+        #: otherwise be a query.
+        self._cadence = {}
+
+    # -- how old a place's newest reading is ------------------------------
+
+    def place_age(self, place, now=None):
+        """How long ago this place last wrote a record, and what that means.
+
+        Facts, not a sentence: `count` and `word` are a number and one of the
+        five keys `lang/*.conf` already translates for the live badge ("just
+        now", "s ago", "min ago", "h ago", "d ago"), so the board row and the
+        badge beside it say the same thing in the same words.
+
+        `state` is the one judgement, and it is made against **this place's
+        own cadence**. A console reporting every sixteen seconds and one
+        reporting every five minutes cannot share a threshold and both stand
+        on the same site: give them one and either the fast one is never late
+        or the slow one always is.
+
+        A place that has never written a record is `never`, not `silent`.
+        That is an unconfigured place, and telling the two apart is what
+        stops somebody chasing a console that was never alive -- the rule
+        `notify/` follows, for the same reason.
+        """
+        if not place or not place.get("has_data") or not place.get("stop"):
+            return {"seconds": None, "count": 0, "word": "", "state": "never"}
+
+        when = float(now) if now else time.time()
+        seconds = max(0, int(when - int(place["stop"])))
+        cadence = self.place_cadence(place)
+        state = ""
+        if seconds > self.SILENT_AFTER * cadence:
+            state = "silent"
+        elif seconds > cadence:
+            state = "stale"
+
+        count, word = seconds, "s ago"
+        if seconds < 10:
+            count, word = 0, "just now"
+        elif seconds >= 86400:
+            count, word = seconds // 86400, "d ago"
+        elif seconds >= 3600:
+            count, word = seconds // 3600, "h ago"
+        elif seconds >= 60:
+            count, word = seconds // 60, "min ago"
+        return {"seconds": seconds, "count": int(count), "word": word,
+                "state": state}
+
+    def place_cadence(self, place):
+        """How far apart this place's records are, in seconds, measured.
+
+        The archive's own `interval` column over its last day: the station
+        wrote it beside each record, so it is the spacing by definition
+        rather than an inference from timestamps. The maximum rather than the
+        mean, because a station whose interval was raised last week has to be
+        judged on what it does now.
+
+        Measured and not assumed, for the reason `intervals_in()` gives on
+        the Grafana side: an archive whose interval has changed is exactly
+        the archive where the assumption is wrong, and nothing reports it.
+        """
+        name = place.get("name") if place else None
+        if name in self._cadence:
+            return self._cadence[name]
+
+        found = self.FALLBACK_CADENCE
+        reader = getattr(place.get("tags"), "reader", None) if place else None
+        span = reader.span() if reader is not None else None
+        if span is not None:
+            try:
+                minutes = reader.aggregate(
+                    "interval", span[1] - 86400, span[1] + 1, "max")
+                if isinstance(minutes, (int, float)) and minutes > 0:
+                    found = int(minutes) * 60
+            except Exception:
+                # A column this archive does not have, or one holding text.
+                # The fallback is a working board; letting it out is a blank
+                # overview page for a schema nobody here has seen.
+                logdbg(f"could not measure the cadence of {name}")
+        self._cadence[name] = found
+        return found
+
+    # -- what is worth saying out loud ------------------------------------
+
+    def unusual_list(self, places, observation, spread, cap=4,
+                     now=None):
+        """The nothing-to-four things on this site that are not ordinary.
+
+        A closed list of three rules, and the closure is the point: a list
+        that can grow to say anything is a log, and nobody reads a log for
+        news. Past `cap` it stops reading as news, so it stops.
+
+        What is deliberately **not** in it, each with its reason. A spread on
+        `barometer` fires every day for ever, because the places are at
+        different altitudes and always will be, and a line that appears every
+        day is furniture. A spread on rain fires when one shower misses one
+        garden, which is weather rather than news. "The wind is high" is a
+        threshold, and a weather threshold is taste: it belongs where it can
+        be changed without a restart, which is Grafana and `notify/`, not a
+        file that was published five minutes ago.
+
+        `spread` is read **in the unit the pages are shown in**. Nothing
+        converts it, and nothing has to: the readings it is compared against
+        came out of the same `Target` this page prints. A threshold converted
+        the wrong way is amber at 79 on a Fahrenheit page and silent at 26.
+        """
+        having = [one for one in (places or [])
+                  if one.get("has_data") and one.get("tags") is not None]
+
+        # Silence is worked out first because the spread rule needs it. A
+        # console that stopped four hours ago still answers `$current`, and
+        # its four-hour-old reading subtracted from a reading taken now is
+        # two different moments printed as one difference -- on the page
+        # whose whole argument is that the anomaly is written honestly.
+        quiet = self._silent(having, now)
+        stopped = {one["place"]["name"] for one in quiet}
+
+        found = self._spread([one for one in having
+                              if one.get("name") not in stopped],
+                             observation, spread)
+        found += quiet
+        found += self._records(having, observation)
+        return found[:max(1, int(cap or 1))]
+
+    def _spread(self, places, observation, spread):
+        """Two places' current readings, far enough apart to be news.
+
+        A difference naming **both** endpoints, never a mean: two
+        thermometers reading 19 and 21 do not make 20 anywhere, and this is
+        the one line on the site where somebody would be tempted to write it
+        down.
+
+        `places` has already had the stopped consoles taken out of it. Both
+        readings have to be from about the same moment or the difference is
+        a fact about nothing -- and the same page would then carry "4 K
+        apart" and "Nordfeld has stopped reporting" one line below it.
+        """
+        try:
+            limit = float(spread)
+        except (TypeError, ValueError):
+            return []
+        if limit <= 0:
+            return []
+
+        seen = []
+        for one in places:
+            value = getattr(one["tags"].current, observation, None)
+            raw = getattr(value, "raw", None)
+            if isinstance(raw, (int, float)):
+                seen.append((raw, one, value))
+        if len(seen) < 2:
+            return []
+
+        low = min(seen, key=lambda pair: pair[0])
+        high = max(seen, key=lambda pair: pair[0])
+        gap = high[0] - low[0]
+        if gap <= limit:
+            return []
+        return [{"kind": "spread", "figure": gap, "unit": high[2].unit,
+                 "high": high[1], "high_value": high[2],
+                 "low": low[1], "low_value": low[2]}]
+
+    def _silent(self, places, now):
+        """Places that have stopped, each measured against its own cadence."""
+        out = []
+        for one in places:
+            age = self.place_age(one, now)
+            if age["state"] == "silent":
+                out.append({"kind": "silent", "place": one, "age": age})
+        return out
+
+    def _records(self, places, observation):
+        """A place whose today holds its own year's high or low.
+
+        Asked as *when* the year's extreme happened, not whether today's is
+        bigger than it. Today is inside the year, so the year's maximum is
+        by construction at least today's and `day.max > year.max` can never
+        once be true -- the rule was advertised, translated into two
+        languages and completely dead. A check that never speaks is worse
+        than no check: its silence reads as "nothing to report".
+
+        `maxtime` comes out of the same daily summaries the year's extremes
+        do, so this is one aggregate over a few hundred rows and no new pass
+        over the archive. A day that only ties an earlier one keeps that
+        earlier day's timestamp and is not reported, which is what "exceeds"
+        means.
+        """
+        out = []
+        for one in places:
+            here = getattr(one["tags"], "day", None)
+            today = getattr(here, observation, None)
+            yearly = getattr(one["tags"].year, observation, None)
+            span = getattr(here, "span", None)
+            if today is None or yearly is None or not span:
+                continue
+            # A place whose whole archive is today has no year to beat, and
+            # "the highest so far this year" on a console's first morning is
+            # true, useless and there every hour of that day.
+            if not one.get("start") or one["start"] >= span[0]:
+                continue
+            for way, edge, at in (("high", "max", "maxtime"),
+                                  ("low", "min", "mintime")):
+                mine = getattr(today, edge, None)
+                stamp = getattr(getattr(yearly, at, None), "raw", None)
+                value = getattr(mine, "raw", None)
+                if not isinstance(stamp, (int, float)):
+                    continue
+                if not isinstance(value, (int, float)):
+                    continue
+                if span[0] <= stamp < span[1]:
+                    out.append({"kind": "record", "way": way, "place": one,
+                                "value": mine})
+        return out
+
+    # -- the figures table on a comparison page ---------------------------
+
+    def compare_rows(self, places, observations, span):
+        """One row per reading, one cell per place, with both ends of the
+        spread named.
+
+        **Which aggregate a row uses is the skin's own answer** -- the same
+        `get_show_sum` / `get_show_max` the stat tiles ask -- so a figure
+        here and the same figure on a place page are the same number
+        computed the same way. Rain is a total, wind a maximum, everything
+        else the interval-weighted mean.
+
+        And it is not a second implementation of any of them: every value
+        comes out of that place's own tag layer, which bottoms out in
+        `series.py` exactly as the tiles do. They agree because they end in
+        the same function, not because one copies the other.
+
+        The spread is a **difference** and carries both endpoints. Never a
+        mean, never a standard deviation, never a range printed as though it
+        were a value -- this table is where somebody would be most tempted.
+        """
+        if span not in ("day", "week", "month", "year", "yesterday"):
+            span = "day"
+        rows = []
+        for observation in observations or ():
+            how = "avg"
+            if self.stats_util.get_show_sum(observation):
+                how = "sum"
+            elif self.stats_util.get_show_max(observation):
+                how = "max"
+
+            cells, ranked = [], []
+            for one in places or ():
+                value = None
+                if one.get("has_data") and one.get("tags") is not None:
+                    binder = getattr(getattr(one["tags"], span), observation,
+                                     None)
+                    value = getattr(binder, how, None) if binder else None
+                # A number, or nothing. The tag layer answers a reading this
+                # archive does not have with its polite `Unknown`, which is
+                # not None and has no `.raw` -- so a cell holding one made
+                # `$cell.value.raw` raise inside an `#if`, where the error
+                # catcher does not reach, and took the whole page with it.
+                # Four readings are offered by default and a station missing
+                # any one of them lost all four comparison pages.
+                #
+                # A `Value` holding None goes the same way on purpose: an em
+                # dash is the honest answer for a column with nothing in it
+                # over this span, and a nought is a measurement.
+                if not isinstance(getattr(value, "raw", None), (int, float)):
+                    value = None
+                cells.append({"place": one, "value": value})
+                if value is not None:
+                    ranked.append(cells[-1])
+
+            high = low = None
+            for cell in ranked:
+                if high is None or cell["value"].raw > high["value"].raw:
+                    high = cell
+                if low is None or cell["value"].raw < low["value"].raw:
+                    low = cell
+            # Fewer than two places with the reading is not a spread of
+            # zero: it is no spread at all, and a nought there reads as
+            # agreement between places that were never compared.
+            spread = (high["value"].raw - low["value"].raw
+                      if len(ranked) > 1 else None)
+            if not ranked:
+                # A reading no place here records. Dropped, exactly as the
+                # board drops a column nothing fills and for the same
+                # reason: four em dashes in a row is a row of nothing, and
+                # four readings are offered by default -- so a station
+                # without wind carried a quarter of this table as blanks,
+                # on all four comparison pages, above a board that had just
+                # declined to draw the same reading.
+                continue
+            rows.append({
+                "obs": observation, "how": how, "cells": cells,
+                "high": high, "low": low, "spread": spread,
+                "unit": getattr(high["value"], "unit", "") if high else "",
+            })
+        return rows
+
+    # -- what the page is written in --------------------------------------
+
+    def page_unit_system(self):
+        """The unit system this page was rendered in, by name.
+
+        Written onto `<body>` so `live-poll.js` can refuse to print a
+        reading that arrived in another one. A console sending Fahrenheit
+        into a page written in Celsius produces a number that is wrong by
+        thirty degrees, plausible, and undetectable from the page -- which
+        is a failure that has already shipped here once.
+
+        Spelled exactly as `units.name()` spells it, because that is the
+        other end of the handshake: `uploads/webpush.py` writes
+        `unit_system` into every slice of `live.json` with the same call,
+        and `live-poll.js` compares the two as strings. Lower-cased here it
+        was "metricwx" against "METRICWX" -- every slice on every healthy
+        two-place site judged a mismatch, no live value written anywhere,
+        and the amber "wrong units" badge on every tile. Invisible at one
+        place, where the attribute is not written at all.
+        """
+        return skinkit.units.name(self.generator.target.system)

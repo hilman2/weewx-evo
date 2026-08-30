@@ -30,6 +30,14 @@
   class="card stat-tile"
   data-test="$partial_obs"
   data-observation="$skin_obs_key"
+  ## Which place this tile reads, written only where there *is* one -- so a
+  ## one-place site's markup is exactly what it was. `live-poll.js` takes the
+  ## absence to mean the top level of live.json, which is that site's whole
+  ## document. Nothing goes inside `.stat-title-obs-value`: writing there
+  ## re-arms the observer loop that locks the tab within a second of loading.
+  #if $here_place
+  data-archive="$here_place.name"
+  #end if
   data-unit="$get_unit_label($get_unit_for_obs($partial_obs, $skin_obs_key, $context))"
   data-rounding="$rounding"
   #if $show_rain_rate
