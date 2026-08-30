@@ -74,6 +74,13 @@ class Option:
     #: unusual one can still be typed. `allow` is the case this exists for --
     #: "private", "any", or a list of networks nobody can enumerate.
     suggestions: tuple[tuple[str, str], ...] = ()
+    #: Suggestions that depend on the machine rather than on the code, the way
+    #: `choices_from` does for a closed list. The serial devices are the case:
+    #: which one is the station is a question somebody standing next to it
+    #: answers from the adapter's name, and one that a text box cannot ask --
+    #: but a port that is not in `/dev/serial/by-id` still has to be typeable,
+    #: so these are offered and not enforced.
+    suggestions_from: Any = None
     minimum: float | None = None
     maximum: float | None = None
     required: bool = False
@@ -91,6 +98,18 @@ class Option:
     #: reading is not: a station with `extraTemp9` names it and gets it.
     #: Trailing, so the sixty-odd positional constructions are undisturbed.
     closed: bool = False
+    #: `(option, values)` when this setting only applies for certain values of
+    #: another in the same form. A Vantage takes a port or a host and never
+    #: both, and it says so in its own configuration editor.
+    #:
+    #: Shown rather than enforced. The page marks the field and a script folds
+    #: it away; **without JavaScript every field stays visible**, because one
+    #: field too many is harmless and one too few is the failure -- the same
+    #: reasoning as the sidebar's `aria-current`, where the renderer decides
+    #: and the script only improves. Nothing here refuses a value: a stanza
+    #: that carries both a port and a host is what the driver has always been
+    #: handed, and it ignores the one it does not want.
+    when: tuple[str, tuple[str, ...]] | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
@@ -112,6 +131,21 @@ class Option:
         except Exception:
             return self.choices
         return self.choices + found
+
+    def offered(self) -> tuple[tuple[str, str], ...]:
+        """The suggestions, asking the machine where that is where they are.
+
+        Same shape and same failure as `options`, for the open list rather
+        than the closed one: a machine with no serial devices offers none, and
+        the field is a plain box, which is what it was before.
+        """
+        if self.suggestions_from is None:
+            return self.suggestions
+        try:
+            found = tuple(self.suggestions_from())
+        except Exception:
+            return self.suggestions
+        return self.suggestions + found
 
     def parse(self, raw: Any) -> Any:
         """Turn what arrived into the value this setting holds.

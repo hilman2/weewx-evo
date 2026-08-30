@@ -3,14 +3,14 @@
 Every public class, function and method, its file, and the wiki page
 that describes it.
 
-**Generated:** 2026-08-30 12:28 · `python tools/docsindex.py`
+**Generated:** 2026-08-30 18:02 · `python tools/docsindex.py`
 
 Private names (`_foo`) are left out, `__init__` is included. To find a
 name, use the browser's search.
 
 ## `src/weewx_evo/admin.py`
 
-[The settings page](Admin-Page) · last changed 2026-08-30 11:51
+[The settings page](Admin-Page) · last changed 2026-08-30 17:21
 
 | | Name | Line | |
 |---|---|---|---|
@@ -32,41 +32,41 @@ name, use the browser's search.
 | · | &nbsp;&nbsp;`Admin.add_export_settings` | 279 | Create an export with everything it needs, in one write. `add_export` takes a name and a… |
 | · | &nbsp;&nbsp;`Admin.add_export` | 312 | Create an export. Returns an error, or empty if it worked. Only the name and the kind: ev… |
 | · | &nbsp;&nbsp;`Admin.add_collector` | 343 | Create a collector. Returns an error, or empty if it worked. The name is checked against… |
-| · | &nbsp;&nbsp;`Admin.remove_collector` | 384 | Take a collector out of the configuration. Nothing is stopped by this: the collector is a… |
-| · | &nbsp;&nbsp;`Admin.add_feed` | 407 | Create a feed. Returns an error, or empty if it worked. Only the name and the kind. Every… |
-| · | &nbsp;&nbsp;`Admin.remove_feed` | 448 | Delete a feed. What it already wrote is left where it is. |
-| · | &nbsp;&nbsp;`Admin.add_channel` | 465 | Create a notification channel. Returns an error, or empty. Name and kind only, like an up… |
-| · | &nbsp;&nbsp;`Admin.add_upload` | 495 | Create an upload. Returns an error, or empty if it worked. Name and kind only, like an ex… |
-| · | &nbsp;&nbsp;`Admin.remove_upload` | 524 | Delete an upload. Nothing is withdrawn from the service. |
-| · | &nbsp;&nbsp;`Admin.test_upload` | 541 | Try one service and say what it answered. Worth more here than anywhere else on this page… |
-| · | &nbsp;&nbsp;`Admin.add_forecast` | 570 | Create a forecast source. Name and kind only, like the rest. |
-| · | &nbsp;&nbsp;`Admin.remove_forecast` | 595 | Delete a forecast source. What it fetched stays until it is pruned. |
-| · | &nbsp;&nbsp;`Admin.test_forecast` | 612 | Fetch once and say what came back, storing nothing. This button does double duty: a MOSMI… |
-| · | &nbsp;&nbsp;`Admin.remove_export` | 644 | Delete an export from the configuration. Nothing at the far end. |
-| · | &nbsp;&nbsp;`Admin.columns` | 661 | The readings one place's archive has a column for. Asked of the database rather than of a… |
-| · | &nbsp;&nbsp;`Admin.test_export` | 709 | Try one export's destination and say what happened. |
-| · | &nbsp;&nbsp;`Admin.save` | 725 | Check a form and write it. Returns what was wrong, empty if nothing. Everything is valida… |
-| f | `rejoined` | 800 | One value per option, out of the fields the wire actually carried. Three controls send something other than t… |
-| f | `overridden` | 851 | The environment variable outranking this setting, if there is one. The order is argument, environment, file,… |
-| f | `slots` | 882 | A list of choices, in an order that is the value's order. Every candidate gets a row, ticked or not. What sto… |
-| f | `field` | 978 | One setting as a form field. `moved` names the file that has taken this setting over, if one has. Today that… |
-| f | `anchor` | 1118 | A fragment name from a group label. Stable, because it is a link. |
-| f | `group_html` | 1123 |  |
-| f | `new_export_page` | 1151 | The form that creates one. Two fields, and nothing else yet. |
-| f | `notify_kind_choices` | 1196 | The channels there are, from the registry rather than from a list. |
-| f | `new_notify_page` | 1206 | The form that creates one. A name and a way of reaching somebody. |
-| f | `new_upload_page` | 1256 | The form that creates one. A name and a service. |
-| f | `new_forecast_page` | 1301 | A name and a source. The rest waits. |
-| f | `new_collector_page` | 1348 | A collector: a name and what it runs. The name is the field that matters and the page says so, because it is… |
-| f | `new_feed_page` | 1400 | Two fields: a name and a kind. The rest waits. |
-| f | `website_summary` | 1485 | What the built-in server hands out, and at which address. The question this page exists to answer. Without it… |
-| f | `sub_pages` | 1700 | Pages whose name carries an instance, so no fixed list can hold them. `tools/adminpage.py` enumerates schemas… |
-| f | `page` | 1725 |  |
-| **C** | `AdminServer` | 3788 | The admin page, on its own port. |
-| · | &nbsp;&nbsp;`AdminServer.__init__` | 3791 |  |
-| · | &nbsp;&nbsp;`AdminServer.serve_forever` | 3799 |  |
-| · | &nbsp;&nbsp;`AdminServer.start` | 3802 |  |
-| · | &nbsp;&nbsp;`AdminServer.stop` | 3807 |  |
+| · | &nbsp;&nbsp;`Admin.remove_collector` | 392 | Take a collector out of the configuration. Nothing is stopped by this: the collector is a… |
+| · | &nbsp;&nbsp;`Admin.add_feed` | 415 | Create a feed. Returns an error, or empty if it worked. Only the name and the kind. Every… |
+| · | &nbsp;&nbsp;`Admin.remove_feed` | 456 | Delete a feed. What it already wrote is left where it is. |
+| · | &nbsp;&nbsp;`Admin.add_channel` | 473 | Create a notification channel. Returns an error, or empty. Name and kind only, like an up… |
+| · | &nbsp;&nbsp;`Admin.add_upload` | 503 | Create an upload. Returns an error, or empty if it worked. Name and kind only, like an ex… |
+| · | &nbsp;&nbsp;`Admin.remove_upload` | 532 | Delete an upload. Nothing is withdrawn from the service. |
+| · | &nbsp;&nbsp;`Admin.test_upload` | 549 | Try one service and say what it answered. Worth more here than anywhere else on this page… |
+| · | &nbsp;&nbsp;`Admin.add_forecast` | 578 | Create a forecast source. Name and kind only, like the rest. |
+| · | &nbsp;&nbsp;`Admin.remove_forecast` | 603 | Delete a forecast source. What it fetched stays until it is pruned. |
+| · | &nbsp;&nbsp;`Admin.test_forecast` | 620 | Fetch once and say what came back, storing nothing. This button does double duty: a MOSMI… |
+| · | &nbsp;&nbsp;`Admin.remove_export` | 652 | Delete an export from the configuration. Nothing at the far end. |
+| · | &nbsp;&nbsp;`Admin.columns` | 669 | The readings one place's archive has a column for. Asked of the database rather than of a… |
+| · | &nbsp;&nbsp;`Admin.test_export` | 717 | Try one export's destination and say what happened. |
+| · | &nbsp;&nbsp;`Admin.save` | 733 | Check a form and write it. Returns what was wrong, empty if nothing. Everything is valida… |
+| f | `rejoined` | 808 | One value per option, out of the fields the wire actually carried. Three controls send something other than t… |
+| f | `overridden` | 859 | The environment variable outranking this setting, if there is one. The order is argument, environment, file,… |
+| f | `slots` | 890 | A list of choices, in an order that is the value's order. Every candidate gets a row, ticked or not. What sto… |
+| f | `field` | 986 | One setting as a form field. `moved` names the file that has taken this setting over, if one has. Today that… |
+| f | `anchor` | 1138 | A fragment name from a group label. Stable, because it is a link. |
+| f | `group_html` | 1143 |  |
+| f | `new_export_page` | 1171 | The form that creates one. Two fields, and nothing else yet. |
+| f | `notify_kind_choices` | 1216 | The channels there are, from the registry rather than from a list. |
+| f | `new_notify_page` | 1226 | The form that creates one. A name and a way of reaching somebody. |
+| f | `new_upload_page` | 1276 | The form that creates one. A name and a service. |
+| f | `new_forecast_page` | 1321 | A name and a source. The rest waits. |
+| f | `new_collector_page` | 1368 | A collector: a name and what it runs. The page says what happens next, because most of it happens elsewhere.… |
+| f | `new_feed_page` | 1505 | Two fields: a name and a kind. The rest waits. |
+| f | `website_summary` | 1590 | What the built-in server hands out, and at which address. The question this page exists to answer. Without it… |
+| f | `sub_pages` | 1805 | Pages whose name carries an instance, so no fixed list can hold them. `tools/adminpage.py` enumerates schemas… |
+| f | `page` | 1830 |  |
+| **C** | `AdminServer` | 3950 | The admin page, on its own port. |
+| · | &nbsp;&nbsp;`AdminServer.__init__` | 3953 |  |
+| · | &nbsp;&nbsp;`AdminServer.serve_forever` | 3961 |  |
+| · | &nbsp;&nbsp;`AdminServer.start` | 3964 |  |
+| · | &nbsp;&nbsp;`AdminServer.stop` | 3969 |  |
 
 ## `src/weewx_evo/adminarchives.py`
 
@@ -160,21 +160,21 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminquality.py`
 
-[Quality control](Quality) · last changed 2026-08-30 11:51
+[Quality control](Quality) · last changed 2026-08-30 15:01
 
 | | Name | Line | |
 |---|---|---|---|
-| f | `path_for` | 59 | Beside the configuration, like `plots.toml`. |
-| f | `load` | 66 |  |
-| f | `store` | 70 | Write the file. Returns an error, or empty. Written beside and renamed, so a page saved while the archiver is… |
-| f | `as_toml` | 89 | The policy as the file a person would have written. |
-| f | `measured` | 133 | What each reading has been, from the archive. The figure beside the box. Without it the page is a text editor… |
-| f | `would_refuse` | 158 | What the configured rules would refuse over the stored records. The same comparison `quality check` makes, so… |
-| f | `save` | 208 | Take the whole table back. Returns errors by field name. |
-| f | `suggest` | 246 | Fill the table in from what the station has recorded. The button that makes this page worth having. It never… |
-| f | `clear` | 272 | Drop one reading's rule. |
-| f | `nav` | 285 | One entry, with how many readings have a rule. |
-| f | `overview` | 297 |  |
+| f | `path_for` | 75 | Beside the configuration, like `plots.toml`. |
+| f | `load` | 83 |  |
+| f | `store` | 87 | Write the file. Returns an error, or empty. Written beside and renamed, so a page saved while the archiver is… |
+| f | `as_toml` | 106 | The policy as the file a person would have written. |
+| f | `survey` | 150 | What the readings have been, and what the rules would refuse. One pass over every series, because the page ne… |
+| f | `measured` | 196 | What each reading has been, from the archives. The figure beside the box. Without it the page is a text edito… |
+| f | `save` | 258 | Take the whole table back. Returns errors by field name. |
+| f | `suggest` | 296 | Fill the table in from what the station has recorded. The button that makes this page worth having. It never… |
+| f | `clear` | 322 | Drop one reading's rule. |
+| f | `nav` | 335 | One entry, with how many readings have a rule. |
+| f | `overview` | 347 |  |
 
 ## `src/weewx_evo/adminsearch.py`
 
@@ -364,7 +364,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/chartdata.py`
 
-[Plots](Plots) · last changed 2026-08-30 11:51
+[Plots](Plots) · last changed 2026-08-30 14:53
 
 | | Name | Line | |
 |---|---|---|---|
@@ -374,14 +374,14 @@ name, use the browser's search.
 | **C** | `Chart` | 165 | One plot, with its data. What both renderers are handed. |
 | · | &nbsp;&nbsp;`Chart.empty` | 203 |  |
 | f | `build` | 207 | One plot's data, or None if this station has none of its readings. Every line is fetched, converted, and trim… |
-| f | `column_of` | 705 | The column behind a reading, for asking whether it exists. `windvec` is not a column; the speed it is made of… |
-| f | `round_all` | 713 | Round a sequence, leaving the gaps in the data alone. |
-| f | `components` | 721 | A vector series split into how far east and how far north. A chart drawing arrows scales and offsets the comp… |
-| f | `drop_empty` | 743 | Leave out the points that carry nothing, keeping real gaps visible. A sensor reporting every ten minutes fill… |
+| f | `column_of` | 738 | The column behind a reading, for asking whether it exists. `windvec` is not a column; the speed it is made of… |
+| f | `round_all` | 746 | Round a sequence, leaving the gaps in the data alone. |
+| f | `components` | 754 | A vector series split into how far east and how far north. A chart drawing arrows scales and offsets the comp… |
+| f | `drop_empty` | 776 | Leave out the points that carry nothing, keeping real gaps visible. A sensor reporting every ten minutes fill… |
 
 ## `src/weewx_evo/cli.py`
 
-[CLI reference](CLI-Reference) · last changed 2026-08-30 11:51
+[CLI reference](CLI-Reference) · last changed 2026-08-30 17:21
 
 | | Name | Line | |
 |---|---|---|---|
@@ -401,114 +401,120 @@ name, use the browser's search.
 | f | `open_archive` | 437 | The store for one series. Relative paths resolve against the configuration file, the same as every other path… |
 | f | `build_archivers` | 451 | One archiver per series, each with its own place and its own stations. The three numbers come off the archive… |
 | f | `read_stations` | 490 | The announced consoles, and where strangers get noted. Two halves stored two ways, on purpose. `stations.toml… |
-| f | `read_quality` | 513 | The calibration and the limits, from `quality.toml`. Its own file rather than a section in the settings, for… |
-| f | `read_sources` | 541 | Which station wins for which field. Normally a [sources] section in the configuration file, beside everything… |
-| f | `open_stores` | 570 |  |
-| f | `make_archiver` | 578 | One archiver, for the series `--archive` named or for the default. The single-shot commands work on one at a… |
-| f | `start_watchdog` | 604 | The watchdog, where this installation asked for one. Built here rather than in each command because all three… |
-| f | `cmd_listen` | 626 |  |
-| f | `cmd_archive` | 684 |  |
-| f | `cmd_upload_list` | 821 |  |
-| f | `cmd_upload_check` | 852 | Ask each service whether it accepts the account. Worth more than the equivalent for an export: these services… |
-| f | `cmd_upload_compare` | 915 | Count both ends, and say where they differ. A second store is a second truth. Trusting that every write lande… |
-| f | `cmd_upload_run` | 973 | Send now, whatever the trigger says. |
-| f | `cmd_forecast_list` | 1007 |  |
-| f | `cmd_forecast_check` | 1033 | Fetch once and say what came back. This is also how somebody finds a DWD station id or a MeteoAlarm region: a… |
-| f | `cmd_forecast_run` | 1072 | Fetch now and store, whatever the schedule says. |
-| f | `cmd_forecast_show` | 1095 | Print what is stored, which is what a page would draw. |
-| f | `cmd_serve` | 1159 | Listener and archiver in one process, for a small machine. They still speak only through the database. Splitt… |
-| f | `cmd_catchup` | 1476 |  |
-| f | `cmd_rebuild` | 1525 |  |
-| f | `cmd_derive` | 1545 | Fill in derived readings on records that are already in the archive. A calculator that arrives late leaves a… |
-| f | `cmd_weewx_driver_list` | 1712 | What this weewx.conf asks for, and whether it can be built. |
-| f | `cmd_weewx_driver_check` | 1755 | Build the driver, take a few packets, deliver nothing. The question this answers is the one worth asking befo… |
-| f | `cmd_mqtt_check` | 1877 | Subscribe, print what arrives, deliver nothing. The command somebody runs first, and the reason it exists: a… |
-| f | `cmd_mqtt_run` | 1923 | Subscribe and deliver, until stopped. Its own process, like the WeeWX shim and for the same reason: a broker… |
-| f | `cmd_import_dump` | 1954 | Read a MySQL or Postgres dump into the archive. `--dry-run` first, always, and the command says so: this writ… |
-| f | `cmd_import_csv` | 2016 | Read a CSV of readings into the archive. The format every other weather program can produce, and the one some… |
-| f | `cmd_weewx_driver_run` | 2074 | Run the driver and deliver what it produces to the listener. This is the long-running form, meant for a servi… |
-| f | `cmd_columns` | 2137 | Readings that the archive has no column for. A reading only survives the archive interval if the table has a… |
-| f | `cmd_driver_list` | 2212 |  |
-| f | `cmd_driver_install` | 2234 |  |
-| f | `cmd_driver_remove` | 2268 |  |
-| f | `local_addresses` | 2277 | Addresses this machine can be reached on, as (address, what it is). Only what can be worked out without askin… |
-| f | `cmd_url` | 2309 | Print the addresses of the live view and the upload endpoint. The token is a path segment, so an address with… |
-| f | `driver_directory` | 2377 | Where third-party drivers live, resolved like everything else. The command line first, then the setting, then… |
-| f | `all_schemas` | 2396 | Every configurable thing there is: the core, then each driver. Drivers are asked, not enumerated. One that ga… |
-| f | `replace_group` | 2580 |  |
-| f | `cmd_config_show` | 2586 | Print the configuration as it stands, commented. |
-| f | `cmd_config_set` | 2599 | Set one value, checked against the schema that owns it. |
-| f | `cmd_config_check` | 2630 | Check every value against its schema and say what is wrong. |
-| f | `cmd_config_import` | 2648 | Read a weewx.conf and write what it says into our own file. |
-| f | `cmd_admin` | 2679 | Serve the settings page. Its own port and its own token, deliberately. An upload endpoint can at worst put a… |
-| f | `configured_exports` | 2760 | What the configuration file says about exports, by name. |
-| f | `configured_uploads` | 2768 | What the configuration file says about uploads, by name. |
-| f | `build_upload` | 2776 | Make one upload from its settings. Raises with a usable message. |
-| f | `build_upload_schedule` | 2813 | What the uploads are, right now. They read the archive themselves rather than being handed a record: the comp… |
-| f | `live_readings_locally` | 2949 | The live upload an export has already asked for, with nothing to fill in. An export saying "live readings" ha… |
-| f | `configured_forecasts` | 3051 | What the configuration file says about forecast sources, by name. |
-| f | `forecast_db` | 3059 | Where the forecast is kept. Beside the archive, never in it. |
-| f | `forecast_place` | 3068 | Where a forecast is for. `cfg` is the settings **as one archive sees them** where there is more than one -- `… |
-| f | `build_forecast_source` | 3085 | Make one forecast source. Raises with a usable message. |
-| f | `mirror_forecast` | 3107 | A callback that copies a fresh forecast into every InfluxDB upload. Only InfluxDB. Every other upload in that… |
-| f | `build_forecast_schedule` | 3149 | What the forecast sources are, right now, and which series each is for. One entry, one archive. Not one sourc… |
-| f | `apply_live` | 3190 | Apply a changed configuration to a running process. Everything that can be rebuilt in place, in one function.… |
-| f | `build_schedule` | 3316 | What the exports are, right now. An export pointed at a feed has to be told where that feed writes, or it is… |
-| f | `resolve_paths` | 3340 | Make an export's own paths absolute, against the configuration file. The same rule as plots.toml: a relative… |
-| f | `build_export` | 3360 | Make one export from its settings. Raises with a usable message. `upload_token` is what `live.php`'s token is… |
-| f | `cmd_export_list` | 3388 |  |
-| f | `cmd_export_check` | 3420 | Try each destination without sending anything. |
-| f | `cmd_export_run` | 3448 | Send. This is what a feed would call when it has produced something. |
-| f | `cmd_web` | 3500 | Serve the feeds, and nothing else. Separate from `serve` for the same reason `listen` is: a machine that only… |
-| f | `plots_path` | 3553 | Where plots.toml lives: beside the configuration unless told otherwise. |
-| f | `load_plots` | 3567 | The charts, laying the starter set down on a first run. A station with no charts has no feed with anything to… |
-| f | `configured_feeds` | 3606 | What the configuration says about feeds, by name. A name is one configured feed; `kind` says what it is. Two… |
-| f | `feed_dirs` | 3624 | Where each feed writes, by name. One place, because two things need the answer and they must agree: the feed… |
-| f | `feed_schedule` | 3645 | When each configured feed runs, and which archive it reads. Read here rather than asked of the feed class, be… |
-| f | `build_feeds` | 3690 | The feeds this configuration asks for, in the order they run. Ordered by dependence: anything reading what an… |
-| f | `served_directories` | 4030 | What the built-in server hands out, by name. The local exports, plus anything named directly. The same answer… |
-| f | `cmd_plots_list` | 4052 | What charts exist. |
-| f | `cmd_plots_show` | 4078 | One chart, in full. |
-| f | `cmd_plots_import` | 4113 | Take the plots out of a WeeWX skin.conf or weewx.conf. Read, reported, and only written when asked. An import… |
-| f | `cmd_plots_compare` | 4172 | One chart per reading per span, drawing every place on one axis. Read, reported, and only written when asked… |
-| f | `cmd_plots_remove` | 4235 | Delete a chart. |
-| f | `cmd_plots_run` | 4247 | Produce the JSON now, and say what came out. |
-| f | `start_feeds` | 4300 | Start the feed runner, or say why there is nothing to run. One function for both loops. They had their own co… |
-| f | `configured_notify` | 4366 | What the configuration file says about notification channels. |
-| f | `build_channel` | 4374 | One channel from its settings. Raises with a usable message. |
-| f | `build_metrics` | 4395 | What the process is doing, or None where it is switched off. |
-| f | `build_api` | 4420 | The read-only API, or None where it is switched off. Every archive, by name, so a client can ask about any of… |
-| f | `build_notify_runner` | 4447 | The notification runner, or None where nothing is configured. What it watches for failures is the exports and… |
-| f | `cmd_backup` | 4515 | Copy the archive safely, while the station carries on. `sqlite3.Connection.backup`, not a file copy. See main… |
-| f | `cmd_verify` | 4562 | Is the file sound, and do the summaries still follow from the records? Two questions, and the second is ours.… |
-| f | `cmd_vacuum` | 4592 | Rewrite a database without its free pages. |
-| f | `cmd_notify_list` | 4610 | What is configured, and what could be. |
-| f | `cmd_notify_check` | 4635 | Send a test message through each channel. |
-| f | `cmd_notify_status` | 4664 | What is wrong right now, whether or not anybody has been told. |
-| f | `cmd_quality_suggest` | 4701 | Work rules out of what this station has actually recorded. Nobody can type a plausible ceiling for `soilMoist… |
-| f | `cmd_quality_check` | 4768 | Run the configured rules over what is stored, and change nothing. The answer to "what would this cost me". A… |
-| f | `cmd_grafana_list` | 4851 | What would be provisioned, without writing anything. |
-| f | `cmd_grafana_provision` | 4879 | Write the datasource and the dashboards Grafana reads at start. |
-| f | `cmd_status` | 4916 |  |
-| f | `main` | 4970 |  |
+| f | `quality_path` | 513 | Where `quality.toml` lives: beside the configuration unless told. Its own function because the watcher needs… |
+| f | `read_quality` | 533 | The calibration and the limits, from `quality.toml`. Its own file rather than a section in the settings, for… |
+| f | `read_sources` | 554 | Which station wins for which field. Normally a [sources] section in the configuration file, beside everything… |
+| f | `open_stores` | 583 |  |
+| f | `make_archiver` | 591 | One archiver, for the series `--archive` named or for the default. The single-shot commands work on one at a… |
+| f | `start_watchdog` | 617 | The watchdog, where this installation asked for one. Built here rather than in each command because all three… |
+| f | `cmd_listen` | 639 |  |
+| f | `cmd_archive` | 697 |  |
+| f | `cmd_upload_list` | 834 |  |
+| f | `cmd_upload_check` | 865 | Ask each service whether it accepts the account. Worth more than the equivalent for an export: these services… |
+| f | `cmd_upload_compare` | 928 | Count both ends, and say where they differ. A second store is a second truth. Trusting that every write lande… |
+| f | `cmd_upload_run` | 986 | Send now, whatever the trigger says. |
+| f | `cmd_forecast_list` | 1020 |  |
+| f | `cmd_forecast_check` | 1046 | Fetch once and say what came back. This is also how somebody finds a DWD station id or a MeteoAlarm region: a… |
+| f | `cmd_forecast_run` | 1085 | Fetch now and store, whatever the schedule says. |
+| f | `cmd_forecast_show` | 1108 | Print what is stored, which is what a page would draw. |
+| f | `cmd_serve` | 1172 | Listener and archiver in one process, for a small machine. They still speak only through the database. Splitt… |
+| f | `cmd_catchup` | 1497 |  |
+| f | `cmd_rebuild` | 1546 |  |
+| f | `cmd_derive` | 1566 | Fill in derived readings on records that are already in the archive. A calculator that arrives late leaves a… |
+| f | `cmd_weewx_driver_list` | 1772 | What this weewx.conf asks for, and whether it can be built. |
+| f | `cmd_weewx_driver_hardware` | 1811 | Every WeeWX driver on this machine, and what each one asks for. The command behind the hardware list on the c… |
+| f | `cmd_weewx_driver_install` | 1889 | Put a WeeWX driver file where this installation looks for one. A driver is one file, and this is the third pl… |
+| f | `cmd_weewx_driver_check` | 1959 | Build the driver, take a few packets, deliver nothing. The question this answers is the one worth asking befo… |
+| f | `cmd_mqtt_check` | 2081 | Subscribe, print what arrives, deliver nothing. The command somebody runs first, and the reason it exists: a… |
+| f | `cmd_mqtt_run` | 2127 | Subscribe and deliver, until stopped. Its own process, like the WeeWX shim and for the same reason: a broker… |
+| f | `cmd_import_dump` | 2158 | Read a MySQL or Postgres dump into the archive. `--dry-run` first, always, and the command says so: this writ… |
+| f | `cmd_import_csv` | 2220 | Read a CSV of readings into the archive. The format every other weather program can produce, and the one some… |
+| f | `cmd_weewx_driver_run` | 2278 | Run the driver and deliver what it produces to the listener. This is the long-running form, meant for a servi… |
+| f | `cmd_columns` | 2341 | Readings that the archive has no column for. A reading only survives the archive interval if the table has a… |
+| f | `cmd_driver_list` | 2416 |  |
+| f | `cmd_driver_install` | 2438 |  |
+| f | `cmd_driver_remove` | 2472 |  |
+| f | `local_addresses` | 2481 | Addresses this machine can be reached on, as (address, what it is). Only what can be worked out without askin… |
+| f | `cmd_url` | 2513 | Print the addresses of the live view and the upload endpoint. The token is a path segment, so an address with… |
+| f | `driver_directory` | 2581 | Where third-party drivers live, resolved like everything else. The command line first, then the setting, then… |
+| f | `all_schemas` | 2600 | Every configurable thing there is: the core, then each driver. Drivers are asked, not enumerated. One that ga… |
+| f | `replace_group` | 2795 |  |
+| f | `cmd_config_show` | 2801 | Print the configuration as it stands, commented. |
+| f | `cmd_config_set` | 2814 | Set one value, checked against the schema that owns it. |
+| f | `cmd_config_check` | 2845 | Check every value against its schema and say what is wrong. |
+| f | `cmd_config_import` | 2863 | Read a weewx.conf and write what it says into our own file. |
+| f | `cmd_admin` | 2894 | Serve the settings page. Its own port and its own token, deliberately. An upload endpoint can at worst put a… |
+| f | `configured_exports` | 2975 | What the configuration file says about exports, by name. |
+| f | `configured_uploads` | 2983 | What the configuration file says about uploads, by name. |
+| f | `build_upload` | 2991 | Make one upload from its settings. Raises with a usable message. |
+| f | `build_upload_schedule` | 3028 | What the uploads are, right now. They read the archive themselves rather than being handed a record: the comp… |
+| f | `live_readings_locally` | 3164 | The live upload an export has already asked for, with nothing to fill in. An export saying "live readings" ha… |
+| f | `configured_forecasts` | 3266 | What the configuration file says about forecast sources, by name. |
+| f | `forecast_db` | 3274 | Where the forecast is kept. Beside the archive, never in it. |
+| f | `forecast_place` | 3283 | Where a forecast is for. `cfg` is the settings **as one archive sees them** where there is more than one -- `… |
+| f | `build_forecast_source` | 3300 | Make one forecast source. Raises with a usable message. |
+| f | `mirror_forecast` | 3322 | A callback that copies a fresh forecast into every InfluxDB upload. Only InfluxDB. Every other upload in that… |
+| f | `build_forecast_schedule` | 3364 | What the forecast sources are, right now, and which series each is for. One entry, one archive. Not one sourc… |
+| f | `apply_live` | 3405 | Apply a changed configuration to a running process. Everything that can be rebuilt in place, in one function.… |
+| f | `build_schedule` | 3532 | What the exports are, right now. An export pointed at a feed has to be told where that feed writes, or it is… |
+| f | `resolve_paths` | 3556 | Make an export's own paths absolute, against the configuration file. The same rule as plots.toml: a relative… |
+| f | `build_export` | 3576 | Make one export from its settings. Raises with a usable message. `upload_token` is what `live.php`'s token is… |
+| f | `cmd_export_list` | 3604 |  |
+| f | `cmd_export_check` | 3636 | Try each destination without sending anything. |
+| f | `cmd_export_run` | 3664 | Send. This is what a feed would call when it has produced something. |
+| f | `cmd_web` | 3716 | Serve the feeds, and nothing else. Separate from `serve` for the same reason `listen` is: a machine that only… |
+| f | `plots_path` | 3769 | Where plots.toml lives: beside the configuration unless told otherwise. |
+| f | `load_plots` | 3783 | The charts, laying the starter set down on a first run. A station with no charts has no feed with anything to… |
+| f | `configured_feeds` | 3838 | What the configuration says about feeds, by name. A name is one configured feed; `kind` says what it is. Two… |
+| f | `feed_dirs` | 3856 | Where each feed writes, by name. One place, because two things need the answer and they must agree: the feed… |
+| f | `feed_schedule` | 3877 | When each configured feed runs, and which archive it reads. Read here rather than asked of the feed class, be… |
+| f | `build_feeds` | 3922 | The feeds this configuration asks for, in the order they run. Ordered by dependence: anything reading what an… |
+| f | `served_directories` | 4331 | What the built-in server hands out, by name. The local exports, plus anything named directly. The same answer… |
+| f | `cmd_plots_list` | 4353 | What charts exist. Through `load_plots`, so this is the set the feeds draw and not just the file: a site of s… |
+| f | `cmd_plots_show` | 4399 | One chart, in full. |
+| f | `cmd_plots_import` | 4434 | Take the plots out of a WeeWX skin.conf or weewx.conf. Read, reported, and only written when asked. An import… |
+| f | `cmd_plots_compare` | 4493 | One chart per reading per span, drawing every place on one axis. Read, reported, and only written when asked… |
+| f | `cmd_plots_remove` | 4556 | Delete a chart. |
+| f | `cmd_plots_run` | 4568 | Produce the JSON now, and say what came out. |
+| f | `start_feeds` | 4621 | Start the feed runner, or say why there is nothing to run. One function for both loops. They had their own co… |
+| f | `configured_notify` | 4687 | What the configuration file says about notification channels. |
+| f | `build_channel` | 4695 | One channel from its settings. Raises with a usable message. |
+| f | `build_metrics` | 4716 | What the process is doing, or None where it is switched off. |
+| f | `build_api` | 4741 | The read-only API, or None where it is switched off. Every archive, by name, so a client can ask about any of… |
+| f | `build_notify_runner` | 4768 | The notification runner, or None where nothing is configured. What it watches for failures is the exports and… |
+| f | `cmd_backup` | 4836 | Copy the archive safely, while the station carries on. `sqlite3.Connection.backup`, not a file copy. See main… |
+| f | `cmd_verify` | 4883 | Is the file sound, and do the summaries still follow from the records? Two questions, and the second is ours.… |
+| f | `cmd_vacuum` | 4913 | Rewrite a database without its free pages. |
+| f | `cmd_notify_list` | 4931 | What is configured, and what could be. |
+| f | `cmd_notify_check` | 4956 | Send a test message through each channel. |
+| f | `cmd_notify_status` | 4985 | What is wrong right now, whether or not anybody has been told. |
+| f | `cmd_quality_suggest` | 5022 | Work rules out of what this station has actually recorded. Nobody can type a plausible ceiling for `soilMoist… |
+| f | `cmd_quality_check` | 5089 | Run the configured rules over what is stored, and change nothing. The answer to "what would this cost me". A… |
+| f | `cmd_grafana_list` | 5172 | What would be provisioned, without writing anything. |
+| f | `cmd_grafana_provision` | 5200 | Write the datasource and the dashboards Grafana reads at start. |
+| f | `cmd_status` | 5237 |  |
+| f | `main` | 5291 |  |
 
 ## `src/weewx_evo/collectors.py`
 
-[Stations and Archives](Stations-and-Archives) · last changed 2026-08-29 17:20
+[Stations and Archives](Stations-and-Archives) · last changed 2026-08-30 18:00
 
 | | Name | Line | |
 |---|---|---|---|
-| f | `reserved` | 64 | Names already spoken for, so a new collector cannot take one. |
-| f | `configured` | 78 | The collectors in the configuration, by name. `Settings.config` is the parsed file, which is where every othe… |
-| f | `describe` | 94 |  |
-| f | `register_names` | 98 | Give each configured collector its own endpoint at the listener. The parser behind every one of them is the e… |
-| f | `options` | 131 | One collector's settings, for its page. Per kind, because they have almost nothing in common: a WeeWX driver… |
-| f | `settings_for` | 226 | One collector's settings, or {} if there is no such collector. |
-| f | `endpoint` | 231 | The path a collector delivers to, without the token. |
+| **C** | `Kind` | 51 | One sort of collector: what it is called, what it reads, how to run it. The command is in here rather than on… |
+| f | `reserved` | 109 | Names already spoken for, so a new collector cannot take one. |
+| f | `configured` | 123 | The collectors in the configuration, by name. `Settings.config` is the parsed file, which is where every othe… |
+| f | `describe` | 139 | What a collector is, and -- given its name -- how it is started. Named, it says the command, because the sett… |
+| f | `start_command` | 162 | What to type where the hardware is, for this kind of collector. |
+| f | `register_names` | 168 | Give each configured collector its own endpoint at the listener. The parser behind every one of them is the e… |
+| f | `options` | 201 | One collector's settings, for its page. Per kind, because they have almost nothing in common: a WeeWX driver… |
+| f | `settings_for` | 423 | One collector's settings, or {} if there is no such collector. |
+| f | `driver_settings` | 428 | What was chosen for the driver itself, under its own prefix. Separate from the collector's own settings becau… |
+| f | `endpoint` | 440 | The path a collector delivers to, without the token. |
 
 ## `src/weewx_evo/config.py`
 
-[Configuration](Configuration) · last changed 2026-08-28 14:31
+[Configuration](Configuration) · last changed 2026-08-30 14:53
 
 | | Name | Line | |
 |---|---|---|---|
@@ -847,23 +853,23 @@ name, use the browser's search.
 
 ## `src/weewx_evo/feeds/cheetah/__init__.py`
 
-[Feeds](Feeds) · last changed 2026-08-30 11:51
+[Feeds](Feeds) · last changed 2026-08-30 14:53
 
 | | Name | Line | |
 |---|---|---|---|
 | **C** | `CheetahFeed` | 79 | Renders one skin. |
 | · | &nbsp;&nbsp;`CheetahFeed.__init__` | 84 |  |
-| · | &nbsp;&nbsp;`CheetahFeed.narrow` | 212 | Keep only the places this instance was told to show. In the operator's order, and this fe… |
-| · | &nbsp;&nbsp;`CheetahFeed.several` | 245 | Whether this feed shows more than one place. The gate for every difference in this file,… |
-| · | &nbsp;&nbsp;`CheetahFeed.archive_files` | 257 |  |
-| · | &nbsp;&nbsp;`CheetahFeed.produce` | 262 | Every place this feed shows, one pass each, into one directory. A loop around what this a… |
-| · | &nbsp;&nbsp;`CheetahFeed.report` | 606 | How many tags went unanswered across every series, and which. Worded exactly as `Tags.rep… |
-| · | &nbsp;&nbsp;`CheetahFeed.skin_options` | 1491 | What the chosen skin lets an operator set, for the feed's page. `settings` is this feed's… |
-| · | &nbsp;&nbsp;`CheetahFeed.options` | 1510 |  |
-| f | `mqtt_uploads` | 1636 | The configured MQTT uploads, by name. |
-| f | `from_settings` | 2143 | Build the feed, and the tag layer it renders through. The tags are built here rather than handed in because t… |
-| f | `skin_options` | 2239 | What the named skin lets an operator set, or nothing. A skin of ours ships an `options.py` next to its templa… |
-| f | `forecast_default_archive` | 2431 | What a series is called when nobody said, from the store that owns it. |
+| · | &nbsp;&nbsp;`CheetahFeed.narrow` | 219 | Keep only the places this instance was told to show. In the operator's order, and this fe… |
+| · | &nbsp;&nbsp;`CheetahFeed.several` | 261 | Whether this feed shows more than one place. The gate for every difference in this file,… |
+| · | &nbsp;&nbsp;`CheetahFeed.archive_files` | 273 |  |
+| · | &nbsp;&nbsp;`CheetahFeed.produce` | 278 | Every place this feed shows, one pass each, into one directory. A loop around what this a… |
+| · | &nbsp;&nbsp;`CheetahFeed.report` | 622 | How many tags went unanswered across every series, and which. Worded exactly as `Tags.rep… |
+| · | &nbsp;&nbsp;`CheetahFeed.skin_options` | 1507 | What the chosen skin lets an operator set, for the feed's page. `settings` is this feed's… |
+| · | &nbsp;&nbsp;`CheetahFeed.options` | 1526 |  |
+| f | `mqtt_uploads` | 1653 | The configured MQTT uploads, by name. |
+| f | `from_settings` | 2211 | Build the feed, and the tag layer it renders through. The tags are built here rather than handed in because t… |
+| f | `skin_options` | 2312 | What the named skin lets an operator set, or nothing. A skin of ours ships an `options.py` next to its templa… |
+| f | `forecast_default_archive` | 2504 | What a series is called when nobody said, from the store that owns it. |
 
 ## `src/weewx_evo/feeds/diagnostic/__init__.py`
 
@@ -1590,6 +1596,27 @@ name, use the browser's search.
 | f | `remove` | 161 | Delete an installed driver. Returns False if it was not there. |
 | f | `inspect_source` | 285 | What a driver's code reaches for, as {note: [files]}. Read, not run. This is a hint and not a guarantee: it w… |
 
+## `src/weewx_evo/ingest/weewxdrivers.py`
+
+[Drivers](Drivers) · last changed 2026-08-30 16:49
+
+| | Name | Line | |
+|---|---|---|---|
+| **C** | `Setting` | 182 | One option out of a driver's own default stanza. |
+| **C** | `Driver` | 208 | A WeeWX driver on this machine, and the form it describes. |
+| · | &nbsp;&nbsp;`Driver.about` | 234 | The sentence that goes with how it reaches its hardware. |
+| · | &nbsp;&nbsp;`Driver.defaults` | 238 | Every option's default, which is the shape a stanza is written in. |
+| f | `parse_stanza` | 249 | A driver's default stanza: its section, its options, its sub-sections. Comments are the point. Everything abo… |
+| f | `read` | 370 | What a driver file says about itself, without importing it. `module` is the import path to record; empty mean… |
+| f | `is_a_driver` | 444 | Whether a file is a WeeWX driver: `loader` and `DRIVER_NAME`. That is all WeeWX itself requires of one. Read… |
+| f | `conditions_of` | 555 | Which options only apply for certain values of another. A Vantage takes a port or a host and never both, and… |
+| f | `directory` | 734 | Where WeeWX driver files go. Argument, environment, beside the data. The same order as `userdrivers.directory… |
+| f | `available` | 752 | Every WeeWX driver this machine could run, sorted by name. Three places, and the third is the one that makes… |
+| f | `by_module` | 772 | One driver by its import path, or None when it is not on this machine. |
+| f | `serial_ports` | 818 | The serial devices on this machine, as (value, label) pairs. "Which of these is my station" is a question som… |
+| f | `config_dict_for` | 863 | The `config_dict` this driver would have got from a `weewx.conf`. The point of the module: a driver is handed… |
+| f | `stanza_text` | 896 | The same thing as a `weewx.conf` section, for somebody to read or keep. Not what the driver is built from --… |
+
 ## `src/weewx_evo/ingest/weewxnames.py`
 
 [Drivers](Drivers) · last changed 2026-08-29 04:59
@@ -1859,33 +1886,34 @@ name, use the browser's search.
 
 ## `src/weewx_evo/options.py`
 
-[Configuration](Configuration) · last changed 2026-08-30 11:51
+[Configuration](Configuration) · last changed 2026-08-30 17:21
 
 | | Name | Line | |
 |---|---|---|---|
 | **C** | `Invalid` | 51 | A value that a setting cannot take, with a reason a person can act on. |
 | **C** | `Option` | 56 | One setting. |
-| · | &nbsp;&nbsp;`Option.options` | 101 | The choices, asking the installation if that is where they are. A failure here is not fat… |
-| · | &nbsp;&nbsp;`Option.parse` | 116 | Turn what arrived into the value this setting holds. Raises Invalid with a message meant… |
-| · | &nbsp;&nbsp;`Option.render` | 202 | The value as the form should show it. Secrets never come back. |
-| f | `parse_duration` | 213 | Seconds from '90', '5m', '2h', '7d'. A bare number is seconds. |
-| f | `format_duration` | 222 | The other way, choosing the largest unit that stays whole. A string that is already a duration comes back as… |
-| f | `split_duration` | 254 | Seconds as (amount, unit), in the largest unit that stays whole. 604800 becomes (7, "d"), not (604800, "s").… |
-| **C** | `Group` | 270 | Settings that belong together, and become one section of the form. |
-| **C** | `Schema` | 282 | Everything one component can be configured with. |
-| · | &nbsp;&nbsp;`Schema.option` | 297 |  |
-| · | &nbsp;&nbsp;`Schema.defaults` | 303 |  |
-| · | &nbsp;&nbsp;`Schema.parse` | 307 | Check a whole form's worth at once. Returns the parsed settings and, separately, what was… |
-| f | `schema_of` | 350 | Ask a component to describe itself, if it can. |
-| f | `installed_drivers` | 371 | The drivers this installation actually has. Asked at render time, not listed here: installing a driver should… |
-| f | `installed_skins` | 383 | The Cheetah skins that are there, for the dropdown that offers them. Read from the directory a feed points at… |
-| f | `published_names` | 415 | What the built-in web server has to hand out. The local exports, by name: an export is where somebody said a… |
-| f | `building_for` | 440 | Say which file the forms about to be built describe. A dropdown that lists the exports has to read them from… |
-| f | `available_languages` | 496 | Every language there is a file for. English is built in. |
-| f | `running_config` | 503 | What the configuration says, for a list that has to name reality. The same answer `_current_config` works out… |
-| f | `defined_feeds` | 512 | The feeds that exist, by the names the operator gave them. Names, not kinds. Two sets of JSON in two unit sys… |
-| f | `website_options` | 539 | The built-in web server. Its own page, because "where does what I made end up" is the question people actuall… |
-| f | `core_options` | 605 | What weewx-evo itself is configured with. |
+| · | &nbsp;&nbsp;`Option.options` | 120 | The choices, asking the installation if that is where they are. A failure here is not fat… |
+| · | &nbsp;&nbsp;`Option.offered` | 135 | The suggestions, asking the machine where that is where they are. Same shape and same fai… |
+| · | &nbsp;&nbsp;`Option.parse` | 150 | Turn what arrived into the value this setting holds. Raises Invalid with a message meant… |
+| · | &nbsp;&nbsp;`Option.render` | 236 | The value as the form should show it. Secrets never come back. |
+| f | `parse_duration` | 247 | Seconds from '90', '5m', '2h', '7d'. A bare number is seconds. |
+| f | `format_duration` | 256 | The other way, choosing the largest unit that stays whole. A string that is already a duration comes back as… |
+| f | `split_duration` | 288 | Seconds as (amount, unit), in the largest unit that stays whole. 604800 becomes (7, "d"), not (604800, "s").… |
+| **C** | `Group` | 304 | Settings that belong together, and become one section of the form. |
+| **C** | `Schema` | 316 | Everything one component can be configured with. |
+| · | &nbsp;&nbsp;`Schema.option` | 331 |  |
+| · | &nbsp;&nbsp;`Schema.defaults` | 337 |  |
+| · | &nbsp;&nbsp;`Schema.parse` | 341 | Check a whole form's worth at once. Returns the parsed settings and, separately, what was… |
+| f | `schema_of` | 384 | Ask a component to describe itself, if it can. |
+| f | `installed_drivers` | 405 | The drivers this installation actually has. Asked at render time, not listed here: installing a driver should… |
+| f | `installed_skins` | 417 | The Cheetah skins that are there, for the dropdown that offers them. Read from the directory a feed points at… |
+| f | `published_names` | 449 | What the built-in web server has to hand out. The local exports, by name: an export is where somebody said a… |
+| f | `building_for` | 474 | Say which file the forms about to be built describe. A dropdown that lists the exports has to read them from… |
+| f | `available_languages` | 530 | Every language there is a file for. English is built in. |
+| f | `running_config` | 537 | What the configuration says, for a list that has to name reality. The same answer `_current_config` works out… |
+| f | `defined_feeds` | 546 | The feeds that exist, by the names the operator gave them. Names, not kinds. Two sets of JSON in two unit sys… |
+| f | `website_options` | 573 | The built-in web server. Its own page, because "where does what I made end up" is the question people actuall… |
+| f | `core_options` | 639 | What weewx-evo itself is configured with. |
 
 ## `src/weewx_evo/planets.py`
 
@@ -1904,7 +1932,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/plots.py`
 
-[Plots](Plots) · last changed 2026-08-30 11:51
+[Plots](Plots) · last changed 2026-08-30 14:53
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1919,50 +1947,52 @@ name, use the browser's search.
 | f | `series_named` | 270 | Every archive the charts in this set ask for, by name. So a feed opens the files something actually uses and… |
 | **C** | `PlotSet` | 286 | The plots there are, and what the readings in them are called. |
 | · | &nbsp;&nbsp;`PlotSet.__init__` | 289 |  |
-| · | &nbsp;&nbsp;`PlotSet.get` | 302 |  |
-| · | &nbsp;&nbsp;`PlotSet.add` | 308 |  |
-| · | &nbsp;&nbsp;`PlotSet.remove` | 313 |  |
-| · | &nbsp;&nbsp;`PlotSet.by_span` | 318 | Grouped, in the order the spans were first seen. |
-| · | &nbsp;&nbsp;`PlotSet.spans` | 325 | How long each span covers, for the manifest. A client laying out its own periods needs th… |
-| · | &nbsp;&nbsp;`PlotSet.uses` | 336 |  |
-| f | `load` | 342 | Read plots.toml. A file that is not there means no plots, not an error. |
-| f | `from_dict` | 354 | Plots out of already-parsed TOML. |
-| f | `save` | 407 | Write plots.toml, keeping the previous one. Written beside and moved into place, like the configuration: this… |
-| f | `render` | 431 | The plots as a TOML file somebody can edit. |
-| f | `comparisons` | 525 | One chart per (span, reading), one line per place. Generated rather than typed. Four readings by four spans b… |
-| **C** | `Imported` | 644 | What an import found, and what it did not take. |
-| · | &nbsp;&nbsp;`Imported.report` | 655 | What happened, as something to read before trusting it. |
-| f | `labels_from` | 680 | What a WeeWX skin calls each reading: `[Labels] [[Generic]]`. Worth carrying across on its own. Somebody who… |
-| f | `from_image_generator` | 696 | Plots out of a WeeWX `[ImageGenerator]` section. The structure there is three deep: a group of plots (`[[day_… |
+| · | &nbsp;&nbsp;`PlotSet.get` | 308 |  |
+| · | &nbsp;&nbsp;`PlotSet.add` | 314 |  |
+| · | &nbsp;&nbsp;`PlotSet.remove` | 319 |  |
+| · | &nbsp;&nbsp;`PlotSet.by_span` | 324 | Grouped, in the order the spans were first seen. |
+| · | &nbsp;&nbsp;`PlotSet.spans` | 331 | How long each span covers, for the manifest. A client laying out its own periods needs th… |
+| · | &nbsp;&nbsp;`PlotSet.uses` | 342 |  |
+| f | `load` | 348 | Read plots.toml. A file that is not there means no plots, not an error. |
+| f | `from_dict` | 360 | Plots out of already-parsed TOML. |
+| f | `save` | 413 | Write plots.toml, keeping the previous one. Written beside and moved into place, like the configuration: this… |
+| f | `render` | 437 | The plots as a TOML file somebody can edit. |
+| f | `comparisons` | 531 | One chart per (span, reading), one line per place. Generated rather than typed. Four readings by four spans b… |
+| f | `implied` | 606 | The set to draw with, with the missing comparison charts filled in. Worked out rather than written, and this… |
+| **C** | `Imported` | 699 | What an import found, and what it did not take. |
+| · | &nbsp;&nbsp;`Imported.report` | 710 | What happened, as something to read before trusting it. |
+| f | `labels_from` | 735 | What a WeeWX skin calls each reading: `[Labels] [[Generic]]`. Worth carrying across on its own. Somebody who… |
+| f | `from_image_generator` | 751 | Plots out of a WeeWX `[ImageGenerator]` section. The structure there is three deep: a group of plots (`[[day_… |
 
 ## `src/weewx_evo/quality.py`
 
-[Quality control](Quality) · last changed 2026-08-30 12:28
+[Quality control](Quality) · last changed 2026-08-30 15:01
 
 | | Name | Line | |
 |---|---|---|---|
-| **C** | `Rule` | 102 | What one reading has to satisfy. |
-| · | &nbsp;&nbsp;`Rule.empty` | 118 |  |
-| **C** | `Adjust` | 124 | A correction applied before anything is checked. |
-| · | &nbsp;&nbsp;`Adjust.empty` | 130 |  |
-| **C** | `Verdict` | 138 | One reading that did not get through, and why. |
-| **C** | `Policy` | 153 | The rules an installation runs, from `quality.toml`. |
-| · | &nbsp;&nbsp;`Policy.adjust_for` | 167 | The correction for one reading of one station, if any. A station's own entry wins over th… |
-| f | `load` | 181 | Read `quality.toml`. A file that is not there means no rules. Not an error, and not a warning either. Most in… |
-| f | `from_dict` | 195 | A policy out of already-parsed TOML. |
-| **C** | `Check` | 257 | Runs a policy over packets in time order. One of these per span, made fresh. That is what keeps `archiver.bui… |
-| · | &nbsp;&nbsp;`Check.__init__` | 274 |  |
-| · | &nbsp;&nbsp;`Check.calibrate` | 285 | Apply the corrections. Never drops anything. `system` is the packet's, so an offset writt… |
-| · | &nbsp;&nbsp;`Check.check` | 315 | The readings that survived, and one verdict per one that did not. |
-| · | &nbsp;&nbsp;`Check.context` | 403 | Feed in the readings before the span, without judging them. The spike and stuck rules nee… |
-| · | &nbsp;&nbsp;`Check.summary` | 432 |  |
-| **C** | `Seen` | 511 | What one reading has actually done. The basis for a suggestion. |
-| · | &nbsp;&nbsp;`Seen.varies` | 526 | Whether this reading actually moves. Against its own size, not against a fixed figure: a… |
-| · | &nbsp;&nbsp;`Seen.rule` | 539 | A rule with room in it, inside what physics allows. Never tighter than what has been seen… |
-| · | &nbsp;&nbsp;`Seen.resolution` | 596 | The smallest step this sensor makes, as far as can be told. |
-| · | &nbsp;&nbsp;`Seen.as_toml` | 604 |  |
-| f | `watch` | 621 | Measure what each reading has done, over records in time order. Fed the archive for the limits and the live t… |
-| f | `merge` | 686 | The floors and ceilings from one measurement, the rest from another. The archive knows how cold it gets; the… |
+| **C** | `Rule` | 110 | What one reading has to satisfy. |
+| · | &nbsp;&nbsp;`Rule.empty` | 126 |  |
+| **C** | `Adjust` | 132 | A correction applied before anything is checked. |
+| · | &nbsp;&nbsp;`Adjust.empty` | 138 |  |
+| **C** | `Verdict` | 146 | One reading that did not get through, and why. |
+| **C** | `Policy` | 161 | The rules an installation runs, from `quality.toml`. |
+| · | &nbsp;&nbsp;`Policy.adjust_for` | 175 | The correction for one reading of one station, if any. A station's own entry wins over th… |
+| f | `load` | 189 | Read `quality.toml`. A file that is not there means no rules. Not an error, and not a warning either. Most in… |
+| f | `from_dict` | 203 | A policy out of already-parsed TOML. |
+| **C** | `Check` | 265 | Runs a policy over packets in time order. One of these per span, made fresh. That is what keeps `archiver.bui… |
+| · | &nbsp;&nbsp;`Check.__init__` | 282 |  |
+| · | &nbsp;&nbsp;`Check.calibrate` | 293 | Apply the corrections. Never drops anything. `system` is the packet's, so an offset writt… |
+| · | &nbsp;&nbsp;`Check.check` | 323 | The readings that survived, and one verdict per one that did not. |
+| · | &nbsp;&nbsp;`Check.context` | 411 | Feed in the readings before the span, without judging them. The spike and stuck rules nee… |
+| · | &nbsp;&nbsp;`Check.summary` | 440 |  |
+| **C** | `Seen` | 519 | What one reading has actually done. The basis for a suggestion. |
+| · | &nbsp;&nbsp;`Seen.varies` | 534 | Whether this reading actually moves. Against its own size, not against a fixed figure: a… |
+| · | &nbsp;&nbsp;`Seen.rule` | 547 | A rule with room in it, inside what physics allows. Never tighter than what has been seen… |
+| · | &nbsp;&nbsp;`Seen.resolution` | 604 | The smallest step this sensor makes, as far as can be told. |
+| · | &nbsp;&nbsp;`Seen.as_toml` | 612 |  |
+| f | `watch` | 629 | Measure what each reading has done, over records in time order. Fed the archive for the limits and the live t… |
+| f | `merge` | 694 | The floors and ceilings from one measurement, the rest from another. The archive knows how cold it gets; the… |
+| f | `across` | 715 | One measurement out of several series, widest reading wins. There is one `quality.toml` and every archiver ge… |
 
 ## `src/weewx_evo/ratelimit.py`
 
@@ -2135,11 +2165,11 @@ name, use the browser's search.
 
 ## `src/weewx_evo/skins/deck/options.py`
 
-[Deck](Deck) · last changed 2026-08-30 11:51
+[Deck](Deck) · last changed 2026-08-30 14:53
 
 | | Name | Line | |
 |---|---|---|---|
-| f | `groups` | 129 | The skin's own settings, as the admin page and `--explain` see them. The three groups about places are left o… |
+| f | `groups` | 141 | The skin's own settings, as the admin page and `--explain` see them. The three groups about places are left o… |
 
 ## `src/weewx_evo/skins/deck/tags.py`
 

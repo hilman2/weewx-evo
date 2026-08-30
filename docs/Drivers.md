@@ -245,8 +245,9 @@ hundred outside it, for hardware nobody here owns and cannot test against.
 They run unchanged.
 
 ```bash
-weewx-evo weewx-driver check --conf /etc/weewx/weewx.conf   # build it, send nothing
-weewx-evo weewx-driver run   --conf /etc/weewx/weewx.conf   # deliver
+weewx-evo weewx-driver hardware                 # what this machine can run
+weewx-evo weewx-driver check --collector shed   # build it, send nothing
+weewx-evo weewx-driver run   --collector shed   # deliver
 ```
 
 Its own process, delivering over `listener.push()` like any other collector.
@@ -306,7 +307,7 @@ Counted across the fourteen drivers in WeeWX's tree:
 machine. Point at the file:
 
 ```bash
-weewx-evo weewx-driver check --conf ./vantage.conf \
+weewx-evo weewx-driver check \
     --driver-file ~/weewx/src/weewx/drivers/vantage.py
 ```
 
@@ -335,6 +336,63 @@ Three things about it:
 - **The hardware library is still needed.** `import usb` is pyusb, `import
   serial` is pyserial, and no stand-in can supply either: one that did would
   give a driver that builds and reads nothing. `check` names the package.
+
+### Configuring one — `ingest/weewxdrivers.py`
+
+A driver still had to be handed a `weewx.conf`, and somebody without WeeWX
+has no such file. So the one thing meant to be free — plug in one USB console
+— began by writing a configuration file for software that is not installed.
+
+The form comes out of the driver. Every WeeWX driver carries a
+`confeditor` whose `default_stanza` is the block `weectl station reconfigure`
+writes: every option it takes, a working default for each, and a comment above
+each saying what it is. That is read and turned into fields, so a driver that
+gains an option gains a field with nothing changed here.
+
+```bash
+weewx-evo weewx-driver hardware Vantage
+```
+
+```
+Vantage          weewx.drivers.vantage  needs pyserial
+                 It is read over a cable or over the network, and which of the
+                 two decides which of the settings below apply.
+    type                 = serial
+      Connection type: serial or ethernet
+      one of: serial, ethernet
+    port                 = /dev/ttyUSB0 (only when type is serial)
+    host                 = 1.2.3.4 (only when type is ethernet)
+    baudrate             = 19200 (rarely needed)
+```
+
+Four things are read rather than written down here: which options exist and
+what each defaults to, the comment above each as its help text, the row of
+hashes the author drew as *rarely needs attention*, and — from the branches in
+`prompt_for_settings` — which option only applies for certain values of
+another. A Vantage takes a port or a host and never both, and it says so in
+its own code.
+
+**Read, never imported.** Listing what is available runs nobody else's code,
+and
+a driver whose library is missing still has a form: `import usb` fails on a
+machine without pyusb, which is the ordinary state here, and importing would
+drop that driver from the list at exactly the moment somebody wants to know
+what to install.
+
+**Where the drivers come from**, in this order: `weewx.drivers` and `user` if
+WeeWX is installed, then `<data directory>/weewx-drivers/`. The last is the
+one that matters on a machine with no WeeWX, and `weewx-driver install` puts
+a file there, from a path or a URL. It is separate from `driver install`,
+which takes ours: the two meet different contracts.
+
+Values chosen on the page live under `collectors.<name>.settings` in
+`evo.toml`, under a prefix of their own because the names belong to the
+driver. `--conf` still wins where it is given, and nothing is ever written
+into a `weewx.conf`.
+
+`tools/weewxdrivers_test.py` compares the parser against configobj option by
+option and comment by comment, and runs a collector end to end in a process
+where `weewx` cannot be imported.
 
 ### How far this is actually tested
 
@@ -440,6 +498,7 @@ src/weewx_evo/ingest/plugins/push/transport.py
 src/weewx_evo/ingest/sightings.py
 src/weewx_evo/ingest/weewxshim.py
 src/weewx_evo/ingest/weewxnames.py
+src/weewx_evo/ingest/weewxdrivers.py
 src/weewx_evo/ingest/plugins/push/catalogs/__init__.py
 src/weewx_evo/ingest/plugins/push/catalogs/acurite.py
 src/weewx_evo/ingest/plugins/push/catalogs/ambient.py

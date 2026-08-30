@@ -39,17 +39,54 @@ prober nothing. → [Security](Security)
 ## Hardware you have to fetch from
 
 `weewx-evo` runs any WeeWX driver as a collector, in its own process, without
-WeeWX installed:
+WeeWX installed.
+
+Add a collector on the **Collectors** page, pick your hardware from the list,
+and its own settings — serial port, model, whatever else it takes — appear on
+the page after. They are read out of the driver, so they are the ones it
+actually has.
+
+The same list from a terminal, when there is no browser to hand:
 
 ```bash
-weewx-evo weewx-driver check --conf /etc/weewx/weewx.conf   # builds it, sends nothing
-weewx-evo weewx-driver run   --conf /etc/weewx/weewx.conf   # delivers
+weewx-evo weewx-driver hardware           # everything this machine can run
+weewx-evo weewx-driver hardware Vantage   # and every setting one of them takes
+```
+
+Then start it, where the hardware is:
+
+```bash
+weewx-evo weewx-driver check --collector shed   # builds it, sends nothing
+weewx-evo weewx-driver run   --collector shed   # delivers
 ```
 
 `check` first: it says what the driver needs and what is missing, and it does
 not touch the hardware. A serial port that does not answer is a driver hanging
 in its own process, where it cannot stop the recording.
 → [Drivers](Drivers#running-a-weewx-driver--ingestweewxshimpy)
+
+### If your driver is not in the list
+
+The list holds what is on this machine: WeeWX's own drivers if WeeWX is
+installed, anything under `user`, and any driver file you have added. A driver
+is one Python file, and adding it is one command:
+
+```bash
+weewx-evo weewx-driver install ./vantage.py
+weewx-evo weewx-driver install https://example.org/some-driver.py
+```
+
+A driver that needs a library says so rather than going missing — `needs
+pyusb` beside its name. Install that where the collector runs.
+
+### If you already have a weewx.conf
+
+Leave the hardware on *from a weewx.conf* and give the path instead. Nothing
+is copied out of that file and nothing is written into it.
+
+```bash
+weewx-evo weewx-driver run --conf /etc/weewx/weewx.conf
+```
 
 ## Two consoles in one garden
 

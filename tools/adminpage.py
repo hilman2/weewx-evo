@@ -33,6 +33,161 @@ from weewx_evo.ratelimit import Limits
 TOKEN = "admin-token-for-the-test"
 
 
+def the_hardware_form(base: str, path: Path) -> int:
+    """Choosing hardware, and what the driver's own fields do when saved.
+
+    The failure this is for is the one that leaves no trace: the page renders,
+    it answers 303, it says saved, and the value is not in the file -- so the
+    collector runs with the driver's default and nothing anywhere says the
+    setting was ignored.
+
+    A driver file of its own rather than one out of an installed WeeWX,
+    because whether WeeWX is installed is a different question from whether
+    the form works, and this test is run on machines that do not have it.
+    """
+    from weewx_evo import collectors as collector_defs
+    from weewx_evo.ingest import weewxdrivers
+
+    print("\nthe hardware form: a driver's own settings, chosen and saved")
+    bad = 0
+
+    # Where the settings page will look: `archive_db` is relative in
+    # this configuration, and a relative path counts against the file
+    # it is written in. Working that out here rather than assuming it
+    # is what makes the check mean something.
+    where = weewxdrivers.directory(beside=path.parent / "data" / "weewx.sdb")
+    where.mkdir(parents=True, exist_ok=True)
+    (where / "faux.py").write_text(FAUX_DRIVER, encoding="utf-8")
+
+    found = weewxdrivers.available(where)
+    module = "weewx.drivers.faux"
+    bad += not check("the driver is offered",
+                     module in [one.module for one in found], True)
+
+    # Chosen while creating it, because which driver it is decides which
+    # fields the page after has. Left to that page, somebody arrives at a
+    # form that cannot ask anything yet.
+    code, _ = post(f"{base}/{TOKEN}/new-collector",
+                   {"name": "attic", "kind": "weewx-driver",
+                    "driver": module})
+    bad += not check("a collector can be created with hardware chosen",
+                     code, 303)
+
+    code, rendered = get(f"{base}/{TOKEN}/collector:attic")
+    bad += not check("its page renders", code, 200)
+    # The driver's own option, its own default, and the comment its author
+    # wrote above it -- none of which is written down in this program.
+    bad += not check("the driver's own option is on it",
+                     'name="settings.port"' in rendered, True)
+    bad += not check("with the default the driver gives it",
+                     "/dev/faux0" in rendered, True)
+    bad += not check("and the help its author wrote",
+                     "Where the console is plugged in" in rendered, True)
+    bad += not check("the option below the rule is folded away",
+                     "rarely needed" in rendered, True)
+    # Port or host, never both, because the driver says so in its own editor.
+    bad += not check("and the conditional one is marked as conditional",
+                     'data-when="settings.type"' in rendered, True)
+
+    code, _ = post(f"{base}/{TOKEN}/collector:attic",
+                   {"kind": "weewx-driver", "driver": module,
+                    "conf": "", "driver_file": "",
+                    "source": "attic-console", "catchup": "0", "batch": "5",
+                    "settings.port": "/dev/ttyUSB7",
+                    "settings.type": "serial",
+                    "settings.source": "the driver's own idea of source",
+                    "settings.model": "Faux 2000", "settings.timeout": "9"})
+    bad += not check("its settings save", code, 303)
+
+    written = config_file.read(path)
+    settings = collector_defs.driver_settings(written, "attic")
+    bad += not check("the driver's own setting is in the file",
+                     settings.get("port"), "/dev/ttyUSB7")
+    # The collision, measured: the driver has an option called `source` and
+    # so do we. Both were sent, both were saved, and neither took the other's
+    # value. Without the prefix they are one field in the form, one of the
+    # two wins, and both settings get whatever that was.
+    bad += not check("the collector's own source is untouched",
+                     (collector_defs.settings_for(written, "attic")
+                      .get("source")), "attic-console")
+    bad += not check("and the driver's option of the same name is its own",
+                     settings.get("source"),
+                     "the driver's own idea of source")
+
+    # And the whole reason for the prefix: the driver is built from it.
+    one = weewxdrivers.by_module(module, where)
+    built = weewxdrivers.config_dict_for(one, settings)
+    bad += not check("and it reaches the driver",
+                     built["Faux"]["port"], "/dev/ttyUSB7")
+    bad += not check("with what was not chosen left at the driver's default",
+                     built["Faux"]["baudrate"], "19200")
+    return bad
+
+
+#: A driver in the shape WeeWX's own are in, for the form to be read out of.
+#: Not one of WeeWX's: this test runs where WeeWX is not installed, and a
+#: fixture that is only there sometimes is a check that only runs sometimes.
+FAUX_DRIVER = '''"""A driver that exists to be read, never run."""
+DRIVER_NAME = 'Faux'
+DRIVER_VERSION = '1.0'
+
+
+def loader(config_dict, engine):
+    raise NotImplementedError("this one is only ever read")
+
+
+class FauxConfEditor:
+    @property
+    def default_stanza(self):
+        return """
+[Faux]
+    # This section is for the Faux console.
+
+    # Connection type: serial or ethernet
+    type = serial
+
+    # Where the console is plugged in
+    port = /dev/faux0
+
+    # The address of the console
+    host = 1.2.3.4
+
+    ####################################################
+    # The rest of this section rarely needs attention.
+    ####################################################
+
+    # Serial baud rate
+    baudrate = 19200
+
+    # How long to wait, in seconds
+    timeout = 4
+
+    # The station model
+    model = Faux 1000
+
+    # What this driver happens to call the thing it reads. A name the
+    # collector uses too, which is the collision the prefix is for.
+    source = the console
+
+    # The driver to use:
+    driver = weewx.drivers.faux
+"""
+
+    def prompt_for_settings(self):
+        settings = dict()
+        settings['type'] = self._prompt('type', 'serial', ['serial', 'ethernet'])
+        if settings['type'] == 'serial':
+            settings['port'] = self._prompt('port', '/dev/faux0')
+        else:
+            settings['host'] = self._prompt('host')
+        return settings
+
+
+def confeditor_loader():
+    return FauxConfEditor()
+'''
+
+
 def check(label: str, got: object, want: object) -> bool:
     ok = got == want
     print(f"  {'ok  ' if ok else 'FAIL'} {label}: {got!r}" + ("" if ok else f" != {want!r}"))
@@ -1072,6 +1227,8 @@ def main() -> int:
         failures += not check("with the driver file it was given",
                               (written.get("shed") or {}).get("driver_file"),
                               "/opt/fousb.py")
+
+        failures += the_hardware_form(base, path)
 
         # Every kind in the menu is explained under it. The list used to be
         # written out by hand and described one of the two, so half of what

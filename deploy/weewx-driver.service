@@ -31,20 +31,13 @@ Type=simple
 User=weewx
 Group=dialout
 
-# --conf points at the weewx.conf the driver is already configured by: its
-# serial port, its model, its sensor map. Those settings were working before
-# this file existed and are not copied anywhere.
-#
-# --catchup asks a console that keeps its own records for the last day of
-# them at startup. That is what turns an outage into a filled gap instead of
-# a lost one; drop it for hardware that logs nothing.
 # --collector names a collector in weewx-evo's own configuration, and that
 # name is the point of it: its packets arrive under it, so a station can be
 # announced for this console on the Stations page. Two consoles reporting the
 # same model are told apart by nothing else.
 #
-# Everything else about it -- which weewx.conf, which driver file, how much
-# of the console's own log to fetch at startup -- is on its settings page
+# Everything else about it -- which hardware, its serial port and model, how
+# much of the console's own log to fetch at startup -- is on its settings page
 # rather than an argument somebody typed here once.
 ExecStart=/usr/bin/weewx-evo weewx-driver run \
     --config /etc/weewx-evo/evo.toml \

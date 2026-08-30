@@ -61,7 +61,7 @@ from .forecast import Place as ForecastPlace
 from .forecast import codes as forecast_codes
 from .forecast import runner as forecast_runner
 from .forecast.store import ForecastStore
-from .ingest import drivers, userdrivers
+from .ingest import drivers, userdrivers, weewxdrivers
 from .ingest import state as state_module
 from .ingest.listener import HttpListener, Ingest, UdpListener
 from .netaccess import Access, warn_if_open
@@ -1682,24 +1682,67 @@ def _collector_settings(args: argparse.Namespace) -> dict:
 
 
 def _shim_config(args: argparse.Namespace) -> dict:
-    """The weewx.conf a WeeWX driver is configured by.
+    """The configuration a WeeWX driver is built from. Two ways to one shape.
 
-    Its own file, not ours. A WeeWX driver reads its settings out of the
-    section named after it, and those settings are the ones that were already
-    working -- serial port, station model, sensor map. Copying them into our
-    file would mean maintaining a second place for them and getting the
-    translation wrong for the drivers nobody here can test.
+    **A file, when there is one.** A WeeWX driver reads its settings out of
+    the section named after it, and on an installation that has been running
+    those settings are the ones that already work. Nothing here writes that
+    file or copies out of it.
+
+    **Otherwise, built from what was chosen.** `weewxdrivers.py` reads the
+    driver's own configuration editor, so the section is the driver's own
+    defaults under the driver's own section name -- exactly what `weectl`
+    would have written. The driver cannot tell the difference, because there
+    is none.
+
+    The second is what makes one USB console cost one USB console. Requiring
+    the file meant writing a configuration for WeeWX in order not to install
+    WeeWX, which is the thing `weewxnames.py` exists to avoid.
     """
-    from .ingest import weewxshim
+    from .ingest import weewxdrivers, weewxshim
 
-    # An argument beats the collector's own setting beats the usual place.
-    # Same order as everything else: what somebody just typed wins for this
-    # run, and the file is what the settings page writes.
-    from_file = _collector_settings(args).get("conf")
-    path = args.conf or from_file or "/etc/weewx/weewx.conf"
-    if not Path(path).exists():
-        raise SystemExit(f"no weewx.conf at {path}. Say where it is with --conf.")
-    return weewxshim.read_config(path)
+    # An argument beats the collector's own setting. Same order as
+    # everything else: what somebody just typed wins for this run.
+    stored = _collector_settings(args)
+    path = args.conf or stored.get("conf")
+    if path:
+        if not Path(path).exists():
+            raise SystemExit(f"no weewx.conf at {path}. Say where it is "
+                             f"with --conf.")
+        return weewxshim.read_config(path)
+
+    module = getattr(args, "driver", None) or stored.get("driver")
+    from_file = getattr(args, "driver_file", None) or stored.get("driver_file")
+    if module or from_file:
+        # A file on its own is enough. It names itself -- that is what
+        # `DRIVER_NAME` is for -- so making somebody type the module path as
+        # well would be asking for a fact the file already carries, and one
+        # they can get wrong.
+        found = None
+        if module:
+            # `Settings.get` and not the raw file: it anchors a relative path
+            # against the configuration file it was written in, so this looks
+            # where the service looks. The settings page has to do that part
+            # itself -- see `collectors._driver_directory`.
+            where = weewxdrivers.directory(
+                beside=settings_for(args).get("archive_db"))
+            found = weewxdrivers.by_module(str(module), where)
+        if found is None and from_file:
+            found = weewxdrivers.read(from_file, str(module or ""))
+        if found is not None and not found.problem:
+            values = collectors.driver_settings(settings_for(args),
+                                                getattr(args, "collector", "")
+                                                or "")
+            return weewxdrivers.config_dict_for(found, values)
+
+    # Neither, so the usual place -- which is right on a machine that has
+    # WeeWX, and is where somebody who typed nothing expects to be looked.
+    usual = "/etc/weewx/weewx.conf"
+    if Path(usual).exists():
+        return weewxshim.read_config(usual)
+    raise SystemExit(
+        "nothing says what to run: choose the hardware on the collector's "
+        "page, or name a weewx.conf with --conf, or a driver with --driver.")
 
 
 def _shim_options(args: argparse.Namespace) -> dict:
@@ -1762,15 +1805,159 @@ def cmd_weewx_driver_list(args: argparse.Namespace) -> int:
     return 0
 
 
-#: What a driver imports to reach hardware, and what to install for it. The
-#: import name and the package name differ for every one of them, which is
-#: why this table exists rather than a sentence saying to install it.
-_HARDWARE_LIBS = {
-    "usb": "pyusb",            # fousb, te923, ws28xx, wmr300
-    "serial": "pyserial",      # vantage, ws23xx, ultimeter, ws1, cc3000
-    "hid": "hidapi",           # some builds of the HID drivers
-    "ftdi": "pylibftdi",
-}
+def _weewx_driver_dir(args: argparse.Namespace):
+    """Where this installation keeps WeeWX driver files."""
+    return weewxdrivers.directory(
+        configured=getattr(args, "weewx_driver_dir", None),
+        beside=(settings_for(args) or {}).get("archive_db"))
+
+
+def cmd_weewx_driver_hardware(args: argparse.Namespace) -> int:
+    """Every WeeWX driver on this machine, and what each one asks for.
+
+    The command behind the hardware list on the collector's page, and the
+    answer to "will it read mine". Nothing is imported to produce it: the
+    drivers are read, so a driver whose library is not installed is listed
+    with what it needs rather than left out.
+    """
+    where = _weewx_driver_dir(args)
+    found = weewxdrivers.available(where)
+    if not found:
+        print("No WeeWX drivers on this machine.")
+        print(f"Put a driver file in {where}, or install WeeWX.")
+        return 0
+
+    wanted = getattr(args, "name", None)
+    for one in found:
+        if wanted and wanted.lower() not in (one.name.lower(),
+                                             one.module.lower()):
+            continue
+        needs = f"  needs {one.needs}" if one.needs else ""
+        print(f"{one.name:16s} {one.module}{needs}")
+        if one.problem:
+            print(f"                 {one.problem}")
+            continue
+        if one.about:
+            print(f"                 {one.about}")
+        if not wanted:
+            continue
+        # Named, so print the form: every option, its default, and what the
+        # driver's own author says it is. This is what the page shows, in the
+        # place somebody is when they have no page.
+        for setting in one.settings:
+            mark = " (rarely needed)" if setting.advanced else ""
+            if setting.when:
+                on, values = setting.when
+                mark += f" (only when {on} is {' or '.join(values)})"
+            print(f"    {setting.name:20s} = {setting.value}{mark}")
+            for line in setting.help:
+                print(f"      {line}")
+            if setting.choices:
+                print("      one of: "
+                      + ", ".join(value for value, _ in setting.choices))
+    if not wanted:
+        print(f"\n{len(found)} driver(s). Name one to see its settings.")
+    return 0
+
+
+def _fetch_driver(url: str, into: Path) -> Path | None:
+    """Download one driver file. Returns where it landed, or None on failure.
+
+    http and https only. `urlopen` also speaks `file:` and `ftp:` and
+    whatever else is registered, so a "driver URL" could read a local file
+    and hand it back as a download -- which is not what the word means. The
+    same reasoning as `userdrivers._download`, which is the other half of
+    this and takes a zip rather than a file.
+    """
+    import urllib.parse
+    import urllib.request
+
+    if urllib.parse.urlparse(url).scheme.lower() not in ("http", "https"):
+        print(f"{url}: only http and https can be downloaded", file=sys.stderr)
+        return None
+    name = Path(urllib.parse.urlparse(url).path).name or "driver.py"
+    if not name.endswith(".py"):
+        print(f"{url} does not name a .py file. A WeeWX driver is one "
+              f"Python file.", file=sys.stderr)
+        return None
+    target = into / name
+    try:
+        with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
+            target.write_bytes(response.read())
+    except Exception as exc:
+        print(f"could not download {url}: {exc}", file=sys.stderr)
+        return None
+    return target
+
+
+def cmd_weewx_driver_install(args: argparse.Namespace) -> int:
+    """Put a WeeWX driver file where this installation looks for one.
+
+    A driver is one file, and this is the third place `available` looks --
+    the one that matters on a machine with no WeeWX, where there is nothing
+    to take a driver out of.
+
+    Separate from `driver install`, which takes ours. The two meet different
+    contracts: `load(registry)` there, `loader()` and `DRIVER_NAME` here. One
+    command answering to both would have to guess which was meant, and the
+    guess would be wrong the first time a file met neither.
+
+    A URL is taken as well as a path, because that is where a driver comes
+    from on the machine this exists for. Telling somebody to install WeeWX in
+    order to copy one file out of it is the thing being avoided.
+    """
+    import shutil
+    import tempfile
+
+    where = _weewx_driver_dir(args)
+    given = str(args.source)
+    with tempfile.TemporaryDirectory() as staging:
+        if given.lower().startswith(("http://", "https://")):
+            # A URL, because that is where a driver is for the machine this
+            # is for. Somebody with one USB console and no WeeWX has to get
+            # the file from somewhere, and telling them to install WeeWX in
+            # order to copy one file out of it is the thing this avoids.
+            source = _fetch_driver(given, Path(staging))
+            if source is None:
+                return 1
+        else:
+            source = Path(given).expanduser()
+            if not source.is_file():
+                print(f"no file at {source}", file=sys.stderr)
+                return 1
+
+        if not weewxdrivers.is_a_driver(source):
+            # Read, not imported, and that is the point: a file this cannot
+            # make sense of must not be run to find out what it is. It is
+            # also why a URL is safe to take -- nothing downloaded is
+            # executed to decide whether to keep it.
+            print(f"{given} is not a WeeWX driver: a driver has a `loader` "
+                  f"function and a `DRIVER_NAME`.", file=sys.stderr)
+            return 1
+
+        where.mkdir(parents=True, exist_ok=True)
+        target = where / source.name
+        if target.exists() and not args.force:
+            print(f"{target} is already there. --force to replace it.",
+                  file=sys.stderr)
+            return 1
+        shutil.copy2(source, target)
+    one = weewxdrivers.read(target, f"weewx.drivers.{target.stem}")
+    print(f"{one.name} installed at {target}")
+    if one.needs:
+        print(f"It reaches its hardware through {one.needs}. Install it "
+              f"where this collector runs.")
+    print(f"Choose it on a collector's page, or run it with "
+          f"--driver-file {target}")
+    return 0
+
+
+#: What a driver imports to reach hardware, and what to install for it. Read
+#: from `weewxdrivers`, where the hardware list uses the same table to say
+#: what a driver would need before anybody chooses it. Two copies of it
+#: disagree the day a driver gains a dependency, and the half that is wrong
+#: is whichever one nobody hit that day.
+_HARDWARE_LIBS = weewxdrivers.NEEDS
 
 
 def cmd_weewx_driver_check(args: argparse.Namespace) -> int:
@@ -2572,8 +2759,16 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
             # carries the command that starts this one. Somebody reading the
             # file is the reader least likely to have the page open.
             kind="collector", help=collectors.describe(kind, name),
-            groups=tuple(replace_group(group, f"collectors.{name}")
-                         for group in collectors.options(kind))))
+            # A group may already carry a prefix of its own -- the chosen
+            # driver's settings do, so that a driver option called `source`
+            # cannot take the collector's. Kept rather than replaced: the
+            # collector's name goes in front of it.
+            groups=tuple(
+                replace_group(
+                    group,
+                    f"collectors.{name}.{group.prefix}" if group.prefix
+                    else f"collectors.{name}")
+                for group in collectors.options(kind, settings))))
 
     # One page per configured forecast source. Two of them is the ordinary
     # arrangement rather than the exception: a model for the numbers and a
@@ -5191,6 +5386,31 @@ def main(argv: list[str] | None = None) -> int:
     q = shim_sub.add_parser("list", help="what the weewx.conf asks for")
     add_shim_common(q)
     q.set_defaults(func=cmd_weewx_driver_list)
+
+    q = shim_sub.add_parser("hardware",
+                            help="every WeeWX driver on this machine")
+    add_common(q)
+    q.add_argument("name", nargs="?", default=None,
+                   help="one driver, to see every setting it takes")
+    # Not `--driver-dir`: that one is already taken, by the directory our own
+    # drivers live in. Two directories behind one flag holds right up until
+    # somebody puts a file in the wrong one, and then nothing says so.
+    q.add_argument("--weewx-driver-dir", default=None,
+                   help="where WeeWX driver files are kept. Beside the "
+                        "archive database by default.")
+    q.set_defaults(func=cmd_weewx_driver_hardware)
+
+    q = shim_sub.add_parser("install",
+                            help="put a WeeWX driver file where this looks")
+    add_common(q)
+    q.add_argument("source",
+                   help="the driver file: a path, or an http(s) URL to one")
+    q.add_argument("--weewx-driver-dir", default=None,
+                   help="where to put it. Beside the archive database by "
+                        "default.")
+    q.add_argument("--force", action="store_true",
+                   help="replace one that is already there")
+    q.set_defaults(func=cmd_weewx_driver_install)
 
     q = shim_sub.add_parser("check", help="build it, take a few packets, "
                                           "deliver nothing")

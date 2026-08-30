@@ -87,6 +87,20 @@ KINDS = {
         "mqtt run"),
 }
 
+#: Where a hosted driver's own settings sit, under the collector's section.
+#:
+#: In the option *name* rather than as a group prefix, and that is not a
+#: detail: a form field is addressed by the option's name alone, so two
+#: options called `source` -- one ours, one the driver's -- would be two
+#: fields of the same name in one form. The browser sends both, one wins by
+#: the order they were parsed in, and both settings get that value. The core
+#: options do the same thing for the same reason (`station.name`).
+#:
+#: None of the thirteen drivers WeeWX ships collides today. That is not a
+#: reason: the point of this whole module is the hundred drivers written
+#: elsewhere, which nobody here can read.
+PREFIX = "settings"
+
 #: Names that would collide with something the listener already answers to.
 #: A collector called `json` would take the envelope endpoint's name, and a
 #: collector called `ecowitt` would take a real driver's -- in both cases the
@@ -184,25 +198,34 @@ def register_names(registry: Any, settings: Any) -> list[str]:
     return claimed
 
 
-def options(kind: str = "weewx-driver") -> list:
+def options(kind: str = "weewx-driver", settings: dict | None = None) -> list:
     """One collector's settings, for its page.
 
     Per kind, because they have almost nothing in common: a WeeWX driver is
-    a `weewx.conf` and a serial port, a broker is an address and a map from
-    topics to field names. One page carrying both would ask a broker for its
+    a serial port and a model, a broker is an address and a map from topics
+    to field names. One page carrying both would ask a broker for its
     catch-up interval and a USB console for its topic filter, and every
     field somebody has to work out is not theirs is a field they might fill
     in.
 
     What *is* shared is the first group, and it is the only thing that has
     to be: the kind decides the rest, so it has to be answerable before the
-    rest is drawn.
+    rest is drawn. `settings` is what is already stored, and it decides the
+    rest again one level down -- which driver was chosen decides which
+    fields that driver has.
 
-    `conf` is a WeeWX configuration file and not a copy of its contents. The
-    settings a driver needs -- the serial port, the model, the sensor map --
-    were working before this existed, and copying them here would mean
-    maintaining a second place for them and getting the translation wrong for
-    the drivers nobody here can test.
+    **A driver's own settings are asked for here now, and that is a change
+    of position.** They used to be reached only through `conf`, a path to a
+    `weewx.conf`, on the grounds that copying them here would mean keeping a
+    second copy of something the driver already says. The grounds were right
+    and the conclusion did not follow: `weewxdrivers.py` does not copy them,
+    it reads them out of the driver, so the second copy never exists. What
+    the old arrangement cost was the thing `weewxnames.py` was built for --
+    somebody with one USB console and no WeeWX had to write a configuration
+    file for software that is not installed.
+
+    `conf` stays, and a path in it wins. An installation that has a working
+    `weewx.conf` keeps using it, untouched.
     """
     from .options import Group, Option
 
@@ -241,24 +264,31 @@ def options(kind: str = "weewx-driver") -> list:
             )),
         ]
 
+    stored = dict(settings or {})
+    chosen = str(stored.get("driver") or "").strip()
     return [
         which,
-        Group("What it runs", "The driver, and where its settings are.", (
+        Group("The hardware", "What it reads, and how it is reached.", (
+            Option("driver", "The hardware this collector reads",
+                   kind="choice", default="",
+                   choices=(("", "-- from a weewx.conf --"),),
+                   choices_from=lambda: _hardware_choices(chosen),
+                   help="Every WeeWX driver on this machine. Choosing one "
+                        "and saving brings up its own settings below, read "
+                        "out of the driver itself."),
             Option("conf", "The weewx.conf it is configured by",
-                   kind="path", default="/etc/weewx/weewx.conf",
-                   help="Its own file. The driver reads its settings from "
-                        "the section named after it -- serial port, model, "
-                        "sensor map -- and those are not copied here."),
-            Option("driver", "The driver module, if not the one it names",
-                   kind="text", default="",
-                   help="For example weewx.drivers.vantage. Empty means the "
-                        "one [Station] station_type points at."),
+                   kind="path", default="",
+                   when=("driver", ("",)),
+                   help="For an installation that already has one. The "
+                        "driver reads its settings from the section named "
+                        "after it, and nothing here touches that file."),
             Option("driver_file", "Load the driver from this file",
                    kind="path", default="",
                    help="A driver is one file. With this set, WeeWX itself "
                         "does not have to be installed: what the file "
                         "imports is stood in for."),
         )),
+        *_hardware_settings(chosen),
         Group("The console", "What it is, and what it keeps.", (
             Option("source", "Record its readings under this name",
                    kind="text", default="",
@@ -280,9 +310,131 @@ def options(kind: str = "weewx-driver") -> list:
     ]
 
 
+def _hardware_choices(chosen: str = "") -> list[tuple[str, str]]:
+    """Every WeeWX driver on this machine, for the hardware list.
+
+    `chosen` is what is configured now, and it is always in the list even
+    when nothing on disk answers to it any more. A driver file that was
+    removed would otherwise take its own setting with it: the page would
+    refuse the stored value as one that is not offered, fall back to the
+    default, and the collector would quietly become one reading a weewx.conf
+    that may not exist. That is the `archive_names` failure -- the page
+    telling the operator that the truth is a mistake.
+    """
+    from .ingest import weewxdrivers
+
+    out: list[tuple[str, str]] = []
+    for one in weewxdrivers.available(_driver_directory()):
+        if one.problem:
+            label = f"{one.name} -- {one.problem}"
+        elif one.needs:
+            label = f"{one.name} ({one.module}), needs {one.needs}"
+        else:
+            label = f"{one.name} ({one.module})"
+        out.append((one.module, label))
+    if chosen and chosen not in [value for value, _ in out]:
+        out.append((chosen, f"{chosen} -- not found on this machine"))
+    return out
+
+
+def _driver_directory() -> Any:
+    """Where WeeWX driver files are kept, for the file the form describes.
+
+    Through `options._current_config` and not through `settings.running()`.
+    The settings page can be its own process (`weewx-evo admin`) and builds
+    forms for a named file, so a list read off the running settings would be
+    a list of what some other file has -- which is the mistake `building_for`
+    exists to prevent, and it has been made twice before.
+    """
+    from pathlib import Path
+
+    from . import options as option_defs
+    from .ingest import weewxdrivers
+
+    beside = ((option_defs._current_config() or {}).get("archive_db")
+              or "weewx.sdb")
+    # A relative path counts against the file it is written in, not against
+    # whatever directory this process was started in. `Settings._anchor` is
+    # the same rule and says why: `archive_db = "weewx.sdb"` otherwise names
+    # two different files, and the page acts on the one the service is not
+    # using -- while reporting success. Here the symptom would be a hardware
+    # list that is empty on an installation whose drivers are right there.
+    found = Path(str(beside))
+    if not found.is_absolute():
+        for_file = option_defs._config_path()
+        if for_file:
+            found = Path(str(for_file)).parent / found
+    return weewxdrivers.directory(beside=found)
+
+
+def _hardware_settings(module: str) -> list:
+    """One group holding the chosen driver's own options, or none.
+
+    The whole point of the module behind it: these are not written down here.
+    They are what the driver's own configuration editor describes, and a
+    driver that gains an option gains a field with no change on this side.
+    """
+    if not module:
+        return []
+    from .ingest import weewxdrivers
+    from .options import Group, Option
+
+    found = weewxdrivers.by_module(module, _driver_directory())
+    if found is None:
+        return [Group(
+            "The hardware's own settings",
+            f"{module} is not on this machine, so its settings cannot be "
+            f"read. Install it, or point at its file above.", ())]
+    if found.problem:
+        return [Group("The hardware's own settings", found.problem, ())]
+
+    made = []
+    for one in found.settings:
+        # The driver's author wrote this comment above this option. It is the
+        # help text, and it is worth more than anything that could be written
+        # here: it is current, and it is about this version of this driver.
+        help_text = " ".join(one.help)
+        made.append(Option(
+            f"{PREFIX}.{one.name}",
+            # The option's own name as the label. A driver says `iss_id` and
+            # its documentation says `iss_id`; renaming it to "ISS identifier"
+            # would mean the field and every answer written about it disagree.
+            one.name,
+            kind="choice" if one.choices else "text",
+            default=one.value,
+            help=help_text,
+            choices=one.choices,
+            advanced=one.advanced,
+            when=((f"{PREFIX}.{one.when[0]}", one.when[1])
+                  if one.when else None),
+            suggestions_from=(weewxdrivers.serial_ports
+                              if one.name == "port" else None),
+        ))
+    note = found.about or (
+        f"Read out of {found.module}, which is where they are defined.")
+    if found.needs:
+        note += (f" It reaches its hardware through {found.needs}, which has "
+                 f"to be installed where this collector runs.")
+    # No group prefix: the names carry it, because a form field is addressed
+    # by the option's name alone. See PREFIX.
+    return [Group(f"{found.name}", note, tuple(made))]
+
+
 def settings_for(settings: Any, name: str) -> dict:
     """One collector's settings, or {} if there is no such collector."""
     return configured(settings).get(name, {})
+
+
+def driver_settings(settings: Any, name: str) -> dict:
+    """What was chosen for the driver itself, under its own prefix.
+
+    Separate from the collector's own settings because the names are the
+    driver's: a driver with an option called `source` or `batch` would
+    otherwise take one of ours, and which of the two won would depend on the
+    order a dictionary happened to be built in.
+    """
+    found = settings_for(settings, name).get(PREFIX)
+    return dict(found) if isinstance(found, dict) else {}
 
 
 def endpoint(name: str) -> str:
