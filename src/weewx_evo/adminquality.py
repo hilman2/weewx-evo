@@ -22,6 +22,22 @@ A station has a hundred columns in its schema and reports thirty. Listing all
 of them is a page nobody scrolls, so the table is what the archive has
 actually recorded, and the ones with a rule come first.
 
+## Every series, because the rules are not keyed on one
+
+There is one `quality.toml`, and `build_archivers` hands the same policy to
+every archiver. So a floor worked out from the default series is applied to
+the north field too, and a page that measured only the default would offer a
+ceiling the north field passes twice a summer -- with the dry run beside it
+saying the rule refuses nothing.
+
+Which files those are comes from `archives.toml` through the register, the
+way `Admin.columns` finds them. Reading `archive_db` instead is what this did
+before, and the two are allowed to differ the moment anything writes either:
+on the beta instance `archive_db` still said `archive/weewx.sdb` while the
+register said `/data/weewx.sdb`, so the page found no file, showed no rows at
+all, and answered "there is nothing in the archive to work them out from yet"
+about a database holding a year.
+
 ## The file stays hand-editable
 
 This writes the same `quality.toml` a person would, in the same shape --
@@ -58,7 +74,8 @@ SHOWN = 40
 
 def path_for(admin: Any) -> Path:
     """Beside the configuration, like `plots.toml`."""
-    named = str(getattr(admin, "quality_file", "") or "quality.toml")
+    named = str(getattr(admin, "quality_file", "")
+                or quality_defs.FILENAME)
     where = Path(named)
     return where if where.is_absolute() else Path(admin.path).parent / where
 
@@ -130,75 +147,108 @@ def as_toml(policy: quality_defs.Policy) -> str:
 # What the readings have done.
 # ---------------------------------------------------------------------------
 
-def measured(admin: Any, since: float | None = None) -> dict[str, Any]:
-    """What each reading has been, from the archive.
+def survey(admin: Any, since: float | None = None
+           ) -> tuple[dict[str, quality_defs.Seen], dict[str, int], int]:
+    """What the readings have been, and what the rules would refuse.
+
+    One pass over every series, because the page needs both figures about the
+    same records and reading a year of archive twice per render is a settings
+    page that takes seconds to open.
+
+    Returns the ranges by reading, how many records each rule would refuse by
+    reading, and how many records were looked at. Refusals are empty where
+    nothing is configured, which is most installations.
+    """
+    since = (time.time() - LOOK_BACK) if since is None else since
+    policy = load(admin)
+    checking = bool(policy.limits)
+
+    ranges = []
+    dropped: dict[str, int] = {}
+    records = 0
+    for name, where in _series(admin):
+        rows = _records(where, since)
+        if not rows:
+            continue
+        records += len(rows)
+        ranges.append(quality_defs.watch(rows, system=policy.system))
+        if not checking:
+            continue
+        # A checker per series. Shared, the last record of one place would be
+        # the spike rule's reference for the first of another -- a step
+        # neither sensor took, reported against whichever place happens to be
+        # read second.
+        checker = quality_defs.Check(policy)
+        for row in rows:
+            system = units.system_from(row.get("usUnits"),
+                                       default=units.METRICWX)
+            corrected = checker.calibrate(row, "", system)
+            checker.check(corrected, float(row.get("dateTime") or 0), "",
+                          system)
+        for obs, count in checker.dropped.items():
+            dropped[obs] = dropped.get(obs, 0) + count
+        log.debug("%s: %d record(s), %d refused", name, len(rows),
+                  sum(checker.dropped.values()))
+
+    return quality_defs.across(ranges), dropped, records
+
+
+def measured(admin: Any, since: float | None = None
+             ) -> dict[str, quality_defs.Seen]:
+    """What each reading has been, from the archives.
 
     The figure beside the box. Without it the page is a text editor with
     worse keybindings -- typing a ceiling for a soil probe out of your head
     is exactly what produces a limit that throws away measurements.
     """
-    where = _archive(admin)
-    if where is None or not where.exists():
-        return {}
-    since = (time.time() - LOOK_BACK) if since is None else since
+    return survey(admin, since)[0]
+
+
+def _series(admin: Any) -> list[tuple[str, Path]]:
+    """Every series' archive file that is actually there, by place name.
+
+    Out of the register rather than out of `archive_db`, and out of the
+    configuration the page is editing rather than the running settings: a
+    page that read a different file would show ranges for an archive it is
+    not writing rules for. With no `archives.toml` the register answers with
+    the settings themselves, so a single-series installation gets the file it
+    has always got.
+    """
+    from . import adminarchives
+
+    try:
+        every = adminarchives.load(admin).all()
+    except Exception:
+        log.debug("could not read the archives for the ranges", exc_info=True)
+        return []
+
+    out = []
+    for one in every:
+        where = Path(str(one.file))
+        if not where.is_absolute():
+            where = Path(admin.path).parent / where
+        if where.exists():
+            out.append((one.name, where))
+    return out
+
+
+def _records(where: Path, since: float) -> list[dict]:
+    """One archive over the window, oldest first.
+
+    Read-only and `closing` as well as `with`: the context manager on a
+    connection commits the transaction and leaves the connection open, and
+    this is called on every render.
+    """
     try:
         with closing(sqlite3.connect(f"file:{where}?mode=ro",
                                      uri=True)) as conn:
             conn.row_factory = sqlite3.Row
-            rows = [dict(row) for row in conn.execute(
+            return [dict(row) for row in conn.execute(
                 "SELECT * FROM archive WHERE dateTime >= ? ORDER BY dateTime",
                 (int(since),))]
     except sqlite3.Error:
-        log.debug("could not read the archive for the ranges", exc_info=True)
-        return {}
-    policy = load(admin)
-    return quality_defs.watch(rows, system=policy.system)
-
-
-def would_refuse(admin: Any, since: float | None = None) -> tuple[dict, int]:
-    """What the configured rules would refuse over the stored records.
-
-    The same comparison `quality check` makes, so the page and the command
-    cannot disagree. Nothing is written.
-    """
-    policy = load(admin)
-    if not policy.limits:
-        return {}, 0
-    where = _archive(admin)
-    if where is None or not where.exists():
-        return {}, 0
-    since = (time.time() - LOOK_BACK) if since is None else since
-
-    try:
-        with closing(sqlite3.connect(f"file:{where}?mode=ro",
-                                     uri=True)) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = [dict(row) for row in conn.execute(
-                "SELECT * FROM archive WHERE dateTime >= ? ORDER BY dateTime",
-                (int(since),))]
-    except sqlite3.Error:
-        return {}, 0
-
-    checker = quality_defs.Check(policy)
-    for row in rows:
-        system = units.system_from(row.get("usUnits"), default=units.METRICWX)
-        corrected = checker.calibrate(row, "", system)
-        checker.check(corrected, float(row.get("dateTime") or 0), "", system)
-    return dict(checker.dropped), len(rows)
-
-
-def _archive(admin: Any) -> Path | None:
-    """The archive this page is about, the way `Admin.columns` finds it.
-
-    Out of the configuration the page is editing, not out of the running
-    settings: a page that read a different file would show ranges for an
-    archive it is not writing rules for.
-    """
-    from . import config as config_file
-
-    named = config_file.get(admin.config(), "archive_db") or "data/weewx.sdb"
-    where = Path(str(named))
-    return where if where.is_absolute() else Path(admin.path).parent / where
+        log.debug("could not read %s for the ranges", where, exc_info=True)
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +346,7 @@ def nav(admin: Any, active: str) -> list[str]:
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
     policy = load(admin)
-    seen = measured(admin)
-    dropped, records = would_refuse(admin)
+    seen, dropped, records = survey(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
 
     # Readings with a rule first, then the ones the archive holds. A page
