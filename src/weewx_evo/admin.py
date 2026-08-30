@@ -882,73 +882,96 @@ SPARE_SLOTS = 3
 def slots(option: Option, shown: Any) -> str:
     """A list of choices, in an order that is the value's order.
 
-    A `kind="list"` with candidates was rendered as a bare textarea: the
-    `choices` were built, declared and thrown away, so twenty-five readings a
-    station could put on a tile had to be typed from memory into a box with
-    no hint of what was allowed. This is that render bug fixed, not a new
-    control -- eight options ship declaring candidates today.
+    Every candidate gets a row, ticked or not. What stood here was three
+    empty boxes with the choices printed under them as grey text -- so a
+    site with twelve places offered three, said nothing about the other
+    nine, and the only way to the fourth was to save and come back. Somebody
+    with a console on twelve fields had to save four times to describe their
+    own installation, and nothing on the page said that would work.
 
-    One box per row, each under a name of its own. Never a repeated name:
-    `_form` collapses `parse_qs` with `{k: v[-1]}`, so `places=a&places=b`
-    arrives as `"b"` and four picks of five are lost with no error anywhere.
-    That is the same trap that made the station role a `<select>` rather than
-    a checkbox, and sidestepping it here beats changing a function every page
-    in the product goes through.
+    A tick sends the row, an empty tick sends nothing, and `rejoined` drops
+    the gaps -- so the order is the row order and no name is repeated.
+    Never a repeated name: `_form` collapses `parse_qs` with `{k: v[-1]}`,
+    so `places=a&places=b` arrives as `"b"` and four picks of five are lost
+    with no error anywhere. That is the same trap that made the station role
+    a `<select>` rather than a checkbox.
 
-    The row order *is* the value order, which is what `stat_tile_observations`
-    has claimed in its own help since it was written ("One tile each, in this
-    order") and could not deliver from a textarea.
+    Three free rows at the end, because not every list is closed: a station
+    with `extraTemp9` names it and gets it, and the tile list says so in its
+    own help. A value already saved that is not among the candidates keeps
+    its row and is marked, never dropped -- one unreadable file must not
+    silently take a place off a published site.
+
+    The row order *is* the value order, which is what
+    `stat_tile_observations` has claimed in its own help since it was
+    written ("One tile each, in this order") and could not deliver from a
+    textarea.
     """
     name = html.escape(option.name)
     available = [(str(value), str(text)) for value, text in option.options()]
     known = {value for value, _text in available}
+    labels = dict(available)
     chosen = [line.strip() for line in str(shown or "").splitlines()
               if line.strip()]
+
+    # Picked first, in the order they were picked; then everything else, in
+    # the order the candidates came. Ticking one puts it last, which is what
+    # a list read top to bottom implies.
+    rows: list[tuple[str, str, bool]] = []
+    for one in chosen:
+        rows.append((one, labels.get(one, one), True))
+    rows += [(value, text, False) for value, text in available
+             if value not in chosen]
 
     out = []
     # Load-bearing. Empty every box and the option's own name is sent by
     # nothing, and `parse(only_present=True)` reads that as "not part of this
     # request" rather than as "cleared". This says the control was here, and
     # `Admin.save` turns "here, and empty" into an empty list.
+    spare = 0 if option.closed else SPARE_SLOTS
     out.append(f'<input type="hidden" name="{SLOTS}{name}" '
-               f'value="{len(chosen) + SPARE_SLOTS}">')
-    out.append(f'<datalist id="l-{name}">')
-    for value, text in available:
-        out.append(f'<option value="{html.escape(value)}">'
-                   f"{html.escape(text)}</option>")
-    out.append("</datalist>")
+               f'value="{len(rows) + spare}">')
 
-    out.append(f'<ol class="slots" data-list="{name}">')
-    for n in range(len(chosen) + SPARE_SLOTS):
-        one = chosen[n] if n < len(chosen) else ""
-        # Kept and marked, never dropped. Dropping it would mean one
-        # unreadable file silently taking a place off a published site --
-        # the same discipline the `choice` branch already keeps with
-        # "(not installed)".
-        note = ('<span class="alt">not one of the ones offered</span>'
-                if one and one not in known else "")
-        # The field's `<label for>` has to reach something, and the first box
-        # is the one it means. A label pointing at nothing is a label that
-        # does not focus anything when clicked, which reads as a dead page.
-        first = f' id="f-{name}"' if n == 0 else ""
+    out.append(f'<ul class="picks" data-list="{name}">')
+    for n, (value, text, ticked) in enumerate(rows):
+        # The label carries the box, so the whole row is the target. A row
+        # of twelve places is a row of twelve small squares otherwise.
+        note = ""
+        if value not in known:
+            note = ('<span class="alt">not one of the ones offered</span>')
+        said = html.escape(text)
+        if text != value:
+            said += f' <span class="alt">{html.escape(value)}</span>'
         out.append(
-            f'<li><input class="slot"{first} name="{name}__slot{n}"'
-            f' list="l-{name}"'
-            f' value="{html.escape(one)}" autocomplete="off"'
-            f' spellcheck="false" aria-label="{html.escape(option.label)}'
-            f' {n + 1}">'
+            f'<li><label><input type="checkbox" class="pick"'
+            f' name="{name}__slot{n}" value="{html.escape(value)}"'
+            f'{" checked" if ticked else ""}>'
+            f"<span>{said}</span></label>{note}"
             '<button type="button" class="quiet lift" aria-label="Move up">'
             "&#9650;</button>"
             '<button type="button" class="quiet drop" aria-label="Move down">'
-            f"&#9660;</button>{note}</li>")
-    out.append("</ol>")
+            "&#9660;</button></li>")
 
-    spare = [text for value, text in available if value not in chosen]
-    if spare:
-        out.append('<p class="alt">not chosen: '
-                   + html.escape(", ".join(spare)) + "</p>")
-    out.append('<p class="hint">In this order. Empty a box to take it out; '
-               "the gaps close when this is saved.</p>")
+    # Free rows, for a list that is not closed. None at all on a closed one:
+    # a place that is not on the list is refused at startup, so a box to
+    # type one into is a box that can only be filled in wrongly.
+    for n in range(0 if option.closed else SPARE_SLOTS):
+        at = len(rows) + n
+        first = f' id="f-{name}"' if not rows and n == 0 else ""
+        out.append(
+            f'<li class="free"><input class="slot"{first}'
+            f' name="{name}__slot{at}" value="" autocomplete="off"'
+            f' spellcheck="false" placeholder="something not in the list"'
+            f' aria-label="{html.escape(option.label)} {at + 1}"></li>')
+    out.append("</ul>")
+    if not option.closed:
+        # One button, any number of rows. Three spare boxes is three per
+        # save, and somebody describing twelve of anything had to save four
+        # times to do it -- with nothing on the page saying that would work.
+        out.append('<button type="button" class="quiet more" '
+                   f'data-list="{name}">+ another line</button>')
+    out.append('<p class="hint">Ticked ones are used, top to bottom. The '
+               "arrows move a row.</p>")
     return "\n".join(out)
 
 
@@ -2509,14 +2532,46 @@ _PAGE = """<!doctype html>
       color: var(--dim); border: 1px solid var(--line); border-radius: .3rem;
       padding: .5rem; resize: vertical; }}
 
-  /* The ordered picker. A numbered list, because the number is the answer to
-     "in what order" and it is already what an <ol> draws. */
-  ol.slots {{ margin: .35rem 0 .25rem; padding-left: 1.6rem; }}
-  ol.slots li {{ display: flex; align-items: center; gap: .35rem;
-      margin: .25rem 0; }}
-  ol.slots input.slot {{ flex: 1 1 auto; min-width: 0; }}
-  ol.slots button {{ padding: .2rem .5rem; line-height: 1; }}
-  ol.slots .alt {{ margin: 0; flex: 0 0 auto; }}
+  /* The ordered picker. Every candidate is a row, ticked or not: three
+     empty boxes with the choices printed underneath as grey text meant a
+     site with twelve places offered three and said nothing about the rest.
+     The whole row is the target -- twelve places is otherwise twelve small
+     squares to hit. */
+  ul.picks {{ list-style: none; margin: .35rem 0 .25rem; padding: 0;
+      border: 1px solid var(--line); border-radius: .4rem;
+      overflow: hidden; counter-reset: pick; }}
+  /* Only the ticked rows are numbered, and the browser renumbers them as
+     boxes are ticked. The order is the whole point of this control, and a
+     list of twelve says nothing about it without the numbers. */
+  ul.picks li:has(input:checked) {{ counter-increment: pick; }}
+  ul.picks li:has(input:checked) label::after {{ content: counter(pick);
+      margin-left: auto; padding-left: .5rem; color: var(--dim);
+      font-size: .75rem; font-variant-numeric: tabular-nums; }}
+  button.more {{ margin: .1rem 0 .25rem; font-size: .75rem; }}
+  ul.picks li {{ display: flex; align-items: center; gap: .35rem;
+      padding: .3rem .5rem; border-top: 1px solid var(--line); }}
+  ul.picks li:first-child {{ border-top: 0; }}
+  ul.picks li:hover {{ background: color-mix(in srgb, var(--ink) 4%,
+      transparent); }}
+  /* A ticked row is the answer; an unticked one is an offer. Weight rather
+     than colour, so it survives a colour-blind reader and a printout. */
+  ul.picks li:has(input:checked) {{ background: color-mix(in srgb,
+      var(--accent) 8%, transparent); }}
+  ul.picks li:has(input:checked) label > span {{ font-weight: 600; }}
+  ul.picks label {{ display: flex; align-items: center; gap: .5rem;
+      flex: 1 1 auto; min-width: 0; margin: 0; cursor: pointer;
+      font-weight: 400; font-size: .875rem; }}
+  ul.picks label > span {{ min-width: 0; overflow-wrap: anywhere; }}
+  ul.picks input[type=checkbox] {{ flex: 0 0 auto; margin: 0;
+      width: .95rem; height: .95rem; }}
+  ul.picks input.slot {{ flex: 1 1 auto; min-width: 0; font-size: .8125rem; }}
+  /* The free rows are for a list that is not closed. Set apart, or they
+     read as the control failing to show what is available. */
+  ul.picks li.free {{ background: color-mix(in srgb, var(--ink) 2%,
+      transparent); }}
+  ul.picks li.free + li.free {{ border-top-style: dotted; }}
+  ul.picks button {{ padding: .1rem .4rem; line-height: 1; flex: 0 0 auto; }}
+  ul.picks .alt {{ margin: 0; flex: 0 0 auto; }}
 
   /* A place's colour, wherever one is shown. A ring around it, so a colour
      close to the panel's own is still a shape rather than a hole. */
@@ -2643,14 +2698,15 @@ _PAGE = """<!doctype html>
   // the shape `tools/admin_page_test.js` refuses -- so these move rows and
   // the save carries the result. With scripting off the boxes are still
   // boxes and picking still works; only the reordering goes.
-  document.querySelectorAll("ol.slots").forEach(function (list) {{
+  document.querySelectorAll("ul.picks").forEach(function (list) {{
     // Renumbering the `name` attributes is what makes the order real: the
     // server reads `x__slot0`, `x__slot1` and so on, in that order, and a
     // row that moved without its name taking the new position would look
     // moved and save unmoved.
     function renumber() {{
       var field = list.getAttribute("data-list");
-      [].forEach.call(list.querySelectorAll("input.slot"), function (box, n) {{
+      [].forEach.call(list.querySelectorAll("input.pick, input.slot"),
+                      function (box, n) {{
         box.name = field + "__slot" + n;
       }});
     }}
@@ -2667,8 +2723,33 @@ _PAGE = """<!doctype html>
         return;
       }}
       renumber();
-      var box = row.querySelector("input.slot");
+      var box = row.querySelector("input.pick, input.slot");
       if (box) box.focus();
+    }});
+  }});
+
+  // One more free row. The hidden count has to grow with it, or the server
+  // reads `__slots__` rows and the new one is past the end -- it would look
+  // added and save as nothing.
+  document.querySelectorAll("button.more").forEach(function (button) {{
+    button.addEventListener("click", function () {{
+      var field = button.getAttribute("data-list");
+      var list = document.querySelector('ul.picks[data-list="' + field + '"]');
+      var count = document.querySelector('input[name="__slots__' + field + '"]');
+      if (!list || !count) return;
+      var at = list.querySelectorAll("input.pick, input.slot").length;
+      var row = document.createElement("li");
+      row.className = "free";
+      var box = document.createElement("input");
+      box.className = "slot";
+      box.name = field + "__slot" + at;
+      box.placeholder = "something not in the list";
+      box.autocomplete = "off";
+      box.spellcheck = false;
+      row.appendChild(box);
+      list.appendChild(row);
+      count.value = String(at + 1);
+      box.focus();
     }});
   }});
 }})();

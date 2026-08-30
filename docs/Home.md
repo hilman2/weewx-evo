@@ -45,6 +45,8 @@ possible. → [Architecture](Architecture)
 **I want to run it** → [Getting-Started](Getting-Started) ·
 [CLI-Reference](CLI-Reference) · [Deployment](Deployment)
 
+**I have weather at more than one spot** → [Places](Places)
+
 **I want to understand how it is put together** → [Architecture](Architecture) ·
 [WeeWX-Compatibility](WeeWX-Compatibility) · [Glossary](Glossary)
 

@@ -145,13 +145,12 @@ def groups(settings: dict | None = None) -> list[Group]:
               "“Place” at the top of this page. It can carry the "
               "others as well. " + _shape(settings), (
             Option("places", "Places on this site", kind="list",
-                   choices_from=_archive_names,
-                   help="In this order, and the place at the top of this "
-                        "page always comes first whether or not it is "
-                        "ticked here. Empty means all of them, in the order "
-                        "the places page lists. Leave it empty and add a "
-                        "second place later, and this site starts showing "
-                        "it."),
+                   choices_from=_archive_names, closed=True,
+                   help="The place at the top of this page always comes "
+                        "first, whether or not it is ticked. Tick none and "
+                        "all of them are shown, in the order the places "
+                        "page lists -- so a place added later turns up here "
+                        "on its own."),
             Option("site_title", "What to call the site", kind="text",
                    help="The heading on the overview. Empty means the "
                         "station name from the settings -- not the name of "
@@ -159,7 +158,7 @@ def groups(settings: dict | None = None) -> list[Group]:
                         "\"Kirchdorf\" listing four places is a lie the "
                         "page cannot spot."),
             Option("place_pages", "Pages each place gets", kind="list",
-                   choices=PLACE_PAGES, advanced=True,
+                   choices=PLACE_PAGES, advanced=True, closed=True,
                    help="Empty means all of them. Five places with every "
                         "page each is what goes up the FTP link every run."),
             Option("places_fold", "Fold the place list past", kind="int",
@@ -205,7 +204,7 @@ def groups(settings: dict | None = None) -> list[Group]:
               "One page per period -- today, this week, this month, this "
               "year -- each putting the places side by side, figures above "
               "and charts below.", (
-            Option("compare_spans", "Periods", kind="list",
+            Option("compare_spans", "Periods", kind="list", closed=True,
                    choices=(("day", "Today"), ("week", "Week"),
                             ("month", "Month"), ("year", "Year")),
                    default=("day", "week", "month", "year"),

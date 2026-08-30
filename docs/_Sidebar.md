@@ -2,6 +2,7 @@
 
 **Start here**
 - [Getting Started](Getting-Started)
+- [Several places](Places)
 - [Architecture](Architecture)
 - [Glossary](Glossary)
 

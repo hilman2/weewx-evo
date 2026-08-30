@@ -85,6 +85,12 @@ class Option:
     restart: bool = False
     #: What to show in an empty field, when there is no sensible default.
     placeholder: str = ""
+    #: For a `list`: whether the offered candidates are all there is. A place
+    #: is closed -- one that is not on the list is refused at startup, so a
+    #: box to type one into is a box that can only be filled in wrongly. A
+    #: reading is not: a station with `extraTemp9` names it and gets it.
+    #: Trailing, so the sixty-odd positional constructions are undisturbed.
+    closed: bool = False
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:

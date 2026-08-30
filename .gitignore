@@ -56,3 +56,6 @@ plots.toml
 *.png
 !src/**/*.png
 !.charts/*.png
+# The exception: a wiki page that shows the settings page needs pictures of
+# it, and those are the deliverable rather than a look taken while working.
+!docs/images/*.png

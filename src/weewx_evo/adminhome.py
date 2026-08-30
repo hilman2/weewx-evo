@@ -297,10 +297,27 @@ def _live_state(admin: Any, state: State) -> None:
     strangers = [(name, when) for name, when in sources if name not in known]
     state.strangers = len(strangers)
     state.newest_stranger = max((w for _n, w in strangers), default=None)
+    # Through the console page's own reader and the places register: a
+    # console adopted from a stranger is named after the identity its
+    # hardware sent, and the archive is a key. Both were readable on their
+    # own pages and raw here.
+    from . import adminstations
+
+    titles: dict[str, str] = {}
+    try:
+        from . import adminarchives
+
+        titles = {one.name: one.title
+                  for one in adminarchives.load(admin).all()}
+    except Exception:
+        log.debug("could not name the places for the console card",
+                  exc_info=True)
     for one in announced:
         last = _last_from(path, one.name)
-        state.stations.append(Link(one.name, f"into {one.archive}", when=last,
-                                   href="./stations"))
+        state.stations.append(Link(
+            adminstations._readable(one.name),
+            f"into {titles.get(one.archive, one.archive)}",
+            when=last, href="./stations"))
     if not announced and sources:
         state.stations.append(Link(
             f"{len(sources)} source(s), none announced",
@@ -696,11 +713,12 @@ def _forecast_state(admin: Any, state: State) -> None:
         try:
             from . import adminarchives
 
-            places = [one.name for one in adminarchives.load(admin).all()]
+            places = {one.name: one.title
+                      for one in adminarchives.load(admin).all()}
         except Exception:
             log.debug("could not read the archives for the forecast card",
                       exc_info=True)
-            places = []
+            places = {}
 
         for name in sorted(configured):
             # Keyed on the entry's own name now, and on the series it is
@@ -715,7 +733,11 @@ def _forecast_state(admin: Any, state: State) -> None:
                 "SELECT fetched, hours, days FROM run "
                 "WHERE archive = ? AND source = ?",
                 (archive, name)).fetchone()
-            where = f" for {archive}" if len(places) > 1 else ""
+            # The name somebody gave the place, not the key. "8 days for
+            # default" names a row in a file; the card is read by whoever
+            # called it Kirchdorf an der Amper.
+            where = (f" for {places.get(archive, archive)}"
+                     if len(places) > 1 else "")
             if row is None:
                 state.forecasts.append(Link(
                     name, unreachable=f"configured{where}, not fetched yet",

@@ -499,7 +499,7 @@ class JSONGenerator:
                 # handed over and thrown away, and the one thing an operator
                 # needs here is the list of names they may type.
                 Option("places", "Only these places", kind="list",
-                       advanced=True,
+                       advanced=True, closed=True,
                        choices_from=archive_names,
                        help="One per row. Empty writes a directory of "
                             "charts for every place, which is the safe "
