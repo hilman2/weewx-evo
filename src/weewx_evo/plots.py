@@ -287,11 +287,17 @@ class PlotSet:
     """The plots there are, and what the readings in them are called."""
 
     def __init__(self, plots: Iterable[Plot] = (),
-                 labels: dict[str, str] | None = None) -> None:
+                 labels: dict[str, str] | None = None,
+                 implied: Iterable[str] = ()) -> None:
         self.plots: list[Plot] = list(plots)
         #: obs_type -> what to call it in a legend. Not a translation table:
         #: whatever the station's operator wants it to say, in their language.
         self.labels: dict[str, str] = dict(labels or {})
+        #: Which of them are not in the file but were worked out from the
+        #: places (`implied`). Named so `plots list` can say which lines it
+        #: is printing that nothing wrote, and so nothing that saves the set
+        #: can put them in the file by accident.
+        self.implied: tuple[str, ...] = tuple(implied)
 
     def __len__(self) -> int:
         return len(self.plots)
@@ -586,6 +592,55 @@ def comparisons(places: list[str], observations: list[str],
             else:
                 kept.append(plot)
     return PlotSet(kept, words), replaced
+
+
+#: What a site of several places compares when nobody has said otherwise.
+#: The same four the bundled skin puts in the table above the charts, so the
+#: figures and the shapes under them are about the same readings. A chart for
+#: a sensor this station does not have is skipped when the feeds run, so a
+#: list that is too long costs nothing and a list that is too short leaves a
+#: page empty.
+COMPARE_READINGS = ("outTemp", "outHumidity", "windSpeed", "rain")
+
+
+def implied(existing: PlotSet, places: list[str],
+            observations: Iterable[str] = (),
+            spans: Iterable[str] = ()) -> PlotSet:
+    """The set to draw with, with the missing comparison charts filled in.
+
+    Worked out rather than written, and this is the difference from
+    `comparisons()`: nothing reaches `plots.toml`. The same reasoning as
+    `Register.presented()`, which fills in a colour nobody chose without
+    saving it -- write these into the file and a later release's set, with
+    another reading in it or a better bucket, reaches no installation that
+    ever had two places. It also means there is nothing to migrate and
+    nothing to remember: two places, and the charts are there.
+
+    A name already in the file is left exactly as it is, never replaced. That
+    is what `plots compare --write` is for: it puts them in the file, and
+    from then on they are the operator's -- edited axes, a title, a line
+    removed, all of it kept.
+
+    Fewer than two places adds nothing. One place compared with itself is the
+    chart that is already there.
+
+    Returns a new set; `existing` is not touched. The names it added are in
+    `.implied` on the result.
+    """
+    kept = list(existing.plots)
+    if len(places) < 2:
+        return PlotSet(kept, existing.labels)
+
+    have = {plot.name for plot in kept}
+    added: list[str] = []
+    for span in tuple(spans) or tuple(COMPARE_BUCKETS):
+        for obs in tuple(observations) or COMPARE_READINGS:
+            plot = _comparison(span, obs, places)
+            if plot.name in have:
+                continue
+            kept.append(plot)
+            added.append(plot.name)
+    return PlotSet(kept, existing.labels, added)
 
 
 def _is_generated(plot: Plot, spans: set[str]) -> bool:

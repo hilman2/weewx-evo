@@ -43,17 +43,48 @@ is.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 log = logging.getLogger(__name__)
+
+
+class Kind(NamedTuple):
+    """One sort of collector: what it is called, what it reads, how to run it.
+
+    The command is in here rather than on the page because the page is not
+    the only place that has to say it, and the two kinds are started by two
+    different commands. Written out once, the "Add a collector" page said
+    the WeeWX one whichever kind was chosen -- and `weewx-evo mqtt run` is
+    the other, as the CLI itself says when it refuses the wrong one.
+    """
+
+    label: str
+    reads: str
+    command: str
+
 
 #: What a collector can be. Two so far, and they differ only in what they go
 #: and read: the naming, the endpoint and the settings page are the same
 #: problem either way, which is all of what this module does. A third -- a
 #: script that prints envelopes -- would add a line here and nothing else.
+#: Which is the point of `reads` being here: the page draws its list from
+#: this, so a third kind cannot arrive in the menu and be missing from the
+#: explanation under it. That is exactly what happened to MQTT.
 KINDS = {
-    "weewx-driver": "A WeeWX driver, running in its own process",
-    "mqtt": "A broker to subscribe to, in its own process",
+    "weewx-driver": Kind(
+        "A WeeWX driver, running in its own process",
+        "Any of the hundred-odd drivers written for WeeWX, unchanged -- a "
+        "serial console, one on the USB bus, a radio. WeeWX itself does not "
+        "have to be installed: point at the driver file and what it imports "
+        "is stood in for.",
+        "weewx-driver run"),
+    "mqtt": Kind(
+        "A broker to subscribe to, in its own process",
+        "Readings a broker already carries, from a console that publishes "
+        "them itself or from a home-automation system. The command "
+        "weewx-evo mqtt check prints what a broker publishes, which is how "
+        "the topic names its page asks for are found.",
+        "mqtt run"),
 }
 
 #: Names that would collide with something the listener already answers to.
@@ -91,8 +122,33 @@ def configured(settings: Any) -> dict[str, dict]:
             if isinstance(one, dict)}
 
 
-def describe(kind: str) -> str:
-    return KINDS.get(kind, "A collector")
+def describe(kind: str, name: str = "") -> str:
+    """What a collector is, and -- given its name -- how it is started.
+
+    Named, it says the command, because the settings page never does. A
+    collector's page is generated from its schema like any other, and the
+    schema's help goes into the configuration file rather than onto the
+    page -- so somebody redirected there after creating one saw a form and
+    nothing about the process it configures, which is a process this program
+    does not start.
+    """
+    one = KINDS.get(kind)
+    if one is None:
+        return "A collector"
+    if not name:
+        return one.label
+    # Three lines rather than a sentence: the command is the useful half and
+    # it has to be copyable, which it is not when a wrap lands in the middle
+    # of it. The file writer wraps each line of this on its own.
+    return (f"{one.label}.\n"
+            f"Nothing here starts it. Where the hardware is, run:\n"
+            f"weewx-evo {one.command} --collector {name}")
+
+
+def start_command(kind: str, name: str = "<name>") -> str:
+    """What to type where the hardware is, for this kind of collector."""
+    one = KINDS.get(kind) or KINDS["weewx-driver"]
+    return f"weewx-evo {one.command} --collector {name}"
 
 
 def register_names(registry: Any, settings: Any) -> list[str]:
@@ -153,7 +209,8 @@ def options(kind: str = "weewx-driver") -> list:
     kind = kind if kind in KINDS else "weewx-driver"
     which = Group("The collector", "What this one is.", (
         Option("kind", "What kind of collector this is",
-               kind="choice", default=kind, choices=tuple(KINDS.items()),
+               kind="choice", default=kind,
+               choices=tuple((name, one.label) for name, one in KINDS.items()),
                help="Both run in their own process and deliver over the "
                     "loopback, so a serial port or a broker that stops "
                     "answering cannot stop the archiver."),

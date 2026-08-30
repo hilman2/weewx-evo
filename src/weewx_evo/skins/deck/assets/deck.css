@@ -626,7 +626,23 @@ tbody td {
   vertical-align: baseline;
 }
 
-tbody tr:last-child td { border-bottom: none; }
+/* A row header is a cell of its row, not a heading floating in it. Without
+ * this it keeps the browser's own `th`: centred, unpadded and with no rule
+ * under it -- so the name of a row sat a hundred pixels in from the column
+ * heading above it, on a line the eye could not follow across. Measured on
+ * the comparison table: 1px of padding against the 12px 16px every figure
+ * beside it had. */
+tbody th {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line-soft);
+  text-align: start;
+  vertical-align: baseline;
+  font-weight: 560;
+  color: var(--ink);
+}
+
+tbody tr:last-child td,
+tbody tr:last-child th { border-bottom: none; }
 tbody tr:hover td { background: var(--surface-hover); }
 
 td.num, th.num { text-align: end; }
@@ -1838,10 +1854,23 @@ tr.summary td {
 
 .compare-figures { margin-bottom: var(--s-5); }
 .compare-figures thead th .place-dot { margin-inline-end: var(--s-1); }
+/* A column of figures and the heading over it read as one column only if
+ * they line up. Left as headings start and figures end, "KIR" sat at the
+ * left of a 200px column and its readings at the right of it, and which
+ * place a number belonged to was a guess the reader had to make four times
+ * a page. Every column but the first holds figures. */
+.compare-figures thead th + th { text-align: end; }
 .compare-value, .compare-spread {
   text-align: end;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+/* The spread is not another place's reading, so it does not sit in the run
+ * of them. A rule rather than a colour: at four places the eye counts
+ * columns to find the last one, and a line is what stops the count. */
+.compare-figures thead th:last-child,
+.compare-figures td.compare-spread {
+  border-inline-start: 1px solid var(--line);
 }
 /* Which aggregate a row is, said rather than assumed: a mean and a total are
  * different questions and a column of numbers does not say which it

@@ -394,7 +394,8 @@ def build(plot: Plot, reader: Reader, generated: float,
         stop=int(covered_to),
         unit=unit,
         unit_label=units.label(unit).strip(),
-        title=plot.title,
+        title=plot.title or _comparison_title(
+            plot, len(drawn) > 1, labels, target),
         lines=lines,
         yscale=list(plot.yscale),
         places=drawn,
@@ -549,6 +550,38 @@ def _label_for(definition: Any, at: str, places: dict[str, Place],
         return title
     return f"{title} \u2014 " + units.obs_label(
         definition.obs, getattr(target, "language", None))
+
+
+def _comparison_title(plot: Plot, several: bool,
+                      labels: dict[str, str] | None,
+                      target: units.Target | None) -> str:
+    """What to head a chart that draws one reading in several places.
+
+    Left to a renderer's fallback -- the labels of the lines, joined -- every
+    comparison on a page comes out headed "Kirchdorf, Testort". On a
+    comparison a line's label is its *place*, so that is the same sentence
+    over all four cards, and none of them says which reading it draws. The
+    reading is what tells the cards apart; the places are in the legend
+    under each of them.
+
+    Composed here rather than in the renderers for the reason the note is:
+    two of them would word it differently, and the same chart would be
+    called two things on one site.
+
+    Empty where this is not a comparison, so every other chart keeps the
+    fallback it has always had.
+    """
+    if not several:
+        return ""
+    readings = plot.uses()
+    if len(readings) != 1:
+        return ""
+    obs = next(iter(readings))
+    # The skin's own word first, exactly as a line label takes it: a station
+    # that calls `outTemp` something of its own must not have this chart
+    # disagree with the legend under it.
+    return (labels or {}).get(obs) or units.obs_label(
+        obs, getattr(target, "language", None))
 
 
 def _note(chart: Chart, target: units.Target,
