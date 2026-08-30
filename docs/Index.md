@@ -3,7 +3,7 @@
 Which file belongs to which wiki page, and where the page is behind
 the code.
 
-**Generated:** 2026-08-30 10:20 · `python tools/docsindex.py`
+**Generated:** 2026-08-30 10:50 · `python tools/docsindex.py`
 
 This page is generated. Edited by hand, it is overwritten on the next
 run — the mapping lives in the `covers` blocks at the end of every wiki
@@ -30,20 +30,19 @@ python tools/docsindex.py --accept <page>.md
 |---|---|
 | Wiki pages | 43 |
 | Files covered | 225 of 239 |
-| Pages to look at | 16 |
+| Pages to look at | 14 |
 | Files with no page | 16 |
 
 ## To look at
 
 | Page | Changed since the page | File last | Page last |
 |---|---|---|---|
+| ⚠️ [Several places](Places) | `src/weewx_evo/adminarchives.py` | 2026-08-30 10:48 | 2026-08-30 10:05 |
 | ⚠️ [Contributing](Contributing) | `.gitignore`, `CLAUDE.md` | 2026-08-30 09:58 | 2026-08-27 11:07 |
-| ⚠️ [Settings A–Z](Settings-Reference) | `src/weewx_evo/feeds/jsongenerator/__init__.py`, `src/weewx_evo/options.py`, `src/weewx_evo/exports/ftp.py` (+2) | 2026-08-30 09:47 | 2026-08-27 11:16 |
 | ⚠️ [Configuration](Configuration) | `src/weewx_evo/options.py`, `src/weewx_evo/settings.py`, `tools/settings_test.py` (+1) | 2026-08-30 09:45 | 2026-08-27 11:07 |
 | ⚠️ [Web server](Web-Server) | `src/weewx_evo/webserver.py` | 2026-08-29 19:04 | 2026-08-27 11:05 |
 | ⚠️ [Derived readings](Derived-Readings) | `src/weewx_evo/derive.py`, `tools/derive_test.py` | 2026-08-29 19:04 | 2026-08-27 11:03 |
 | ⚠️ [Series](Series) | `src/weewx_evo/series.py` | 2026-08-29 17:25 | 2026-08-27 11:04 |
-| ⚠️ [Units](Units) | `src/weewx_evo/units.py`, `tools/unitcheck.py` | 2026-08-29 15:29 | 2026-08-27 11:04 |
 | ⚠️ [Archiver](Archiver) | `src/weewx_evo/archiver.py` | 2026-08-29 14:55 | 2026-08-27 11:02 |
 | ⚠️ [Listener](Ingest-Listener) | `src/weewx_evo/ingest/listener.py` | 2026-08-29 14:31 | 2026-08-27 11:01 |
 | ⚠️ [Exports](Exports) | `src/weewx_evo/exports/runner.py`, `tools/export_test.py`, `src/weewx_evo/exports/ftp.py` (+3) | 2026-08-28 22:56 | 2026-08-27 11:11 |
@@ -51,7 +50,6 @@ python tools/docsindex.py --accept <page>.md
 | ⚠️ [The live database](Database-Live) | `src/weewx_evo/db/live.py` | 2026-08-28 13:12 | 2026-08-27 11:01 |
 | ⚠️ [Architecture](Architecture) | `deploy/split.yml` | 2026-08-27 23:39 | 2026-08-27 11:00 |
 | ⚠️ [Deployment](Deployment) | `deploy/split.yml`, `deploy/compose.yml` | 2026-08-27 23:39 | 2026-08-27 11:08 |
-| ⚠️ [Getting started](Getting-Started) | `README.md` | 2026-08-27 13:06 | 2026-08-27 10:58 |
 | ⚠️ [Security](Security) | `src/weewx_evo/netaccess.py` | 2026-08-27 11:41 | 2026-08-27 11:08 |
 
 ## Pages
@@ -74,8 +72,8 @@ python tools/docsindex.py --accept <page>.md
 | ⚠️ | [Exports](Exports) | 7 | 2026-08-28 22:56 | 2026-08-27 11:11 |
 | ✅ | [Feeds](Feeds) | 10 | 2026-08-30 09:47 | 2026-08-30 10:18 |
 | ✅ | [Forecast](Forecast) | 9 | 2026-08-30 05:54 | 2026-08-30 10:08 |
-| ⚠️ | [Getting started](Getting-Started) | 1 | 2026-08-27 13:06 | 2026-08-27 10:58 |
-| — | [Glossary](Glossary) | — | — | 2026-08-27 11:00 |
+| ✅ | [Getting started](Getting-Started) | 1 | 2026-08-27 13:06 | 2026-08-30 10:48 |
+| — | [Glossary](Glossary) | — | — | 2026-08-30 10:48 |
 | ✅ | [Grafana](Grafana) | 9 | 2026-08-30 05:54 | 2026-08-30 10:10 |
 | ⚠️ | [Listener](Ingest-Listener) | 4 | 2026-08-29 14:31 | 2026-08-27 11:01 |
 | ✅ | [Maintenance](Maintenance) | 1 | 2026-08-29 15:59 | 2026-08-30 10:08 |
@@ -88,18 +86,18 @@ python tools/docsindex.py --accept <page>.md
 | ✅ | [Quality control](Quality) | 2 | 2026-08-30 05:52 | 2026-08-30 10:18 |
 | ⚠️ | [Security](Security) | 2 | 2026-08-27 11:41 | 2026-08-27 11:08 |
 | ⚠️ | [Series](Series) | 2 | 2026-08-29 17:25 | 2026-08-27 11:04 |
-| ⚠️ | [Settings A–Z](Settings-Reference) | 5 | 2026-08-30 09:47 | 2026-08-27 11:16 |
-| ✅ | [Several places](Places) | 2 | 2026-08-30 07:22 | 2026-08-30 10:05 |
+| ✅ | [Settings A–Z](Settings-Reference) | 5 | 2026-08-30 09:47 | 2026-08-30 10:48 |
+| ⚠️ | [Several places](Places) | 2 | 2026-08-30 10:48 | 2026-08-30 10:05 |
 | ✅ | [Stations and Archives](Stations-and-Archives) | 5 | 2026-08-30 03:14 | 2026-08-30 10:08 |
 | ✅ | [Sun](Sun) | 5 | 2026-08-26 23:56 | 2026-08-30 10:09 |
 | ✅ | [Testing](Testing) | 70 | 2026-08-30 07:12 | 2026-08-30 10:09 |
 | ⚠️ | [The archive database](Database-Archive) | 3 | 2026-08-28 17:59 | 2026-08-27 11:03 |
 | ⚠️ | [The live database](Database-Live) | 1 | 2026-08-28 13:12 | 2026-08-27 11:01 |
 | ✅ | [The settings page](Admin-Page) | 7 | 2026-08-30 09:46 | 2026-08-30 10:19 |
-| ⚠️ | [Units](Units) | 2 | 2026-08-29 15:29 | 2026-08-27 11:04 |
+| ✅ | [Units](Units) | 2 | 2026-08-29 15:29 | 2026-08-30 10:49 |
 | ✅ | [Uploads](Uploads) | 11 | 2026-08-30 05:54 | 2026-08-30 10:08 |
 | ⚠️ | [Web server](Web-Server) | 2 | 2026-08-29 19:04 | 2026-08-27 11:05 |
-| ✅ | [WeeWX compatibility](WeeWX-Compatibility) | 2 | 2026-08-29 12:47 | 2026-08-30 10:19 |
+| ✅ | [WeeWX compatibility](WeeWX-Compatibility) | 2 | 2026-08-29 12:47 | 2026-08-30 10:49 |
 | ✅ | [weewx-evo](Home) | 7 | 2026-08-30 04:48 | 2026-08-30 09:58 |
 
 ## Files
@@ -108,7 +106,7 @@ python tools/docsindex.py --accept <page>.md
 |---|---|---|---|
 | `src/weewx_evo/__init__.py` | 8 | [Architecture](Architecture) · [weewx-evo](Home) | 2026-08-26 10:53 |
 | `src/weewx_evo/admin.py` | 3809 | [The settings page](Admin-Page) | 2026-08-30 09:46 |
-| `src/weewx_evo/adminarchives.py` | 1047 | [Several places](Places) | 2026-08-30 06:30 |
+| `src/weewx_evo/adminarchives.py` | 1047 | ⚠️ [Several places](Places) | 2026-08-30 10:48 |
 | `src/weewx_evo/adminfields.py` | 554 | [The settings page](Admin-Page) | 2026-08-28 19:00 |
 | `src/weewx_evo/adminhome.py` | 984 | [The settings page](Admin-Page) | 2026-08-30 09:37 |
 | `src/weewx_evo/adminplots.py` | 1016 | [Plots](Plots) | 2026-08-30 05:54 |
@@ -151,7 +149,7 @@ python tools/docsindex.py --accept <page>.md
 | `src/weewx_evo/feeds/imagegenerator/__init__.py` | 821 | [Plots](Plots) | 2026-08-29 19:04 |
 | `src/weewx_evo/feeds/imagegenerator/canvas.py` | 410 | [Plots](Plots) | 2026-08-26 23:47 |
 | `src/weewx_evo/feeds/imagegenerator/theme.py` | 225 | [Plots](Plots) | 2026-08-26 23:56 |
-| `src/weewx_evo/feeds/jsongenerator/__init__.py` | 816 | ⚠️ [Feeds](Feeds) · [Settings A–Z](Settings-Reference) | 2026-08-30 09:47 |
+| `src/weewx_evo/feeds/jsongenerator/__init__.py` | 816 | [Feeds](Feeds) · [Settings A–Z](Settings-Reference) | 2026-08-30 09:47 |
 | `src/weewx_evo/feeds/realtime/__init__.py` | 273 | [Feeds](Feeds) | 2026-08-27 10:35 |
 | `src/weewx_evo/forecast/__init__.py` | 420 | [Forecast](Forecast) | 2026-08-30 05:54 |
 | `src/weewx_evo/forecast/codes.py` | 110 | [Forecast](Forecast) | 2026-08-27 10:33 |
@@ -239,7 +237,7 @@ python tools/docsindex.py --accept <page>.md
 | `src/weewx_evo/stations.py` | 482 | [Stations and Archives](Stations-and-Archives) | 2026-08-28 20:00 |
 | `src/weewx_evo/sun.py` | 675 | [Sun](Sun) | 2026-08-26 23:47 |
 | `src/weewx_evo/tags.py` | 1879 | [Feeds](Feeds) | 2026-08-29 19:04 |
-| `src/weewx_evo/units.py` | 1174 | ⚠️ [Units](Units) | 2026-08-29 15:29 |
+| `src/weewx_evo/units.py` | 1174 | [Units](Units) | 2026-08-29 15:29 |
 | `src/weewx_evo/uploads/__init__.py` | 518 | [Uploads](Uploads) | 2026-08-30 05:54 |
 | `src/weewx_evo/uploads/ambient.py` | 312 | [Uploads](Uploads) | 2026-08-27 10:33 |
 | `src/weewx_evo/uploads/cwop.py` | 304 | [Uploads](Uploads) | 2026-08-27 13:03 |
@@ -316,7 +314,7 @@ python tools/docsindex.py --accept <page>.md
 | `tools/stillweewx_test.py` | 472 | [Testing](Testing) | 2026-08-29 13:18 |
 | `tools/suncheck.py` | 243 | [Sun](Sun) · [Testing](Testing) | 2026-08-26 23:55 |
 | `tools/tagcheck.py` | 343 | [Testing](Testing) | 2026-08-26 23:56 |
-| `tools/unitcheck.py` | 247 | ⚠️ [Testing](Testing) · [Units](Units) | 2026-08-27 13:03 |
+| `tools/unitcheck.py` | 247 | [Testing](Testing) · [Units](Units) | 2026-08-27 13:03 |
 | `tools/upload_test.py` | 377 | [Testing](Testing) | 2026-08-28 22:36 |
 | `tools/vantage_test.py` | 317 | [Testing](Testing) | 2026-08-29 05:23 |
 | `tools/vantagesim.py` | 401 | [Testing](Testing) | 2026-08-29 08:23 |
@@ -340,7 +338,7 @@ python tools/docsindex.py --accept <page>.md
 | `deploy/compose.grafana.yml` | 120 | [Grafana](Grafana) | 2026-08-29 17:13 |
 | `deploy/compose.yml` | 93 | ⚠️ [Deployment](Deployment) | 2026-08-27 23:38 |
 | `deploy/split.yml` | 78 | ⚠️ [Architecture](Architecture) · [Deployment](Deployment) | 2026-08-27 23:39 |
-| `README.md` | 458 | ⚠️ [Getting started](Getting-Started) · [weewx-evo](Home) | 2026-08-27 13:06 |
+| `README.md` | 458 | [Getting started](Getting-Started) · [weewx-evo](Home) | 2026-08-27 13:06 |
 | `CLAUDE.md` | 2417 | ⚠️ [Contributing](Contributing) · [weewx-evo](Home) | 2026-08-30 04:48 |
 | `pyproject.toml` | 147 | [weewx-evo](Home) · [Testing](Testing) | 2026-08-28 17:40 |
 | `.gitignore` | 61 | ⚠️ [Contributing](Contributing) | 2026-08-30 09:58 |

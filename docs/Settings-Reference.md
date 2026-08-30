@@ -18,6 +18,10 @@ Key: **A** = advanced (behind a toggle on the admin page),
 
 *Where the readings come from, and where that is.*
 
+**These four move.** With a second place they are read from `archives.toml`
+instead, per place, and nothing here is read at all. The settings page marks
+them. → [Several places](Places#the-settings-move)
+
 | Name | Kind | Default | | What it means |
 |---|---|---|---|---|
 | `station.name` | text | `weewx-evo` | | On the live page and in reports |

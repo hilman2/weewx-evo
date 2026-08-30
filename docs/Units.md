@@ -120,9 +120,8 @@ group_pressure = "inHg"
 python tools/unitcheck.py
 ```
 
-Checks **all 147 conversions** against WeeWX at nine values
-(`0, 1, -1, 7.5, 100, -40, 1013.25, 0.001, 98765.4321`), plus groups, systems,
-labels and formats.
+Checks **every conversion in the table** against WeeWX, at nine values, plus
+groups, systems, labels and formats. → [Testing](Testing#unitcheckpy--the-units)
 
 The test found **three real transcription errors** — the knot factors, which had
 been guessed rather than read.

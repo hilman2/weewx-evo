@@ -195,7 +195,7 @@ def _slug(said: str) -> str:
 
 
 def create(admin: Any, form: dict) -> tuple[archive_defs.Archive | None, str]:
-    """Add an archive. Returns (what was added, error)."""
+    """Add a place. Returns (what was added, error)."""
     register = load(admin)
     wanted = from_form(form)
     if not wanted.name and wanted.label:

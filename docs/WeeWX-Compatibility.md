@@ -70,7 +70,7 @@ none.
 |---|---|
 | `tools/difftest.py` | Recompute the daily summaries of a real database |
 | `tools/roundtrip.py` | Rewrite part of one and check that nothing moves |
-| `tools/unitcheck.py` | All 147 conversions against WeeWX |
+| `tools/unitcheck.py` | Every conversion against WeeWX |
 | `tools/seriestest.py` | Fetch the same series from both and compare |
 | `tools/derive_test.py` | The derived readings against what WeeWX wrote |
 | `tools/suncheck.py` | Solar times against pyephem and against `weeutil.Sun` |

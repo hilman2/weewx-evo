@@ -3,7 +3,7 @@
 Every public class, function and method, its file, and the wiki page
 that describes it.
 
-**Generated:** 2026-08-30 10:20 · `python tools/docsindex.py`
+**Generated:** 2026-08-30 10:50 · `python tools/docsindex.py`
 
 Private names (`_foo`) are left out, `__init__` is included. To find a
 name, use the browser's search.
@@ -70,7 +70,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminarchives.py`
 
-[Several places](Places) · last changed 2026-08-30 06:30
+[Several places](Places) · last changed 2026-08-30 10:48
 
 | | Name | Line | |
 |---|---|---|---|
@@ -80,7 +80,7 @@ name, use the browser's search.
 | f | `load` | 105 |  |
 | f | `store` | 109 | Write them. Returns an error, or empty if it worked. |
 | f | `from_form` | 146 | An archive from what a form sent. Every field `Archive` has, because `configure` replaces the whole record: o… |
-| f | `create` | 197 | Add an archive. Returns (what was added, error). |
+| f | `create` | 197 | Add a place. Returns (what was added, error). |
 | f | `configure_only` | 226 | Change the one place, while it is still the settings themselves. The page that used to be here was a disclosu… |
 | f | `configure` | 253 | Change one archive in place. |
 | f | `remove` | 266 | Take one off the list. The file stays where it is. |

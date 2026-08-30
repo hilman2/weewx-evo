@@ -223,6 +223,7 @@ to write the same path down twice.
 - Push it to a web host → [Exports](Exports)
 - Run it in a container → [Deployment](Deployment)
 - Add a second sensor → [Multiple-Sources](Multiple-Sources)
+- Record a second spot → [Several places](Places)
 
 <!-- covers
 README.md

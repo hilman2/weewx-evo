@@ -30,6 +30,11 @@ Replaces WeeWX's `StdArchive`. → [Archiver](Archiver)
 consoles both number from one — hence the console list.
 → [Driver-Ecowitt](Driver-Ecowitt)
 
+**Console** — The box that sends the readings. What the settings page calls a
+station in the file and a console on the page: one row in `stations.toml`, one
+identity, and the place its readings belong to.
+→ [Several places](Places#pointing-a-console-at-a-place)
+
 **Deriver** — What adds dewpoint, wind chill and the rain delta. Replaces
 WeeWX's `StdWXCalculate`. → [Derived-Readings](Derived-Readings)
 
@@ -85,6 +90,12 @@ the file comment and the `--explain` line. → [Configuration](Configuration)
 
 **PASSKEY** — What Ecowitt hardware identifies itself with, derived from its MAC
 address. Redacted before anything is stored that somebody might pass on.
+
+**Place** — One spot whose weather is kept: its own coordinates, its own
+height above sea level, its own file of readings. Sunrise and the barometer
+reduction are worked out from them, so each place has its own. One entry in
+`archives.toml`, which is why the code calls it an archive.
+→ [Several places](Places)
 
 **Plot** — A plot **definition**: a name, a timespan, and the readings in it.
 Belongs to weewx-evo, not to a renderer. → [Plots](Plots)
