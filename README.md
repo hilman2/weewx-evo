@@ -1,457 +1,127 @@
 # weewx-evo
 
-Ein Proof of Concept: der WeeWX-Kern neu geschrieben, modular, ohne Altlasten —
-und ohne dass eine bestehende Datenbank etwas davon merkt.
+A rebuild of the WeeWX core. Python, no dependencies outside the standard
+library, 3.11 and up.
 
-Läuft auf einer Testinstanz neben einer WeeWX-Instanz, beide an derselben
-Wetterstation, beide mit derselben Historie als Startpunkt. Die Archive lassen
-sich Satz für Satz vergleichen.
+It records the weather from one console or from ten, keeps it in a database
+WeeWX itself can carry on using, and publishes it — as a website, as charts, to
+a weather service, to Grafana.
 
-## Die eine Regel
+**Documentation is in the [wiki](https://github.com/hilman2/weewx-evo/wiki).**
 
-Eine bestehende WeeWX-Datenbank muss lesbar und schreibbar bleiben — für WeeWX
-selbst. Nicht „importierbar": dieselbe Datei, dieselbe Bedeutung, und WeeWX 5
-kann sie danach weiterbenutzen. Alles andere ist verhandelbar, das hier nicht.
+## The one rule
 
-## Der Schnitt
+An existing WeeWX database stays readable and writable — **by WeeWX itself**.
+Not "importable": the same file, the same meaning, and WeeWX 5 can carry on
+using it afterwards.
 
-```
-Quellen (Push oder Pull, je eigener Prozess)
-  └─ Listener: HTTP + UDP, Token, Parser-Plugins
-      └─ live: jedes Paket, mit Herkunft, N Tage
-          └─ Archiver: deterministisch je Zeitspanne
-              └─ archive (WeeWX-kompatibel, PK dateTime)
-                  └─ archive_day_* (Cache, jederzeit neu berechenbar)
+Everything else here is negotiable. This is not, and it is what the test suite
+spends most of its time on: the daily statistics of a real database are
+recomputed and compared against what WeeWX wrote into it.
 
-Und hinaus, jeweils aus der Datenbank gelesen statt durchgereicht:
-  Feeds    → ein Verzeichnis     Exports   → dieses Verzeichnis, woandershin
-  Uploads  → die Messwerte an einen Wetterdienst oder einen MQTT-Broker
-  Forecast → was kommt, in eine eigene Datei neben dem Archiv
-```
-
-Jede Stufe ist aus der vorherigen reproduzierbar. Es gibt keinen flüchtigen
-Zustand, aus dem sich eine Zahl herleitet — kein In-Memory-Akkumulator, der
-einen Neustart nicht überlebt.
-
-Die Komponenten reden **ausschließlich über die Datenbank**, nie miteinander.
-Deshalb laufen sie als drei systemd-Units auf einem Server oder als ein
-Prozess auf einem Pi Zero, ohne dass sich eine Zeile Code ändert.
-
-Was das kauft, und was WeeWX heute nicht kann:
-
-- Neustart mitten im Archivintervall kostet nichts.
-- Ein verspätetes Push-Paket landet im richtigen Intervall.
-- Eine falsche Kalibrierung oder ein Ausreißer lässt sich rückwirkend
-  korrigieren, solange die Rohdaten in der Retention liegen.
-
-## Der Kern bietet den Listener. Treiber bringen alles mit.
-
-Die Trennung ist die Architektur, deshalb ausdrücklich:
-
-**Der Kern besitzt den Socket.** Threads, Shutdown, Body-Limits, IPv6,
-Token-Prüfung, Schreiben in die Live-Tabelle. Das ist für jedes Protokoll
-dasselbe, und es ist die Stelle, an der Push-Treiber schiefgehen.
-
-**Der Treiber besitzt alles andere.** Parsen, Feldnamen, Einheiten, welchem
-Gerät er überhaupt antwortet, und **was dieses Gerät zurückhören muss**. Er
-liefert ein fertiges Paket ab. Der Kern schaut nicht hinein, weiß nicht, was
-ein Ecowitt ist, und lässt sich das auch nicht beibringen.
-
-```python
-class MyDriver:
-    response = (b'{"ok":true}', "application/json")   # was das Gerät hören will
-
-    def packets(self, body: bytes, meta: dict) -> list[Packet]:
-        ...
-```
-
-```toml
-[project.entry-points."weewx_evo.drivers"]
-mine = "my_package:MyDriver"
-```
-
-### Zwei Orte für Treiber
-
-```
-src/weewx_evo/ingest/plugins/     unsere, im Repo, zentral gepflegt
-  ecowitt/                        Kern-Treiber
-<datenverzeichnis>/drivers/       fremde, per CLI installiert
-```
-
-**`plugins/`** sind unsere. Ein Unterordner je Treiber, nichts wird von Hand
-aufgezählt — jedes Unterverzeichnis wird geladen. Der erste ist **Ecowitt**,
-und er ist Kern: `catalog.py` (1074 Zeilen Feldkatalog), `mapping.py`,
-`infer.py`, `protocol.py`, `consoles.py`, `columns.py`, `report.py`,
-`driver.py`, plus 59 Tests.
-
-Katalog, Protokoll und Tests kamen ursprünglich aus
-[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt). Das ist die
-Herkunft, keine laufende Bindung — jenes Plugin spricht `weewx.conf` und
-`weewx.drivers`, dieser Treiber spricht `options()`, `view()` und die
-Live-Tabelle. Zwei Programme, ein gemeinsamer Vorfahr.
-
-Dass wichtige Treiber hier liegen, ist eine Entscheidung über Pflege, nicht
-über Kopplung: ein Treiber im Repo hängt an derselben Schnittstelle wie einer
-von außerhalb und ließe sich herausziehen, ohne dass der Kern es merkt.
-
-**Fremde Treiber** liegen außerhalb des Pakets, damit ein Upgrade sie nicht
-anfasst und nichts darin für unseres gehalten wird:
+## Install
 
 ```bash
-weewx-evo driver install https://github.com/jemand/weewx-evo-acurite
-weewx-evo driver install ./treiber.zip
-weewx-evo driver list
-weewx-evo driver remove acurite
+git clone https://github.com/hilman2/weewx-evo
+cd weewx-evo
+pip install -e .
 ```
 
-### Plugins, und wo sie stehen
-
-Ein Treiber ist ein Verzeichnis neben den Daten. Alles andere — Exports,
-Uploads, Feeds, Vorhersagequellen — ist ein pip-Paket mit einem Entry Point:
-
-```toml
-[project.entry-points."weewx_evo.exports"]
-sftp = "weewx_evo_sftp:SftpExport"
-```
-
-Mehr ist es nicht. Nach `pip install` steht die Sache in `export list`, in der
-Auswahl auf der Einstellungsseite und als `kind = "sftp"` in der Konfiguration.
-
-**Ein Plugin darf, was der Kern nicht darf: eine Abhängigkeit nehmen.** Der
-Kern läuft auf der Standardbibliothek, damit `pip install weewx-evo` auf einem
-Pi ohne Compiler funktioniert. Ein Plugin hat diese Verpflichtung nicht.
-
-Welche es gibt, steht in einem eigenen Repo statt in diesem:
-
-- **[weewx-evo-plugins](https://github.com/hilman2/weewx-evo-plugins)** — der
-  Katalog. Ein Eintrag je Plugin, jeder zeigt auf dessen eigenes Repository.
-- **[weewx-evo-sftp](https://github.com/hilman2/weewx-evo-sftp)** — der erste:
-  ein Export für einen Host mit SSH, aber ohne rsync.
-
-Ein Repo je Plugin, nicht eins für alle. Der Fehler, den das vermeidet, ist
-der von `weewx-DWD`: zehn unabhängige Dinge in einem Paket, wo eine Änderung
-am Radar-Code die Vorhersage kaputt macht.
-
-### Kann ein Treiber Amok laufen?
-
-Im Prozess: **nein, nicht verhinderbar.** Ein Treiber ist Python im selben
-Interpreter, `import sqlite3` genügt, und keine Schnittstelle hindert Code
-daran, sie zu umgehen. WeeWX hat dieselbe Eigenschaft.
-
-Die Zwischenschicht ist deshalb ein Vertrag, kein Käfig. Ein Treiber bekommt
-einen `state` — `get`, `set`, `delete` auf Strings — und nicht den
-`ArchiveStore`. Damit ist das Richtige einfach und das Falsche eine sichtbare,
-absichtliche Handlung.
-
-Durchgesetzt wird es außerhalb des Prozesses, und die Architektur kann das
-schon:
-
-| Mittel | Wirkung |
-|---|---|
-| `weewx-evo listen` und `archive` getrennt (`deploy/split.yml`) | Der Listener öffnet das Archiv nie. Ein Treiber darin hat die Datei nicht. |
-| Eigener Benutzer ohne Schreibrecht aufs Archiv | Macht die Frage gegenstandslos. |
-| `weewx-evo driver install` liest den Code | Meldet `sqlite3`, `subprocess`, `socket`. Ein Hinweis, keine Garantie. |
-
-Die Live-Tabelle ist die einzige Schnittstelle zwischen den beiden Diensten.
-Deshalb ist das Aufteilen eine Änderung an einer Compose-Datei und an keiner
-Zeile Code.
-
-### Was keine Spalte hat, wird gemeldet
-
-Ein Messwert überlebt das Archivintervall nur, wenn die Tabelle eine Spalte
-für ihn hat. Das Standardschema hat 113, Ecowitt-Hardware füllt das Vierfache.
-Dass etwas wegfällt, ist normal — dass es **still** wegfällt, ist der Fehler,
-den dieses Projekt beheben will:
-
-```
-$ weewx-evo columns
-44 field(s) arriving, 8 with nowhere to live.
-
-  dayRain           2831 packet(s), e.g. 0.012      -> REAL
-  lightning_num     2831 packet(s), e.g. 0.0        -> INTEGER
-  ...
-```
-
-Angelegt wird nichts von allein. Wohin ein Messwert gehört, ist eine
-Entscheidung, und die falsche mischt zwei Sensoren in eine Spalte, die danach
-niemand mehr trennt. `--add` legt an, das Werkzeug des Treibers
-(`python -m user.ecowitt`) sagt genauer, wohin.
-
-## Mehrere Quellen
-
-WeeWX kennt genau einen `station_type`, deshalb braucht das Zusammenführen
-zweier Stationen dort einen Treiber, der Treiber umschließt —
-[weewx-metadriver](https://github.com/tkeffer/weewx-metadriver). Dessen
-Grenzen folgen daraus, *wo* er sitzt: Pakete werden beim Eintreffen
-zusammengeführt, also darf nur der primäre Treiber Archivsätze liefern, nur
-seine Uhr wird gelesen, und ein abgestürztes Kind bleibt tot.
-
-Hier umschließt nichts irgendwas. Jede Quelle liefert selbst ein, ihre Pakete
-landen mit ihrem Namen in der Live-Tabelle, und zusammengeführt wird erst beim
-Aufbau des Intervalls — wenn alle Pakete samt Herkunft vorliegen. Damit
-verschiebt sich die Frage von „welcher Treiber hat das Sagen" zu „welcher
-Quelle glaube ich für *dieses Feld* in *diesem Intervall*".
-
-```toml
-# sources.toml
-[sources]
-outTemp = "garten, dach"     # der Garten ist die Messreihe
-"soil*" = "garten"           # nur der Garten hat Bodensonden
-"*"     = "dach, garten"     # alles andere: zuerst das Dach
-```
-
-Die Regel gilt **je Feld**, nicht je Datensatz — dasselbe Muster wie die Sicht
-`messreihe_1d` der Wetterstation Kirchdorf. Eine Station, die Temperatur und
-Regen misst, aber keine Schneehöhe messen *kann*, liefert ihre Temperatur und
-ihren Regen; die Schneehöhe kommt von dem, der sie hat.
-
-Gemittelt wird über Quellen **nie**. Zwei Thermometer mit 19 °C und 21 °C
-ergeben nirgends 20 °C — es sind zwei Messungen zweier Orte, und eine davon zu
-nehmen ist die einzige ehrliche Antwort. Wer beide will, gibt der zweiten eine
-eigene Spalte.
-
-`tools/multisource.py` prüft genau die drei Fälle, die der Metatreiber nennt.
-
-## Was läuft
-
-| Modul | Zweck |
-|---|---|
-| `aggregate.py` | Der Kern. Rohwerte rein, Statistik raus. Kein Zustand, keine DB, keine Uhr. |
-| `obstypes.py` | Welche Größe wie aggregiert wird. Ohne globalen Zustand, anders als WeeWX. |
-| `sources.py` | Welche Quelle für welches Feld gewinnt. |
-| `archiver.py` | Archivsätze aus Zeitspannen. Ersetzt `StdArchive`. |
-| `db/live.py` | Die Live-Tabelle. Append-only, idempotent, mit Retention. |
-| `db/archive.py` | Die WeeWX-Datenbank, lesend und schreibend. |
-| `db/schema.py` | Schema-Introspektion. Das Schema kommt aus der Datei, nie aus einer Liste im Code. |
-| `ingest/listener.py` | HTTP + UDP, Token, Treiberauswahl. Ein Ort für das, was Push-Treiber falsch machen. |
-| `ingest/drivers.py` | Die Treiber-Schnittstelle und ihre Registry. |
-| `ingest/envelope.py` | Der JSON-Umschlag — der Vertrag, kein Protokoll. Der einzige Treiber im Kern. |
-| `ingest/plugins/ecowitt/` | Ecowitt. Kern-Treiber, der meistgebrauchte. |
-| `derive.py` | Was aus anderen Messwerten folgt. Taupunkt bis Sonnenscheindauer. |
-| `feeds/` | Was erzeugt wird: JSON, Diagramme, eine Skin, `realtime.txt`. |
-| `exports/` | Wie ein Verzeichnis woandershin kommt: FTP, rsync, lokal. |
-| `uploads/` | Die Messwerte an einen Dienst: WU, PWSweather, WOW, Windy, Weathercloud, CWOP, MQTT. |
-| `mqtt.py` | Ein MQTT-3.1.1-Client aus der Standardbibliothek. Was eine Skin lebendig macht. |
-| `forecast/` | Vorhersage und Warnungen: Open-Meteo, DWD MOSMIX, MeteoAlarm, NWS. Eigene Datei, nie ins Archiv. |
-
-## Tests
-
-`tools/` ist kein Beiwerk. Die Zusage dieses Projekts ist, dass eine bestehende
-Datenbank unverändert bleibt und dieselben Zahlen herauskommen. Diese Dateien
-sind der Beleg dafür, und sie laufen gegen eine echte Datenbank statt gegen
-ausgedachte Werte.
-
-### Ein Befehl
+That gives you the `weewx-evo` command. Without installing works too:
 
 ```bash
-docker/run.sh          # oder dockerun.ps1 unter Windows
+PYTHONPATH=src python -m weewx_evo.cli --help
 ```
 
-Baut das Testbild, mountet das Repository hinein und fährt **alles** der Reihe
-nach — 29 Werkzeuge, rund eine Minute, ein Exit-Code. Ohne Netz
-(`--network none`): jeder Test hier kommt ohne aus, und einer der still ins
-Internet greift, ist einer der im Zug fehlschlägt.
+## Set it up
 
-Das Bild ist das Gegenteil von `deploy/Dockerfile`. Dort ist bewusst nichts
-drin; hier ist alles drin, was ein Test verlangen kann — WeeWX 5.1, pyephem,
-Cheetah, Pillow, ein FTP-Server, ein PHP. Der Grund ist einfach: **ein Test,
-der nicht gegen das vergleichen kann, wovon er abgeschrieben wurde, ist kein
-Test, sondern eine Meinung.** Als das Bild zum ersten Mal lief, fand es sofort
-vier Dinge, die niemand sah: 22 Ecowitt-Tests, die still übersprungen wurden,
-weil WeeWX fehlte; einen CWOP-Pakettyp, der von WeeWX' abwich; ein `ruff`, das
-neuer sein musste als das im pyproject genannte Regelwerk; und einen Tippfehler
-in WeeWX' eigener Einheitentabelle.
-
-Ohne Docker geht dasselbe direkt — dann wird übersprungen, was fehlt, und
-gesagt was:
+A token, a configuration file, and the service:
 
 ```bash
-python tools/runtests.py          # alles, was hier laufen kann
-python tools/runtests.py --list   # was liefe, und warum nicht
-python tools/runtests.py units sun
+python -c "import secrets; print(secrets.token_hex(24))"    # the token
+
+weewx-evo config set --config evo.toml token <the-token>
+weewx-evo config set --config evo.toml station.name "Kirchdorf an der Amper"
+weewx-evo config set --config evo.toml station.latitude 48.4596
+weewx-evo config set --config evo.toml station.longitude 11.6539
+weewx-evo config set --config evo.toml station.altitude 440
+
+weewx-evo serve --config evo.toml
 ```
 
-### Einzeln
-
-Alle ohne Netz, ohne Zustand außerhalb eines Temp-Verzeichnisses:
+Then point the console at `http://<host>:8000/<token>/ecowitt/` and everything
+else is done on the settings page:
 
 ```bash
-python tools/difftest.py reference/weewx.sdb     # die Arithmetik
-python tools/roundtrip.py reference/weewx.sdb    # das Schreiben
-python tools/smoke.py                             # alles zusammen
-python tools/multisource.py                       # mehrere Stationen
-python tools/driverinstall.py                     # Fremdtreiber
-python tools/adminpage.py                         # die Einstellungsseite
-python tools/settings_test.py                     # die Rangfolge der Quellen
-python tools/netaccess_test.py                    # wer geantwortet wird
-python tools/ratelimit_test.py                    # die zwei Grenzen
-python tools/export_test.py                       # FTP und rsync
-python tools/web_test.py                          # der lokale Webserver
-python tools/derive_test.py                       # die Ableitungen
-python tools/feeds_test.py                        # mehrere Feeds nebeneinander
-python tools/cheetah_test.py                      # eine WeeWX-Skin, unverändert
-python tools/image_test.py                        # die Diagramme als PNG
-python tools/deck_live_test.py                    # die Live-Werte, beide Wege
-python tools/upload_test.py                       # WU, PWS, CWOP, Windy
-python tools/mqtt_test.py                         # der MQTT-Client
-python tools/forecast_test.py                     # die Vorhersagequellen
-python -m pytest tests/                           # der Ecowitt-Treiber
-python -m ruff check src/ tools/ tests/           # undefinierte Namen
+weewx-evo config set --config evo.toml admin.token <a-different-token>
+weewx-evo admin --config evo.toml
 ```
 
-`ruff` ist der einzige Punkt, an dem ein Werkzeug von außen gebraucht wird,
-und er verdient seinen Platz. Es findet die Sorte Fehler, die kein Test
-findet: einen Aufruf in einem Zweig, den nichts durchläuft. Ein Umbau nahm
-hier einmal sieben Funktionen mit, und **alle Tests liefen weiter durch** —
-weil keiner davon die serve-Schleife startet. `ruff` nannte jede einzelne.
+→ [Getting started](https://github.com/hilman2/weewx-evo/wiki/Getting-Started),
+[Several places](https://github.com/hilman2/weewx-evo/wiki/Places),
+[Deployment](https://github.com/hilman2/weewx-evo/wiki/Deployment)
 
-Deshalb gehört es vor den Commit, nicht danach:
-
-```bash
-cat > .git/hooks/pre-commit <<'HOOK'
-#!/bin/sh
-python -m ruff check --select F src/ tools/ || {
-    echo "ruff hat etwas gefunden. Erst beheben." >&2; exit 1; }
-HOOK
-chmod +x .git/hooks/pre-commit
-```
-
-Fünf vergleichen direkt gegen ein installiertes WeeWX und brauchen es deshalb
-im Pfad:
-
-```bash
-PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/seriestest.py \
-    reference/weewx.sdb Europe/Berlin      # Zeitreihen gegen weewx.xtypes
-PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/unitcheck.py   # 147 Umrechnungen
-PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/suncheck.py    # Sonnenstand
-PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/mooncheck.py   # Mondstand und -phasen
-PYTHONPATH=/pfad/zu/weewx/src:src python3 tools/tagcheck.py     reference/weewx.sdb Europe/Berlin      # die Tags, die eine Skin benutzt
-```
-
-`PYTHONPATH` dabei **nicht** exportieren: die Ecowitt-Tests greifen sonst auf
-WeeWX' eigene Module zu und schlagen fehl, ohne dass etwas kaputt wäre.
-
-Die Zeitzone bei `seriestest.py` ist kein Beiwerk: die Tagestabellen sind auf
-lokale Mitternacht geschlüsselt, und in der falschen Zone gelesen vergleicht man
-einen Tag mit einem anderen.
-
-Gemessen, Stand heute:
+## What it does
 
 | | |
 |---|---|
-| Tagesstatistiken gegen die echte Datenbank | 0 Summenabweichungen |
-| Zeitreihen gegen `weewx.xtypes` | 94 Vergleiche, 19 957 Punkte, 0 Fehler |
-| Einheiten gegen `weewx.units` | 147 Umrechnungen × 9 Werte, exakt |
-| Sonnenaufgang gegen pyephem | 37 s im schlechtesten Fall |
-| Template-Tags gegen `weewx.tags` | 82 Ausdrücke, 0 Abweichungen |
-| Ecowitt-Treiber | 59 Tests, unverändert übernommen |
+| Takes readings from six push protocols, any WeeWX driver, or a collector of your own | [Drivers](https://github.com/hilman2/weewx-evo/wiki/Drivers) |
+| Records the weather at more than one spot, each with its own coordinates | [Several places](https://github.com/hilman2/weewx-evo/wiki/Places) |
+| Publishes a website, charts as JSON or PNG, and NOAA reports | [Feeds](https://github.com/hilman2/weewx-evo/wiki/Feeds), [Deck](https://github.com/hilman2/weewx-evo/wiki/Deck) |
+| Sends them on by FTP or rsync, only what changed | [Exports](https://github.com/hilman2/weewx-evo/wiki/Exports) |
+| Posts to Weather Underground, Windy, CWOP, MQTT, InfluxDB and others | [Uploads](https://github.com/hilman2/weewx-evo/wiki/Uploads) |
+| Fetches a forecast per place, from Open-Meteo, DWD, MeteoAlarm or NWS | [Forecast](https://github.com/hilman2/weewx-evo/wiki/Forecast) |
+| Refuses a reading a flat battery or a hosed-down rain gauge produced | [Quality control](https://github.com/hilman2/weewx-evo/wiki/Quality) |
+| Says something when a console goes quiet or an upload starts failing | [Notifications](https://github.com/hilman2/weewx-evo/wiki/Notifications) |
+| Answers questions over HTTP, in whatever unit the caller asks for | [API](https://github.com/hilman2/weewx-evo/wiki/API) |
 
-### Der Abnahmetest
+Every stage is reproducible from the one before it. There is no in-memory
+accumulator a restart would lose: a late packet lands in the right interval, and
+a wrong calibration can be corrected afterwards for as long as the raw packets
+are still in retention.
+→ [Architecture](https://github.com/hilman2/weewx-evo/wiki/Architecture)
 
-`difftest.py` baut die Tagesstatistiken einer echten Datenbank neu und
-vergleicht sie mit dem, was WeeWX hineingeschrieben hat. Gegen die
-Testinstanz (2280 Sätze, 134 Spalten, 132 Tagestabellen):
-
-```
-sum mismatches:            0
-extremes sharper than DB:  0
-extremes duller than DB:   189   (expected: LOOP highs/lows)
-```
-
-Zwei Spaltenklassen, zwei Maßstäbe — und der Unterschied ist der Punkt:
-
-- **Summen** (`sum`, `count`, `wsum`, `sumtime`, `xsum`, `ysum`, `dirsumtime`,
-  `squaresum`, `wsquaresum`) stammen ausschließlich aus Archivsätzen. Sie
-  müssen exakt stimmen. Sie tun es.
-- **Extremwerte** dürfen abweichen. Mit `loop_hilo = True` schreibt WeeWX
-  LOOP-Pakete direkt in die Tagesextreme, und die sind feiner als jeder
-  Archivsatz. Eine Rekonstruktion kann nur gleich oder stumpfer sein — nie
-  schärfer. Schärfer wäre ein Fehler, und genau darauf prüft der Test.
-
-`roundtrip.py --packets` speist die gespeicherten LOOP-Pakete wieder ein. Wo
-sie den Zeitraum abdecken, sinkt die Zahl entsprechend: 109 → 89 bei 76 %
-Abdeckung.
-
-Diese Asymmetrie ist das beste Argument für die Live-Tabelle, und sie ist
-messbar. Darunter am 25.08.2026 ein `outTemp`-Minimum von 17,6 °F (−8 °C) und
-ein Maximum von 96,8 °F (36 °C), acht Minuten auseinander, spätabends im
-August. Beides Müll aus einer Umbauphase — und beides steht dauerhaft in der
-Statistik, weil die LOOP-Pakete fort sind. `weectl database rebuild-daily`
-würde es entfernen und dabei jedes echte LOOP-Extrem des gesamten Zeitraums
-mitnehmen.
-
-## Betrieb
+## Tests
 
 ```bash
-weewx-evo serve      # Listener + Archiver in einem Prozess
-weewx-evo listen     # nur der Listener
-weewx-evo archive    # nur der Archiver
-weewx-evo catchup    # jedes Intervall bauen, das die Live-Tabelle abdeckt
-weewx-evo rebuild <von> <bis>
-weewx-evo status
+docker/run.sh          # or docker\run.ps1
+docker/run.sh --list   # what would run, and what would be skipped
+docker/run.sh units    # just that one
 ```
 
-Konfiguration über `WEEWX_EVO_*` in der Umgebung oder als Argumente.
+Around a minute, no network. The image carries WeeWX 5.1, pyephem, Cheetah and
+Pillow on purpose: **a test that cannot compare against the thing it was
+transcribed from is not a test.** The unit conversions, the series, the daily
+statistics, the almanac and thirteen WeeWX drivers are each checked against
+WeeWX's own answers.
 
-### Größe der Live-Tabelle
+→ [Testing](https://github.com/hilman2/weewx-evo/wiki/Testing),
+[Contributing](https://github.com/hilman2/weewx-evo/wiki/Contributing)
 
-Gemessen an der Konsole in Kirchdorf, ein Paket alle 8 s: rund 11 MB pro Tag,
-also etwa 80 MB bei sieben Tagen Retention. Eine Vantage mit einem LOOP-Paket
-alle 2 s ist das Vierfache. Eigene Datei, eigene Retention — die Archiv-DB
-bleibt klein und sicherbar.
+## Licence
 
-## Referenzdaten
+**GPL-3.0-or-later**, and that is not a free choice. `aggregate.py` and
+`units.py` are transcriptions from WeeWX, expression by expression: the daily
+statistics arithmetic from `weewx.accum`, the unit conversions from
+`weewx.units`. That makes this a derived work, and WeeWX is GPL v3.
 
-`reference/` liegt in `.gitignore` — echte Messwerte, mehrere Megabyte. Neu
-ziehen:
+It is deliberate rather than a corner we were backed into. A "cleaner"
+recomputed conversion is a chart that differs from WeeWX in the third decimal,
+and not doing that is the whole promise of this project.
 
-```bash
-HOST=your-weewx-host
-ssh $HOST 'docker exec weewx python3 -c "
-import sqlite3
-for s in [\"weewx.sdb\", \"weewx-loop.sdb\"]:
-    c = sqlite3.connect(\"/data/archive/\" + s)
-    c.execute(\"VACUUM INTO ?\", (\"/data/snap-\" + s,)); c.close()"'
-scp $HOST:/opt/weewx/data/snap-weewx.sdb reference/weewx.sdb
-ssh $HOST 'rm -f /opt/weewx/data/snap-*.sdb'
-```
+WeeWX: Copyright (c) Tom Keffer and contributors, <https://weewx.com>.
 
-`VACUUM INTO` statt `cp`: die Datenbank wird nebenher beschrieben, und ein
-kopiertes WAL ist ein zerrissener Zustand.
+### Bundled
 
-## Verwandte Arbeit im Original
+- The **Deck** skin began as [weewx-wdc](https://github.com/Daveiano/weewx-wdc)
+  by David Baetge, GPL v3. `CHANGES.md` beside the skin lists what differs.
+- The **Ecowitt driver** goes back to
+  [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) — the catalogue, the
+  protocol and its tests. It is developed further here.
+- [**uPlot**](https://github.com/leeoniya/uPlot) 1.6.32, MIT, unchanged, under
+  `feeds/diagnostic/vendor/`. The diagnostic feed draws with it, so that page
+  works on a station with no way out to the internet. (Deck draws with ECharts,
+  which it fetches itself.)
 
-Die Architektur ist in `D:\Git\weewx` bereits in vier Zweigen erprobt. Sie
-sind die Spezifikation für dieses Projekt und sein Referenz-Orakel:
-
-| Zweig | Was er zeigt |
-|---|---|
-| `core-http-listener` | HTTP/UDP-Listener als Basis aller Push-Treiber, Token-Prüfung an einer Stelle |
-| `loop-store` | LOOP-Pakete in eigener Datenbank, NDJSON-Export beim Verlassen der Retention |
-| `ingest-table` | Jeder Archivsatz aus der Ingest-Tabelle gerechnet statt aus dem Akkumulator |
-| `split-archive-service` | `StdArchive` in Generator und Speicher getrennt |
-
-## Lizenz
-
-GPL v3, und das ist keine freie Wahl. `aggregate.py` und `units.py` sind
-Transkriptionen aus WeeWX, Ausdruck für Ausdruck: die Tagesstatistik-Arithmetik
-aus `weewx.accum`, die 147 Umrechnungen aus `weewx.units`. Damit ist dieser Code
-ein abgeleitetes Werk, und WeeWX steht unter GPL v3.
-
-Das ist Absicht, nicht Notlage. Eine „sauberer" neu gerechnete Umrechnung ist
-ein Diagramm, das in der dritten Nachkommastelle von WeeWX abweicht, und die
-ganze Zusage dieses Projekts ist, dass es das nicht tut.
-
-WeeWX: Copyright (c) Tom Keffer und Mitwirkende, <https://weewx.com>.
-
-### Mitgeliefert
-
-- [uPlot](https://github.com/leeoniya/uPlot) 1.6.32, MIT, unverändert unter
-  `src/weewx_evo/feeds/diagnostic/vendor/`. Der Diagnose-Feed zeichnet damit,
-  ohne dass eine Station dafür ins Netz muss.
-- Der Ecowitt-Treiber geht auf
-  [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) zurück — Katalog,
-  Protokoll und 59 Tests. Er wird hier weiterentwickelt.
-
-Ansonsten nichts. Der Kern kommt mit der Standardbibliothek aus, und pyephem
-wird benutzt, wenn es da ist, ohne dass es fehlen darf.
+Nothing else. The core runs on the standard library, and pyephem is used where
+it is installed without ever being required.

@@ -20,8 +20,8 @@ failing. Three things can be missing:
     importing both and running them side by side. That is the point of them,
     so without WeeWX they are skipped rather than approximated.
   * **`reference/weewx.sdb`.** A real archive, which is not in the repository
-    because it is somebody's actual measurements. See the README for pulling
-    one.
+    because it is somebody's actual measurements. The wiki page Testing says
+    how to pull one.
 
 Anything skipped is named, with what would make it run. A test suite that
 quietly covers half of what you think it covers is worse than one that covers
@@ -280,7 +280,8 @@ def missing(test: Test, have: dict[str, bool], reference: bool) -> str:
             }.get(module, f"{module} is not importable")
     if test.needs_reference and not reference:
         return (f"{database()} is not there. It holds real measurements, so "
-                f"it is not in the repository; see the README.")
+                f"it is not in the repository; the wiki page Testing says "
+                f"how to pull one.")
     return ""
 
 

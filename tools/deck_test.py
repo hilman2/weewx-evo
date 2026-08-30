@@ -557,7 +557,7 @@ def main(argv: list[str]) -> int:
     database = Path(argv[1] if len(argv) > 1 else "reference/weewx.sdb")
     if not database.is_file():
         print(f"no such database: {database}")
-        print("see the README for how to fetch a reference database")
+        print("the wiki page Testing says how to fetch a reference database")
         return 2
 
     out = Path(tempfile.mkdtemp(prefix="deck-test-"))
