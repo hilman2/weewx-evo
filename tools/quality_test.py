@@ -30,16 +30,28 @@ make that untrue and nothing would say so.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from weewx_evo import quality, units
+from weewx_evo import adminquality, quality, units
+from weewx_evo.admin import Admin
 from weewx_evo.archiver import Archiver
+from weewx_evo.cli import (
+    _resolve,
+    _watched_files,
+    _Watcher,
+    all_schemas,
+    apply_live,
+    quality_path,
+    read_archives,
+    read_quality,
+)
 from weewx_evo.db.archive import ArchiveStore
 from weewx_evo.db.live import LiveStore, Packet
 
@@ -755,6 +767,251 @@ def test_rules_that_cannot_be_applied_do_not_stop_the_readings() -> None:
     got = live.after(0, 1)
     check("the reading came through anyway", got[0].get("outTemp"), 20.0)
     live.close()
+
+
+# ---------------------------------------------------------------------------
+# From the settings page to the running archiver.
+# ---------------------------------------------------------------------------
+#
+# Everything above this line builds an `Archiver` and hands it a policy the
+# test made. That is the half nothing was wrong with, and it stayed green
+# through three separate failures of the half nobody measured:
+#
+#   the page read `archive_db` while the register read `[archives.default]
+#   file`, so it found no database, listed no readings and answered "there is
+#   nothing in the archive to work them out from yet" about a year of records
+#
+#   `quality.toml` was not among the files the watcher stats, so a rule saved
+#   on the page reached the loop only when somebody restarted the container
+#
+#   and `apply_live` never touched `Archiver.quality`, so it would not have
+#   reached it even then
+#
+# All three say saved and refuse nothing. So these go the other way round:
+# write the file a page would write, and ask the archiver what it does.
+
+
+def an_installation(work: Path, *, second: bool = False,
+                    archive_db: str = "") -> Any:
+    """A settings file, a register and one or two archives on disk.
+
+    `archive_db` is what the page used to read. Pointed somewhere that does
+    not exist -- which is what the beta instance had, left behind when the
+    archives moved into their own file -- while the register names the real
+    one.
+    """
+    (work / "data").mkdir(exist_ok=True)
+    (work / "evo.toml").write_text(
+        f'token = "{"a" * 16}"\n'
+        f'archive_db = "{archive_db or (work / "data" / "one.sdb").as_posix()}"\n',
+        encoding="utf-8")
+    entries = ["[archives.default]",
+               f'file = "{(work / "data" / "one.sdb").as_posix()}"']
+    if second:
+        entries += ["", "[archives.nordfeld]",
+                    f'file = "{(work / "data" / "two.sdb").as_posix()}"']
+    (work / "archives.toml").write_text("\n".join(entries) + "\n",
+                                        encoding="utf-8")
+    path = work / "evo.toml"
+    return Admin(path, lambda: all_schemas(path), "a" * 16)
+
+
+def some_records(where: Path, readings: list[float]) -> None:
+    """An archive holding one reading per five minutes, ending now.
+
+    Ending now rather than at `START`: the page looks back a year from the
+    wall clock, and records dated 2020 are outside every window it asks
+    about.
+    """
+    now = int(time.time()) - len(readings) * 300
+    store = ArchiveStore(where)
+    try:
+        for index, value in enumerate(readings):
+            store.add_record({"dateTime": now + index * 300,
+                              "usUnits": units.METRICWX, "interval": 5,
+                              "outTemp": value})
+    finally:
+        store.close()
+
+
+def test_the_page_reads_the_archive_the_register_names() -> None:
+    """The failure that made the whole page look like it did nothing.
+
+    `archive_db` and `[archives.default] file` are allowed to differ the
+    moment anything writes either, and on the beta instance they did. The
+    page found no file, so the table had no rows to type a limit into and the
+    suggest button said the archive was empty -- about a database being
+    written to every five minutes.
+    """
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        work = Path(tmp)
+        admin = an_installation(work, archive_db="archive/gone.sdb")
+        some_records(work / "data" / "one.sdb",
+                     [18.0 + (index % 7) * 0.5 for index in range(60)])
+
+        seen, _dropped, records = adminquality.survey(admin)
+        check("the records are found", records, 60)
+        check("and the reading is listed", "outTemp" in seen, True)
+
+
+def test_every_series_is_measured_not_just_the_default() -> None:
+    """One `quality.toml` is handed to every archiver, so all of them count.
+
+    A floor worked out from the default alone is applied to the north field
+    too. Measured on the default only, the page would offer a floor of 18 and
+    a dry run saying it refuses nothing -- while the second series holds 5.
+    """
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        work = Path(tmp)
+        admin = an_installation(work, second=True)
+        some_records(work / "data" / "one.sdb", [18.0, 19.0] * 30)
+        some_records(work / "data" / "two.sdb", [5.0, 6.0] * 30)
+
+        seen, _dropped, records = adminquality.survey(admin)
+        check("both series are read", records, 120)
+        close_to("the floor covers the colder one", seen["outTemp"].lowest, 5.0)
+        close_to("and the ceiling the warmer one", seen["outTemp"].highest, 19.0)
+
+
+def test_the_dry_run_counts_what_the_rules_would_refuse() -> None:
+    """The figure the page prints above the table, over every series."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        work = Path(tmp)
+        admin = an_installation(work, second=True)
+        some_records(work / "data" / "one.sdb", [20.0] * 10 + [-41.0])
+        some_records(work / "data" / "two.sdb", [20.0] * 10 + [-41.0])
+        (work / "quality.toml").write_text(
+            'unit_system = "metricwx"\n\n[limits.outTemp]\nminimum = -30\n',
+            encoding="utf-8")
+
+        _seen, dropped, records = adminquality.survey(admin)
+        check("over both series", records, 22)
+        check("one refusal in each", dropped.get("outTemp"), 2)
+
+
+def test_a_saved_rule_is_a_file_the_service_reads() -> None:
+    """The page writes where the service looks. Both ends, one comparison.
+
+    Spelled out separately in `adminquality.path_for` and in
+    `cli.quality_path`, this is two answers that agree until one of them is
+    changed.
+    """
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        work = Path(tmp)
+        admin = an_installation(work)
+        adminquality.save(admin, {"limit-outTemp-minimum": "-30"})
+
+        args = argparse.Namespace(config=work / "evo.toml", quality=None)
+        cfg = _resolve(args)
+        check("the page wrote where the service reads",
+              adminquality.path_for(admin), quality_path(args, cfg))
+        policy = read_quality(args, cfg)
+        close_to("and the service reads the rule",
+                 policy.limits["outTemp"].minimum, -30.0)
+
+
+def test_the_watcher_notices_the_rules_being_written() -> None:
+    """Without this a saved limit refused nothing until a restart.
+
+    The watcher's own docstring listed "the readings' limits" among the files
+    it stats. It was the one of the four that was not passed to it, and
+    nothing on the page or in the log could say so.
+
+    Asked of the list `serve` hands the watcher, not of a watcher this test
+    built: a watcher made here would go on noticing the file long after the
+    loop stopped passing it.
+    """
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        work = Path(tmp)
+        admin = an_installation(work)
+        args = argparse.Namespace(config=work / "evo.toml", quality=None)
+        cfg = _resolve(args)
+
+        watched = _watched_files(args, cfg, work)
+        check("the rules are among the files serve watches",
+              quality_path(args, cfg) in watched, True)
+
+        watcher = _Watcher(*watched)
+        check("nothing has changed yet", watcher.changed(), False)
+        adminquality.save(admin, {"limit-outTemp-minimum": "-30"})
+        check("the file being written is a change", watcher.changed(), True)
+
+
+def test_a_saved_rule_reaches_a_running_archiver() -> None:
+    """The whole chain, ending where it has to: a reading that is refused.
+
+    A rule was applied at startup and never again. `apply_live` rebuilds
+    everything else a page can change and did not touch this, so the answer
+    to "why does nothing happen" was a restart nobody had a reason to think
+    of.
+
+    Through `apply_live` rather than through the function it calls: that is
+    the door the loop comes in by, and a fix reachable only by calling past
+    it is the same bug in a different place.
+    """
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        work = Path(tmp)
+        admin = an_installation(work)
+        live_path = an_archive(work, [20.0, 20.1, -41.0, 20.2])
+        args = argparse.Namespace(config=work / "evo.toml", quality=None)
+        cfg = _resolve(args)
+
+        live = LiveStore(live_path, interval_seconds=300)
+        store = ArchiveStore(work / "data" / "one.sdb")
+        try:
+            defined = read_archives(args, cfg).get("default")
+            archiver = Archiver(live, store, interval_seconds=300,
+                                quality=read_quality(args, cfg))
+            check("nothing is refused before a rule exists",
+                  archiver.build(START + 300).dropped, {})
+
+            adminquality.save(admin, {"limit-outTemp-minimum": "-30"})
+            apply_live(args, cfg, None, None,
+                       series=[(defined, store, archiver)])
+
+            built = archiver.build(START + 300)
+            check("the saved rule refuses the reading",
+                  built.dropped, {"outTemp": 1})
+            close_to("and it never reached the mean",
+                     built.record["outTemp"], 20.1, tol=0.05)
+        finally:
+            live.close()
+            store.close()
+
+
+def test_every_archiver_gets_the_rules_not_just_the_first() -> None:
+    """There is one `quality.toml` and it is not keyed on the series.
+
+    A loop that updated the first and left the rest would leave the second
+    place recording what the first refuses -- and the page, which is about
+    readings rather than places, could not show the difference.
+    """
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        work = Path(tmp)
+        admin = an_installation(work, second=True)
+        adminquality.save(admin, {"limit-outTemp-minimum": "-30"})
+        args = argparse.Namespace(config=work / "evo.toml", quality=None)
+        cfg = _resolve(args)
+
+        live_path = an_archive(work, [20.0])
+        live = LiveStore(live_path, interval_seconds=300)
+        stores = [ArchiveStore(work / "data" / name)
+                  for name in ("one.sdb", "two.sdb")]
+        try:
+            # Real archive definitions, not placeholders: `apply_live` also
+            # repoints the stations, and that reads the name off each one.
+            defined = read_archives(args, cfg).all()
+            series = [(one, store, Archiver(live, store, interval_seconds=300,
+                                            name=one.name))
+                      for one, store in zip(defined, stores, strict=True)]
+            apply_live(args, cfg, None, None, series=series)
+            check("both archivers have the rule",
+                  [one.quality.limits["outTemp"].minimum
+                   for _a, _s, one in series], [-30.0, -30.0])
+        finally:
+            live.close()
+            for one in stores:
+                one.close()
 
 
 def main() -> int:

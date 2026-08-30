@@ -510,6 +510,26 @@ def read_stations(args: argparse.Namespace, cfg: Settings,
     return register, Sightings(live)
 
 
+def quality_path(args: argparse.Namespace, cfg: Settings) -> Path:
+    """Where `quality.toml` lives: beside the configuration unless told.
+
+    Its own function because the watcher needs the same answer the reader
+    gets. Worked out twice, a rule saved into a file named on the command
+    line would be read from one path and watched at another.
+    """
+    from . import quality as quality_module
+
+    named = (getattr(args, "quality", None) or cfg.get("quality_file")
+             or quality_module.FILENAME)
+    path = Path(named)
+    if not path.is_absolute() and not getattr(args, "quality", None):
+        # Against the configuration file, like every other relative path that
+        # is not typed on the command line.
+        base = Path(args.config).parent if getattr(args, "config", None) else Path()
+        path = base / path
+    return path
+
+
 def read_quality(args: argparse.Namespace, cfg: Settings) -> Any:
     """The calibration and the limits, from `quality.toml`.
 
@@ -522,14 +542,7 @@ def read_quality(args: argparse.Namespace, cfg: Settings) -> Any:
     """
     from . import quality as quality_module
 
-    named = getattr(args, "quality", None) or cfg.get("quality_file")         or "quality.toml"
-    path = Path(named)
-    if not path.is_absolute():
-        # Against the configuration file, like every other relative path that
-        # is not typed on the command line.
-        base = Path(args.config).parent if getattr(args, "config", None) else Path()
-        if not getattr(args, "quality", None):
-            path = base / path
+    path = quality_path(args, cfg)
     policy = quality_module.load(path)
     if policy:
         log.info("quality: %d limit(s) and %d calibration(s) from %s",
@@ -1338,10 +1351,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     beside = (Path(args.config).parent if getattr(args, "config", None)
               else Path("."))
-    watcher = _Watcher(getattr(args, "config", None),
-                       beside / archives_module.FILENAME,
-                       beside / stations_module.FILENAME,
-                       plots_path(args, cfg))
+    watcher = _Watcher(*_watched_files(args, cfg, beside))
     #: Which series existed when this process started. A place added or
     #: repointed while running needs an archiver and a line in the live
     #: table's pending list, and neither can be handed to a running loop.
@@ -3228,6 +3238,7 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
 
     if series is not None:
         _repoint_stations(args, cfg, series)
+        _recheck_readings(args, cfg, series)
 
     if runner is not None:
         fresh = build_schedule(args, cfg)
@@ -3944,6 +3955,22 @@ def _diagnostic_feed(cfg: Settings, name: str, reads: Path):
                                                     prefix=f"feeds.{name}")
 
 
+def _watched_files(args: argparse.Namespace, cfg: Settings,
+                   beside: Path) -> list[Any]:
+    """Every file a settings page writes and this process reads.
+
+    A list rather than five arguments at the one call site, so there is
+    something a test can ask. Spelled out inline, `quality.toml` was left off
+    while the watcher's own docstring said it was there -- and the only sign
+    was a limit that refused nothing until somebody restarted.
+    """
+    return [getattr(args, "config", None),
+            beside / archives_module.FILENAME,
+            beside / stations_module.FILENAME,
+            plots_path(args, cfg),
+            quality_path(args, cfg)]
+
+
 class _Watcher:
     """Notices that one of the files this process reads has been written.
 
@@ -4047,6 +4074,45 @@ def _collector_shape(cfg: Settings) -> list[str]:
 
     return sorted(name for name, one in collector_defs.configured(cfg).items()
                   if str(one.get("kind", "")).strip() in collector_defs.KINDS)
+
+
+def _recheck_readings(args: argparse.Namespace, cfg: Settings,
+                      series: Any) -> None:
+    """The limits each archiver applies, after `quality.toml` changed.
+
+    Read once at startup and never again, so a limit saved on the settings
+    page refused nothing until somebody restarted the container -- and the
+    page said saved, because it had been. The same failure `_repoint_stations`
+    describes, arriving through the other control on that page.
+
+    Every archiver, not the one whose page was open: there is one
+    `quality.toml` and it is not keyed on the series. `Archiver._checker`
+    builds a fresh checker for every span out of this attribute, so replacing
+    it is the whole of the change -- no run in progress carries the old rules
+    into the next one.
+    """
+    try:
+        policy = read_quality(args, cfg)
+    except Exception:
+        # A file being written as it is read. Left alone rather than
+        # emptied: no rules means nothing is refused, and half a second of
+        # that would let through exactly what the rules exist to stop.
+        log.exception("could not re-read the limits; leaving the archivers "
+                      "as they are")
+        return
+
+    changed = False
+    for _archive, _store, archiver in series:
+        if archiver.quality != policy:
+            changed = True
+        archiver.quality = policy
+    if changed:
+        # Only on a change: this runs whenever any watched file is written,
+        # and a line every time somebody saves an unrelated setting is a line
+        # nobody reads.
+        log.info("%d limit(s) and %d calibration(s) now in force",
+                 len(policy.limits),
+                 sum(len(one) for one in policy.calibration.values()))
 
 
 def _series_shape(args: argparse.Namespace, cfg: Settings) -> list[tuple[str, str]]:

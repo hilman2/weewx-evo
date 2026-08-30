@@ -79,6 +79,14 @@ from . import units
 
 log = logging.getLogger(__name__)
 
+#: Where the rules live, beside the configuration like `plots.toml` and
+#: `archives.toml`. A constant because three places need the same answer --
+#: the service that reads it, the settings page that writes it, and the
+#: watcher that notices the write. Spelled out in two of them and forgotten
+#: in the third, a rule saved on the page reached the running process only
+#: after somebody restarted the container.
+FILENAME = "quality.toml"
+
 #: The units the figures in `quality.toml` are written in. A limit of -50 is
 #: meaningless without one, and guessing from the archive would mean the same
 #: file behaving differently on two stations.
@@ -701,6 +709,41 @@ def merge(limits: dict[str, Seen], rates: dict[str, Seen]) -> dict[str, Seen]:
     for obs, close in rates.items():
         if obs not in out:
             out[obs] = close
+    return out
+
+
+def across(parts: list[dict[str, Seen]]) -> dict[str, Seen]:
+    """One measurement out of several series, widest reading wins.
+
+    There is one `quality.toml` and every archiver gets the same policy out
+    of it, so a floor worked out from one place is applied to all of them. A
+    page that measured only the default series would offer a ceiling the
+    north field exceeds twice a summer, and the dry run beside it would say
+    the rule refuses nothing.
+
+    Each series is measured on its own before it gets here -- `watch` carries
+    the previous reading forward, and the last record of one place followed
+    by the first of another is a step neither sensor took. So this takes one
+    `watch` result per series and returns the readings any of them holds,
+    each widened to cover all of them.
+    """
+    out: dict[str, Seen] = {}
+    for part in parts:
+        for obs, entry in part.items():
+            was = out.get(obs)
+            if was is None:
+                out[obs] = entry
+                continue
+            out[obs] = Seen(
+                obs=obs, count=was.count + entry.count,
+                lowest=min(was.lowest, entry.lowest),
+                highest=max(was.highest, entry.highest),
+                fastest=max(was.fastest, entry.fastest),
+                longest_still=max(was.longest_still, entry.longest_still),
+                # The finest step any of them resolves. A rule needs the
+                # resolution to tell a calm night from a dead sensor, and the
+                # coarser figure would call a moving sensor stuck.
+                step=min(was.step, entry.step))
     return out
 
 
