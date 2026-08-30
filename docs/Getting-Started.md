@@ -228,3 +228,8 @@ to write the same path down twice.
 <!-- covers
 README.md
 -->
+
+<!-- watches
+src/weewx_evo/cli.py
+src/weewx_evo/options.py
+-->

@@ -50,8 +50,6 @@ One feed, one directory, one export, one `live.json`. Separate feeds could not
 link to one another, and every skin setting would be written out once per
 place — which is the WeeWX arrangement this project removed.
 
-![The overview of a site with two places](images/wiki-6-deck-overview.png)
-
 **With one place nothing changes.** No overview, no subdirectory, no
 comparison pages, and the output is what it has always been, file for file.
 The gate is how many places *this feed shows*: a one-entry `archives.toml`

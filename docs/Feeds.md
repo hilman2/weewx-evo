@@ -19,8 +19,6 @@ The settings page draws that arrangement: each feed with the exports carrying
 it underneath, so which one moves what is a thing to look at rather than to
 work out.
 
-![Two feeds, one export carrying both](images/wiki-7-publishing.png)
-
 In WeeWX a "skin" renders files *and* the FTP upload is configured in the same
 section. One page for two destinations means running the renderer twice.
 

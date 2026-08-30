@@ -302,3 +302,7 @@ src/weewx_evo/cli.py
 src/weewx_evo/dumps.py
 src/weewx_evo/dumpscsv.py
 -->
+
+<!-- watches
+src/weewx_evo/cli.py
+-->

@@ -114,8 +114,6 @@ weewx-evo quality check
 The settings page does the same thing behind one button, and prints what the
 rules as they stand would have refused before any of them is saved.
 
-![The sensor checks page, one row per reading](images/wiki-8-quality.png)
-
 `suggest` measures the station: the archive for the floors and ceilings,
 because it has years and knows how cold it gets, and the live table for the
 spike and stuck rules, because only it has the packet-to-packet steps those

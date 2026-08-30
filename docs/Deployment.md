@@ -269,3 +269,7 @@ deploy/Dockerfile
 deploy/compose.yml
 deploy/split.yml
 -->
+
+<!-- watches
+deploy/
+-->

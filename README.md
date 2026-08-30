@@ -1,25 +1,57 @@
 # weewx-evo
 
-A rebuild of the WeeWX core. Python, no dependencies outside the standard
-library, 3.11 and up.
+**Your weather station, on your own website.** Reads a console you already own,
+keeps every reading, and publishes a site you host yourself — no cloud account,
+no subscription, nothing that stops working when a company loses interest.
 
-It records the weather from one console or from ten, keeps it in a database
-WeeWX itself can carry on using, and publishes it — as a website, as charts, to
-a weather service, to Grafana.
+It records the weather at one spot or at twelve, and it goes on using an
+existing WeeWX database **without changing it**, so you can try it beside what
+you run now and switch back at any point.
 
-**Documentation is in the [wiki](https://github.com/hilman2/weewx-evo/wiki).**
+**[See a station running it →](https://weewx-evo.formsache.app/default/index.html)**
 
-## The one rule
+![The current conditions and the forecast](docs/images/readme-1-today.png)
 
-An existing WeeWX database stays readable and writable — **by WeeWX itself**.
-Not "importable": the same file, the same meaning, and WeeWX 5 can carry on
-using it afterwards.
+Every reading gets its own card with today's high and low, live while the
+console is sending. Below them, the last 24 hours:
 
-Everything else here is negotiable. This is not, and it is what the test suite
-spends most of its time on: the daily statistics of a real database are
-recomputed and compared against what WeeWX wrote into it.
+![The last 24 hours](docs/images/readme-2-charts.png)
 
-## Install
+Everything is set from a page in your browser. No file to edit unless you want
+to — and the file it writes stays readable and editable by hand:
+
+![The settings page](docs/images/readme-3-settings.png)
+
+## What you get
+
+| | |
+|---|---|
+| **A website** | a full site, in your language, light or dark, on a web host of your own — or on the station itself |
+| **Live readings** | on the published page, without a broker, a port forward or a certificate |
+| **Charts** | around a hundred to start with, changeable, drawn from your record |
+| **A forecast** | Open-Meteo, DWD, MeteoAlarm or the US service, with warnings |
+| **Several places** | a garden and an allotment on one site, compared side by side |
+| **Weather services** | Weather Underground, Windy, CWOP, PWSweather, WOW, Weathercloud |
+| **Home Assistant** | over MQTT, or the built-in HTTP API |
+| **Grafana** | your record as dashboards, generated from the charts you already have |
+| **Alerts** | an email when a console goes quiet or an upload starts failing |
+| **Sensor checks** | a flat battery reporting −40 never reaches the record |
+
+## Will it run my console?
+
+Almost certainly.
+
+**Anything with a *Custom Server* field** posts straight to it — Ecowitt
+gateways, Froggit, Sainlogic, Ambient, La Crosse. Six protocols are built in.
+
+**Anything WeeWX supports** runs too: weewx-evo drives any WeeWX driver in a
+process of its own, and **WeeWX does not have to be installed**. That covers
+Davis Vantage, Fine Offset, SDR receivers and around a hundred others.
+
+## Getting it running
+
+Python 3.11 or newer. Nothing else — no database server, no message broker, no
+web server. It runs on a Raspberry Pi.
 
 ```bash
 git clone https://github.com/hilman2/weewx-evo
@@ -27,18 +59,10 @@ cd weewx-evo
 pip install -e .
 ```
 
-That gives you the `weewx-evo` command. Without installing works too:
+A token, your position, and go:
 
 ```bash
-PYTHONPATH=src python -m weewx_evo.cli --help
-```
-
-## Set it up
-
-A token, a configuration file, and the service:
-
-```bash
-python -c "import secrets; print(secrets.token_hex(24))"    # the token
+python -c "import secrets; print(secrets.token_hex(24))"    # your token
 
 weewx-evo config set --config evo.toml token <the-token>
 weewx-evo config set --config evo.toml station.name "Kirchdorf an der Amper"
@@ -49,79 +73,50 @@ weewx-evo config set --config evo.toml station.altitude 440
 weewx-evo serve --config evo.toml
 ```
 
-Then point the console at `http://<host>:8000/<token>/ecowitt/` and everything
-else is done on the settings page:
+Then point the console at `http://<this-machine>:8000/<token>/ecowitt/` and open
+the settings page for everything else.
+
+**[Getting started →](https://github.com/hilman2/weewx-evo/wiki/Getting-Started)**
+· [Connecting a console](https://github.com/hilman2/weewx-evo/wiki/Connecting-a-console)
+· [Publishing a website](https://github.com/hilman2/weewx-evo/wiki/Publishing-a-website)
+· [Running it in Docker](https://github.com/hilman2/weewx-evo/wiki/Deployment)
+
+## Already running WeeWX?
+
+Your database is used as it is. Not imported, not converted: **the same file,
+and WeeWX 5 can carry on using it afterwards.** That is the one promise this
+project does not negotiate, and most of the test suite exists to hold it — the
+daily statistics of a real database are recomputed and compared against what
+WeeWX itself wrote.
+
+Your settings and your charts come across too:
 
 ```bash
-weewx-evo config set --config evo.toml admin.token <a-different-token>
-weewx-evo admin --config evo.toml
+weewx-evo config import /etc/weewx/weewx.conf --config evo.toml --write
+weewx-evo plots import /etc/weewx/skins/Seasons/skin.conf --write
 ```
 
-→ [Getting started](https://github.com/hilman2/weewx-evo/wiki/Getting-Started),
-[Several places](https://github.com/hilman2/weewx-evo/wiki/Places),
-[Deployment](https://github.com/hilman2/weewx-evo/wiki/Deployment)
+And a WeeWX skin renders unchanged, so a site you have tuned for years keeps
+working. → [WeeWX compatibility](https://github.com/hilman2/weewx-evo/wiki/WeeWX-Compatibility)
 
-## What it does
+## Documentation
 
-| | |
-|---|---|
-| Takes readings from six push protocols, any WeeWX driver, or a collector of your own | [Drivers](https://github.com/hilman2/weewx-evo/wiki/Drivers) |
-| Records the weather at more than one spot, each with its own coordinates | [Several places](https://github.com/hilman2/weewx-evo/wiki/Places) |
-| Publishes a website, charts as JSON or PNG, and NOAA reports | [Feeds](https://github.com/hilman2/weewx-evo/wiki/Feeds), [Deck](https://github.com/hilman2/weewx-evo/wiki/Deck) |
-| Sends them on by FTP or rsync, only what changed | [Exports](https://github.com/hilman2/weewx-evo/wiki/Exports) |
-| Posts to Weather Underground, Windy, CWOP, MQTT, InfluxDB and others | [Uploads](https://github.com/hilman2/weewx-evo/wiki/Uploads) |
-| Fetches a forecast per place, from Open-Meteo, DWD, MeteoAlarm or NWS | [Forecast](https://github.com/hilman2/weewx-evo/wiki/Forecast) |
-| Refuses a reading a flat battery or a hosed-down rain gauge produced | [Quality control](https://github.com/hilman2/weewx-evo/wiki/Quality) |
-| Says something when a console goes quiet or an upload starts failing | [Notifications](https://github.com/hilman2/weewx-evo/wiki/Notifications) |
-| Answers questions over HTTP, in whatever unit the caller asks for | [API](https://github.com/hilman2/weewx-evo/wiki/API) |
-
-Every stage is reproducible from the one before it. There is no in-memory
-accumulator a restart would lose: a late packet lands in the right interval, and
-a wrong calibration can be corrected afterwards for as long as the raw packets
-are still in retention.
-→ [Architecture](https://github.com/hilman2/weewx-evo/wiki/Architecture)
-
-## Tests
-
-```bash
-docker/run.sh          # or docker\run.ps1
-docker/run.sh --list   # what would run, and what would be skipped
-docker/run.sh units    # just that one
-```
-
-Around a minute, no network. The image carries WeeWX 5.1, pyephem, Cheetah and
-Pillow on purpose: **a test that cannot compare against the thing it was
-transcribed from is not a test.** The unit conversions, the series, the daily
-statistics, the almanac and thirteen WeeWX drivers are each checked against
-WeeWX's own answers.
-
-→ [Testing](https://github.com/hilman2/weewx-evo/wiki/Testing),
-[Contributing](https://github.com/hilman2/weewx-evo/wiki/Contributing)
+The [wiki](https://github.com/hilman2/weewx-evo/wiki) has a user guide — one
+page per job, from connecting a console to backups — and, below it, how the
+thing is built, for anyone who wants to change the code.
 
 ## Licence
 
-**GPL-3.0-or-later**, and that is not a free choice. `aggregate.py` and
-`units.py` are transcriptions from WeeWX, expression by expression: the daily
-statistics arithmetic from `weewx.accum`, the unit conversions from
-`weewx.units`. That makes this a derived work, and WeeWX is GPL v3.
+**GPL-3.0-or-later.** Parts of this are transcribed from WeeWX expression by
+expression — the daily statistics arithmetic and the unit conversions — which
+makes it a derived work, and WeeWX is GPL v3.
 
-It is deliberate rather than a corner we were backed into. A "cleaner"
-recomputed conversion is a chart that differs from WeeWX in the third decimal,
-and not doing that is the whole promise of this project.
+That is deliberate. A "cleaner" recomputed conversion is a chart that differs
+from WeeWX in the third decimal, and not doing that is the whole promise above.
 
 WeeWX: Copyright (c) Tom Keffer and contributors, <https://weewx.com>.
 
-### Bundled
-
-- The **Deck** skin began as [weewx-wdc](https://github.com/Daveiano/weewx-wdc)
-  by David Baetge, GPL v3. `CHANGES.md` beside the skin lists what differs.
-- The **Ecowitt driver** goes back to
-  [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) — the catalogue, the
-  protocol and its tests. It is developed further here.
-- [**uPlot**](https://github.com/leeoniya/uPlot) 1.6.32, MIT, unchanged, under
-  `feeds/diagnostic/vendor/`. The diagnostic feed draws with it, so that page
-  works on a station with no way out to the internet. (Deck draws with ECharts,
-  which it fetches itself.)
-
-Nothing else. The core runs on the standard library, and pyephem is used where
-it is installed without ever being required.
+**Bundled:** the [Deck](https://github.com/Daveiano/weewx-wdc) skin (David
+Baetge, GPL v3), the [Ecowitt driver](https://github.com/hilman2/weewx-ecowitt),
+and [uPlot](https://github.com/leeoniya/uPlot) (MIT) for the diagnostic page.
+Nothing else — the core runs on the Python standard library.

@@ -3,7 +3,7 @@
 Every public class, function and method, its file, and the wiki page
 that describes it.
 
-**Generated:** 2026-08-30 11:55 · `python tools/docsindex.py`
+**Generated:** 2026-08-30 12:28 · `python tools/docsindex.py`
 
 Private names (`_foo`) are left out, `__init__` is included. To find a
 name, use the browser's search.
@@ -1937,7 +1937,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/quality.py`
 
-[Quality control](Quality) · last changed 2026-08-29 16:49
+[Quality control](Quality) · last changed 2026-08-30 12:28
 
 | | Name | Line | |
 |---|---|---|---|

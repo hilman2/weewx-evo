@@ -104,8 +104,6 @@ working that has never heard of places.
 From two places on, each console says which one it writes into. **Consoles →**
 the row's **Place**.
 
-![The consoles page with three consoles and three places](images/wiki-4-consoles.png)
-
 A console that has turned up but was never announced appears under **Seen, not
 announced**, with its readings already being recorded under whatever identity
 its hardware sent. Adopting one gives it a name and a place.
@@ -193,4 +191,8 @@ different zones stay a real case. → [Stations and Archives](Stations-and-Archi
 <!-- covers
 src/weewx_evo/adminarchives.py
 src/weewx_evo/adminstations.py
+-->
+
+<!-- watches
+src/weewx_evo/archives.py
 -->

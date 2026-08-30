@@ -185,7 +185,23 @@ src/weewx_evo/obstypes.py
 -->
 ```
 
-From that, `tools/docsindex.py` builds the [Index](Index) and the
+A user-guide page describes a job rather than a module, so it covers nothing
+and would never be marked. It says what it depends on instead:
+
+```markdown
+<!-- watches
+src/weewx_evo/exports/
+src/weewx_evo/feeds/
+-->
+```
+
+Same test, different claim. **Covering** a file means being its documentation:
+one page owns it, and a file nothing covers is reported as having no page.
+**Watching** one means going stale when it changes: any number of pages may
+watch the same file, and a file nobody watches is nobody's problem. A directory
+stands for everything under it.
+
+From both, `tools/docsindex.py` builds the [Index](Index) and the
 [API-Index](API-Index) — and marks the pages whose code has changed since the
 last revision.
 

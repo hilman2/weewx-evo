@@ -182,6 +182,33 @@ are filled in from the station settings, so that nobody types them twice.
 
 Its own page: [MQTT](MQTT).
 
+### InfluxDB
+
+Its own page, because what reads it is: [Grafana](Grafana). `post(records)`
+with an oldest-first list and a tracker is the shape a time series sink wants,
+so fifteen years is `upload run --since 2010`.
+
+### Live readings on a published page
+
+`webpush`. A page sent by FTP shows figures as old as the last run. This posts
+the current readings to a small PHP file the export carries up with it, which
+writes `live.json` beside the pages; the page polls that.
+
+The connection goes **out**, the same way the upload that put the pages there
+did. Nothing is opened and nothing expires — which is the whole difference from
+the usual answer, an MQTT broker at the station behind a port forward and a
+certificate.
+
+**There is nothing to set up.** The export already knows the address and the
+directories, and the token is derived from the upload token, so
+`live_readings_locally()` creates the upload itself. It is not in the list of
+kinds to add by hand for that reason: as a menu entry it was a form of eight
+empty fields, and the empty one that mattered was the units.
+
+A `local` export needs none of the PHP: the built-in web server serves the
+directory anyway, so `live.json` is written straight into it. **The page cannot
+tell the difference** — it reads `live.json` either way.
+
 ## Configuration
 
 ```toml

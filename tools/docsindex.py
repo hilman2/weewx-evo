@@ -22,6 +22,28 @@ line there, and nothing else has to be told. The alternative -- a separate
 manifest -- is a second list to keep in step with the first, which is the
 failure this whole arrangement exists to avoid.
 
+## And what it merely watches
+
+A user-guide page describes a job rather than a module, so it covers no file
+and `covers` would never mark it. It still goes wrong when the code moves:
+"Settings A-Z" listed four settings that a second place had stopped anyone
+reading, and nothing said so, because the change was in `archives.py` and that
+page covers nothing.
+
+    <!-- watches
+    src/weewx_evo/exports/
+    src/weewx_evo/feeds/
+    -->
+
+Same test, different claim. **Covering a file means being its documentation**
+-- one page owns it, and a file nothing covers is reported. **Watching a file
+means going stale when it changes** -- any number of pages may watch one, and
+nothing is reported for a file nobody watches.
+
+A directory watches everything under it, which is what a page about publishing
+wants: it is out of date when *any* of the export code moves, and listing the
+eleven files by hand is a list that rots.
+
 ## What "dirty" means here
 
 A covered file whose modification time is newer than the page's. That is a
@@ -69,6 +91,7 @@ GENERATED = {"Index.md", "API-Index.md"}
 FURNITURE = {"_Sidebar.md", "_Footer.md", "_Header.md"}
 
 COVERS = re.compile(r"<!--\s*covers\s*(.*?)-->", re.DOTALL)
+WATCHES = re.compile(r"<!--\s*watches\s*(.*?)-->", re.DOTALL)
 
 
 def stamp(path: Path) -> float:
@@ -100,29 +123,58 @@ class Page:
         self.mtime = stamp(path)
         self.covers: list[Path] = []
         self.missing: list[str] = []
+        #: Files this page is not the documentation of but goes stale with.
+        #: A directory stands for everything under it.
+        self.watches: list[Path] = []
         for block in COVERS.findall(text):
-            for line in block.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
+            for line in _named(block):
                 target = ROOT / line
                 if target.exists():
                     self.covers.append(target)
                 else:
                     self.missing.append(line)
+        for block in WATCHES.findall(text):
+            for line in _named(block):
+                target = ROOT / line
+                if target.is_dir():
+                    self.watches += sorted(
+                        f for f in target.rglob("*")
+                        if f.is_file() and "__pycache__" not in f.parts)
+                elif target.exists():
+                    self.watches.append(target)
+                else:
+                    self.missing.append(line)
 
     @property
     def declares(self) -> bool:
-        """Whether the page carries a covers block at all."""
-        return bool(self.covers or self.missing)
+        """Whether the page carries a covers or watches block at all."""
+        return bool(self.covers or self.watches or self.missing)
 
     def stale(self) -> list[tuple[Path, float]]:
-        """Covered files changed since this page was last touched, newest first."""
-        out = [(f, stamp(f)) for f in self.covers if stamp(f) > self.mtime]
+        """Files changed since this page was last touched, newest first.
+
+        Covered and watched together: the question the register answers is
+        "which page is worth looking at now", and for that the two mean the
+        same thing. They differ only in what is reported about the *file* --
+        a file nothing covers is an orphan, a file nothing watches is not.
+        """
+        seen = {f: stamp(f) for f in self.covers + self.watches}
+        out = [(f, at) for f, at in seen.items() if at > self.mtime]
         return sorted(out, key=lambda pair: pair[1], reverse=True)
 
     def newest_covered(self) -> float:
-        return max((stamp(f) for f in self.covers), default=0.0)
+        """The newest file this page stands on, covered or watched."""
+        return max((stamp(f) for f in self.covers + self.watches), default=0.0)
+
+
+def _named(block: str) -> list[str]:
+    """The paths in a covers or watches block, comments and blanks dropped."""
+    out = []
+    for line in block.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            out.append(line)
+    return out
 
 
 def pages() -> list[Page]:
@@ -196,9 +248,9 @@ def render_index(found: list[Page]) -> str:
         "",
         "| | |",
         "|---|---|",
-        "| ✅ | The page is newer than every file it covers |",
+        "| ✅ | The page is newer than every file it covers or watches |",
         "| ⚠️ | A covered file was changed **after** the page — worth a look |",
-        "| — | The page covers no file (glossary, navigation) |",
+        "| — | The page covers and watches nothing (glossary, navigation) |",
         "",
         "\"⚠️\" means *look*, not *wrong*. Anyone who has looked and had nothing",
         "to change ticks it off:",
@@ -250,7 +302,16 @@ def render_index(found: list[Page]) -> str:
             mark, code = "⚠️", when(page.newest_covered())
         else:
             mark, code = "✅", when(page.newest_covered())
-        count = len(page.covers) or "—"
+        # Watched files counted apart: they are what the page goes stale
+        # with, not what it is the documentation of.
+        if page.covers and page.watches:
+            count = f"{len(page.covers)} +{len(page.watches)}w"
+        elif page.covers:
+            count = str(len(page.covers))
+        elif page.watches:
+            count = f"{len(page.watches)}w"
+        else:
+            count = "—"
         lines.append(f"| {mark} | [{page.title}]({page.name}) | {count} "
                      f"| {code} | {when(page.mtime)} |")
     lines.append("")

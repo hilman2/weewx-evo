@@ -40,21 +40,29 @@ is why they run as three systemd units or as one process, with no code change.
 It is not decoration, it is the property that makes `deploy/split.yml`
 possible. → [Architecture](Architecture)
 
-## Where to start
+## Two halves, and you probably want the first
 
-**I want to run it** → [Getting-Started](Getting-Started) ·
-[CLI-Reference](CLI-Reference) · [Deployment](Deployment)
+**The user guide** is about running a weather station: connecting a console,
+publishing a site, being told when something breaks. It starts at
+[Getting Started](Getting-Started) and each page links to the technical one
+behind it, for when you want to know why.
 
-**I have weather at more than one spot** → [Places](Places)
+**Everything below the line in the sidebar** is how this is built — the
+arithmetic, the databases, the transcriptions from WeeWX. **None of it is
+needed to run a station**, including by somebody who likes knowing how things
+work. It is there for changing the code.
 
-**I want to understand how it is put together** → [Architecture](Architecture) ·
-[WeeWX-Compatibility](WeeWX-Compatibility) · [Glossary](Glossary)
-
-**I want to change something** → [Contributing](Contributing) ·
-[Testing](Testing) · [Index](Index) (which file belongs to which page, with
-staleness marks)
-
-**I am looking for a function** → [API-Index](API-Index)
+| I want to… | |
+|---|---|
+| get a station recording | [Getting Started](Getting-Started) · [Connecting a console](Connecting-a-console) |
+| put it on the web | [Publishing a website](Publishing-a-website) · [Charts](Charts) |
+| keep a second spot | [Several places](Places) |
+| send it to Weather Underground, Windy, Grafana | [Sending readings on](Sending-readings-on) |
+| hear about it when it breaks | [Alerts](Alerts) · [Sensor checks](Sensor-checks) |
+| look a setting up | [Settings A–Z](Settings-Reference) · [Command line](CLI-Reference) |
+| understand how it is put together | [Architecture](Architecture) · [WeeWX compatibility](WeeWX-Compatibility) |
+| change the code | [Contributing](Contributing) · [Testing](Testing) · [Index](Index) |
+| find a function | [API index](API-Index) |
 
 ## Licence
 

@@ -213,3 +213,8 @@ src/weewx_evo/exports/ftp.py
 src/weewx_evo/exports/rsync.py
 src/weewx_evo/exports/local.py
 -->
+
+<!-- watches
+src/weewx_evo/options.py
+src/weewx_evo/archives.py
+-->
