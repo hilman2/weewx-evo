@@ -3,7 +3,7 @@
 Every public class, function and method, its file, and the wiki page
 that describes it.
 
-**Generated:** 2026-08-30 10:50 · `python tools/docsindex.py`
+**Generated:** 2026-08-30 11:47 · `python tools/docsindex.py`
 
 Private names (`_foo`) are left out, `__init__` is included. To find a
 name, use the browser's search.

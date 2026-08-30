@@ -3,7 +3,7 @@
 Which file belongs to which wiki page, and where the page is behind
 the code.
 
-**Generated:** 2026-08-30 10:50 · `python tools/docsindex.py`
+**Generated:** 2026-08-30 11:47 · `python tools/docsindex.py`
 
 This page is generated. Edited by hand, it is overwritten on the next
 run — the mapping lives in the `covers` blocks at the end of every wiki
@@ -29,16 +29,18 @@ python tools/docsindex.py --accept <page>.md
 | | |
 |---|---|
 | Wiki pages | 43 |
-| Files covered | 225 of 239 |
-| Pages to look at | 14 |
+| Files covered | 226 of 239 |
+| Pages to look at | 16 |
 | Files with no page | 16 |
 
 ## To look at
 
 | Page | Changed since the page | File last | Page last |
 |---|---|---|---|
+| ⚠️ [Testing](Testing) | `tools/deck_test.py`, `tools/runtests.py` | 2026-08-30 11:33 | 2026-08-30 10:09 |
+| ⚠️ [Getting started](Getting-Started) | `README.md` | 2026-08-30 11:23 | 2026-08-30 10:48 |
+| ⚠️ [weewx-evo](Home) | `README.md` | 2026-08-30 11:23 | 2026-08-30 09:58 |
 | ⚠️ [Several places](Places) | `src/weewx_evo/adminarchives.py` | 2026-08-30 10:48 | 2026-08-30 10:05 |
-| ⚠️ [Contributing](Contributing) | `.gitignore`, `CLAUDE.md` | 2026-08-30 09:58 | 2026-08-27 11:07 |
 | ⚠️ [Configuration](Configuration) | `src/weewx_evo/options.py`, `src/weewx_evo/settings.py`, `tools/settings_test.py` (+1) | 2026-08-30 09:45 | 2026-08-27 11:07 |
 | ⚠️ [Web server](Web-Server) | `src/weewx_evo/webserver.py` | 2026-08-29 19:04 | 2026-08-27 11:05 |
 | ⚠️ [Derived readings](Derived-Readings) | `src/weewx_evo/derive.py`, `tools/derive_test.py` | 2026-08-29 19:04 | 2026-08-27 11:03 |
@@ -62,7 +64,7 @@ python tools/docsindex.py --accept <page>.md
 | ⚠️ | [Archiver](Archiver) | 2 | 2026-08-29 14:55 | 2026-08-27 11:02 |
 | ✅ | [CLI reference](CLI-Reference) | 3 | 2026-08-30 06:51 | 2026-08-30 10:08 |
 | ⚠️ | [Configuration](Configuration) | 4 | 2026-08-30 09:45 | 2026-08-27 11:07 |
-| ⚠️ | [Contributing](Contributing) | 4 | 2026-08-30 09:58 | 2026-08-27 11:07 |
+| ✅ | [Contributing](Contributing) | 5 | 2026-08-30 11:46 | 2026-08-30 11:47 |
 | ✅ | [Daily summaries](Daily-Summaries) | 1 | 2026-08-26 23:56 | 2026-08-27 11:03 |
 | ✅ | [Deck](Deck) | 6 | 2026-08-30 09:46 | 2026-08-30 10:18 |
 | ⚠️ | [Deployment](Deployment) | 3 | 2026-08-27 23:39 | 2026-08-27 11:08 |
@@ -72,7 +74,7 @@ python tools/docsindex.py --accept <page>.md
 | ⚠️ | [Exports](Exports) | 7 | 2026-08-28 22:56 | 2026-08-27 11:11 |
 | ✅ | [Feeds](Feeds) | 10 | 2026-08-30 09:47 | 2026-08-30 10:18 |
 | ✅ | [Forecast](Forecast) | 9 | 2026-08-30 05:54 | 2026-08-30 10:08 |
-| ✅ | [Getting started](Getting-Started) | 1 | 2026-08-27 13:06 | 2026-08-30 10:48 |
+| ⚠️ | [Getting started](Getting-Started) | 1 | 2026-08-30 11:23 | 2026-08-30 10:48 |
 | — | [Glossary](Glossary) | — | — | 2026-08-30 10:48 |
 | ✅ | [Grafana](Grafana) | 9 | 2026-08-30 05:54 | 2026-08-30 10:10 |
 | ⚠️ | [Listener](Ingest-Listener) | 4 | 2026-08-29 14:31 | 2026-08-27 11:01 |
@@ -90,7 +92,7 @@ python tools/docsindex.py --accept <page>.md
 | ⚠️ | [Several places](Places) | 2 | 2026-08-30 10:48 | 2026-08-30 10:05 |
 | ✅ | [Stations and Archives](Stations-and-Archives) | 5 | 2026-08-30 03:14 | 2026-08-30 10:08 |
 | ✅ | [Sun](Sun) | 5 | 2026-08-26 23:56 | 2026-08-30 10:09 |
-| ✅ | [Testing](Testing) | 70 | 2026-08-30 07:12 | 2026-08-30 10:09 |
+| ⚠️ | [Testing](Testing) | 70 | 2026-08-30 11:33 | 2026-08-30 10:09 |
 | ⚠️ | [The archive database](Database-Archive) | 3 | 2026-08-28 17:59 | 2026-08-27 11:03 |
 | ⚠️ | [The live database](Database-Live) | 1 | 2026-08-28 13:12 | 2026-08-27 11:01 |
 | ✅ | [The settings page](Admin-Page) | 7 | 2026-08-30 09:46 | 2026-08-30 10:19 |
@@ -98,7 +100,7 @@ python tools/docsindex.py --accept <page>.md
 | ✅ | [Uploads](Uploads) | 11 | 2026-08-30 05:54 | 2026-08-30 10:08 |
 | ⚠️ | [Web server](Web-Server) | 2 | 2026-08-29 19:04 | 2026-08-27 11:05 |
 | ✅ | [WeeWX compatibility](WeeWX-Compatibility) | 2 | 2026-08-29 12:47 | 2026-08-30 10:49 |
-| ✅ | [weewx-evo](Home) | 7 | 2026-08-30 04:48 | 2026-08-30 09:58 |
+| ⚠️ | [weewx-evo](Home) | 7 | 2026-08-30 11:23 | 2026-08-30 09:58 |
 
 ## Files
 
@@ -267,7 +269,7 @@ python tools/docsindex.py --accept <page>.md
 | `tools/deck_dead_test.py` | 261 | [Testing](Testing) | 2026-08-29 01:55 |
 | `tools/deck_live_test.py` | 1032 | [Testing](Testing) | 2026-08-29 00:18 |
 | `tools/deck_places_test.py` | 851 | [Testing](Testing) | 2026-08-30 01:45 |
-| `tools/deck_test.py` | 840 | [Testing](Testing) | 2026-08-30 03:17 |
+| `tools/deck_test.py` | 840 | ⚠️ [Testing](Testing) | 2026-08-30 11:33 |
 | `tools/derive_test.py` | 521 | ⚠️ [Derived readings](Derived-Readings) · [Testing](Testing) | 2026-08-27 19:38 |
 | `tools/difftest.py` | 133 | [Aggregation](Aggregation) · [Testing](Testing) | 2026-08-26 23:54 |
 | `tools/driverinstall.py` | 225 | [Drivers](Drivers) · [Testing](Testing) | 2026-08-26 23:43 |
@@ -299,7 +301,7 @@ python tools/docsindex.py --accept <page>.md
 | `tools/resilience_test.py` | 300 | [Testing](Testing) | 2026-08-29 14:31 |
 | `tools/roles_test.py` | 237 | [Testing](Testing) | 2026-08-28 18:22 |
 | `tools/roundtrip.py` | 239 | [Archiver](Archiver) · [Testing](Testing) | 2026-08-26 23:54 |
-| `tools/runtests.py` | 411 | [Testing](Testing) | 2026-08-29 21:05 |
+| `tools/runtests.py` | 412 | ⚠️ [Testing](Testing) | 2026-08-30 11:33 |
 | `tools/scaletest.py` | 302 | [Testing](Testing) | 2026-08-27 10:29 |
 | `tools/schedule_test.py` | 234 | [Testing](Testing) | 2026-08-28 22:58 |
 | `tools/sdr_test.py` | 312 | [Testing](Testing) | 2026-08-29 05:23 |
@@ -338,10 +340,10 @@ python tools/docsindex.py --accept <page>.md
 | `deploy/compose.grafana.yml` | 120 | [Grafana](Grafana) | 2026-08-29 17:13 |
 | `deploy/compose.yml` | 93 | ⚠️ [Deployment](Deployment) | 2026-08-27 23:38 |
 | `deploy/split.yml` | 78 | ⚠️ [Architecture](Architecture) · [Deployment](Deployment) | 2026-08-27 23:39 |
-| `README.md` | 458 | [Getting started](Getting-Started) · [weewx-evo](Home) | 2026-08-27 13:06 |
-| `CLAUDE.md` | 2417 | ⚠️ [Contributing](Contributing) · [weewx-evo](Home) | 2026-08-30 04:48 |
+| `README.md` | 127 | ⚠️ [Getting started](Getting-Started) · [weewx-evo](Home) | 2026-08-30 11:23 |
+| `CLAUDE.md` | 2417 | [Contributing](Contributing) · [weewx-evo](Home) | 2026-08-30 04:48 |
 | `pyproject.toml` | 147 | [weewx-evo](Home) · [Testing](Testing) | 2026-08-28 17:40 |
-| `.gitignore` | 61 | ⚠️ [Contributing](Contributing) | 2026-08-30 09:58 |
+| `.gitignore` | 61 | [Contributing](Contributing) | 2026-08-30 09:58 |
 | `LICENSE` | 674 | [weewx-evo](Home) | 2026-08-26 15:37 |
 
 ## With no page

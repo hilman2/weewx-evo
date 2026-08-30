@@ -170,6 +170,12 @@ ruff check src tools tests    # line-length 100
 
 ## Maintaining this wiki
 
+**`docs/` is the source; the wiki is the published copy.** A push to `main` that
+touches `docs/` runs `.github/workflows/wiki.yml`, which copies the pages and
+`docs/images/` into the wiki repository. It deletes there what is gone here, so
+a page edited in the wiki's own web editor is overwritten by the next run.
+Change the file in `docs/`, not the page on the web.
+
 Every page declares at the end which files it covers:
 
 ```markdown
@@ -205,4 +211,5 @@ Say what is. Ask what you want to know. Stop.
 <!-- covers
 CLAUDE.md
 .gitignore
+.github/workflows/wiki.yml
 -->
