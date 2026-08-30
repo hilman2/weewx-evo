@@ -126,3 +126,7 @@ an instance down with 477 of them, three subsystems reporting errors and none
 of them anywhere near the leak.
 
 → [Database-Archive](Database-Archive) · [Daily-Summaries](Daily-Summaries) · [Deployment](Deployment) · [Notifications](Notifications)
+
+<!-- covers
+src/weewx_evo/maintenance.py
+-->

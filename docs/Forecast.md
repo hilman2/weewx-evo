@@ -266,3 +266,15 @@ field names, the namespaces and the encodings are exactly what the services
 send, because that is what parsing fails on.
 
 → [Units](Units) · [Feeds](Feeds) · [Uploads](Uploads)
+
+<!-- covers
+src/weewx_evo/forecast/__init__.py
+src/weewx_evo/forecast/runner.py
+src/weewx_evo/forecast/store.py
+src/weewx_evo/forecast/tags.py
+src/weewx_evo/forecast/codes.py
+src/weewx_evo/forecast/openmeteo.py
+src/weewx_evo/forecast/dwd.py
+src/weewx_evo/forecast/meteoalarm.py
+src/weewx_evo/forecast/nws.py
+-->

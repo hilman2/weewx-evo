@@ -152,3 +152,10 @@ last check is the whole chain — a record through the real upload, into our own
 broker, out to a page — with nothing else installed.
 
 → [Uploads](Uploads) · [Live database](Database-Live) · [Feeds](Feeds)
+
+<!-- covers
+src/weewx_evo/ingest/mqttsub.py
+src/weewx_evo/uploads/mqtt.py
+src/weewx_evo/notify/mqtt.py
+src/weewx_evo/mqtt.py
+-->

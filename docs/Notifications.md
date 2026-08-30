@@ -178,3 +178,12 @@ what is being checked is which answers mean "stop" and which mean "Tuesday",
 and a stub returning a number is a restatement of the code under test.
 
 → [Exports](Exports) · [Uploads](Uploads) · [Deployment](Deployment) · [Grafana](Grafana)
+
+<!-- covers
+src/weewx_evo/notify/__init__.py
+src/weewx_evo/notify/rules.py
+src/weewx_evo/notify/runner.py
+src/weewx_evo/notify/smtp.py
+src/weewx_evo/notify/webhook.py
+src/weewx_evo/exports/record.py
+-->

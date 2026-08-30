@@ -99,3 +99,7 @@ Every line is parsed back against the exposition grammar. Prometheus does not
 looks exactly like the process being down — on the day somebody set this up.
 
 → [API](API) · [Notifications](Notifications) · [Deployment](Deployment) · [Grafana](Grafana)
+
+<!-- covers
+src/weewx_evo/metrics.py
+-->

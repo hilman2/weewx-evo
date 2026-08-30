@@ -37,7 +37,7 @@ is something you want to be able to diff and pass on.
 | `marker`, `marker_size` | |
 | `gap_fraction` | The distance at which a gap is a gap |
 | `rotate` | |
-| `series` | Which [archive](Stations-and-Archives.md) this line reads. Empty is the one the chart is being drawn for, which is every line on every station with one series |
+| `series` | Which [archive](Stations-and-Archives) this line reads. Empty is the one the chart is being drawn for, which is every line on every station with one series |
 | `binding` | WeeWX's `data_binding`, carried through an import and back out again. Read by nothing here |
 
 `series` is what "outTemp at all five locations on one axis" is: five lines,
@@ -293,4 +293,10 @@ weewx-evo plots run [--into DIR] [--no-page]
 <!-- covers
 src/weewx_evo/plots.py
 src/weewx_evo/adminplots.py
+src/weewx_evo/chartdata.py
+src/weewx_evo/feeds/imagegenerator/__init__.py
+src/weewx_evo/feeds/imagegenerator/canvas.py
+src/weewx_evo/feeds/imagegenerator/theme.py
+src/weewx_evo/starter/__init__.py
+src/weewx_evo/starter/plots.toml
 -->

@@ -15,6 +15,12 @@ export → that directory, sent somewhere
 listener and archiver. One feed, three exports. Or three feeds into one
 directory and one export. Neither knows about the other.
 
+The settings page draws that arrangement: each feed with the exports carrying
+it underneath, so which one moves what is a thing to look at rather than to
+work out.
+
+![Two feeds, one export carrying both](images/wiki-7-publishing.png)
+
 In WeeWX a "skin" renders files *and* the FTP upload is configured in the same
 section. One page for two destinations means running the renderer twice.
 
@@ -66,7 +72,7 @@ Whatever it raises is logged and holds nothing up.
 ### One feed, several places
 
 `Produced.directory` is still one directory, and that is deliberate. An
-installation with more than one [archive](Stations-and-Archives.md) publishes
+installation with more than one [archive](Stations-and-Archives) publishes
 one *site*, and a site of several places is a tree inside that one directory:
 an overview at the root and a subdirectory per place. One export moves it,
 one upload writes its `live.json`, and nothing about `Produced` had to grow.
@@ -334,4 +340,9 @@ src/weewx_evo/feeds/jsongenerator/__init__.py
 src/weewx_evo/feeds/diagnostic/__init__.py
 src/weewx_evo/feeds/diagnostic/vendor/LICENSE
 src/weewx_evo/feedrunner.py
+src/weewx_evo/feeds/cheetah/__init__.py
+src/weewx_evo/feeds/realtime/__init__.py
+src/weewx_evo/tags.py
+src/weewx_evo/skinkit.py
+src/weewx_evo/schedule.py
 -->

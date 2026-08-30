@@ -299,4 +299,6 @@ non-zero when something is wrong, so that they are usable in a script.
 
 <!-- covers
 src/weewx_evo/cli.py
+src/weewx_evo/dumps.py
+src/weewx_evo/dumpscsv.py
 -->

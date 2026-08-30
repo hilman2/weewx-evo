@@ -264,3 +264,15 @@ credentials and is written 0600, while a dashboard is copied around and
 rendered to PNG.
 
 → [Uploads](Uploads) · [Plots](Plots) · [Deck](Deck) · [Deployment](Deployment)
+
+<!-- covers
+src/weewx_evo/grafana/__init__.py
+src/weewx_evo/grafana/dashboards.py
+src/weewx_evo/grafana/panels.py
+src/weewx_evo/grafana/query_influx.py
+src/weewx_evo/grafana/style.py
+src/weewx_evo/grafana/words.py
+src/weewx_evo/grafana/icons.py
+src/weewx_evo/uploads/influx.py
+deploy/compose.grafana.yml
+-->

@@ -228,3 +228,17 @@ wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
 ```
 
 → [Exports](Exports) · [MQTT](MQTT) · [Feeds](Feeds)
+
+<!-- covers
+src/weewx_evo/uploads/__init__.py
+src/weewx_evo/uploads/runner.py
+src/weewx_evo/uploads/records.py
+src/weewx_evo/uploads/progress.py
+src/weewx_evo/uploads/ambient.py
+src/weewx_evo/uploads/cwop.py
+src/weewx_evo/uploads/windy.py
+src/weewx_evo/uploads/weathercloud.py
+src/weewx_evo/uploads/homeassistant.py
+src/weewx_evo/uploads/webpush.py
+src/weewx_evo/exports/livepush/__init__.py
+-->

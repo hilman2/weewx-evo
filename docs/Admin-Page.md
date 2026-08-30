@@ -10,6 +10,12 @@ renders `Option` objects and writes back what comes out. That is the whole
 design: a driver that gains a setting gains a field, and this file does not
 change. → [Configuration](Configuration)
 
+![The overview: a card per step, in the order a reading travels](images/wiki-9-admin-overview.png)
+
+The chain along the top of that page — consoles, places, feeds, exports — is on
+every page belonging to it, with the one being looked at marked.
+→ [Several places](Places)
+
 ## Starting it
 
 ```bash
@@ -23,11 +29,8 @@ Its own port, its own token, deliberately: an upload can at worst write a wrong
 reading, this page can point the archive at a different file. **The same token
 for both is refused.** → [Security](Security)
 
-Reaching it from elsewhere without opening it up:
-
-```bash
-ssh -L 8080:localhost:8080 the-station
-```
+Reaching it from elsewhere without opening it up: → [Getting
+Started](Getting-Started#the-settings-page)
 
 ## The routes
 
@@ -187,4 +190,9 @@ The cases that found something:
 <!-- covers
 src/weewx_evo/admin.py
 tools/adminpage.py
+src/weewx_evo/adminhome.py
+src/weewx_evo/adminpublish.py
+src/weewx_evo/adminsearch.py
+src/weewx_evo/adminsetup.py
+src/weewx_evo/adminfields.py
 -->

@@ -121,4 +121,7 @@ would be a whole day of difference.
 <!-- covers
 src/weewx_evo/sun.py
 tools/suncheck.py
+src/weewx_evo/moon.py
+src/weewx_evo/planets.py
+src/weewx_evo/vsop87.py
 -->

@@ -12,6 +12,7 @@
 - [Ecowitt](Driver-Ecowitt)
 - [Plugins](Plugins)
 - [Multiple Sources](Multiple-Sources)
+- [Stations and Archives](Stations-and-Archives)
 
 **Processing**
 - [Live database](Database-Live)

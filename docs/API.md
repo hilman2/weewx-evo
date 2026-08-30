@@ -134,3 +134,7 @@ route in is as much a part of this as the answers — including a feed called
 `api` sitting next to it.
 
 → [Series](Series) · [Web-Server](Web-Server) · [Units](Units) · [Security](Security)
+
+<!-- covers
+src/weewx_evo/api.py
+-->

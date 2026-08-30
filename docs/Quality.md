@@ -111,6 +111,11 @@ weewx-evo quality suggest --days 365 > quality.toml
 weewx-evo quality check
 ```
 
+The settings page does the same thing behind one button, and prints what the
+rules as they stand would have refused before any of them is saved.
+
+![The sensor checks page, one row per reading](images/wiki-8-quality.png)
+
 `suggest` measures the station: the archive for the floors and ceilings,
 because it has years and knows how cold it gets, and the live table for the
 spike and stuck rules, because only it has the packet-to-packet steps those
@@ -175,3 +180,8 @@ and refuse nothing — is what found the unit-system variable being shadowed by
 a loop variable in `watch`, which recorded a wind speed of 4 as 1.79.
 
 → [Archiver](Archiver) · [Derived-Readings](Derived-Readings) · [Units](Units) · [Database-Live](Database-Live)
+
+<!-- covers
+src/weewx_evo/quality.py
+src/weewx_evo/adminquality.py
+-->

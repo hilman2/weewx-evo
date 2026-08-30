@@ -312,7 +312,7 @@ it beside another one. Three fields closed that: a colour, a short code and
 a presentation order, all in `archives.toml` and all optional.
 
 They are here rather than in a skin for the same reason plot definitions are:
-[Deck](Deck.md), the image generator and [Grafana](Grafana.md) would otherwise
+[Deck](Deck), the image generator and [Grafana](Grafana) would otherwise
 hold three copies of "what colour is the north field", and the day they
 disagree the same place is one colour on a page and another in the picture
 beside it.
@@ -343,3 +343,11 @@ comes back out as a list with every lookup on the page finding nothing.
 * Whether an archive gets its own `sources.toml` policy. It is global now,
   which is harmless while two archives share no stations, and wrong the
   moment one does.
+
+<!-- covers
+src/weewx_evo/archives.py
+src/weewx_evo/stations.py
+src/weewx_evo/roles.py
+src/weewx_evo/adopt.py
+src/weewx_evo/collectors.py
+-->

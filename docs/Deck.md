@@ -8,7 +8,7 @@ lists what is different; this page is what an operator sets.
 
 ## Running it
 
-A skin is rendered by a [Cheetah feed](Feeds.md), so Deck is one entry under
+A skin is rendered by a [Cheetah feed](Feeds), so Deck is one entry under
 `[feeds]`:
 
 ```toml
@@ -17,7 +17,7 @@ feeds.site.skin = "deck"
 ```
 
 Nothing else is needed. The pages land in the feed's directory and an
-[export](Exports.md) moves them wherever they are published.
+[export](Exports) moves them wherever they are published.
 
 Two of them are two entries, which is how one station publishes the same
 readings twice — a German page and an English one, or metric and US:
@@ -33,7 +33,7 @@ feeds.en.units = "US"
 
 ## Several places on one site
 
-An installation with more than one [archive](Stations-and-Archives.md) keeps
+An installation with more than one [archive](Stations-and-Archives) keeps
 several measurement series, each for its own place. One Deck feed publishes
 all of them as **one site**:
 
@@ -49,6 +49,8 @@ one place                   several places
 One feed, one directory, one export, one `live.json`. Separate feeds could not
 link to one another, and every skin setting would be written out once per
 place — which is the WeeWX arrangement this project removed.
+
+![The overview of a site with two places](images/wiki-6-deck-overview.png)
 
 **With one place nothing changes.** No overview, no subdirectory, no
 comparison pages, and the output is what it has always been, file for file.
@@ -99,7 +101,7 @@ legend click repeated four times. With scripting off every place is on every
 chart, and the table above is complete either way — it is server-rendered,
 it prints, and it is the answer; the charts are the *shape* of the answer.
 
-The comparison charts are ordinary [plots](Plots.md) whose lines name their
+The comparison charts are ordinary [plots](Plots) whose lines name their
 archive, so the image generator draws the same overlays. They are generated
 rather than typed:
 
@@ -123,7 +125,7 @@ plot and draws it, then asks again every minute.
 That is the difference worth knowing about this fork. Upstream, a chart is
 defined in the skin and queried while the page is written — so it is as old as
 the last render, and the skin holds an opinion about what a chart contains
-while [`plots.toml`](Plots.md) and the plot editor hold another.
+while [`plots.toml`](Plots) and the plot editor hold another.
 
 Two settings follow from it:
 
@@ -267,13 +269,13 @@ page.
 
 Language files are whole skin configurations rather than word lists — units,
 labels, the points of the compass — and `skin.conf` overrides them, which is
-[WeeWX's order](WeeWX-Compatibility.md) and is kept.
+[WeeWX's order](WeeWX-Compatibility) and is kept.
 
 ## Live readings
 
 The station posts its current readings to `live.php`, which writes them beside
 itself; the page reads that file every ten seconds. No broker, no port
-forwarded, no certificate. It is set up by whichever [export](Exports.md)
+forwarded, no certificate. It is set up by whichever [export](Exports)
 publishes these pages — there is nothing to configure in the skin.
 
 `Extras.live_push` switches the poller off for a site that does not want it.
@@ -282,7 +284,16 @@ publishes these pages — there is nothing to configure in the skin.
 
 - **Nivo's chart options.** ECharts draws here. See above.
 - **weewx-forecast and weewx-DWD.** The forecast section reads
-  [`$forecast`](Forecast.md), which is weewx-evo's own and covers hours, days,
+  [`$forecast`](Forecast), which is weewx-evo's own and covers hours, days,
   warnings and the model run.
 - **A `[[Rounding]]` section per table.** Decimal places come from the units
   the page is written in.
+
+<!-- covers
+src/weewx_evo/skins/deck/options.py
+src/weewx_evo/skins/deck/tags.py
+src/weewx_evo/skins/deck/skin.conf
+src/weewx_evo/skins/__init__.py
+src/weewx_evo/skins/deck/CHANGES.md
+src/weewx_evo/skins/deck/README.md
+-->

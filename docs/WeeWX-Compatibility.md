@@ -194,10 +194,7 @@ Two pitfalls, both of them real:
 daily summaries, but uses a plain `AVG()` on the archive table — so in a database
 whose archive interval has changed, WeeWX contradicts itself.
 
-Measured: `tools/seriestest.py`, 94 comparisons, 19,957 points, 0 failures,
-8 known departures (exactly these).
-
-→ [Series](Series#one-deliberate-departure)
+→ [Series](Series#one-deliberate-departure), which has the measurement.
 
 ## Running side by side
 

@@ -57,7 +57,7 @@ before you change them.
 Two consoles in *one* garden do not need this. Both already feed the one place,
 and pointing a second console at it is a job for the
 [Consoles](#pointing-a-console-at-a-place) page. A place is for a second
-*spot* -- somewhere with its own sunrise and its own air pressure.
+*spot* — somewhere with its own sunrise and its own air pressure.
 
 **Where you measure → Add a second place.**
 
@@ -181,7 +181,7 @@ A chart line names the place it reads, so one chart can draw two places on one
 axis. → [Plots](Plots)
 
 A forecast is an answer about a pair of coordinates, so it belongs to one place:
-two places want two entries. A place with no entry gets no forecast -- never its
+two places want two entries. A place with no entry gets no forecast — never its
 neighbour's. → [Forecast](Forecast)
 
 ## What is not built
