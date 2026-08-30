@@ -3,14 +3,14 @@
 Every public class, function and method, its file, and the wiki page
 that describes it.
 
-**Generated:** 2026-08-30 11:47 · `python tools/docsindex.py`
+**Generated:** 2026-08-30 11:55 · `python tools/docsindex.py`
 
 Private names (`_foo`) are left out, `__init__` is included. To find a
 name, use the browser's search.
 
 ## `src/weewx_evo/admin.py`
 
-[The settings page](Admin-Page) · last changed 2026-08-30 09:46
+[The settings page](Admin-Page) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -70,7 +70,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminarchives.py`
 
-[Several places](Places) · last changed 2026-08-30 10:48
+[Several places](Places) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -110,7 +110,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminhome.py`
 
-[The settings page](Admin-Page) · last changed 2026-08-30 09:37
+[The settings page](Admin-Page) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -126,7 +126,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminplots.py`
 
-[Plots](Plots) · last changed 2026-08-30 05:54
+[Plots](Plots) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -149,7 +149,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminpublish.py`
 
-[The settings page](Admin-Page) · last changed 2026-08-30 07:02
+[The settings page](Admin-Page) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -160,7 +160,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminquality.py`
 
-[Quality control](Quality) · last changed 2026-08-30 05:52
+[Quality control](Quality) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -190,7 +190,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminsetup.py`
 
-[The settings page](Admin-Page) · last changed 2026-08-30 06:40
+[The settings page](Admin-Page) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -200,7 +200,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminstations.py`
 
-[Several places](Places) · last changed 2026-08-30 07:22
+[Several places](Places) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -328,7 +328,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/archives.py`
 
-[Stations and Archives](Stations-and-Archives) · last changed 2026-08-30 03:14
+[Stations and Archives](Stations-and-Archives) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -364,7 +364,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/chartdata.py`
 
-[Plots](Plots) · last changed 2026-08-29 20:45
+[Plots](Plots) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -381,7 +381,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/cli.py`
 
-[CLI reference](CLI-Reference) · last changed 2026-08-30 06:51
+[CLI reference](CLI-Reference) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -600,7 +600,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/derive.py`
 
-[Derived readings](Derived-Readings) · last changed 2026-08-29 19:04
+[Derived readings](Derived-Readings) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -713,7 +713,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/exports/livepush/__init__.py`
 
-[Uploads](Uploads) · last changed 2026-08-29 19:04
+[Uploads](Uploads) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -808,7 +808,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/feedrunner.py`
 
-[Feeds](Feeds) · last changed 2026-08-29 19:04
+[Feeds](Feeds) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -827,7 +827,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/feeds/__init__.py`
 
-[Feeds](Feeds) · last changed 2026-08-30 05:53
+[Feeds](Feeds) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -847,7 +847,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/feeds/cheetah/__init__.py`
 
-[Feeds](Feeds) · last changed 2026-08-30 06:51
+[Feeds](Feeds) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -867,7 +867,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/feeds/diagnostic/__init__.py`
 
-[Feeds](Feeds) · last changed 2026-08-29 19:04
+[Feeds](Feeds) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -881,7 +881,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/feeds/imagegenerator/__init__.py`
 
-[Plots](Plots) · last changed 2026-08-29 19:04
+[Plots](Plots) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -932,7 +932,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/feeds/jsongenerator/__init__.py`
 
-[Feeds](Feeds) · last changed 2026-08-30 09:47
+[Feeds](Feeds) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -958,7 +958,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/forecast/__init__.py`
 
-[Forecast](Forecast) · last changed 2026-08-30 05:54
+[Forecast](Forecast) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1071,7 +1071,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/forecast/runner.py`
 
-[Forecast](Forecast) · last changed 2026-08-30 04:43
+[Forecast](Forecast) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1091,7 +1091,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/forecast/store.py`
 
-[Forecast](Forecast) · last changed 2026-08-30 03:15
+[Forecast](Forecast) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1112,7 +1112,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/forecast/tags.py`
 
-[Forecast](Forecast) · last changed 2026-08-30 03:11
+[Forecast](Forecast) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1168,7 +1168,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/grafana/dashboards.py`
 
-[Grafana](Grafana) · last changed 2026-08-29 19:50
+[Grafana](Grafana) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1794,7 +1794,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/notify/rules.py`
 
-[Notifications](Notifications) · last changed 2026-08-29 22:43
+[Notifications](Notifications) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1859,7 +1859,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/options.py`
 
-[Configuration](Configuration) · last changed 2026-08-30 09:45
+[Configuration](Configuration) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1904,7 +1904,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/plots.py`
 
-[Plots](Plots) · last changed 2026-08-29 20:08
+[Plots](Plots) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2135,7 +2135,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/skins/deck/options.py`
 
-[Deck](Deck) · last changed 2026-08-30 09:46
+[Deck](Deck) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2143,7 +2143,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/skins/deck/tags.py`
 
-[Deck](Deck) · last changed 2026-08-29 21:57
+[Deck](Deck) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2314,7 +2314,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/tags.py`
 
-[Feeds](Feeds) · last changed 2026-08-29 19:04
+[Feeds](Feeds) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2482,7 +2482,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/uploads/__init__.py`
 
-[Uploads](Uploads) · last changed 2026-08-30 05:54
+[Uploads](Uploads) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2569,7 +2569,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/uploads/influx.py`
 
-[Grafana](Grafana) · last changed 2026-08-30 05:54
+[Grafana](Grafana) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2619,7 +2619,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/uploads/records.py`
 
-[Uploads](Uploads) · last changed 2026-08-29 22:44
+[Uploads](Uploads) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2639,7 +2639,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/uploads/runner.py`
 
-[Uploads](Uploads) · last changed 2026-08-30 04:44
+[Uploads](Uploads) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2676,7 +2676,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/uploads/webpush.py`
 
-[Uploads](Uploads) · last changed 2026-08-29 22:45
+[Uploads](Uploads) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|
@@ -2726,7 +2726,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/webserver.py`
 
-[Web server](Web-Server) · last changed 2026-08-29 19:04
+[Web server](Web-Server) · last changed 2026-08-30 11:51
 
 | | Name | Line | |
 |---|---|---|---|

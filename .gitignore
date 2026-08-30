@@ -50,6 +50,11 @@ plots.toml
 # indistinguishable from this.
 !src/weewx_evo/starter/plots.toml
 
+# The working list of what to build next. Notes to self, in German, on the
+# front page of a public repository -- and out of date the moment a step is
+# done. Kept on disk, not in the repository.
+PLAN.md
+
 # Screenshots taken while working on the settings page. Two have gone in
 # by accident; the page is checked by looking at it, and what is looked at
 # is not what is kept.
