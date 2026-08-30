@@ -198,6 +198,8 @@ def tests() -> list[Test]:
         # against rather than as a thing to run on.
         Test("collector", ["collector_test.py"],
              "a collector is a station: its own name, its own rules"),
+        Test("weewxdrivers", ["weewxdrivers_test.py"],
+             "a driver's own form, and a console with no weewx.conf"),
         Test("standin", ["standin_test.py"],
              "a WeeWX driver decodes a record with no WeeWX installed"),
         Test("vantage", ["vantage_test.py"],

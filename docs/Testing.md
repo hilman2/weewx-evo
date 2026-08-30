@@ -349,6 +349,7 @@ tools/archives_e2e.py
 tools/archives_test.py
 tools/cheetah_test.py
 tools/collector_test.py
+tools/weewxdrivers_test.py
 tools/deck_dead_test.py
 tools/deck_live_test.py
 tools/deck_places_test.py

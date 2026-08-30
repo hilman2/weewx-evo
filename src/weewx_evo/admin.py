@@ -340,7 +340,7 @@ class Admin:
         self.refresh()
         return ""
 
-    def add_collector(self, name: str, kind: str) -> str:
+    def add_collector(self, name: str, kind: str, driver: str = "") -> str:
         """Create a collector. Returns an error, or empty if it worked.
 
         The name is checked against what the listener already answers to, and
@@ -348,6 +348,12 @@ class Admin:
         take a real driver's endpoint: the uploads would still arrive, be
         handed to the envelope parser, fail to parse, and look like a console
         that had stopped working.
+
+        `driver` is the hardware, and it is asked for here rather than on the
+        page after: which driver was chosen decides which fields that page
+        has, so leaving it for later means arriving at a form that cannot ask
+        anything yet. Empty is a collector configured from a `weewx.conf`,
+        which is what an installation moving over already has.
         """
         from . import collectors as collector_defs
 
@@ -373,6 +379,8 @@ class Admin:
             if config_file.get(current, f"collectors.{name}") is not None:
                 return f"There is already a collector called {name!r}."
             config_file.put(current, f"collectors.{name}.kind", kind)
+            if driver and kind == "weewx-driver":
+                config_file.put(current, f"collectors.{name}.driver", driver)
             try:
                 config_file.write(self.path, current, self.schemas)
             except Exception as exc:
@@ -988,7 +996,17 @@ def field(option: Option, value: Any, error: str = "",
     name = html.escape(option.name)
     shown = option.render(value)
     label = html.escape(option.label)
-    out = [f'<div class="field{" bad" if error else ""}">']
+    # What this field depends on, for a script to fold it away. Stated on the
+    # field rather than acted on here: the form is rendered once and the value
+    # it depends on changes while somebody types, so the renderer cannot know.
+    # Without the script every field is visible, which is the safe direction --
+    # see `Option.when`.
+    depends = ""
+    if option.when is not None:
+        on, values = option.when
+        depends = (f' data-when="{html.escape(str(on))}"'
+                   f' data-when-is="{html.escape(" ".join(str(v) for v in values))}"')
+    out = [f'<div class="field{" bad" if error else ""}"{depends}>']
     out.append(f'<label for="f-{name}">{label}')
     if option.required:
         out.append('<span class="req" title="required">*</span>')
@@ -1069,17 +1087,19 @@ def field(option: Option, value: Any, error: str = "",
             "unset" if option.default is None else "")
         # Suggestions rather than a dropdown, where the usual answers are
         # worth one click but an unusual one must still be typeable. `allow`
-        # is the case: "private", "any", or a list nobody can enumerate.
-        listed = f' list="l-{name}"' if option.suggestions else ""
+        # is the case: "private", "any", or a list nobody can enumerate. So
+        # is a serial port, which is why this asks the machine as well.
+        suggestions = option.offered()
+        listed = f' list="l-{name}"' if suggestions else ""
         out.append(f'<input type="{kinds.get(option.kind, "text")}" id="f-{name}" '
                    f'name="{name}" value="{html.escape(str(shown))}"'
                    f'{step}{limits}{listed} placeholder="{html.escape(placeholder)}" '
                    f'autocomplete="off" spellcheck="false">')
-        if option.suggestions:
+        if suggestions:
             out.append(f'<datalist id="l-{name}">')
-            for value_, text in option.suggestions:
-                out.append(f'<option value="{html.escape(value_)}">'
-                           f"{html.escape(text)}</option>")
+            for value_, text in suggestions:
+                out.append(f'<option value="{html.escape(str(value_))}">'
+                           f"{html.escape(str(text))}</option>")
             out.append("</datalist>")
 
     if option.unit:
@@ -1380,6 +1400,19 @@ def new_collector_page(admin: Admin, error: str = "",
         f"<code>weewx-evo {html.escape(one.command)}</code>.</li>"
         for one in collector_defs.KINDS.values())
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+
+    # The hardware, asked for here rather than on the page after. Which
+    # driver was chosen decides which fields that page has, so leaving it
+    # until then means arriving at a form with nothing on it -- and the
+    # driver's own settings are the reason somebody came.
+    picked = str(form.get("driver", ""))
+    hardware = NEWLINE.join(
+        f'<option value="{html.escape(value)}"'
+        f'{" selected" if picked == value else ""}>{html.escape(label)}</option>'
+        for value, label in
+        [("", "-- from a weewx.conf --"),
+         *collector_defs._hardware_choices(picked)])
+
     return f'''
 <section class="group">
   <p class="lede">A collector goes and reads a console, rather than waiting
@@ -1393,9 +1426,9 @@ def new_collector_page(admin: Admin, error: str = "",
     <li><strong>Here</strong>: a name and a kind. That writes it into the
         configuration file and gives it an endpoint of its own at the
         listener, so its readings can be told from another collector's.</li>
-    <li><strong>Its own page, next</strong>: which <code>weewx.conf</code>,
-        or which broker and topics. Nothing is delivered until that is filled
-        in.</li>
+    <li><strong>Its own page, next</strong>: the serial port, the model, the
+        broker and its topics. For a WeeWX driver those fields are read out
+        of the driver itself, so they are the ones it actually takes.</li>
     <li><strong>Then start it</strong>, where the hardware is. This page
         never starts anything: it is a separate process, on purpose, so that
         a serial port which stops answering cannot stop the archiver. The
@@ -1423,6 +1456,15 @@ def new_collector_page(admin: Admin, error: str = "",
       <label for="f-kind">What it runs</label>
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
+    </div>
+    <div class="field" data-when="kind" data-when-is="weewx-driver">
+      <label for="f-driver">The hardware</label>
+      <select id="f-driver" name="driver">{hardware}</select>
+      <p class="help">Every WeeWX driver on this machine. Its own settings --
+         serial port, model, whatever else it takes -- are read out of the
+         driver and asked for on the next page, so WeeWX itself does not
+         have to be installed. Leave it on <em>from a weewx.conf</em> if you
+         already have one that works.</p>
     </div>
     <div class="actions"><button type="submit">Create</button></div>
   </form>
@@ -2845,6 +2887,31 @@ _PAGE = """<!doctype html>
       box.focus();
     }});
   }});
+
+  // A field that only applies for certain values of another. The renderer
+  // marks it and this folds it away, so a form with nothing running shows
+  // every field -- one too many is harmless, one too few is the failure.
+  //
+  // A hidden field still submits, and that is on purpose: a Vantage handed
+  // both a port and a host ignores the one its type does not name, which is
+  // exactly what a stanza written by hand has always done. Clearing it here
+  // would throw away what somebody typed before they changed their mind.
+  var conditional = document.querySelectorAll("[data-when]");
+  if (conditional.length) {{
+    var settle = function () {{
+      conditional.forEach(function (field) {{
+        var on = field.getAttribute("data-when");
+        var wanted = (field.getAttribute("data-when-is") || "").split(" ");
+        var source = document.querySelector('[name="' + on + '"]');
+        // No such field on this form: show it. Guessing would hide a setting
+        // for a reason nobody can see.
+        field.hidden = !!source && wanted.indexOf(source.value) < 0;
+      }});
+    }};
+    document.addEventListener("change", settle);
+    document.addEventListener("input", settle);
+    settle();
+  }}
 }})();
 </script>
 </body>
@@ -3088,11 +3155,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._setup_step(action, form)
             return
 
-        # Adding one. Two fields; everything else waits for the page that
-        # appears next.
+        # Adding one. A name, a kind, and -- for a WeeWX driver -- which
+        # hardware, because that is what decides the fields on the page it
+        # redirects to.
         if action == "new-collector":
             error = self.admin.add_collector(form.get("name", ""),
-                                             form.get("kind", ""))
+                                             form.get("kind", ""),
+                                             form.get("driver", ""))
             if error:
                 self._reply(200, page(self.admin, "new-collector",
                                       errors={"": error}, form=form))
