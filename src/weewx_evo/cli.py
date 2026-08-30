@@ -1258,6 +1258,31 @@ def cmd_serve(args: argparse.Namespace) -> int:
         udp.start()
         log.info("UDP on %s:%s", cfg.get("host"), cfg.get("udp_port"))
 
+    # The local web server for whatever the feeds produced. Its own port:
+    # the listener answers hardware behind a token and this answers browsers,
+    # and one port for two audiences means the stricter rule has to lose.
+    # Declared out here because the watchdog is handed to it further down,
+    # and an installation with the web server switched off reached that line
+    # and stopped `serve` from starting at all.
+    #
+    # **Before the catch-up, and before the feeds.** What it serves is on
+    # disk already, written by the last run, so there is nothing to wait for.
+    # Started after them, every restart took the site down for as long as the
+    # catch-up ran, and a reverse proxy in front of it answered 502 the whole
+    # time -- for pages that were sitting there, complete, the entire while.
+    web = metrics = None
+    if cfg.get("web.enabled"):
+        site = site_from(cfg)
+        metrics = build_metrics(args, cfg, live=live)
+        web = WebServer(site, cfg.get("web.host"), cfg.get("web.port"),
+                        access=Access.parse(cfg.get("web.allow")),
+                        api=build_api(args, cfg, announced),
+                        metrics=metrics)
+        web.start()
+        log.info("serving %d feed(s) on %s:%s%s", len(site.feeds),
+                 web.host, web.port,
+                 f", {site.default} at /" if site.default else "")
+
     for archive_def, _store, archiver in series:
         caught = archiver.catch_up()
         if caught:
@@ -1279,25 +1304,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
         # the one thing that file is not supposed to be.
         ingest.on_packets = feeds.packet_stored
 
-
-    # The local web server for whatever the feeds produced. Its own port:
-    # the listener answers hardware behind a token and this answers browsers,
-    # and one port for two audiences means the stricter rule has to lose.
-    # Declared out here because the watchdog is handed to it further down,
-    # and an installation with the web server switched off reached that line
-    # and stopped `serve` from starting at all.
-    web = metrics = None
-    if cfg.get("web.enabled"):
-        site = site_from(cfg)
-        metrics = build_metrics(args, cfg, live=live)
-        web = WebServer(site, cfg.get("web.host"), cfg.get("web.port"),
-                        access=Access.parse(cfg.get("web.allow")),
-                        api=build_api(args, cfg, announced),
-                        metrics=metrics)
-        web.start()
-        log.info("serving %d feed(s) on %s:%s%s", len(site.feeds),
-                 web.host, web.port,
-                 f", {site.default} at /" if site.default else "")
 
     # The exports, each in its own thread. Not in this loop: an FTP host that
     # has stopped answering sits in a connect for its timeout, and thirty

@@ -291,11 +291,22 @@ class Archiver:
 
     def catch_up(self, since: float | None = None, until: float | None = None,
                  replace: bool = False) -> int:
-        """Build every interval covered by the live table.
+        """Build every interval covered by the live table that is not archived.
 
         Used at startup, after downtime, and by the differential test. Unlike
         `process_due` this ignores the pending list and works straight from the
         packets, so it also fills intervals whose marks were lost.
+
+        **What is already in the archive is not built again.** It used to be:
+        the record was built, `exists` was asked afterwards, and the answer
+        threw the work away. At startup that meant rebuilding the whole live
+        retention every time -- reading the packets, running the quality
+        rules, deriving and accumulating -- to arrive at records that were all
+        already there. Measured on a running instance: 153 intervals, 43
+        seconds, and "caught up 0" at the end of it.
+
+        The cost is one primary-key lookup per interval, against building one.
+        `replace` still builds everything, because that is what it is for.
         """
         first, last = self.live.span()
         if first is None:
@@ -307,12 +318,18 @@ class Archiver:
         stop = interval_stop(since, seconds)
         done = 0
         while stop <= interval_stop(until, seconds):
+            existing = self.archive.exists(stop)
+            if existing and not replace:
+                # Asked before building rather than after. A gap inside the
+                # live span is still filled: this skips the intervals that
+                # are there, not the ones that are missing.
+                self.live.clear_pending(stop, self.name)
+                stop += seconds
+                continue
             built = self.build(stop, seconds)
             if built is not None:
-                existing = self.archive.exists(stop)
-                if not existing or replace:
-                    self.store(built, replace=existing)
-                    done += 1
+                self.store(built, replace=existing)
+                done += 1
             self.live.clear_pending(stop, self.name)
             stop += seconds
         return done
