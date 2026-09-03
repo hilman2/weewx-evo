@@ -67,7 +67,7 @@ minutes. But it would have been allowed, and that is the point.
 
 ## The catalogue
 
-[**weewx-evo-plugins**](https://github.com/hilman2/weewx-evo-plugins). One
+[**weewx-evo-plugins**](https://github.com/weewx-evo/weewx-evo-plugins). One
 `plugins.toml`, one entry per plugin, each pointing at that plugin's own
 repository.
 
@@ -88,7 +88,7 @@ is core now; that repo stays what it is.
 
 | Plugin | Kind | `kind` | What for |
 |---|---|---|---|
-| [weewx-evo-sftp](https://github.com/hilman2/weewx-evo-sftp) | Export | `sftp` | A server with SSH but without rsync |
+| [weewx-evo-sftp](https://github.com/weewx-evo/weewx-evo-sftp) | Export | `sftp` | A server with SSH but without rsync |
 
 ## Installing from the admin page?
 
