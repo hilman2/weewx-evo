@@ -94,7 +94,7 @@ ARG WEATHERFLOW=e75158e51be8a476f4269ea896ded07273af83f0
 # the form that is read out of a driver file, and because the collector menu
 # with only one kind in it does not exercise the entry point that puts a
 # second one there.
-ARG WEEWX_DRIVER=d5c7d4e3270f332371209d7095f629e057c78749
+ARG WEEWX_DRIVER=ea19f80073d2487e65e4ffc8dad00b23091aeeda
 RUN pip install --no-cache-dir --no-deps \
    "weewx-evo-weewx-driver @ git+https://github.com/weewx-evo/weewx-evo-weewx-driver@${WEEWX_DRIVER}" \
    "weewx-evo-push-common @ git+https://github.com/weewx-evo/weewx-evo-push-common@${PUSH_COMMON}" \

@@ -37,4 +37,4 @@ weewx-evo-ecowitt @ https://github.com/weewx-evo/weewx-evo-ecowitt/archive/1e1ad
 # Without its `[usb]` or `[serial]` extras, and that is right: the driver
 # runs where the hardware is, which is not this container. What this image
 # needs from the package is the settings page and the endpoint.
-weewx-evo-weewx-driver @ https://github.com/weewx-evo/weewx-evo-weewx-driver/archive/d5c7d4e3270f332371209d7095f629e057c78749.tar.gz
+weewx-evo-weewx-driver @ https://github.com/weewx-evo/weewx-evo-weewx-driver/archive/ea19f80073d2487e65e4ffc8dad00b23091aeeda.tar.gz
