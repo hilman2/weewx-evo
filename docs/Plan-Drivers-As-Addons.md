@@ -1,10 +1,26 @@
 # Plan: every driver an add-on
 
-Nobody needs this page to run a station. It is the design for a change that
-has not been made yet: taking every driver and collector out of the core and
-into `weewx-evo/weewx-evo-drivers`, where each one is downloaded on its own.
+Nobody needs this page to run a station. It was the design for taking every
+driver and collector out of the core, written before the work so it could be
+argued with.
 
-Written before the work so it can be argued with. Nothing here is built.
+**It is done.** What the core does now is in
+[Drivers](Drivers) and in `CLAUDE.md`; this stays for the reasoning, and
+because the four questions at the bottom are still open.
+
+Three things came out differently from the plan:
+
+- **One repository per add-on, not one `weewx-evo-drivers`.** The catalogue
+  already said why -- separate issues, separate releases, and somebody who is
+  not us able to keep one alive.
+- **The tests moved with the code, and the captured uploads did not.** A body
+  a console actually sent is evidence rather than an implementation, and the
+  question it answers is the core's: does a record hold what arrived.
+- **Two contracts had to be built before the shim could leave.** A kind of
+  collector comes from an entry point, and a kind says what it wants decided
+  before its own page exists -- the add-a-collector page called straight into
+  the WeeWX driver list, which is add-on knowledge that had walked into the
+  core.
 
 ## What was decided
 
