@@ -475,11 +475,26 @@ class Placer:
 
     def _install_groups(self, groups: dict[str, str], driver: str,
                         dialect: str) -> None:
-        """Add only previously unknown catalog groups; authority never moves.
+        """Take what a catalog says, in the order `units.group_of` asks.
 
-        Core groups and `placement.toml` are authoritative. A catalog also
-        cannot overwrite a group learned from another packet: doing so would
-        let one driver's data change the interpretation of another place.
+        The order is the one written down there and it was reversed here,
+        which is how the same question got two answers depending on which
+        process asked it. `install_driver_groups` lets a driver beat the
+        standard schema -- a driver knows its own fields and the core's table
+        is the standard schema and nothing else -- and this read the schema
+        first, so a settings page with the driver loaded said "percent" while
+        a record built from the stored dialect was told "moisture".
+
+        So: what the operator wrote wins, then what a driver already said,
+        then a catalog over the schema. The middle one is the part worth
+        keeping from the old rule -- one console's data must not change how
+        another place reads its own archive -- and the operator's line is the
+        answer when two consoles really do disagree.
+
+        `soilMoist1` is the case. WeeWX's schema calls it group_moisture,
+        because it was written when a soil probe was a Watermark sensor; an
+        Ecowitt probe puts a percentage in the same column, and it is right
+        about its own hardware.
         """
         from . import units as unit_defs
 
@@ -487,39 +502,34 @@ class Placer:
         added: dict[str, str] = {}
         conflicts: list[str] = []
         for column, group in groups.items():
-            authoritative = (self.placements.groups.get(column)
-                             or unit_defs.GROUPS.get(column))
-            existing = authoritative or current.get(column)
-            if existing is None:
+            decided = self.placements.groups.get(column) or current.get(column)
+            if decided is None:
+                # Nothing but the schema, which the catalog may improve on.
                 added[column] = group
-            elif existing != group:
+            elif decided != group:
                 conflicts.append(column)
         if added:
             unit_defs.contribute({**current, **added})
         key = (_safe_name(driver), _safe_name(dialect))
         if conflicts and _first(_group_conflicts, key):
-            # A warning, not an error: nothing is broken and no reading is
-            # lost. What it costs is a unit word, and the reason it has to be
-            # said at all is that nothing on the page can show it -- a soil
-            # probe reading 43 prints "43 cb" where the console meant 43 %,
-            # and both are plausible numbers.
+            # A warning, not an error: no reading is lost and what it costs
+            # is a unit word. And now a real disagreement -- two consoles, or
+            # a console against a line somebody wrote -- rather than a
+            # catalog improving on the standard schema, which is what this
+            # reported before and did on every start.
             #
             # It names what to do, because the alternative is a line that
-            # tells somebody a thing is wrong and not how to make it right.
-            # `[groups]` in placement.toml beats everything here, which is
-            # what makes this the operator's decision rather than ours: the
-            # column is shared, and only whoever owns the sensor knows which
-            # kind is on it.
+            # says something is wrong and not how to make it right.
             shown = sorted(conflicts)[:8]
             log.warning(
-                "%s: the %s driver says %s, the schema says %s. The schema "
-                "wins; set [groups] in placement.toml, or on the Fields "
-                "page, to say otherwise.%s",
+                "%s: the %s driver says %s, and %s is already in force here. "
+                "Set [groups] in placement.toml, or use the Fields page, to "
+                "settle it.%s",
                 ", ".join(shown), key[0],
                 ", ".join(sorted({groups[one] for one in shown})),
                 ", ".join(sorted({
-                    str(self.placements.groups.get(one)
-                        or unit_defs.GROUPS.get(one)) for one in shown})),
+                    str(self.placements.groups.get(one) or current.get(one))
+                    for one in shown})),
                 "" if len(conflicts) <= 8
                 else f" ({len(conflicts) - 8} more)")
         if conflicts:

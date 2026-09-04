@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""When a driver and the schema disagree about what a column measures.
+"""Who decides what a column measures, and it has to be one answer.
 
 `soilMoist1` is the case. WeeWX's schema calls it `group_moisture` --
 centibars, because it was written when a soil probe was a Watermark sensor --
-and an Ecowitt probe puts a percentage in the same column. Measured on the
-beta instance: 4 352 readings between 30 and 63, printed as centibars.
+and an Ecowitt probe puts a percentage in the same column. Six columns on the
+beta instance disagree like that.
 
 The value is right either way and must not be touched: the same number goes
 into the same column under WeeWX, and the one rule of this project is that
-the file keeps its meaning. What is wrong is the unit word beside it, and
-**nothing in the data can settle it** -- a Watermark probe on a Davis puts
-real centibars in that same column.
+the file keeps its meaning. What is at stake is the unit word beside it.
 
-So the schema keeps winning by default, the disagreement is recorded where
-the settings page can see it, and the operator decides. What is measured
-here is that round trip: a conflict is noticed, it survives into another
-process, and a choice made on the page reaches a formatted reading.
+**The fault this exists for is that there were two answers.**
+`units.group_of` asks the drivers before the schema, and says why -- a driver
+knows its own fields and the core's table is the standard schema and nothing
+else. `placement._install_groups` asked them in the opposite order. So a
+settings page with the driver loaded printed "percent" while a record built
+from the stored dialect was told "moisture", and neither could see the other.
 
     python tools/unitgroup_test.py
 """
@@ -44,63 +44,93 @@ def check(what: str, got: object, want: object) -> None:
     failures += 0 if ok else 1
 
 
-def the_schema_wins_and_says_so(where: Path) -> None:
-    """A driver cannot change what a column means, and is not ignored either."""
-    print("\nwhen a driver disagrees")
-    check("the schema's own answer for soilMoist1",
-          units.GROUPS.get("soilMoist1"), "group_moisture")
+def _fresh() -> None:
+    """Forget what a driver contributed. Process-wide state, so it has to go."""
+    units.contribute({})
 
-    live = LiveStore(where / "live.sdb")
+
+def a_catalog_may_improve_on_the_schema(where: Path) -> None:
+    """The order `units.group_of` documents, now in both places."""
+    print("\na catalog against the standard schema")
+    _fresh()
+    check("the schema's own answer", units.GROUPS.get("soilMoist1"),
+          "group_moisture")
+
+    live = LiveStore(where / "one.sdb")
     try:
         placer = placement.Placer("default", placement.Placements(),
                                   directory=live)
-        # What an Ecowitt catalog says, against what the schema says.
         placer._install_groups(
-            {"soilMoist1": "group_percent",
-             "leafWet1": "group_percent",
-             "lightning_num": "group_count"},   # this one nothing disputes
+            {"soilMoist1": "group_percent",      # the schema has an answer
+             "lightning_num": "group_count"},    # it has none
             "ecowitt", "ecowitt")
 
-        # Unchanged: a driver that could redefine a schema column could change
-        # how another place reads its own archive.
-        check("the schema still decides", units.group_of("soilMoist1"),
-              "group_moisture")
-        # And what it does not know, it takes.
-        check("but what the schema has no answer for is taken",
+        # The point of the change. Before it, this stayed group_moisture here
+        # and became group_percent in any process that loaded the driver.
+        check("the catalog wins over the schema",
+              units.group_of("soilMoist1"), "group_percent")
+        check("and takes what the schema does not know",
               units.group_of("lightning_num"), "group_count")
-
-        recorded = json.loads(live.get_meta(placement.GROUP_CONFLICTS) or "{}")
-        check("the disagreement is left where the page can read it",
-              recorded.get("ecowitt"),
-              {"soilMoist1": "group_percent", "leafWet1": "group_percent"})
-        check("and nothing undisputed is in it",
-              "lightning_num" in json.dumps(recorded), False)
+        check("with nothing recorded as a disagreement",
+              live.get_meta(placement.GROUP_CONFLICTS), None)
     finally:
         live.close()
+        _fresh()
 
 
-def the_operator_decides(where: Path) -> None:
-    """`[groups]` in placement.toml beats both, which is what makes it a choice."""
-    print("\nwhen somebody has said otherwise")
-    live = LiveStore(where / "live2.sdb")
+def but_not_over_another_console(where: Path) -> None:
+    """One console's data must not change how another place reads its own."""
+    print("\na second catalog, disagreeing with the first")
+    _fresh()
+    live = LiveStore(where / "two.sdb")
     try:
-        said = placement.Placements(groups={"soilMoist1": "group_percent"})
+        placer = placement.Placer("default", placement.Placements(),
+                                  directory=live)
+        placer._install_groups({"soilMoist1": "group_percent"},
+                               "ecowitt", "ecowitt")
+        placer._install_groups({"soilMoist1": "group_moisture"},
+                               "davis", "vantage")
+
+        check("the first one still holds",
+              units.group_of("soilMoist1"), "group_percent")
+        recorded = json.loads(live.get_meta(placement.GROUP_CONFLICTS) or "{}")
+        check("and the second is recorded as a disagreement",
+              recorded.get("davis"), {"soilMoist1": "group_moisture"})
+        check("named by the driver that raised it, so the page can say which",
+              sorted(recorded), ["davis"])
+    finally:
+        live.close()
+        _fresh()
+
+
+def and_never_over_the_operator(where: Path) -> None:
+    """`[groups]` in placement.toml is the answer when consoles disagree."""
+    print("\nwhen somebody has written it down")
+    _fresh()
+    live = LiveStore(where / "three.sdb")
+    try:
+        said = placement.Placements(groups={"soilMoist1": "group_moisture"})
         placer = placement.Placer("default", said, directory=live)
         placer._install_groups({"soilMoist1": "group_percent"},
                                "ecowitt", "ecowitt")
-        check("no disagreement is recorded once it is settled",
-              live.get_meta(placement.GROUP_CONFLICTS), None)
-        # The reading is what makes it real: a percentage formatted as a
-        # percentage rather than as a pressure.
-        check("and the choice is what the file says",
-              said.groups.get("soilMoist1"), "group_percent")
+
+        # Not contributed, so `group_of` falls through to the schema -- which
+        # is what the operator wrote. The line in the file is what makes this
+        # settleable at all: nothing in the data can say which probe is in
+        # the ground.
+        check("the catalog does not overwrite it",
+              units.contributed().get("soilMoist1"), None)
+        recorded = json.loads(live.get_meta(placement.GROUP_CONFLICTS) or "{}")
+        check("and it is recorded, so the page can offer the other answer",
+              recorded.get("ecowitt"), {"soilMoist1": "group_percent"})
     finally:
         live.close()
+        _fresh()
 
 
-def the_page_offers_it_only_where_it_is_disputed(where: Path) -> None:
-    """A select on every row would bury the two that matter."""
-    print("\nwhat the page shows")
+def the_page_reads_it(where: Path) -> None:
+    """Another process. The live table is the only channel between them."""
+    print("\nwhat the settings page can see")
     from weewx_evo import adminfields
 
     class FakeAdmin:
@@ -108,7 +138,7 @@ def the_page_offers_it_only_where_it_is_disputed(where: Path) -> None:
         read_only = False
 
         def config(self):
-            return {"live_db": str(where / "live.sdb")}
+            return {"live_db": str(where / "three.sdb")}
 
         @property
         def language(self):
@@ -120,10 +150,8 @@ def the_page_offers_it_only_where_it_is_disputed(where: Path) -> None:
             return self.language.say(english)
 
     found = adminfields.disagreements(FakeAdmin())
-    check("the page reads what the other process wrote",
+    check("it reads what the other process wrote",
           found.get("soilMoist1"), "group_percent")
-    check("for every disputed column", sorted(found),
-          ["leafWet1", "soilMoist1"])
 
     class NoFile(FakeAdmin):
         def config(self):
@@ -136,15 +164,16 @@ def the_page_offers_it_only_where_it_is_disputed(where: Path) -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
         where = Path(raw)
-        the_schema_wins_and_says_so(where)
-        the_operator_decides(where)
-        the_page_offers_it_only_where_it_is_disputed(where)
+        a_catalog_may_improve_on_the_schema(where)
+        but_not_over_another_console(where)
+        and_never_over_the_operator(where)
+        the_page_reads_it(where)
 
     print()
     if failures:
         print(f"{failures} check(s) failed")
         return 1
-    print("the schema decides, the disagreement is said, the operator settles it")
+    print("one order everywhere: the operator, then a driver, then the schema")
     return 0
 
 
