@@ -128,6 +128,40 @@ def and_never_over_the_operator(where: Path) -> None:
         _fresh()
 
 
+def a_settled_disagreement_stops_being_offered(where: Path) -> None:
+    """Found on the beta: the record stayed after the reason for it went.
+
+    A disagreement is the current state of a question, not a history of it.
+    Left behind, the page keeps offering a choice that decides nothing --
+    and the one thing worse than not asking is asking about something that
+    is already settled.
+    """
+    print()
+    print("when the disagreement goes away")
+    _fresh()
+    live = LiveStore(where / "four.sdb")
+    try:
+        placer = placement.Placer("default", placement.Placements(),
+                                  directory=live)
+        placer._install_groups({"soilMoist1": "group_percent"},
+                               "ecowitt", "ecowitt")
+        placer._install_groups({"soilMoist1": "group_moisture"},
+                               "davis", "vantage")
+        check("it is recorded while it lasts",
+              "davis" in (live.get_meta(placement.GROUP_CONFLICTS) or ""),
+              True)
+
+        # The second console says the same thing this time -- somebody
+        # changed a catalog, or the sensor was replaced.
+        placer._install_groups({"soilMoist1": "group_percent"},
+                               "davis", "vantage")
+        recorded = json.loads(live.get_meta(placement.GROUP_CONFLICTS) or "{}")
+        check("and taken back when it is over", recorded, {})
+    finally:
+        live.close()
+        _fresh()
+
+
 def the_page_reads_it(where: Path) -> None:
     """Another process. The live table is the only channel between them."""
     print("\nwhat the settings page can see")
@@ -167,6 +201,7 @@ def main() -> int:
         a_catalog_may_improve_on_the_schema(where)
         but_not_over_another_console(where)
         and_never_over_the_operator(where)
+        a_settled_disagreement_stops_being_offered(where)
         the_page_reads_it(where)
 
     print()

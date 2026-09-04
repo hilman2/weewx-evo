@@ -532,9 +532,11 @@ class Placer:
                     for one in shown})),
                 "" if len(conflicts) <= 8
                 else f" ({len(conflicts) - 8} more)")
-        if conflicts:
-            self._record_conflicts(driver, {one: groups[one]
-                                            for one in conflicts})
+        # Always, including with nothing left to say. A disagreement that has
+        # been settled -- somebody wrote the line, or the other console went
+        # away -- has to stop being offered, or the page keeps asking a
+        # question that no longer decides anything.
+        self._record_conflicts(driver, {one: groups[one] for one in conflicts})
 
     def _record_conflicts(self, driver: str, wanted: dict[str, str]) -> None:
         """Leave the disagreement where the settings page can read it.
@@ -562,7 +564,15 @@ class Placer:
             held = {}
         if not isinstance(held, dict):
             held = {}
-        held[str(driver)] = wanted
+        if wanted:
+            held[str(driver)] = wanted
+        else:
+            held.pop(str(driver), None)
+        if held == json.loads(store.get_meta(GROUP_CONFLICTS) or "{}"):
+            # Nothing changed. A record is built every interval, and a write
+            # per interval into a table shared with the listener is a lock
+            # somebody else is waiting for.
+            return
         try:
             setter(GROUP_CONFLICTS, json.dumps(held))
         except Exception:
