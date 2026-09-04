@@ -191,6 +191,8 @@ def tests() -> list[Test]:
              "hardware that has to be asked arrives like one that pushes"),
         Test("unread", ["unread_test.py"],
              "an upload nothing can read is seen rather than only logged"),
+        Test("catalogue", ["catalogue_test.py"],
+             "which add-on reads what turned up, and offline is a state"),
         Test("livedb", ["livedb_test.py"],
              "the live table hands a descriptor back when its thread ends"),
         Test("livesource", ["livesource_test.py"],

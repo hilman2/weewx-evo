@@ -896,6 +896,9 @@ def _judge(admin: Any, state: State) -> None:
             f"{ago(state.newest_stranger)} and are selected by no place.",
             "./senders")
 
+    for said in _nothing_reads_it(admin):
+        _concern(state, said, "./senders")
+
     for one in state.archives:
         if one.unreachable:
             _concern(state, f"Place {one.name!r}: {one.unreachable}",
@@ -908,6 +911,68 @@ def _judge(admin: Any, state: State) -> None:
 
     for said, where in _senders_placing_nothing(admin):
         _concern(state, said, where)
+
+
+def _nothing_reads_it(admin: Any) -> list[str]:
+    """Uploads arriving that no installed driver can read, and what would.
+
+    The first-run state once the drivers are add-ons: console configured,
+    token right, and nothing on any page. `listener._unread` keeps what
+    arrived; this turns it into a name by asking the catalogue.
+
+    The catalogue is what knows the protocols, not this. Where it cannot be
+    fetched -- a station with no way out, which is a supported state -- the
+    sighting is still reported, with what arrived instead of a name. Knowing
+    that something is uploading and being unreadable is most of the value;
+    which add-on reads it is the part that needs the network.
+    """
+    from . import catalogue
+    from .db.live import LiveStore
+    from .ingest.listener import UNREAD
+
+    try:
+        where = config_file.resolved_path(
+            admin.config(), "live_db", Path(admin.path).parent,
+            "data/live.sdb")
+        if not where.exists():
+            return []
+        with closing(LiveStore(where)) as live:
+            from .ingest.sightings import Sightings
+
+            with closing(Sightings(live)) as seen:
+                unread = [one for one in seen.waiting()
+                          if one.driver == UNREAD]
+    except Exception:
+        log.debug("could not read the unreadable uploads", exc_info=True)
+        return []
+    if not unread:
+        return []
+
+    plugins = catalogue.fetch(Path(admin.path).parent)
+    said = []
+    for one in unread:
+        opening = one.fields[0] if one.fields else ""
+        reads = catalogue.matching(plugins, opening, one.identity)
+        where_from = f" from {one.peer}" if one.peer else ""
+        if not reads:
+            said.append(
+                f"Something is uploading to {one.identity!r}{where_from} "
+                f"that no installed driver can read. It has sent "
+                f"{one.packets} time(s).")
+        elif len(reads) == 1:
+            said.append(
+                f"{reads[0].summary.rstrip('.')} is uploading to "
+                f"{one.identity!r}{where_from} and nothing here reads it. "
+                f"Install {reads[0].name}.")
+        else:
+            # Said rather than chosen. 160 bytes are not always enough to
+            # tell two protocols apart, and the wrong add-on installed with
+            # nothing saying why is worse than a question.
+            names = ", ".join(one.name for one in reads)
+            said.append(
+                f"Something is uploading to {one.identity!r}{where_from} "
+                f"that nothing here reads. It looks like one of: {names}.")
+    return said
 
 
 def _senders_placing_nothing(admin: Any) -> list[tuple[str, str]]:
