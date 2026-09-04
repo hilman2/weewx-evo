@@ -3,9 +3,13 @@
 `admin.py`, `adminplots.py`.
 
 A task-oriented shell around the generated settings forms. Its five primary
-destinations are fixed: **Overview**, **Senders**, **Places**, **Publishing**
-and **System**. Adding a feed, export, driver or sender never grows the primary
+destinations are fixed: **Overview**, **Drivers**, **Places**, **Publishing**
+and **System**. Adding a feed, export or driver never grows the primary
 navigation.
+
+**Drivers** holds every way readings get in, and that is one entry on purpose:
+a console that uploads here and a driver started where the hardware is are
+the same task to somebody who has just unpacked one.
 
 **Nothing here knows what an Ecowitt is or what an archive interval means.** It
 renders `Option` objects and writes back what comes out. That is the whole

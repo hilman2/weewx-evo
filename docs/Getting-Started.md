@@ -63,7 +63,7 @@ Its sender selection also belongs here. The explicit `"*"` above accepts every
 arrival for the initial one-sender setup; replace it with selected sender IDs
 on the **Places** page after the sender appears. Omitting the selection from a
 current file selects nothing.
-The **Senders** page remains the diagnostic view of what actually arrived.
+The **Drivers** page remains the diagnostic view of what actually arrived.
 
 ### 3. Start it
 

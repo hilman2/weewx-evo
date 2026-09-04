@@ -35,7 +35,7 @@ part of the path:
 http://192.168.1.20:8000/<token>/ecowitt/
 ```
 
-Set that on the console, and the first upload turns up on the **Consoles**
+Set that on the console, and the first upload turns up on the **Drivers**
 page under *Seen, not announced* — with its readings already being recorded.
 They are in the shared live database, not assigned to an archive.
 Adopting it there gives its hardware identity a readable, unique name. To keep
@@ -57,7 +57,7 @@ An AcuRite bridge posts to Chaney's servers and a LaCrosse gateway to
 `box.weatherdirect.com`; neither has a setting for it. A WeatherFlow hub does
 not post at all — it broadcasts on the local network.
 
-Open **Add a console** anyway. Each of them is listed at the bottom of that
+Open **Drivers -> Add driver** anyway. Each of them is listed at the bottom of that
 page with its own steps: the name that has to resolve to this machine, a
 `dnsmasq` line with your address already in it, and the port redirect, because
 they all post to port 80. A hub instead needs the UDP port switched on under
@@ -71,9 +71,11 @@ its serial — so there is nothing to type in.
 
 `weewx-evo` runs any WeeWX driver in its own process, without WeeWX installed.
 
-Add it under **System → Drivers**, pick your hardware from the list, and its
-own settings — serial port, model, whatever else it takes — appear on the page
-after. They are read out of the driver, so they are the ones it actually has.
+**It is the same form as everything above.** Open **Drivers → Add driver**,
+and your hardware is in the menu under *It is read where it is plugged in* —
+Vantage, FineOffsetUSB, WS23xx and the rest, by name. Its own settings —
+serial port, model, whatever else it takes — appear on the page after. They
+are read out of the driver, so they are the ones it actually has.
 
 The same list from a terminal, when there is no browser to hand:
 
