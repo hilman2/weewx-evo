@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from . import adminarchives, placement, series, units
+from . import language as language_defs
 from . import archives as archive_defs
 from . import config as config_file
 from . import stations as station_defs
@@ -129,18 +130,19 @@ def _hourly(conn: Any, table: str, column: str = "dateTime") -> list[int]:
     return counts
 
 
-def ago(when: float | None) -> str:
+def ago(when: float | None, lang: Any = None) -> str:
     """How long ago, in words. The only time format on this page."""
+    lang = lang if lang is not None else language_defs.get("en")
     if not when:
-        return "never"
+        return lang.say("never")
     gap = max(0, int(time.time() - when))
     if gap < 90:
-        return f"{gap} s ago"
+        return lang.fill("{n} s ago", n=gap)
     if gap < 5400:
-        return f"{gap // 60} min ago"
+        return lang.fill("{n} min ago", n=gap // 60)
     if gap < 172800:
-        return f"{gap // 3600} h ago"
-    return f"{gap // 86400} d ago"
+        return lang.fill("{n} h ago", n=gap // 3600)
+    return lang.fill("{n} d ago", n=gap // 86400)
 
 
 @dataclass
@@ -279,15 +281,18 @@ def _live_store(admin: Any) -> Any:
 
 
 def _live_state(admin: Any, state: State) -> None:
+    lang = admin.language
     path = _setting(admin, "live_db", "data/live.sdb")
     if not path.exists():
-        state.live = Link("Live data", unreachable=f"no database at {path}",
-                          href="./live")
+        state.live = Link(lang.say("Live data"), href="./live",
+                          unreachable=lang.fill("no database at {path}",
+                                                path=path))
         return
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except sqlite3.Error as exc:
-        state.live = Link("Live data", unreachable=str(exc), href="./live")
+        state.live = Link(lang.say("Live data"), unreachable=str(exc),
+                          href="./live")
         return
     try:
         count, newest = conn.execute(
@@ -306,7 +311,8 @@ def _live_state(admin: Any, state: State) -> None:
             (time.time() - STRANGER_WINDOW,)).fetchall()
         history = _hourly(conn, "packet")
     except sqlite3.Error as exc:
-        state.live = Link("Live data", unreachable=str(exc), href="./live")
+        state.live = Link(lang.say("Live data"), unreachable=str(exc),
+                          href="./live")
         return
     finally:
         conn.close()
@@ -315,9 +321,10 @@ def _live_state(admin: Any, state: State) -> None:
     size = path.stat().st_size / 1e6
     # Middle dots and short words: three columns in a card this wide have
     # room for a phrase, not a sentence.
-    state.live = Link("Live data",
-                      f"{count:,} packets · {size:.1f} MB "
-                      f"· {state.pending} waiting",
+    detail = " · ".join((lang.fill("{n} packets", n=f"{count:,}"),
+                         f"{size:.1f} MB",
+                         lang.fill("{n} waiting", n=state.pending)))
+    state.live = Link(lang.say("Live data"), detail,
                       when=newest, href="./live", history=history)
 
     announced = station_defs.load(_base(admin) / station_defs.FILENAME)
@@ -470,27 +477,30 @@ def archives_state(admin: Any, register: Any = None) -> list[Series]:
 
 
 def _archive_state(admin: Any, state: State) -> None:
+    lang = admin.language
     register = adminarchives.load(admin)
     for row in archives_state(admin, register):
         one = row.archive
         if not row.exists:
             state.archives.append(Link(
-                one.title, unreachable=f"no file at {row.path} yet",
-                href="./places"))
+                one.title, href="./places",
+                unreachable=lang.fill("no file at {path} yet", path=row.path)))
             continue
         if row.unreachable:
             state.archives.append(Link(one.title, unreachable=row.unreachable,
                                        href="./places"))
             continue
-        records = "record" if row.count == 1 else "records"
+        records = (lang.fill("{n} record", n=1) if row.count == 1
+                   else lang.fill("{n} records", n=f"{row.count:,}"))
         state.archives.append(Link(
-            one.title, f"{row.count:,} {records} · {row.size:.1f} MB",
+            one.title, f"{records} · {row.size:.1f} MB",
             when=row.newest, href="./places", history=row.history))
         if row.newest and (state.newest_record is None
                            or row.newest > state.newest_record):
             state.newest_record = row.newest
     for name, said in register.concerns().items():
-        _concern(state, f"Place {name!r}: {said}", "./places")
+        _concern(state, lang.fill("Place {name}: {why}",
+                                  name=repr(name), why=said), "./places")
 
 
 def _newest_file(where: Path) -> tuple[int, float | None]:
@@ -969,9 +979,11 @@ def nav(admin: Any, active: str) -> list[str]:
     state = read(admin)
     mark = ""
     if state.concerns:
-        mark = (f' <span class="warn" title="something needs looking at">'
+        said = html.escape(admin.say("something needs looking at"))
+        mark = (f' <span class="warn" title="{said}">'
                 f'{len(state.concerns)}</span>')
-    return [f'<a class="home" href="./overview"{current}>Overview{mark}</a>']
+    return [f'<a class="home" href="./overview"{current}>'
+            f'{html.escape(admin.say("Overview"))}{mark}</a>']
 
 
 def _short(text: str, keep: int = 34) -> str:
@@ -979,9 +991,11 @@ def _short(text: str, keep: int = 34) -> str:
     return text if len(text) <= keep else "…" + text[-(keep - 1):]
 
 
-def _flow_row(one: Link, kind: str = "") -> str:
+def _flow_row(one: Link, kind: str = "", lang: Any = None) -> str:
     """One compact status row in a stage."""
-    label = f'<span class="chip">{html.escape(kind)}</span>' if kind else ""
+    lang = lang if lang is not None else language_defs.get("en")
+    label = (f'<span class="chip">{html.escape(lang.say(kind))}</span>'
+             if kind else "")
     whole = html.escape(one.name)
     name = f'<span class="title" title="{whole}">{whole}</span>'
     if one.href:
@@ -995,61 +1009,82 @@ def _flow_row(one: Link, kind: str = "") -> str:
         status = (f'<span class="{tone}" title="{html.escape(one.unreachable)}">'
                   f'{html.escape(_short(one.unreachable))}</span>')
     elif one.when is not None:
-        status = f'<span class="when">{html.escape(ago(one.when))}</span>'
+        status = f'<span class="when">{html.escape(ago(one.when, lang))}</span>'
     return f"<li>{label}{name}{detail}{status}</li>"
 
 
 def _stage(title: str, summary: str, href: str, rows: list[tuple[str, Link]],
-           empty: str) -> str:
-    items = (NEWLINE.join(_flow_row(one, kind) for kind, one in rows)
-             if rows else f'<li class="none">{html.escape(empty)}</li>')
+           empty: str, lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
+    items = (NEWLINE.join(_flow_row(one, kind, lang) for kind, one in rows)
+             if rows else
+             f'<li class="none">{html.escape(lang.say(empty))}</li>')
+    said = html.escape(lang.say(title))
+    open_it = html.escape(lang.fill("Open {stage}", stage=lang.say(title)))
     return f'''
 <section class="overview-stage flow" aria-labelledby="stage-{title.lower()}">
   <div class="made">
-    <h3 class="title" id="stage-{title.lower()}">{html.escape(title)}</h3>
+    <h3 class="title" id="stage-{title.lower()}">{said}</h3>
     <span class="note">{html.escape(summary)}</span>
     <a class="aside" href="{html.escape(href)}"
-       aria-label="Open {html.escape(title)}">Open</a>
+       aria-label="{open_it}">{html.escape(lang.say("Open"))}</a>
   </div>
   <ul class="sends plain">{items}</ul>
 </section>'''
 
 
-def _count(amount: int, singular: str) -> str:
-    return f"{amount} {singular if amount == 1 else singular + 's'}"
+def _count(amount: int, singular: str, lang: Any = None) -> str:
+    """"3 senders", in the reader's language.
+
+    Two keys per noun rather than a stem and an "s". German makes some
+    plurals with an umlaut and some with nothing at all, and a language that
+    inflects the number as well has nowhere else to say so.
+    """
+    lang = lang if lang is not None else language_defs.get("en")
+    if amount == 1:
+        return lang.fill("{n} " + singular, n=amount)
+    return lang.fill("{n} " + singular + "s", n=amount)
 
 
-def _collection(name: str, links: list[Link], href: str) -> Link:
+def _collection(name: str, links: list[Link], href: str,
+                lang: Any = None) -> Link:
     """Summarise an inventory without copying it onto the overview."""
+    lang = lang if lang is not None else language_defs.get("en")
     failed = [one for one in links if one.wrong]
     newest = max((one.when for one in links if one.when is not None),
                  default=None)
-    detail = _count(len(links), "configured item") if links else "Not configured"
-    return Link(name, detail, when=newest,
-                unreachable=(f"{_count(len(failed), 'failure')}" if failed else ""),
+    detail = (_count(len(links), "configured item", lang) if links
+              else lang.say("Not configured"))
+    return Link(lang.say(name), detail, when=newest,
+                unreachable=(_count(len(failed), "failure", lang)
+                             if failed else ""),
                 href=href, wrong=bool(failed))
 
 
-def _attention(state: State) -> str:
+def _attention(state: State, lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
     if not state.concerns:
         return ""
     rows = []
     for index, concern in enumerate(state.concerns):
         href = (state.concern_hrefs[index]
                 if index < len(state.concern_hrefs) else "./overview")
+        about = html.escape(lang.fill("Review: {what}", what=concern))
         rows.append(
             f'<li><span>{html.escape(concern)}</span>'
-            f'<a href="{html.escape(href)}" '
-            f'aria-label="Review: {html.escape(concern)}">Review</a></li>')
+            f'<a href="{html.escape(href)}" aria-label="{about}">'
+            f'{html.escape(lang.say("Review"))}</a></li>')
     return f'''
 <section class="overview-attention banner warn" aria-labelledby="attention-title">
-  <h3 id="attention-title">Needs attention
+  <h3 id="attention-title">{html.escape(lang.say("Needs attention"))}
       <span class="count">{len(rows)}</span></h3>
   <ul class="attention-list">{NEWLINE.join(rows)}</ul>
 </section>'''
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
+    say = admin.say
+    lang = admin.language
     state = read(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     # The banner above the page says it. Printing it a second time in the
@@ -1057,46 +1092,49 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     # having happened.
     said = ""
 
-    attention = _attention(state)
+    attention = _attention(state, lang)
 
     intake_rows = [("Sender", one) for one in state.stations]
     if state.live:
         intake_rows.append(("Live", state.live))
-    intake_summary = _count(len(state.stations), "sender")
+    intake_summary = _count(len(state.stations), "sender", lang)
     if state.newest_packet is not None:
-        intake_summary += f" · last reading {ago(state.newest_packet)}"
+        intake_summary += " · " + lang.fill(
+            "last reading {when}", when=ago(state.newest_packet, lang))
 
-    place_summary = _count(len(state.archives), "place")
+    place_summary = _count(len(state.archives), "place", lang)
     if state.newest_record is not None:
-        place_summary += f" · last record {ago(state.newest_record)}"
+        place_summary += " · " + lang.fill(
+            "last record {when}", when=ago(state.newest_record, lang))
 
     configured_notify = admin.config().get("notify") or {}
     notify_count = sum(1 for one in configured_notify.values()
                        if isinstance(one, dict))
     publishing_rows = [
-        ("", _collection("Feeds", state.feeds, "./publishing")),
-        ("", _collection("Exports", state.exports, "./publishing")),
-        ("", _collection("Uploads", state.uploads, "./publishing")),
-        ("", Link("Notifications", _count(notify_count, "configured item")
-                  if notify_count else "Not configured",
+        ("", _collection("Feeds", state.feeds, "./publishing", lang)),
+        ("", _collection("Exports", state.exports, "./publishing", lang)),
+        ("", _collection("Uploads", state.uploads, "./publishing", lang)),
+        ("", Link(say("Notifications"),
+                  _count(notify_count, "configured item", lang)
+                  if notify_count else say("Not configured"),
                   href="./publishing")),
-        ("", _collection("Forecasts", state.forecasts, "./publishing")),
+        ("", _collection("Forecasts", state.forecasts, "./publishing", lang)),
     ]
     publishing_count = (len(state.feeds) + len(state.exports)
                         + len(state.uploads) + notify_count
                         + len(state.forecasts))
     return f'''
 <div class="page-head">
-  <h2>Overview</h2>
-  <a class="small-action" href="./setup">Setup</a>
+  <h2>{html.escape(say("Overview"))}</h2>
+  <a class="small-action" href="./setup">{html.escape(say("Setup"))}</a>
 </div>
 {problem}{said}{attention}
 <div class="overview-stages">
 {_stage("Intake", intake_summary, "./senders", intake_rows,
-        "No senders.")}
+        "No senders.", lang)}
 {_stage("Places", place_summary, "./places",
-        [("Place", one) for one in state.archives], "No places.")}
-{_stage("Publishing", _count(publishing_count, "configured item"),
-        "./publishing", publishing_rows, "Not configured.")}
+        [("Place", one) for one in state.archives], "No places.", lang)}
+{_stage("Publishing", _count(publishing_count, "configured item", lang),
+        "./publishing", publishing_rows, "Not configured.", lang)}
 </div>
 '''

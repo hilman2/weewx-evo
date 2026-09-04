@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from . import language as language_defs
 from . import placement
 from . import stations as station_defs
 
@@ -362,24 +363,26 @@ def nav(admin: Any, active: str) -> list[str]:
     out: list[str] = []
     here = active in ("senders", "stations", "new-sender", "new-station")
     current = " aria-current='page'" if here else ""
-    out.append(f'<a href="./senders"{current}>Senders'
+    out.append(f'<a href="./senders"{current}>'
+               f'{html.escape(admin.say("Senders"))}'
                f'<span class="count">{len(register)}</span></a>')
     if not len(register):
-        out.append('<p class="navempty">None</p>')
+        out.append(f'<p class="navempty">{html.escape(admin.say("None"))}</p>')
     return out
 
 
-def _ago(when: int) -> str:
+def _ago(when: int, lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
     if not when:
-        return "never"
+        return lang.say("never")
     gap = max(0, int(time.time()) - when)
     if gap < 90:
-        return f"{gap} s ago"
+        return lang.fill("{n} s ago", n=gap)
     if gap < 5400:
-        return f"{gap // 60} min ago"
+        return lang.fill("{n} min ago", n=gap // 60)
     if gap < 172800:
-        return f"{gap // 3600} h ago"
-    return f"{gap // 86400} days ago"
+        return lang.fill("{n} h ago", n=gap // 3600)
+    return lang.fill("{n} days ago", n=gap // 86400)
 
 
 def _sender_id(one: Any) -> str:
@@ -415,49 +418,59 @@ def _used_by(places: list[Any], sender: str) -> list[Any]:
     return [one for one in places if one.selects(sender)]
 
 
-def _place_cell(places: list[Any], sender: str) -> str:
+def _place_cell(places: list[Any], sender: str, say: Any = None) -> str:
     """Places using this sender, and the one configuration action."""
+    say = say or str
     used = _used_by(places, sender)
     links = ", ".join(
         f'<a href="{html.escape(_place_href(one.name), quote=True)}">'
         f'{html.escape(one.title)}</a>' for one in used)
     if links:
-        action = _place_href(used[0].name)
-        return (f'{links}<br><a class="note" '
-                f'href="{html.escape(action, quote=True)}">Change assignment</a>')
+        action = html.escape(_place_href(used[0].name), quote=True)
+        return (f'{links}<br><a class="note" href="{action}">'
+                f'{html.escape(say("Change assignment"))}</a>')
     if places:
-        action = _place_href(places[0].name)
-        return (f'<span class="warn">Not assigned</span><br>'
-                f'<a href="{html.escape(action, quote=True)}">Assign to a Place</a>')
-    return '<a href="./places">Create a Place</a>'
+        action = html.escape(_place_href(places[0].name), quote=True)
+        return (f'<span class="warn">{html.escape(say("Not assigned"))}</span>'
+                f'<br><a href="{action}">'
+                f'{html.escape(say("Assign to a Place"))}</a>')
+    return f'<a href="./places">{html.escape(say("Create a Place"))}</a>'
 
 
-def _technical_identity(driver: str, identity: str, sender: str) -> str:
+def _technical_identity(driver: str, identity: str, sender: str,
+                        say: Any = None) -> str:
     """Driver identity first; canonical key folded underneath it."""
+    say = say or str
     return f'''
       <span>{html.escape(driver)}</span>
-      <code>{html.escape(identity or "(none)")}</code>
+      <code>{html.escape(identity or say("(none)"))}</code>
       <details class="technical-id">
-        <summary>Technical ID</summary>
+        <summary>{html.escape(say("Technical ID"))}</summary>
         <code>{html.escape(sender)}</code>
       </details>'''
 
 
-def _sender_status(when: int, waiting: bool = False) -> str:
+def _sender_status(when: int, waiting: bool = False, lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
     if when:
         fresh = max(0, int(time.time()) - when) < 10 * 60
-        state = ('<span class="ok">Receiving</span>' if fresh else
-                 '<span class="warn">Stale</span>')
-        return f'{state}<br><span class="note">{html.escape(_ago(when))}</span>'
+        state = (f'<span class="ok">{html.escape(lang.say("Receiving"))}</span>'
+                 if fresh else
+                 f'<span class="warn">{html.escape(lang.say("Stale"))}</span>')
+        return (f'{state}<br><span class="note">'
+                f"{html.escape(_ago(when, lang))}</span>")
     if waiting:
-        return '<span class="warn">Waiting for first data</span>'
-    return '<span class="note">No data</span>'
+        return (f'<span class="warn">'
+                f'{html.escape(lang.say("Waiting for first data"))}</span>')
+    return f'<span class="note">{html.escape(lang.say("No data"))}</span>'
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
     """Named, newly discovered and ignored live senders."""
     from . import adminarchives
 
+    say = admin.say
+    lang = admin.language
     chain = adminarchives.chain(admin, "stations")
     register = load(admin)
     seen = sightings_for(admin)
@@ -472,9 +485,10 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
         diagnostic = _what_it_sends_html(admin, one)
         if waiting:
             identity = (f'<a href="./new-sender?learn={quote(one.name, safe="")}">'
-                        'Connection settings</a>')
+                        f'{html.escape(say("Connection settings"))}</a>')
         else:
-            identity = _technical_identity(one.driver, one.identity, sender)
+            identity = _technical_identity(one.driver, one.identity, sender,
+                                           say)
         anchor = html.escape(_sender_anchor(sender), quote=True)
         detail = (f'''
     <tr class="sendsrow" data-sender-detail="{html.escape(sender, quote=True)}">
@@ -485,32 +499,37 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
       <td><strong>{html.escape(_readable(one.name))}</strong>
           {f'<br><span class="note">{html.escape(one.note)}</span>' if one.note else ""}</td>
       <td>{identity}</td>
-      <td>{_sender_status(when.get(one.name, 0), waiting)}</td>
-      <td>{_place_cell(places, sender)}</td>
+      <td>{_sender_status(when.get(one.name, 0), waiting, lang)}</td>
+      <td>{_place_cell(places, sender, say)}</td>
       <td class="act">
         <form method="post" action="./senders/{html.escape(one.name)}/remove"
               class="inline">
-          <button type="submit" class="quiet">Remove name</button></form></td>
+          <button type="submit" class="quiet">
+            {html.escape(say("Remove name"))}</button></form></td>
     </tr>{detail}''')
     announced = f'''
   <table class="stations">
-    <thead><tr><th>Name</th><th>Identity</th><th>Status</th>
-               <th>Used by</th><th></th></tr></thead>
+    <thead><tr><th>{html.escape(say("Name"))}</th>
+               <th>{html.escape(say("Identity"))}</th>
+               <th>{html.escape(say("Status"))}</th>
+               <th>{html.escape(say("Used by"))}</th><th></th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
-  </table>''' if rows else '<p class="note">No named senders.</p>'
+  </table>''' if rows else (
+      f'<p class="note">{html.escape(say("No named senders."))}</p>')
 
     add = ""
     if not admin.read_only:
         add = ('<div class="actions">'
-               '<a class="button" href="./new-sender">Add sender</a>'
+               '<a class="button" href="./new-sender">'
+               f'{html.escape(say("Add sender"))}</a>'
                "</div>")
     try:
         waiting = _waiting(admin, seen, register, places)
-        folded = _folded(seen)
+        folded = _folded(seen, lang)
     finally:
         _close_sightings(seen)
     return f'''
-<h2>Senders</h2>
+<h2>{html.escape(say("Senders"))}</h2>
 {chain}
 {problem}{add}
 <section class="group">
@@ -540,6 +559,8 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
 
 def _waiting(admin: Any, seen: Any, register: Any, places: list[Any]) -> str:
     """Senders observed in live but not named yet."""
+    say = admin.say
+    lang = admin.language
     waiting = seen.waiting()
     if not waiting:
         return ""
@@ -555,62 +576,75 @@ def _waiting(admin: Any, seen: Any, register: Any, places: list[Any]) -> str:
         anchor = html.escape(_sender_anchor(sender), quote=True)
         rows.append(f'''
     <tr id="{anchor}" data-sender="{html.escape(sender, quote=True)}">
-      <td>{_technical_identity(one.driver, one.identity, sender)}</td>
-      <td>{_sender_status(one.last_seen)}</td>
-      <td>{_place_cell(places, sender)}</td>
+      <td>{_technical_identity(one.driver, one.identity, sender, say)}</td>
+      <td>{_sender_status(one.last_seen, lang=lang)}</td>
+      <td>{_place_cell(places, sender, say)}</td>
       <td><span class="note">{html.escape(fields)}</span></td>
       <td>
         <form method="post" action="./senders/adopt" class="inline">
           <input type="hidden" name="driver" value="{html.escape(one.driver)}">
           <input type="hidden" name="identity" value="{html.escape(one.identity)}">
-          <input type="text" name="name" required placeholder="sender name"
+          <input type="text" name="name" required
+                 placeholder="{html.escape(say("sender name"))}"
                  value="{html.escape(suggested)}" autocomplete="off"
                  spellcheck="false">
-          <button type="submit">Save name</button>
+          <button type="submit">{html.escape(say("Save name"))}</button>
         </form>
         <form method="post" action="./senders/ignore" class="inline">
           <input type="hidden" name="driver" value="{html.escape(one.driver)}">
           <input type="hidden" name="identity" value="{html.escape(one.identity)}">
-          <button type="submit" class="quiet">Ignore</button>
+          <button type="submit" class="quiet">
+            {html.escape(say("Ignore"))}</button>
         </form>
       </td>
     </tr>''')
 
     return f'''
 <section class="group">
-  <h3>New senders <span class="count">{len(waiting)}</span></h3>
+  <h3>{html.escape(say("New senders"))}
+    <span class="count">{len(waiting)}</span></h3>
   <table class="stations">
-    <thead><tr><th>Identity</th><th>Status</th><th>Used by</th>
-               <th>Fields</th><th>Name</th></tr></thead>
+    <thead><tr><th>{html.escape(say("Identity"))}</th>
+               <th>{html.escape(say("Status"))}</th>
+               <th>{html.escape(say("Used by"))}</th>
+               <th>{html.escape(say("Fields"))}</th>
+               <th>{html.escape(say("Name"))}</th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
   </table>
 </section>'''
 
 
-def _folded(seen: Any) -> str:
+def _folded(seen: Any, lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
     folded = seen.ignored()
     if not folded:
         return ""
     rows = []
     for one in folded:
+        identity = html.escape(one.identity or lang.say("(none)"))
         rows.append(f'''
     <tr>
-      <td>{html.escape(one.driver)} <code>{html.escape(one.identity or "(none)")}</code></td>
-      <td><span class="note">{html.escape(_ago(one.last_seen))}</span></td>
+      <td>{html.escape(one.driver)} <code>{identity}</code></td>
+      <td><span class="note">
+        {html.escape(_ago(one.last_seen, lang))}</span></td>
       <td>
         <form method="post" action="./senders/unignore" class="inline">
           <input type="hidden" name="driver" value="{html.escape(one.driver)}">
           <input type="hidden" name="identity" value="{html.escape(one.identity)}">
-          <button type="submit" class="quiet">Restore</button>
+          <button type="submit" class="quiet">
+            {html.escape(lang.say("Restore"))}</button>
         </form>
       </td>
     </tr>''')
     return f'''
 <section class="group">
   <details>
-    <summary><h3>Ignored<span class="count">{len(folded)}</span></h3></summary>
+    <summary><h3>{html.escape(lang.say("Ignored"))}
+      <span class="count">{len(folded)}</span></h3></summary>
     <table class="stations">
-      <thead><tr><th>Identity</th><th>Last seen</th><th></th></tr></thead>
+      <thead><tr><th>{html.escape(lang.say("Identity"))}</th>
+                 <th>{html.escape(lang.say("Last seen"))}</th>
+                 <th></th></tr></thead>
       <tbody>{"".join(rows)}</tbody>
     </table>
   </details>
@@ -624,17 +658,18 @@ def new(admin: Any, error: str = "", form: dict | None = None,
     if made is not None:
         return _what_to_enter(admin, made)
 
+    say = admin.say
     offered = tellable()
     chosen = form.get("driver") or ("wunderground" if "wunderground" in offered
                                     else next(iter(offered), ""))
     options = NEWLINE.join(
         f'<option value="{html.escape(kind)}"'
         f'{" selected" if chosen == kind else ""}>'
-        f'{html.escape(one.label)}</option>'
+        f"{html.escape(say(one.label))}</option>"
         for kind, one in offered.items())
     explained = "".join(
-        f"<li><strong>{html.escape(one.label)}</strong>: "
-        f"{html.escape(one.hardware)}</li>"
+        f"<li><strong>{html.escape(say(one.label))}</strong>: "
+        f"{html.escape(say(one.hardware))}</li>"
         for one in offered.values())
     # Named rather than described in general terms. "Hardware that cannot be
     # told where to upload" leaves somebody holding an AcuRite bridge to work
@@ -643,39 +678,47 @@ def new(admin: Any, error: str = "", form: dict | None = None,
     host, port, _guessed = _where_consoles_reach_us(admin)
     token = admin.config().get("token") or ""
     adopting = "".join(
-        f'<details class="kind"><summary>{html.escape(one.label)}: '
-        f'{html.escape(one.hardware)}</summary><ol class="steps">'
-        + "".join(_step(fill(note, host, port, token, name))
+        f'<details class="kind"><summary>{html.escape(say(one.label))}: '
+        f'{html.escape(say(one.hardware))}</summary><ol class="steps">'
+        + "".join(_step(fill(say(note), host, port, token, name))
                   for note in one.notes)
         + "</ol></details>"
         for name, one in setups().items() if not one.tellable)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    other = ""
+    if adopting:
+        other = (f"<details><summary>{html.escape(say('Other hardware'))}"
+                 f"</summary>{adopting}</details>")
 
     return f'''
 <section class="group">
-  <h3>Add sender</h3>
+  <h3>{html.escape(say("Add sender"))}</h3>
   {problem}
   <form method="post" action="./new-sender">
     <div class="field">
-      <label for="s-name">Name</label>
+      <label for="s-name">{html.escape(say("Name"))}</label>
       <input type="text" id="s-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="garden" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _.</p>
+      <p class="help">{html.escape(say(
+         "Lowercase letters, digits, - and _."))}</p>
     </div>
     <div class="field">
-      <label for="s-driver">Protocol</label>
+      <label for="s-driver">{html.escape(say("Protocol"))}</label>
       <select id="s-driver" name="driver">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
-    <div class="actions"><button type="submit">Continue</button></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Continue"))}</button></div>
   </form>
-  {f'<details><summary>Other hardware</summary>{adopting}</details>' if adopting else ''}
+  {other}
 </section>'''
 
 
 def _what_to_enter(admin: Any, station: Any) -> str:
     """The point of the whole wizard: what to type into the console."""
+    say = admin.say
+    lang = admin.language
     token = admin.config().get("token") or ""
     host, port, guessed = _where_consoles_reach_us(admin)
 
@@ -686,17 +729,18 @@ def _what_to_enter(admin: Any, station: Any) -> str:
     # exactly like the right one. Somebody types it into a console, nothing
     # arrives, and there is nothing anywhere to suspect.
     caveat = "" if not guessed else (
-        '<p class="help warn">This address is what this machine sees of '
-        'itself. Behind a reverse proxy or a published container port it is '
-        'not the one a device can reach -- set <strong>Address devices '
-        'reach it at</strong> under Listener, and this will say that '
-        'instead.</p>')
+        '<p class="help warn">' + html.escape(say(
+            "This address is what this machine sees of itself. Behind a "
+            "reverse proxy or a published container port it is not the one a "
+            "device can reach -- set 'Address consoles reach it at' under "
+            "Listener, and this will say that instead.")) + "</p>")
 
     said = setups().get(station.driver)
     rows = [(label, fill(value, host, port, token,
                          station.driver, station.identity))
             for label, value in (said.fields if said else ())]
-    notes = [fill(one, host, port, token, station.driver, station.identity)
+    notes = [fill(say(one), host, port, token, station.driver,
+                  station.identity)
              for one in (said.notes if said else ())]
     if said is None:
         # A driver that says nothing still gets a station and a page. The
@@ -705,10 +749,10 @@ def _what_to_enter(admin: Any, station: Any) -> str:
         rows = [("Address", f"{_base(host, port)}/{token}/{station.driver}/"
                             if token else
                             f"{_base(host, port)}/{station.driver}/")]
-        notes = ["This driver does not provide connection instructions."]
+        notes = [say("This driver does not provide connection instructions.")]
 
     table = "".join(
-        f'<tr><th>{html.escape(label)}</th>'
+        f"<tr><th>{html.escape(say(label))}</th>"
         f'<td><code>{html.escape(str(value))}</code></td></tr>'
         for label, value in rows)
     told = "".join(_step(one) for one in notes)
@@ -718,26 +762,30 @@ def _what_to_enter(admin: Any, station: Any) -> str:
         # console, so this is the moment to read its identity off the wire --
         # rather than at some point in service, to whichever console happens
         # to speak first.
+        how = html.escape(lang.fill(
+            "This sender names itself with a {field} of its own and cannot "
+            "be told what to call itself, so press that once it is sending. "
+            "The first upload from {kind} hardware this installation does "
+            "not know yet becomes {name}.",
+            field=said.identity if said else say("name"),
+            kind=say(said.label) if said else station.driver,
+            name=station.name))
         after = f'''
   <form method="post" action="./senders/{html.escape(station.name)}/learn">
-    <div class="actions"><button type="submit">It is uploading now</button></div>
+    <div class="actions"><button type="submit">
+      {html.escape(say("It is uploading now"))}</button></div>
   </form>
-  <p class="help">This sender names itself with a
-     <code>{html.escape(said.identity if said else "name")}</code> of its own
-     and cannot be told what to call itself, so press that once it is
-     sending. The first upload from
-     {html.escape(said.label if said else station.driver)} hardware this
-     installation does not know yet becomes
-     <strong>{html.escape(station.name)}</strong>.</p>'''
+  <p class="help">{how}</p>'''
     else:
-        after = '''
-  <p class="help">Waiting for the first upload. Return to
-     <a href="./senders">Senders</a> to check its status.</p>'''
+        after = f'''
+  <p class="help">{html.escape(say("Waiting for the first upload. Return to"))}
+     <a href="./senders">{html.escape(say("Senders"))}</a>
+     {html.escape(say("to check its status."))}</p>'''
 
     return f'''
 <section class="group">
-  <h3>Connect {html.escape(station.name)}</h3>
-  <p class="ok">Sender created</p>
+  <h3>{html.escape(lang.fill("Connect {name}", name=station.name))}</h3>
+  <p class="ok">{html.escape(say("Sender created"))}</p>
   <table class="stations enter">{table}</table>
   <ol class="steps">{told}</ol>
   {caveat}
@@ -1055,15 +1103,17 @@ def _catalog_of(spec: dict[str, Any],
 
 def _what_it_sends_html(admin: Any, station: Any) -> str:
     """Read-only sender diagnostics; Place configuration stays elsewhere."""
+    say = admin.say
     found = what_it_sends(admin, station)
     if not found:
         return ""
 
-    summary = f"Latest readings ({len(found['sent'])})"
+    summary = admin.language.fill("Latest readings ({n})",
+                                  n=len(found["sent"]))
     if found.get("dialect"):
         summary += f" · {found['dialect']}"
     if not found.get("mapping"):
-        summary += " · mapping unavailable"
+        summary += " · " + say("mapping unavailable")
 
     readings = "".join(
         f'<tr><td class="mono">{html.escape(name)}</td>'
@@ -1072,14 +1122,16 @@ def _what_it_sends_html(admin: Any, station: Any) -> str:
         for name in found["sent"])
     table = f'''
     <table class="stations sender-readings">
-      <thead><tr><th>Raw field</th><th>Latest value</th><th>Stored description</th></tr></thead>
+      <thead><tr><th>{html.escape(say("Raw field"))}</th>
+                 <th>{html.escape(say("Latest value"))}</th>
+                 <th>{html.escape(say("Stored description"))}</th></tr></thead>
       <tbody>{readings}</tbody>
     </table>''' if readings else ""
 
     raw = ""
     if found["raw"]:
         raw = f'''
-    <label>Redacted upload</label>
+    <label>{html.escape(say("Redacted upload"))}</label>
     <textarea class="rawupload" rows="4" readonly
               onclick="this.select()">{html.escape(found["raw"])}</textarea>'''
 
@@ -1105,12 +1157,13 @@ def _properties(admin: Any, station: Any) -> str:
     return f'''
     <form method="post" action="./senders/{html.escape(station.name)}/set"
           class="props">
-      {_clock_fields(station)}
-      <button type="submit" class="quiet">Save clock</button>
+      {_clock_fields(station, admin.say)}
+      <button type="submit" class="quiet">
+        {html.escape(admin.say("Save clock"))}</button>
     </form>'''
 
 
-def _clock_fields(station: Any) -> str:
+def _clock_fields(station: Any, say: Any = None) -> str:
     """This console's clock, folded away because almost none needs it.
 
     It was a per-protocol setting, which put one figure on every console
@@ -1122,17 +1175,20 @@ def _clock_fields(station: Any) -> str:
     writing the default onto each station would freeze it, so a later change
     to the setting would reach every console except the ones already listed.
     """
+    say = say or str
     behind = "" if station.max_behind is None else f"{station.max_behind:g}"
     ahead = "" if station.max_ahead is None else f"{station.max_ahead:g}"
     opened = " open" if (behind or ahead) else ""
+    default = html.escape(say("as configured"))
     return f'''
       <details class="clock"{opened}>
-        <summary>Sender clock</summary>
-        <p class="hint">Allowed timestamp drift. Empty uses the global setting.</p>
-        <label>behind
+        <summary>{html.escape(say("Sender clock"))}</summary>
+        <p class="hint">{html.escape(say(
+          "Allowed timestamp drift. Empty uses the global setting."))}</p>
+        <label>{html.escape(say("behind"))}
           <input type="text" name="max_behind" value="{html.escape(behind)}"
-                 placeholder="as configured" size="10"></label>
-        <label>ahead
+                 placeholder="{default}" size="10"></label>
+        <label>{html.escape(say("ahead"))}
           <input type="text" name="max_ahead" value="{html.escape(ahead)}"
-                 placeholder="as configured" size="10"></label>
+                 placeholder="{default}" size="10"></label>
       </details>'''
