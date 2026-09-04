@@ -128,6 +128,16 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     elif message:
         banner = f'<div class="banner">{html.escape(message)}</div>'
 
+    if addons.in_a_container():
+        # Before the buttons, not after. Installing here works and is gone at
+        # the next rebuild, and somebody who found that out by their console
+        # going unread would have no way to guess why.
+        banner += (
+            '<div class="banner warn">' + html.escape(say(
+                "This is running in a container, so anything installed here "
+                "is gone at the next rebuild. Put it in deploy/addons.txt to "
+                "keep it.")) + "</div>")
+
     top = ""
     if suggested:
         top = f'''

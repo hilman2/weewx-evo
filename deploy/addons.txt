@@ -1,0 +1,31 @@
+# The add-ons this installation runs, installed into the image.
+#
+# weewx-evo ships no driver. In a container that has to be said somewhere the
+# image can read, because a driver installed from the settings page lives in
+# site-packages and site-packages is not a volume: it works until the next
+# `docker compose up` and is then gone, with the console still uploading and
+# nothing reading it.
+#
+# So this file is the truth for a container, and the page says so when it is
+# running in one. Edit it, rebuild, and the station comes back with what it
+# needs.
+#
+# Pinned to commits, like everything else in this project that is compared
+# against or depended on. A station that runs untouched for years should not
+# have what it records decided by whatever was on a branch the morning
+# somebody rebuilt.
+#
+# `--no-deps` in the Dockerfile, so this has to name what it needs: the push
+# protocols share weewx-evo-push-common, and pip would otherwise go looking
+# for it on PyPI, where it is not.
+
+# The machinery the six push protocols share. Provides nothing on its own.
+weewx-evo-push-common @ git+https://github.com/weewx-evo/weewx-evo-push-common@52559665bb349e4cfa34d90745662b776fc0fd99
+
+# Ecowitt custom upload: the console this station has.
+weewx-evo-ecowitt @ git+https://github.com/weewx-evo/weewx-evo-ecowitt@1e1ad54fb4ae1945da3c7a0b7b5ac7286dc84e01
+
+# Running a WeeWX driver as a collector. Here because the configuration has
+# collectors of that kind in it: without this the kind is unknown, they are
+# skipped, and their endpoints do not exist.
+weewx-evo-weewx-driver @ git+https://github.com/weewx-evo/weewx-evo-weewx-driver@8ac28ffd7a5b155bd7333f46c46a8e9ef8bf9219

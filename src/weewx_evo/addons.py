@@ -118,6 +118,29 @@ def _version_of(package: str) -> str:
         return ""
 
 
+def in_a_container() -> bool:
+    """Whether this is running in a container, as far as can be told.
+
+    It decides what is said, never what is done. Installing works either way;
+    in a container it works until the next `docker compose up`, because
+    site-packages is in the image and the image is rebuilt from
+    `deploy/addons.txt`. Somebody who installs a driver from the page,
+    restarts, and finds their console unread again would have no way to
+    guess why -- so it is said before the button is pressed.
+
+    `/.dockerenv` and the cgroup line are the two usual tells, and either
+    being wrong costs a sentence on a page, which is why a guess is
+    acceptable here and would not be anywhere the data is decided.
+    """
+    if Path("/.dockerenv").exists():
+        return True
+    try:
+        return "docker" in Path("/proc/self/cgroup").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
 def _where() -> Path:
     """Where the cached catalogue is. Beside the configuration file."""
     from . import settings as settings_state

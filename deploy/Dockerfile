@@ -39,10 +39,27 @@ RUN pip install --no-cache-dir "CT3==3.4.0.post5" "Pillow==12.3.0"
 RUN apt-get update && apt-get install -y --no-install-recommends         fonts-dejavu-core     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-# The bundled drivers come with the source; weewx-ecowitt is one of them.
 COPY src/ /app/src/
 COPY tools/ /app/tools/
 ENV PYTHONPATH=/app/src
+
+# The add-ons. weewx-evo ships no driver, so without this the container comes
+# up, answers, and reads nothing -- the console keeps uploading and every
+# packet is a sighting nobody asked for.
+#
+# `--no-deps` because these depend on `weewx-evo`, which here is a source tree
+# rather than a package on PyPI. What they really need of each other is named
+# in the file.
+#
+# git is needed to fetch them and is then taken out again: it is 40 MB of
+# build tool in a container that has no reason to be able to clone anything.
+COPY deploy/addons.txt /app/deploy/addons.txt
+RUN if [ -s /app/deploy/addons.txt ]; then \
+        apt-get update && apt-get install -y --no-install-recommends git && \
+        pip install --no-cache-dir --no-deps -r /app/deploy/addons.txt && \
+        apt-get purge -y git && apt-get autoremove -y && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Unprivileged: this process is reachable from the internet through Caddy, and
 # it has no reason to own the files it writes beyond writing them.
