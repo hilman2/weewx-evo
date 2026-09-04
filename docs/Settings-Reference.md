@@ -155,7 +155,7 @@ operator choices.
 | `table` | text | `archive` | A R | The table in the database. Only of interest to an installation that renamed it |
 | `poll` | duration | `5` (1–300) | A | How often the archiver looks for closed intervals. The work is idempotent and the boundaries come from the packets, so a late or missed tick changes nothing |
 | `driver_dir` | path | — | A R | Where drivers installed with `weewx-evo driver install` live. Empty means: next to the archive |
-| `weewx_conf` | path | — | A | A `weewx.conf` to fall back to. Read, never written. Its place and database values are only input to the one-time migration to `archives.toml` |
+| `weewx_conf` | path | — | A | A `weewx.conf` to fall back to. Read, never written. Its place and database values are read only when there is no `archives.toml` yet |
 
 ## Feed: json
 

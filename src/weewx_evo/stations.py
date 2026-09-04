@@ -56,11 +56,6 @@ IDENTITY_DIGITS = 6
 #: A station display name, as it appears in the admin URL.
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-#: Settings that lived on a Station before one console could feed several
-#: archives.  They remain readable for the staged migration in `archives.py`;
-#: new runtime authority is `Archive.members`.
-LEGACY_MEMBER_FIELDS = ("role", "channel", "indoor")
-
 
 @dataclass(frozen=True, slots=True)
 class Station:
@@ -83,10 +78,6 @@ class Station:
     #: What the hardware is, for the page and the log. Cosmetic, and a
     #: property of this box rather than of the protocol it speaks.
     model: str = ""
-    #: A station-owned field map from older configurations. Runtime placement
-    #: never reads it; it is retained only so ``placement import`` can move the
-    #: decisions to the Place-scoped placement file without losing them.
-    field_map: dict[str, str] = field(default_factory=dict)
     #: How far out this console's clock may be before the arrival time is
     #: used instead. None means the figure from the settings, which is what
     #: nearly every console wants.
@@ -99,12 +90,6 @@ class Station:
     #: old one needs would have been extended to the new one as well.
     max_behind: float | None = None
     max_ahead: float | None = None
-    #: Old station-owned role settings, retained only so a station-file save
-    #: cannot erase them before `archives.toml` has copied them. No runtime
-    #: caller reads this; the archive migration clears it after committing
-    #: the canonical member policies.
-    _legacy_member: dict[str, Any] = field(
-        default_factory=dict, repr=False, compare=False)
 
     def matches(self, driver: str, identity: str) -> bool:
         """Whether an upload belongs to this station.
@@ -310,56 +295,6 @@ def load(path: str | Path) -> Register:
     return made
 
 
-def legacy_member_settings(path: str | Path) -> dict[str, dict[str, Any]]:
-    """Old role/channel/indoor values, without making them runtime authority.
-
-    Only complete station announcements count, exactly as in `from_dict`.
-    Values are deliberately returned uncoerced: `archives.MemberPolicy`
-    validates them before committing the one-time migration, so a quoted
-    ``"false"`` cannot quietly become true and an extra source without a
-    usable channel cannot start writing main columns.
-    """
-    import tomllib
-
-    path = Path(path)
-    if not path.exists():
-        return {}
-    with open(path, "rb") as fp:
-        raw = tomllib.load(fp)
-    found: dict[str, dict[str, Any]] = {}
-    for name, entry in (raw.get("stations") or {}).items():
-        if not isinstance(entry, dict):
-            continue
-        if not str(entry.get("driver") or "").strip():
-            continue
-        if not str(entry.get("identity") or "").strip():
-            continue
-        policy = {field_name: entry[field_name]
-                  for field_name in LEGACY_MEMBER_FIELDS
-                  if field_name in entry}
-        if policy:
-            found[str(name)] = policy
-    return found
-
-
-def clear_legacy_member_settings(path: str | Path) -> bool:
-    """Remove copied role settings from a writable station file.
-
-    Called only after ``archives.toml`` has committed the versioned member
-    policies. A read-only split deployment may leave the obsolete keys on
-    disk; they remain harmless because no Station exposes them and a marked
-    archive registry never consults them again.
-    """
-    path = Path(path)
-    register = load(path)
-    if not any(one._legacy_member for one in register):
-        return False
-    register.stations = [replace(one, _legacy_member={})
-                         for one in register.stations]
-    save(path, register, "member policies moved to archives.toml")
-    return True
-
-
 def _seconds(value: Any) -> float | None:
     """A clock tolerance, or None for "whatever the settings say".
 
@@ -408,13 +343,8 @@ def from_dict(raw: dict[str, Any], path: Path | None = None) -> Register:
             note=str(entry.get("note") or ""),
             learnt=bool(entry.get("learnt", False)),
             model=str(entry.get("model") or ""),
-            field_map={str(k): str(v) for k, v
-                       in (entry.get("field_map") or {}).items()},
             max_behind=_seconds(entry.get("max_behind")),
             max_ahead=_seconds(entry.get("max_ahead")),
-            _legacy_member={field_name: entry[field_name]
-                            for field_name in LEGACY_MEMBER_FIELDS
-                            if field_name in entry},
         ))
     return Register(stations=made, path=path)
 
@@ -466,13 +396,6 @@ def render(register: Register, note: str = "") -> str:
         out.append(f'identity = "{_escape(one.identity)}"')
         if one.learnt:
             out.append("learnt = true")
-        # Only until the place registry has committed the migration. Keeping
-        # the raw values here makes a listener-only station edit lossless;
-        # they are not attributes of Station and never affect routing.
-        for field_name in LEGACY_MEMBER_FIELDS:
-            if field_name in one._legacy_member:
-                out.append(f"{field_name} = "
-                           f"{_toml_scalar(one._legacy_member[field_name])}")
         if one.model:
             out.append(f'model = "{_escape(one.model)}"')
         # Only when this console differs from the configured figure. Writing
@@ -484,22 +407,8 @@ def render(register: Register, note: str = "") -> str:
             out.append(f"max_ahead = {one.max_ahead:g}")
         if one.note:
             out.append(f'note = "{_escape(one.note)}"')
-        if one.field_map:
-            out.append("")
-            out.append(f"[stations.{one.name}.field_map]")
-            for their, ours in sorted(one.field_map.items()):
-                out.append(f'"{_escape(their)}" = "{_escape(ours)}"')
         out.append("")
     return "\n".join(out).rstrip() + "\n"
-
-
-def _toml_scalar(value: Any) -> str:
-    """A legacy scalar, preserved until its archive migration commits."""
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return str(value)
-    return f'"{_escape(str(value))}"'
 
 
 def _escape(text: str) -> str:

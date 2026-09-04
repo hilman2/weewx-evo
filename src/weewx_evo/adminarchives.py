@@ -4,9 +4,9 @@ Hand-written for the same reason the stations page is. The form generator
 takes one named value at a time, and an archive is a set of them -- a file,
 a label and three numbers -- repeated per row.
 
-This is the only page that writes place settings. A legacy installation gets
-one row migrated into `archives.toml`; one and several archives then use the
-same storage and the same edit path.
+This is the only page that writes place settings. An installation with no
+file yet gets one row written from the settings; one and several archives
+then use the same storage and the same edit path.
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ def sender_choices(admin: Any, archive: archive_defs.Archive | None = None
 
 
 def settings_of(admin: Any) -> Any:
-    """Legacy saved settings, for the one-time archive migration.
+    """The saved settings, for writing out the first place.
 
     Not the running `Settings`: this page reads the file it writes, and the
     running one belongs to whichever process is listening. A present
@@ -157,30 +157,10 @@ def settings_of(admin: Any) -> Any:
 
 
 def load(admin: Any) -> archive_defs.Register:
-    path = path_for(admin)
-    # Admin is an allowed migration boundary: unlike the Archiver it owns the
-    # editable configuration directory and may translate the old station
-    # relationships once before reading the Place register.
-    needs_migration = not path.exists()
-    if path.exists():
-        import tomllib
-
-        with open(path, "rb") as handle:
-            raw = tomllib.load(handle)
-        version = raw.get("member_policy_version", 0)
-        entries = raw.get("archives") or {}
-        needs_migration = (
-            isinstance(version, int)
-            and not isinstance(version, bool)
-            and version < archive_defs.MEMBER_POLICY_VERSION
-            and isinstance(entries, dict)
-            and any(isinstance(entry, dict)
-                    and ("stations" in entry or bool(entry.get("members")))
-                    for entry in entries.values()))
-    if needs_migration:
-        archive_defs.migrate_station_ownership(
-            path, settings_of(admin), Path(admin.path).parent / "stations.toml")
-    return archive_defs.Register.load(path, settings_of(admin))
+    # With no file yet, the settings are the one place and are written out.
+    # This page owns the editable configuration directory, which is why it
+    # may hand the saved settings over and the Archiver may not.
+    return archive_defs.Register.load(path_for(admin), settings_of(admin))
 
 
 def store(admin: Any, register: archive_defs.Register) -> str:

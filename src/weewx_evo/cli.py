@@ -52,7 +52,7 @@ from . import uploads as upload_registry
 from .admin import Admin, AdminServer
 from .archiver import Archiver
 from .db.archive import ArchiveStore
-from .db.live import LiveStore, sender_id
+from .db.live import LiveStore
 from .derive import from_settings as deriver_from
 from .exports import livepush
 from .exports import record as export_record
@@ -255,7 +255,6 @@ def configure_drivers(cfg: Settings, archive: Any = None,
         # A sender's clock is judged at ingest, so its tolerances have to
         # reach the driver. Field placement does not: the listener stores
         # raw names and each Place maps them while reading the journal.
-        # Legacy Station.field_map values are read only by `placement import`.
         clocks = sender_clock_settings(cfg, name)
         instance = drivers.DEFAULT.get(name)
         if clocks and _accepts(instance, "stations"):
@@ -320,10 +319,10 @@ def sender_clock_settings(cfg: Settings, driver: str) -> dict:
     """Per-sender clock tolerances for one driver, out of `stations.toml`.
 
     These are front-door policy: a timestamp is accepted or rejected before
-    the raw packet is stored. Field maps are deliberately absent. They used
-    to be injected here, which made the listener decide an archive field
-    before any Place had selected the packet. Old maps remain readable only
-    to the explicit `placement import` migration.
+    the raw packet is stored. Field maps are deliberately absent. Injected
+    here they made the listener decide an archive column before any Place
+    had selected the packet, which is the decision `placement.toml` exists
+    to keep on the read side.
     """
     # `_path` rather than a public one: Settings keeps the file it was
     # read from and nothing else needed it until now.
@@ -437,20 +436,6 @@ def read_placements(args: argparse.Namespace, cfg: Settings) -> Any:
         return placement.Placements(path=path)
 
 
-def migrate_legacy_placements(args: argparse.Namespace, cfg: Settings,
-                              registry: Any) -> bool:
-    """Bind old global scopes while this listener still knows all places.
-
-    Archive-only processes deliberately never call this: they have no
-    migration authority and must not make a rule reach a place created after
-    the upgrade snapshot.
-    """
-    plans = read_placements(args, cfg)
-    if not placement.bind_legacy_scopes(plans, registry.names()):
-        return False
-    placement.save(placement_path(args, cfg), plans,
-                   "Legacy scopes bound to the places present at migration.")
-    return True
 
 
 def build_placer(archive: Any, placements: Any, directory: Any,
@@ -476,72 +461,15 @@ def status_placer(registry: Any, placements: Any, stations: Any) -> Any:
     return build_placer(archive, placements, stations)
 
 
-def stranded_field_maps(stations: Any, placements: Any,
-                        archives: Any) -> dict[str, list[str]]:
-    """Placements still in `stations.toml` that nothing reads any more.
-
-    A field map used to live on the station and be handed to the driver. It
-    lives in `placement.toml` now, and an installation upgrading with a map
-    already in the old place would have it quietly stop being read -- every
-    reading falling back to whatever its catalog says, which for a contested
-    field means two sensors in one column.
-
-    So it is measured and said, once, at startup. Not migrated behind
-    anybody's back: which column a year of readings goes into is the one
-    decision on this page that cannot be taken back, and a program that made
-    it on being upgraded would be making it for somebody who was not asked.
-    `weewx-evo placement import` is the answer, and it prints what it would
-    do before it does it.
-
-    Asked exactly as `cmd_placement_import` asks it: per place, and keyed on
-    the canonical sender ID. Asked with the friendly name instead, every
-    lookup misses and every installation is told its maps are stranded --
-    and a warning that is always there is one nobody reads. Asked with an
-    empty archive it is worse: no scope covers one, so the answer is the
-    same whether the placements are there or not.
-    """
-    stranded: dict[str, list[str]] = {}
-    for one in stations or ():
-        mapped = getattr(one, "field_map", None) or {}
-        if not mapped:
-            continue
-        sender = sender_id(one.driver, one.identity)
-        for archive in archives.all():
-            if not archive.selects(sender):
-                continue
-            known = placements.extensions(archive.name, sender, "")
-            missing = sorted(raw for raw, column in mapped.items()
-                             if known.get(raw) != column)
-            if missing:
-                stranded.setdefault(one.name, [])
-                stranded[one.name] = sorted(set(stranded[one.name]) | set(missing))
-    return stranded
-
-
-def say_if_stranded(stations: Any, placements: Any, archives: Any) -> None:
-    """Report a field map nothing reads. Never fatal."""
-    try:
-        stranded = stranded_field_maps(stations, placements, archives)
-    except Exception:
-        log.debug("could not check the old field maps", exc_info=True)
-        return
-    for name, missing in stranded.items():
-        log.warning(
-            "%s has %d placement(s) in stations.toml that nothing reads any "
-            "more: %s. They are in placement.toml now. Until they are moved, "
-            "those readings go wherever their catalog says -- run "
-            "'weewx-evo placement import --write'.",
-            name, len(missing), ", ".join(missing[:6])
-            + (" ..." if len(missing) > 6 else ""))
 
 
 def read_archives(args: argparse.Namespace,
                   cfg: Settings) -> archives_module.Register:
     """Every measurement series this installation keeps.
 
-    A missing file is the one legacy case: `Register.load` writes the former
-    central archive settings into the first entry, atomically. From then on
-    this file is the only authority, including on a one-place installation.
+    With no file, `Register.load` writes the central archive settings into
+    the first entry, atomically. From then on this file is the only
+    authority, including on a one-place installation.
     """
     where = archives_path(args, cfg)
     register = archives_module.Register.load(where, cfg)
@@ -864,11 +792,7 @@ def cmd_listen(args: argparse.Namespace) -> int:
     # The listener writes the live table, and every archive reads it. It has
     # to mark all of them pending, so it needs their names even though it
     # opens none of them.
-    archives_module.migrate_station_ownership(
-        archives_path(args, cfg), cfg, stations_path(args, cfg))
     archive_register = read_archives(args, cfg)
-    migrate_legacy_placements(args, cfg, archive_register)
-    say_if_stranded(announced, read_placements(args, cfg), archive_register)
     live.archives = archive_register.names()
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
@@ -1427,18 +1351,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
     announced, sightings = read_stations(args, cfg, live)
-    # This is the last startup path allowed to know both the old station
-    # registry and the place registry. The archive-only commands never call
-    # the migration helper and therefore never open stations.toml.
-    archives_module.migrate_station_ownership(
-        archives_path(args, cfg), cfg, stations_path(args, cfg))
     registry = read_archives(args, cfg)
-    migrate_legacy_placements(args, cfg, registry)
-    # Said here, where both registries are still readable. A map left in
-    # stations.toml is not an error and nothing waits for it -- but it is
-    # the one upgrade in which readings quietly change column, so it is
-    # named at the start of every run until somebody moves it.
-    say_if_stranded(announced, read_placements(args, cfg), registry)
     series = build_archivers(args, cfg, live, registry)
     # Every archive marks its own pending intervals, so the table has to know
     # who is reading it before the first packet lands.
@@ -3552,9 +3465,8 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
             # Empty is intentional and must stay different from broad: a new
             # Place with no member may not publish another Place's readings.
             consoles[one.name] = selected
-        # Main/extra describes this Place's relation to a sender. The placer
-        # also expands any reachable legacy alias under the canonical
-        # sender's policy, so an old row cannot silently regain main status.
+        # Main/extra describes this Place's relation to a sender, so it is
+        # asked of the placer that holds this Place's members.
         main_consoles[one.name] = placer.selected_main_senders()
 
     # Every series, in the order pages present them, with the label and the
@@ -5602,64 +5514,6 @@ def cmd_placement_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_placement_import(args: argparse.Namespace) -> int:
-    """Move a field map out of `stations.toml` and into `placement.toml`.
-
-    For an installation that had one before placements were a file of their
-    own. Nothing is written without `--write`, and nothing already decided is
-    overwritten: this only fills in what the new file does not say.
-
-    The station's own entries are left in `stations.toml` afterwards. Deleting
-    them would mean editing a file the operator may have edited by hand for a
-    year, on a run that was meant to add something.
-    """
-    cfg = settings_for(args)
-    register, _sightings = read_stations(args, cfg)
-    plans = read_placements(args, cfg)
-    archives = read_archives(args, cfg)
-    migrated = placement.bind_legacy_scopes(plans, archives.names())
-    stranded: list[tuple[Any, Any, str, list[str]]] = []
-    for station in register:
-        mapped = getattr(station, "field_map", None) or {}
-        if not mapped:
-            continue
-        sender = sender_id(station.driver, station.identity)
-        for archive in archives.all():
-            if not archive.selects(sender):
-                continue
-            known = plans.extensions(archive.name, sender, "")
-            missing = sorted(raw for raw, column in mapped.items()
-                             if known.get(raw) != column)
-            if missing:
-                stranded.append((archive, station, sender, missing))
-    if not stranded and not migrated:
-        print("Nothing to move. Every placement in stations.toml is already "
-              "in placement.toml, or there are none.")
-        return 0
-
-    moved = 0
-    for archive, station, sender, missing in stranded:
-        print(f"\n{station.name} -> {archive.name}")
-        for raw in missing:
-            column = station.field_map[raw]
-            print(f"  {raw:24} -> {column}")
-            plans.decide(archive.name, sender, "", raw, column)
-            moved += 1
-
-    if migrated:
-        print("\nLegacy placements were bound to the Places that exist now.")
-
-    if not args.write:
-        print(f"\n{moved} placement(s). Nothing written; add --write.")
-        return 0
-    path = placement_path(args, cfg)
-    placement.save(path, plans, f"Moved {moved} placement(s) from stations.toml.")
-    print(f"\n{moved} placement(s) written to {path}.")
-    print("The entries in stations.toml are left where they are; nothing "
-          "reads them.")
-    return 0
-
-
 def cmd_placement_accept(args: argparse.Namespace) -> int:
     """Turn what inference worked out into lines somebody can read.
 
@@ -5672,7 +5526,6 @@ def cmd_placement_accept(args: argparse.Namespace) -> int:
     plans = read_placements(args, cfg)
     archives = read_archives(args, cfg)
     archive = selected_archive(archives, args.series)
-    migrated = placement.bind_legacy_scopes(plans, archives.names())
     mode = str(args.mode or cfg.get("infer_unknown") or "series")
     live_db = Path(cfg.get("live_db") or "")
     if not live_db.exists():
@@ -5682,7 +5535,7 @@ def cmd_placement_accept(args: argparse.Namespace) -> int:
     with LiveStore(live_db) as live:
         notes = proposal_defs.Proposals(store=live)
     written = placement.promote(notes, plans, archive.name, mode)
-    if not written and not migrated:
+    if not written:
         print(f"Nothing to write ({mode})."
               + ("" if mode != "off" else
                  " `infer_unknown = off` promotes nothing by design; place"
@@ -5691,8 +5544,6 @@ def cmd_placement_accept(args: argparse.Namespace) -> int:
 
     for raw, column in written:
         print(f"  {raw:24} -> {column}")
-    if migrated:
-        print("  legacy scopes -> current Places")
     if not args.write:
         print(f"\n{len(written)} placement(s). Nothing written; add --write.")
         return 0
@@ -6546,13 +6397,6 @@ def main(argv: list[str] | None = None) -> int:
         "list", help="what arrives, and where it goes")
     add_common(q)
     q.set_defaults(func=cmd_placement_list)
-
-    q = placement_sub.add_parser(
-        "import", help="move a field map out of stations.toml")
-    add_common(q)
-    q.add_argument("--write", action="store_true",
-                   help="write placement.toml. Without it, nothing is saved")
-    q.set_defaults(func=cmd_placement_import)
 
     q = placement_sub.add_parser(
         "accept", help="write down what inference has worked out")

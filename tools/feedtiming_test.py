@@ -183,7 +183,6 @@ def archive_names_are_resolved_once_and_exactly() -> None:
             '[feeds.bad]\nkind = "json"\narchive = "gone"\n',
             encoding="utf-8")
         (work / "archives.toml").write_text(
-            'member_policy_version = 2\n\n'
             '[archives.north]\nfile = "elsewhere/north.sdb"\n'
             'senders = "*"\n', encoding="utf-8")
         args = argparse.Namespace(config=config, weewx_conf=None)
@@ -198,7 +197,6 @@ def archive_names_are_resolved_once_and_exactly() -> None:
               forecast_db(args, cfg), work / "forecast.sdb")
 
         (work / "archives.toml").write_text(
-            'member_policy_version = 2\n\n'
             '[archives.north]\nfile = "north.sdb"\nsenders = "*"\n\n'
             '[archives.south]\nfile = "south.sdb"\nsenders = []\n',
             encoding="utf-8")
@@ -274,7 +272,6 @@ def form_defaults_follow_the_registry() -> None:
         config.write_text("", encoding="utf-8")
         archives = work / "archives.toml"
         archives.write_text(
-            'member_policy_version = 2\n\n'
             '[archives.north]\nfile = "north.sdb"\nsenders = "*"\n',
             encoding="utf-8")
         option_defs.building_for(config)
@@ -288,7 +285,6 @@ def form_defaults_follow_the_registry() -> None:
                   ("north", "north", "north"))
 
             archives.write_text(
-                'member_policy_version = 2\n\n'
                 '[archives.north]\nfile = "north.sdb"\nsenders = "*"\n\n'
                 '[archives.south]\nfile = "south.sdb"\nsenders = []\n',
                 encoding="utf-8")

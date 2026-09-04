@@ -111,8 +111,6 @@ The place is a repeated record and therefore has its own file rather than an
 
 ```toml
 # archives.toml
-member_policy_version = 2
-
 [archives.default]
 file = "data/weewx.sdb"
 label = "Kirchdorf an der Amper"

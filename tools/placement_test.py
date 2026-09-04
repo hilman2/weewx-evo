@@ -59,7 +59,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import ClassVar
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -387,17 +386,19 @@ def what_moved_off_the_front_door() -> None:
             "default", "unused.sdb",
             stations=(haus,),
             members={haus: archive_defs.MemberPolicy(indoor=False)})
-        legacy = sender_id("__legacy__", "haus")
+        # A console the place does not select is in the directory and is
+        # still not this place's: an explicit selection is a list, not a
+        # hint, and the second console's readings must not reach this file.
+        other = sender_id("ecowitt", "BBBB")
         main_placer = placement.Placer(
             archive, placement.Placements(), [
                 SenderIdentity(haus, "ecowitt", passkey, "haus"),
-                SenderIdentity(legacy, "__legacy__", "haus", "haus"),
+                SenderIdentity(other, "ecowitt", "BBBB", "schuppen"),
             ])
-        selected = main_placer.selected_senders()
-        check("an explicit place still reaches pre-journal rows",
-              legacy in selected, True)
-        check("a legacy alias inherits its member's main role",
-              main_placer.selected_main_senders(), [haus, legacy])
+        check("an explicit place selects what it names and nothing else",
+              main_placer.selected_senders(), [haus])
+        check("and the one it names is its primary reading",
+              main_placer.selected_main_senders(), [haus])
         roles._said.clear()
         placement._said.clear()
         want = oracle(driver, body, meta, station=register.by_name("haus"),
@@ -769,70 +770,47 @@ def the_archiver_executes_data_not_a_driver() -> None:
         unit_defs.contribute(before_groups)
 
 
-def legacy_global_scopes_are_closed() -> None:
-    """An old archive-less rule cannot leak into a place added later."""
-    print("\nlegacy global placements are bound to a closed place snapshot")
+def a_scope_without_a_place_reaches_nothing() -> None:
+    """A rule that names no archive must not apply to every archive.
+
+    Fail-closed, because the other direction is silent: a place created
+    next year would start following a line written before it existed, and
+    the readings it moved would look like the readings it was given.
+    """
+    print("\na placement that names no place is fail-closed")
     plans = placement.from_dict({"takes": [{
         "dialect": "old",
         "fields": {"raw": "outTemp"},
     }]})
-    check("an unbound legacy rule is fail-closed",
-          plans.extensions("default", "", "old"), {})
-    check("binding reports a migration", placement.bind_legacy_scopes(
-        plans, ["default", "north"]), True)
-    check("the existing places receive explicit copies",
-          (plans.extensions("default", "", "old"),
-           plans.extensions("north", "", "old")),
-          ({"raw": "outTemp"}, {"raw": "outTemp"}))
-    check("a later place inherits nothing",
-          plans.extensions("future", "", "old"), {})
+    check("it reaches the default place", plans.extensions("default", "", "old"),
+          {})
+    check("and any other", plans.extensions("north", "", "old"), {})
 
 
-def a_map_left_behind_is_named() -> None:
-    """A field map still keyed on the friendly name is reported, not obeyed.
+def a_scope_is_keyed_on_the_sender_id() -> None:
+    """A display name in `station` selects nobody. Only the id does.
 
-    The instance this was measured on had thirty-five of them, written by
-    the previous version of `placement import` under `station = "kirchdorf"`.
-    Placement is keyed on the canonical sender ID now, so none of them
-    matched -- `tf_ch1` would have gone wherever the Ecowitt catalog says
-    rather than into `extraTemp9`, and nothing anywhere would have said so.
+    Worth its own check because both spellings read the same in the file
+    and neither is a syntax error. A scope keyed on what somebody calls
+    the console applies to no packet, so every reading in it falls back to
+    whatever the catalog says -- `tf_ch1` into a column of the driver's
+    choosing rather than the one the operator picked, silently.
     """
-    print("\na field map nothing reads any more is named at startup")
-    from weewx_evo import cli
+    print("\na placement scope is keyed on the sender id")
     from weewx_evo.db.live import sender_id
 
-    class Station:
-        name = "kirchdorf"
-        driver = "ecowitt"
-        identity = "3178AB6B42A759F51A5A4AD72E37F8DE"
-        field_map: ClassVar[dict] = {"tf_ch1": "extraTemp9",
-                                     "tf_ch2": "extraTemp10"}
-
-    sender = sender_id(Station.driver, Station.identity)
-    register = archive_defs.Register(
-        [archive_defs.Archive(name="default", file="a.sdb",
-                              stations=(sender,))])
+    sender = sender_id("ecowitt", "3178AB6B42A759F51A5A4AD72E37F8DE")
+    fields = {"tf_ch1": "extraTemp9", "tf_ch2": "extraTemp10"}
 
     by_name = placement.from_dict({"takes": [{
-        "archive": "default", "station": "kirchdorf",
-        "fields": dict(Station.field_map)}]})
-    check("a scope on the friendly name reaches nothing, and is reported",
-          cli.stranded_field_maps([Station()], by_name, register),
-          {"kirchdorf": ["tf_ch1", "tf_ch2"]})
+        "archive": "default", "station": "kirchdorf", "fields": dict(fields)}]})
+    check("a scope on the display name reaches the console not at all",
+          by_name.extensions("default", sender, ""), {})
 
-    moved = placement.from_dict({"takes": [{
-        "archive": "default", "station": sender,
-        "fields": dict(Station.field_map)}]})
-    check("the same map under the sender ID is not reported",
-          cli.stranded_field_maps([Station()], moved, register), {})
-
-    # And a place that does not select this sender says nothing about it:
-    # its map is not stranded there, it is simply none of that place's
-    # business, and a warning naming every place would be unreadable.
-    elsewhere = archive_defs.Register(
-        [archive_defs.Archive(name="north", file="b.sdb", stations=())])
-    check("a place that does not select it reports nothing",
-          cli.stranded_field_maps([Station()], by_name, elsewhere), {})
+    keyed = placement.from_dict({"takes": [{
+        "archive": "default", "station": sender, "fields": dict(fields)}]})
+    check("the same scope on its id reaches all of it",
+          keyed.extensions("default", sender, ""), fields)
 
 
 def the_archive_service_does_not_load_a_driver() -> None:
@@ -863,7 +841,6 @@ def the_archive_service_does_not_load_a_driver() -> None:
             'trigger = "manual"\n'
             'archive = "default"\n', encoding="utf-8")
         (work / "archives.toml").write_text(
-            'member_policy_version = 2\n\n'
             '[archives.default]\n'
             'file = "archive.sdb"\n'
             'senders = "*"\n', encoding="utf-8")
@@ -1199,8 +1176,8 @@ def main() -> int:
     the_guessing_is_written_down()
     placing_is_quiet()
     the_archiver_executes_data_not_a_driver()
-    legacy_global_scopes_are_closed()
-    a_map_left_behind_is_named()
+    a_scope_without_a_place_reaches_nothing()
+    a_scope_is_keyed_on_the_sender_id()
     the_archive_service_does_not_load_a_driver()
     archive_members_reload_through_the_live_database()
     a_placement_reaches_the_reader()

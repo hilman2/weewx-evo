@@ -125,8 +125,8 @@ weewx-evo config import /etc/weewx/weewx.conf --write --overwrite
 
 | | |
 |---|---|
-| `[Station]` | Name, latitude, longitude and altitude for one-time creation of `[archives.default]` (`_altitude_metres` converts feet) |
-| `[DataBindings]` / `[Databases]` | `_databases()` finds the SQLite file for that one-time migration |
+| `[Station]` | Name, latitude, longitude and altitude, to write `[archives.default]` where there is none (`_altitude_metres` converts feet) |
+| `[DataBindings]` / `[Databases]` | `_databases()` finds the SQLite file for it |
 | `[StdArchive]` | Archive interval, `loop_hilo` |
 | The driver | `_driver()` works out which one is in use and brings its settings along |
 | `[Accumulator]` | `_accumulators()` — see below |

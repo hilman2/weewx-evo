@@ -13,9 +13,9 @@ out of it.
     altitude = 452.0
 
 One archive is the ordinary case, but it is still an archive and is still
-described here. An installation made before this file existed is migrated on
-the first read: its old `station.*` and `archive_db` settings are written once
-as `[archives.default]`. From then on this file is the authority.
+described here. An installation with no file at all has one anyway: the
+`station.*` and `archive_db` settings are written out once as
+`[archives.default]`. From then on this file is the authority.
 
 The second archive is why `station.*` had to stop being global. Sunrise,
 pressure reduction, evapotranspiration and every skin hang off those three
@@ -25,7 +25,7 @@ coordinates, differs by seconds and looks entirely correct.
 
 ## Where the values come from
 
-    no archives.toml        migrate the old settings, atomically
+    no archives.toml        write the settings out as one place, atomically
     archives.toml exists    read only this list
 
 There is no live fallback to the old settings. A misspelled archive name or a
@@ -54,25 +54,18 @@ log = logging.getLogger(__name__)
 
 FILENAME = "archives.toml"
 
-#: The name used for the one-time migration of the legacy settings. It is not
-#: an archive silently supplied at runtime: it exists only when the file names
-#: it (or after migration has written it there).
+#: The name the settings become when they are written out as one place. Not
+#: an archive silently supplied at runtime: it exists only when the file
+#: names it.
 DEFAULT = "default"
 
 #: The same shape as a station name: this ends up in a filename and in a URL.
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-#: Which old settings are copied into the first archive during migration.
+#: Which settings become the first archive.
 FROM_SETTINGS = ("archive_db", "station.name", "station.latitude",
                  "station.longitude", "station.altitude", "station.url",
                  "station.rain_year_start")
-
-#: Version two is the sender-owned shape. Version one used names from
-#: ``stations.toml`` both in ``stations = [...]`` and below ``members``.  A
-#: running archiver must never open that file to translate them, so the
-#: translation is an explicit installation/admin migration (see
-#: :func:`migrate_station_ownership`).
-MEMBER_POLICY_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,13 +161,13 @@ class Archive:
     order: int = 0
 
     #: Which senders from the live database feed this series. Values are the
-    #: canonical, versioned IDs produced by ``db.live.sender_id``.  The old
-    #: attribute name remains for a short source-compatibility window; the
-    #: public spelling is :attr:`senders` and the file spells it ``senders``.
+    #: canonical, versioned IDs produced by ``db.live.sender_id``. The public
+    #: spelling is :attr:`senders`, and the file spells it ``senders``.
     #:
-    #: **None and empty are different answers.** None is the explicit broad
-    #: selection inherited by a migrated installation; an empty tuple selects
-    #: none. Both belong to this archive -- neither is looked up on a station.
+    #: **None and empty are different answers.** None selects every sender
+    #: that arrives, including one nobody has announced; an empty tuple
+    #: selects none. Both belong to this archive -- neither is looked up on a
+    #: station.
     stations: tuple[str, ...] | None = ()
 
     #: Per-sender interpretation inside this archive. For an explicit
@@ -242,9 +235,10 @@ class Archive:
     def senders(self) -> tuple[str, ...] | None:
         """Canonical live sender IDs selected by this place.
 
-        ``None`` is only the explicit broad legacy mode. The compatibility
-        storage name is intentionally hidden behind this property so new code
-        cannot mistake a friendly station name for the journal identity.
+        ``None`` is the explicit broad selection: every arrival, including a
+        console nobody has announced. The storage name is deliberately hidden
+        behind this property so nothing mistakes a display name for the
+        journal identity.
         """
         return self.stations
 
@@ -393,10 +387,11 @@ _CODE = re.compile(r"^[A-Za-z0-9]{1,4}$")
 
 
 def from_settings(cfg: Any) -> Archive:
-    """The archive copied from an installation's legacy settings.
+    """The one place an installation's `station.*` settings describe.
 
-    This is migration input, never a live fallback. `Register.load` writes the
-    result to `archives.toml` before returning it.
+    Read only where there is no `archives.toml` yet, and never a live
+    fallback: `Register.load` writes the result to the file before returning
+    it, and from then on the file is the authority.
     """
     return Archive(
         name=DEFAULT,
@@ -407,9 +402,9 @@ def from_settings(cfg: Any) -> Archive:
         altitude=_number(cfg.get("station.altitude")),
         url=str(cfg.get("station.url") or ""),
         rain_year_start=int(cfg.get("station.rain_year_start") or 1),
-        # Existing one-place installations accepted every arrival. Preserve
-        # that as an explicit migration result, never as a missing-key
-        # fallback in the new format.
+        # Every arrival, written out explicitly. An installation with one
+        # place has nothing to tell apart, and a console plugged in next
+        # week must reach it without anybody selecting it first.
         stations=None,
     )
 
@@ -487,9 +482,11 @@ class Register:
 
         A present file is the whole answer. In particular, this method never
         opens ``stations.toml``: it is on the Archiver path, and the Archiver
-        knows only the live database and this Place configuration. Old
-        station-owned routing is moved by :func:`migrate_station_ownership`,
-        which the installer/listener/admin may call before starting it.
+        knows only the live database and this Place configuration.
+
+        With no file, `station.*` in the settings is the one place, and it is
+        written out here. That is how an installation that has never needed a
+        second series gets its first file, without anything to fill in.
         """
         if path is None:
             raise ValueError("archives.toml needs a path")
@@ -497,25 +494,13 @@ class Register:
         if not path.exists():
             if cfg is None:
                 raise FileNotFoundError(path)
-            found = [from_settings(cfg)]
-            log.info("migrating the legacy place settings to %s", path)
-            register = cls(found, path)
+            log.info("writing the one place from the settings to %s", path)
+            register = cls([from_settings(cfg)], path)
             register.save(path)
             return register
-        else:
-            data = _data(path)
-            version = _member_policy_version(data)
-            legacy_membership = any(
-                isinstance(entry, dict)
-                and ("stations" in entry or bool(entry.get("members")))
-                for entry in (data.get("archives") or {}).values())
-            if version < MEMBER_POLICY_VERSION and legacy_membership:
-                raise ValueError(
-                    f"{path} uses station-owned archive membership; run its "
-                    "configuration migration before the archiver")
-            found = _read(path, data)
-            if not found:
-                raise ValueError(f"{path} defines no archives")
+        found = _read(path)
+        if not found:
+            raise ValueError(f"{path} defines no archives")
         return cls(found, path)
 
     def refresh(self) -> bool:
@@ -746,8 +731,6 @@ class Register:
             "#",
             "# Written by the settings page. Editing it by hand is fine.",
             "",
-            f"member_policy_version = {MEMBER_POLICY_VERSION}",
-            "",
         ]
         blank = Archive("", "")
         for one in self.all():
@@ -846,175 +829,12 @@ def _data(path: Path) -> dict[str, Any]:
         return tomllib.load(handle)
 
 
-def _member_policy_version(data: dict[str, Any]) -> int:
-    """The completed member-policy migration, or zero for an old file."""
-    raw = data.get("member_policy_version", 0)
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
-        raise ValueError("member_policy_version is a non-negative whole number")
-    if raw > MEMBER_POLICY_VERSION:
-        raise ValueError(
-            f"member_policy_version {raw} is newer than this program "
-            f"understands ({MEMBER_POLICY_VERSION})")
-    return raw
 
 
-def migrate_station_ownership(path: str | Path, cfg: Any = None,
-                              station_path: str | Path | None = None) -> bool:
-    """Move the committed station-owned layout to canonical sender IDs.
-
-    This helper is deliberately *not* called by :meth:`Register.load`. The
-    listener, installer or admin process may call it while it still has
-    ``stations.toml``; the Archiver path consequently has no import, file read
-    or fallback involving a driver/station registry.
-
-    Returns true when ``archives.toml`` was written. The write is atomic, and
-    the version marker makes the operation idempotent.
-    """
-    path = Path(path)
-    station_path = (Path(station_path) if station_path is not None
-                    else path.with_name("stations.toml"))
-    station_data = _data(station_path) if station_path.exists() else {}
-    announced = station_data.get("stations") or {}
-    if not isinstance(announced, dict):
-        announced = {}
-
-    from .db.live import LEGACY_DRIVER, sender_id, sender_parts
-
-    identities: dict[str, str] = {}
-    destinations: dict[str, list[str]] = {}
-    policies: dict[str, MemberPolicy] = {}
-    for raw_name, raw in announced.items():
-        if not isinstance(raw, dict):
-            continue
-        name = str(raw_name)
-        driver = str(raw.get("driver") or "").strip()
-        identity = str(raw.get("identity") or "").strip()
-        if not driver or not identity:
-            continue
-        canonical = sender_id(driver, identity)
-        identities[name] = canonical
-        destination = str(raw.get("archive") or DEFAULT).strip() or DEFAULT
-        destinations.setdefault(destination, []).append(canonical)
-        values = {key: raw[key] for key in ("role", "channel", "indoor")
-                  if key in raw}
-        if values:
-            try:
-                policies[canonical] = MemberPolicy.from_dict(values)
-            except ValueError as exc:
-                raise ValueError(
-                    f"[stations.{name}] cannot be migrated: {exc}") from exc
-
-    def canonical(name: Any) -> str:
-        text = str(name).strip()
-        if not text:
-            raise ValueError("an empty legacy station cannot be migrated")
-        try:
-            sender_parts(text)
-            return text
-        except ValueError:
-            # Rows from the first live-table shape were already named with
-            # the friendly station/source string. The driver's migration
-            # keeps them under this reserved, canonical pair.
-            return identities.get(text, sender_id(LEGACY_DRIVER, text))
-
-    if path.exists():
-        data = _data(path)
-        if _member_policy_version(data) >= MEMBER_POLICY_VERSION:
-            return False
-        raw_archives = data.get("archives") or {}
-        if not isinstance(raw_archives, dict):
-            raise ValueError(f"{path} has no [archives] table")
-    else:
-        data = {}
-        raw_archives = {}
-
-    entries: list[tuple[str, dict[str, Any]]] = [
-        (str(name), raw) for name, raw in raw_archives.items()
-        if isinstance(raw, dict)]
-    if not any(name == DEFAULT for name, _raw in entries):
-        # A named Place with its own selection is already the complete
-        # authority.  Adding a legacy ``default`` beside it would make the
-        # same live packets feed an extra archive merely because the file is
-        # receiving its version marker.  Only the older shape -- Places with
-        # no selection of their own -- still needs the central settings
-        # materialised as ``default``.
-        owns_selection = any(
-            "stations" in raw or bool(raw.get("members"))
-            for _name, raw in entries)
-        if not owns_selection:
-            if cfg is None:
-                if entries:
-                    raise ValueError(
-                        f"{path} needs the legacy place settings to migrate "
-                        "its default archive")
-                raise FileNotFoundError(path)
-            first = from_settings(cfg)
-            raw_first = {field_name: getattr(first, field_name)
-                         for field_name, _read_as in FIELDS}
-            entries.insert(0, (DEFAULT, raw_first))
-
-    several = len(entries) > 1
-    migrated: list[Archive] = []
-    for name, raw in entries:
-        made: dict[str, Any] = {"name": name}
-        for field_name, read_as in FIELDS:
-            value = raw.get(field_name)
-            made[field_name] = read_as("" if value is None else value)
-
-        raw_members = raw.get("members") or {}
-        if not isinstance(raw_members, dict):
-            raise ValueError(f"[archives.{name}.members] is not a table")
-        existing: dict[str, MemberPolicy] = {}
-        for old, values in raw_members.items():
-            sender = canonical(old)
-            try:
-                existing[sender] = MemberPolicy.from_dict(values)
-            except ValueError as exc:
-                raise ValueError(
-                    f"[archives.{name}.members.{old}]: {exc}") from exc
-
-        if "stations" in raw:
-            old_selection = raw.get("stations")
-            if isinstance(old_selection, str) and old_selection.strip() == "*":
-                selected: tuple[str, ...] | None = None
-            elif isinstance(old_selection, (list, tuple)):
-                selected = tuple(dict.fromkeys(canonical(one)
-                                                for one in old_selection))
-            else:
-                raise ValueError(
-                    f"[archives.{name}].stations is '*' or a list")
-        elif several:
-            selected = tuple(dict.fromkeys(destinations.get(name, ())))
-        else:
-            selected = None
-
-        active = set(existing) if selected is None else set(selected)
-        members = {sender: existing.get(sender, policies.get(sender,
-                                                              MemberPolicy()))
-                   for sender in active}
-        made["stations"] = selected
-        made["members"] = members
-        migrated.append(Archive(**made))
-
-    Register(migrated, path).save(path)
-    log.info("migrated station ownership to canonical sender IDs in %s", path)
-
-    # Cleanup is best effort and happens only after the canonical file is
-    # durable. A read-only copy remains harmless because this helper will see
-    # the version marker and no runtime reader consults it.
-    try:
-        from . import stations as station_defs
-
-        station_defs.clear_legacy_member_settings(station_path)
-    except Exception as exc:
-        log.warning("could not remove migrated station member settings from "
-                    "%s: %s", station_path, exc)
-    return True
 
 
 def _read(path: Path, data: dict[str, Any] | None = None) -> list[Archive]:
     data = _data(path) if data is None else data
-    _member_policy_version(data)
     found = []
     for name, entry in (data.get("archives") or {}).items():
         if not isinstance(entry, dict):
@@ -1025,11 +845,11 @@ def _read(path: Path, data: dict[str, Any] | None = None) -> list[Archive]:
             raw = entry.get(field_name)
             made[field_name] = read_as("" if raw is None else raw)
         if "stations" in entry:
-            # Never reinterpret old friendly names as journal IDs. That would
-            # make every explicit selection silently empty.
+            # Said rather than ignored. The selection is `senders`, and a
+            # hand-edited file naming the other one would otherwise read as
+            # an archive that has deliberately selected nobody.
             raise ValueError(
-                f"[archives.{name}].stations is legacy station ownership; "
-                "migrate it before the archiver")
+                f"[archives.{name}] selects with `senders`, not `stations`")
         members = _members(entry.get("members"), str(name))
         made["stations"] = _sender_ids(
             entry.get("senders") if "senders" in entry else None,

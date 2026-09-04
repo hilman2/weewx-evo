@@ -48,65 +48,9 @@ def table(work: Path, rows: list[tuple]) -> Path:
     identity) pair the real table records -- the station name each one
     answers to is a lookup, and `Live` makes it through the register.
     """
+    from weewx_evo.db.live import sender_id
+
     db = work / "live.sdb"
-    conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE packet (dateTime INTEGER, seq INTEGER, "
-                 "driver TEXT, identity TEXT, dialect TEXT, "
-                 "usUnits INTEGER, interval INTEGER, data TEXT)")
-    conn.executemany(
-        "INSERT INTO packet (dateTime, seq, driver, identity, dialect,"
-        " usUnits, interval, data) VALUES (?,?,?,?,NULL,?,?,?)",
-        [(when, seq, "json", source, units, gap, data)
-         for when, seq, source, units, gap, data in rows])
-    conn.commit()
-    conn.close()
-    return db
-
-
-def old_table(work: Path, rows: list[tuple]) -> Path:
-    """The exact source-keyed table from before the sensor journal."""
-    db = work / "old-live.sdb"
-    conn = sqlite3.connect(db)
-    conn.execute(
-        "CREATE TABLE packet ("
-        "seq INTEGER PRIMARY KEY AUTOINCREMENT, dateTime INTEGER NOT NULL, "
-        "received INTEGER NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, "
-        "usUnits INTEGER NOT NULL, interval REAL, digest TEXT NOT NULL, "
-        "data TEXT NOT NULL, raw TEXT)")
-    conn.executemany(
-        "INSERT INTO packet (dateTime, received, source, kind, usUnits, interval,"
-        " digest, data, raw) VALUES (?,?,?,?,?,?,?,?,NULL)",
-        [(when, when, source, "loop", units, gap, str(seq), data)
-         for when, seq, source, units, gap, data in rows])
-    conn.commit()
-    conn.close()
-    return db
-
-
-def sender_table(work: Path, rows: list[tuple]) -> Path:
-    """A sender-keyed table without the redundant pair columns."""
-    from weewx_evo.db.live import sender_id
-
-    db = work / "sender-live.sdb"
-    conn = sqlite3.connect(db)
-    conn.execute("CREATE TABLE packet (dateTime INTEGER, seq INTEGER, "
-                 "sender TEXT, dialect TEXT, usUnits INTEGER, interval INTEGER, "
-                 "data TEXT)")
-    conn.executemany(
-        "INSERT INTO packet (dateTime, seq, sender, dialect, usUnits, interval,"
-        " data) VALUES (?,?,?,NULL,?,?,?)",
-        [(when, seq, sender_id("json", source), units, gap, data)
-         for when, seq, source, units, gap, data in rows])
-    conn.commit()
-    conn.close()
-    return db
-
-
-def current_table(work: Path, rows: list[tuple]) -> Path:
-    """The current table, carrying sender plus its reversible pair."""
-    from weewx_evo.db.live import sender_id
-
-    db = work / "current-live.sdb"
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE packet (dateTime INTEGER, seq INTEGER, "
                  "driver TEXT, identity TEXT, sender TEXT, dialect TEXT, "
@@ -193,42 +137,19 @@ def both_reporting() -> None:
               averaged.get("barometer"), 1013.0)
 
 
-def source_only_schema_stays_readable() -> None:
-    """A rolling upgrade may start the uploader before the listener migrates."""
-    print("\nthe source-only live schema")
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
-        now = int(time.time())
-        db = old_table(Path(raw), [
-            (now - 20, 1, "garten", 16, None,
-             json.dumps({"outTemp": 20.0})),
-            (now - 10, 2, "schuppen", 16, None,
-             json.dumps({"outTemp": 10.0})),
-        ])
-        check("an explicitly selected old source is read",
-              reading(db, "main").get("outTemp"), 20.0)
-        check("old sources can still be averaged",
-              reading(db, "average").get("outTemp"), 15.0)
+def a_sender_is_addressed_either_way() -> None:
+    """Selected by its canonical id, and by the pair that id decodes to.
 
-
-def sender_only_schema_stays_readable() -> None:
-    """The reader also accepts the canonical single-column sender key."""
-    print("\nthe sender-only live schema")
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
-        now = int(time.time())
-        db = sender_table(Path(raw), [
-            (now - 20, 1, "garten", 16, None,
-             json.dumps({"outTemp": 20.0})),
-            (now - 10, 2, "schuppen", 16, None,
-             json.dumps({"outTemp": 10.0})),
-        ])
-        check("a canonical sender is selected without pair columns",
-              reading(db, "main").get("outTemp"), 20.0)
-
+    Both reach the same rows, because both are in the table. A place holds
+    the id; a caller with a (driver, identity) pair in hand -- the status
+    page, a diagnostic -- should not have to build one to ask.
+    """
+    print("\na console addressed by id and by pair")
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
         from weewx_evo.db.live import sender_id
 
         now = int(time.time())
-        db = current_table(Path(raw), [
+        db = table(Path(raw), [
             (now - 20, 1, "garten", 16, None,
              json.dumps({"outTemp": 20.0})),
             (now - 10, 2, "schuppen", 16, None,
@@ -236,10 +157,12 @@ def sender_only_schema_stays_readable() -> None:
         ])
         senders = (sender_id("json", "garten"),
                    sender_id("json", "schuppen"))
-        check("the current redundant sender shape is read",
+        check("by canonical id",
               reading(db, "average", sources=senders, main=(senders[0],),
                       placer=_placer(("garten", "schuppen"))).get("outTemp"),
               15.0)
+        check("and by the name the directory resolves",
+              reading(db, "main").get("outTemp"), 20.0)
 
 
 def averaging_normalises_each_packet() -> None:
@@ -428,8 +351,7 @@ def an_explicitly_empty_place_reads_nothing() -> None:
 def main() -> int:
     print("which console a live reading comes from")
     both_reporting()
-    source_only_schema_stays_readable()
-    sender_only_schema_stays_readable()
+    a_sender_is_addressed_either_way()
     averaging_normalises_each_packet()
     the_main_one_goes_quiet()
     the_whole_site_is_quiet()

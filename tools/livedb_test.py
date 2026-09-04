@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import gc
 import os
-import sqlite3
 import sys
 import tempfile
 import threading
@@ -300,117 +299,12 @@ def close_reaches_the_other_threads() -> None:
         thread.join(5)
 
 
-def a_file_from_before_the_journal() -> None:
-    """Opening an old live table migrates it rather than refusing or erasing it.
-
-    The one path every other test here skips, because they all start from an
-    empty directory. On the instance it was the whole difference between a
-    service that came up and one that did not: `CREATE TABLE IF NOT EXISTS`
-    is a no-op against a table that is already there, so the first thing to
-    touch the new columns was the *index* -- and `ON packet(driver, identity,
-    dateTime)` against the old shape raises "no such column: driver" before
-    any migration has had a chance to run.
-
-    Measured against a real one: 205 MB of packets under WeeWX names, and a
-    container in a restart loop.
-    """
-    print("\na live table written before the readings were stored raw")
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
-        path = Path(raw) / "live.sdb"
-        old = sqlite3.connect(path)
-        old.executescript("""
-            CREATE TABLE packet (
-                seq INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-                dateTime INTEGER NOT NULL, received INTEGER NOT NULL,
-                source TEXT NOT NULL, kind TEXT NOT NULL,
-                usUnits INTEGER NOT NULL, interval REAL,
-                digest TEXT NOT NULL, data TEXT NOT NULL, raw TEXT);
-            CREATE UNIQUE INDEX packet_identity
-                ON packet(source, kind, dateTime, digest);
-            CREATE TABLE pending (stop INTEGER NOT NULL,
-                seconds INTEGER NOT NULL,
-                archive TEXT NOT NULL DEFAULT 'default',
-                PRIMARY KEY (stop, archive));
-            CREATE TABLE live_metadata (name TEXT NOT NULL PRIMARY KEY,
-                value TEXT);
-        """)
-        old.execute(
-            "INSERT INTO packet (dateTime, received, source, kind, usUnits,"
-            " digest, data) VALUES (1787800000, 1787800000, 'kirchdorf',"
-            " 'loop', 1, 'abc', '{\"outTemp\": 20.5}')")
-        old.execute("INSERT INTO live_metadata VALUES ('sightings', '[]')")
-        old.commit()
-        old.close()
-
-        store = LiveStore(path)
-        try:
-            check("it opens without losing the waiting packet", store.count(), 1)
-            legacy = next(iter(store.packets(1787799999, 1787800001)))
-            check("the already-placed row is marked as legacy",
-                  (legacy.driver, legacy.identity, legacy.sender, legacy.dialect),
-                  ("__legacy__", "kirchdorf",
-                   sender_id("__legacy__", "kirchdorf"), None))
-            check("and keeps its WeeWX-named reading", legacy.data,
-                  {"outTemp": 20.5})
-            columns = {row[1] for row in
-                       store.conn.execute("PRAGMA table_info(packet)")}
-            check("under the journal's own columns",
-                  sorted(columns & {"driver", "identity", "dialect", "source"}),
-                  ["dialect", "driver", "identity"])
-            # The indexes go with the table, and a table that answers every
-            # query by scanning is the sort of thing nobody notices for a year.
-            indexes = {row[1] for row in
-                       store.conn.execute("PRAGMA index_list(packet)")}
-            check("with its indexes", "packet_station" in indexes, True)
-            # What is *not* dropped: the metadata beside it. The sightings,
-            # the export records and what the watchdog remembers are not
-            # packets and have nothing to migrate.
-            check("and the metadata beside it is left alone",
-                  store.get_meta("sightings"), "[]")
-            # And it takes a packet afterwards, which is the thing the
-            # restart loop on the instance never got to.
-            check("a reading goes in", store.add(Packet(
-                dateTime=1787800100, usUnits=1, data={"tempf": 68.4},
-                driver="ecowitt", identity="AAAA", dialect="ecowitt")), True)
-        finally:
-            store.close()
-
-
-def an_interrupted_pending_migration_resumes() -> None:
-    """A crash after RENAME must not strand every unarchived interval."""
-    print("\na pending migration interrupted after its rename")
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
-        path = Path(raw) / "live.sdb"
-        old = sqlite3.connect(path)
-        old.executescript("""
-            CREATE TABLE pending_one_archive (
-                stop INTEGER NOT NULL PRIMARY KEY,
-                seconds INTEGER NOT NULL);
-            INSERT INTO pending_one_archive VALUES (1787800200, 300);
-        """)
-        old.close()
-
-        store = LiveStore(path)
-        try:
-            check("the staged marker reaches the new table",
-                  store.due(now=1787801000, grace=0, archive="default"),
-                  [(1787800200, 300)])
-            tables = {row[0] for row in store.conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'")}
-            check("and the staging table is retired",
-                  "pending_one_archive" in tables, False)
-        finally:
-            store.close()
-
-
 def main() -> int:
     nothing_accumulates()
     dialect_descriptions_are_stored_once()
     and_this_test_can_tell()
     a_thread_that_stays_keeps_its_connection()
     close_reaches_the_other_threads()
-    a_file_from_before_the_journal()
-    an_interrupted_pending_migration_resumes()
 
     print()
     if failures:

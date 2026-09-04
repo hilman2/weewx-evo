@@ -63,6 +63,13 @@ def check(what: str, got: object, want: object) -> bool:
     return ok
 
 
+#: The consoles these fixtures announce, by the id everything selects on.
+#: Named after the identity rather than the display name: which name a
+#: fixture gives to `AAAA` varies, and the id is what is being selected.
+SENDER_A = "v1/ecowitt/aaaa"
+SENDER_B = "v1/ecowitt/bbbb"
+
+
 def an_installation(work: Path, *, two_archives: bool = False,
                     stations: str = "", placements: str = "",
                     archives: str = "") -> Admin:
@@ -75,15 +82,15 @@ def an_installation(work: Path, *, two_archives: bool = False,
     if not archives:
         archives = (
             "[archives.default]\n"
-            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n\n'
-            'stations = ["kirchdorf"]\n\n'
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            f'senders = ["{SENDER_A}"]\n\n'
             "[archives.nordfeld]\n"
             f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
-            'stations = ["nordhof"]\n'
+            f'senders = ["{SENDER_B}"]\n'
             if two_archives else
             "[archives.default]\n"
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf"]\n')
+            f'senders = ["{SENDER_A}"]\n')
     (work / "archives.toml").write_text(archives, encoding="utf-8")
     (work / "stations.toml").write_text(stations or (
         '[stations.kirchdorf]\ndriver = "ecowitt"\n'
@@ -228,11 +235,11 @@ def another_station_of_the_same_archive() -> None:
             'identity = "AAAA"\n\n'
             '[stations.garten]\ndriver = "ecowitt"\n'
             'identity = "BBBB"\n'), placements=(
-            '[[takes]]\narchive = "default"\nstation = "kirchdorf"\n'
+            f'[[takes]]\narchive = "default"\nstation = "{SENDER_A}"\n'
             '[takes.fields]\n"tf_ch1" = "soilTemp1"\n'), archives=(
             '[archives.default]\n'
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf", "garten"]\n'))
+            f'senders = ["{SENDER_A}", "{SENDER_B}"]\n'))
         an_archive(work / "data" / "weewx.sdb", {"soilTemp1": 40})
         from weewx_evo.stations import load
 
@@ -299,10 +306,10 @@ def one_station_in_two_places_is_never_guessed() -> None:
             'identity = "AAAA"\n'), archives=(
             '[archives.default]\n'
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf"]\n\n'
+            f'senders = ["{SENDER_A}"]\n\n'
             '[archives.nordfeld]\n'
             f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf"]\n'))
+            f'senders = ["{SENDER_A}"]\n'))
         an_archive(work / "data" / "weewx.sdb")
         an_archive(work / "data" / "nord.sdb")
         from weewx_evo.stations import load
@@ -344,7 +351,6 @@ def a_place_saves_for_a_canonical_sender() -> None:
         canonical = sender_id("ecowitt", "AAAA")
         archive_path = (work / "data" / "weewx.sdb").as_posix()
         admin = an_installation(work, archives=(
-            "member_policy_version = 2\n\n"
             "[archives.default]\n"
             f'file = "{archive_path}"\n\n'
             f'[archives.default.members."{canonical}"]\n'
@@ -409,7 +415,7 @@ def dialect_specific_holders_are_seen() -> None:
             archives=(
                 '[archives.default]\n'
                 f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-                'stations = ["kirchdorf", "garten"]\n'), placements=(
+                f'senders = ["{SENDER_A}", "{SENDER_B}"]\n'), placements=(
                 '[[takes]]\narchive = "default"\nstation = "kirchdorf"\n'
                 'dialect = "ecowitt"\n'
                 '[takes.fields]\n"tf_ch1" = "soilTemp1"\n'))

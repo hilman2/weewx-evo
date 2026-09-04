@@ -263,131 +263,21 @@ def member_policy_values_are_checked_per_archive() -> None:
     else:
         check("selected extras may not share a channel", False, True)
 
+    # A file naming the selection with the key it had before senders were
+    # ids. Said rather than read as "this place selects nobody".
     with tempfile.TemporaryDirectory() as raw:
         where = Path(raw) / "archives.toml"
         where.write_text(
-            f"member_policy_version = {archives.MEMBER_POLICY_VERSION + 1}\n"
-            '[archives.north]\nfile = "north.sdb"\nsenders = []\n',
+            '[archives.north]\nfile = "north.sdb"\nstations = ["garten"]\n',
             encoding="utf-8")
         try:
             archives.Register.load(where, Fake())
         except ValueError as exc:
-            check("a newer policy format is not silently downgraded",
-                  "newer" in str(exc), True)
+            check("`stations` is refused rather than ignored",
+                  "senders" in str(exc), True)
         else:
-            check("a newer policy format is not silently downgraded",
-                  False, True)
+            check("`stations` is refused rather than ignored", False, True)
 
-
-def legacy_station_destinations_move_once() -> None:
-    """Old Station.archive pointers become archive-owned lists atomically."""
-    print("\nlegacy station destinations move into archives.toml")
-    cfg = Fake(**{"archive_db": "data/south.sdb",
-                  "station.name": "South", "station.altitude": 440.0})
-    with tempfile.TemporaryDirectory() as raw:
-        work = Path(raw)
-        where = work / "archives.toml"
-        # Old files commonly named only the added archive; Register supplied
-        # the central default at runtime.
-        where.write_text(
-            '[archives.north]\nfile = "data/north.sdb"\n', encoding="utf-8")
-        (work / "stations.toml").write_text(
-            '[stations.south-console]\n'
-            'driver = "wunderground"\nidentity = "south"\n\n'
-            '[stations.north-console]\n'
-            'driver = "wunderground"\nidentity = "north"\n'
-            'archive = "north"\n', encoding="utf-8")
-
-        check("the explicit migration changed the file",
-              archives.migrate_station_ownership(
-                  where, cfg, work / "stations.toml"), True)
-        migrated = archives.Register.load(where, cfg)
-        check("the implicit central archive is written into the file",
-              migrated.names(), ["default", "north"])
-        check("an old implicit destination becomes default's list",
-              migrated.get("default").senders,
-              (sender_id("wunderground", "south"),))
-        check("an old named destination becomes north's list",
-              migrated.get("north").senders,
-              (sender_id("wunderground", "north"),))
-        check("all migrated selections are explicit",
-              where.read_text(encoding="utf-8").count("members."), 2)
-
-        # The old pointer is no longer consulted after the canonical file was
-        # written, even if somebody leaves or changes it.
-        (work / "stations.toml").write_text(
-            '[stations.south-console]\n'
-            'driver = "wunderground"\nidentity = "south"\n'
-            'archive = "north"\n', encoding="utf-8")
-        again = archives.Register.load(where, Fake(archive_db="data/wrong.sdb"))
-        check("later station pointers do not change routing",
-              again.get("default").senders,
-              (sender_id("wunderground", "south"),))
-
-
-def legacy_member_policies_move_once() -> None:
-    """Old global roles move once to the selected sender relationship."""
-    print("\nlegacy station roles move into selected Place members once")
-    with tempfile.TemporaryDirectory() as raw:
-        work = Path(raw)
-        where = work / "archives.toml"
-        where.write_text(
-            '[archives.south]\nfile = "south.sdb"\n'
-            'stations = ["shared"]\n\n'
-            '[archives.south.members.shared]\n'
-            'role = "main"\nchannel = 0\nindoor = true\n\n'
-            '[archives.north]\nfile = "north.sdb"\n'
-            'stations = ["shared"]\n',
-            encoding="utf-8")
-        stations_path = work / "stations.toml"
-        stations_path.write_text(
-            '[stations.shared]\n'
-            'driver = "wunderground"\nidentity = "shared"\n'
-            'role = "extra"\nchannel = 3\nindoor = false\n\n'
-            '[stations.later]\n'
-            'driver = "ecowitt"\nidentity = "later"\n'
-            'role = "extra"\nchannel = 4\nindoor = false\n',
-            encoding="utf-8")
-
-        archives.migrate_station_ownership(where, Fake(), stations_path)
-        migrated = archives.Register.load(where, Fake())
-        shared = sender_id("wunderground", "shared")
-        later = sender_id("ecowitt", "later")
-        check("an explicit new policy beats the legacy station value",
-              migrated.get("south").policy_for(shared),
-              archives.MemberPolicy())
-        check("the legacy policy reaches another place",
-              migrated.get("north").policy_for(shared),
-              archives.MemberPolicy(role="extra", channel=3, indoor=False))
-        check("an unselected station creates no dormant authority",
-              later in migrated.get("south").members, False)
-        text = where.read_text(encoding="utf-8")
-        check("the completed migration is marked",
-              f"member_policy_version = {archives.MEMBER_POLICY_VERSION}" in text,
-              True)
-        check("the canonical sender is one quoted TOML key",
-              f'[archives.north.members."{shared}"]' in text, True)
-        check("the obsolete station-owned policy was removed after commit",
-              stations.legacy_member_settings(stations_path), {})
-
-        # Even if an obsolete writer adds the keys again, the marker makes
-        # them cease to be authority. A later edit there must not overwrite
-        # the copied relationship values.
-        stations_path.write_text(
-            stations_path.read_text(encoding="utf-8").replace(
-                'identity = "shared"',
-                'identity = "shared"\nrole = "extra"\nchannel = 8\n'
-                'indoor = true'), encoding="utf-8")
-        check("the versioned migration is not repeated",
-              archives.migrate_station_ownership(
-                  where, Fake(), stations_path), False)
-        again = archives.Register.load(where, Fake())
-        check("later legacy edits cannot replace the migrated policy",
-              again.get("north").policy_for(shared),
-              archives.MemberPolicy(role="extra", channel=3, indoor=False))
-
-
-# -- the pending table -------------------------------------------------
 
 
 def two_archives_do_not_clear_each_others_work() -> None:
@@ -417,32 +307,6 @@ def two_archives_do_not_clear_each_others_work() -> None:
               len(live.due(now=later, archive="nordfeld")), 1)
         check("and does clear its own",
               len(live.due(now=later, archive="default")), 0)
-        live.close()
-
-
-def an_old_database_gains_the_column() -> None:
-    """Rows in `pending` are intervals no archive has taken yet."""
-    print("\na live database made before archives existed")
-    with tempfile.TemporaryDirectory() as raw:
-        path = Path(raw) / "live.sdb"
-        # The old table, exactly as it was.
-        old = sqlite3.connect(path)
-        old.executescript("""
-            CREATE TABLE pending (
-                stop    INTEGER NOT NULL PRIMARY KEY,
-                seconds INTEGER NOT NULL
-            );
-            INSERT INTO pending (stop, seconds) VALUES (1787800060, 60);
-        """)
-        old.commit()
-        old.close()
-
-        live = LiveStore(path, interval_seconds=INTERVAL)
-        columns = {row[1] for row in
-                   live.conn.execute("PRAGMA table_info(pending)")}
-        check("the column is there now", "archive" in columns, True)
-        check("and the waiting interval survived the rebuild",
-              live.due(now=1787900000, archive="default"), [(1787800060, 60)])
         live.close()
 
 
@@ -662,7 +526,6 @@ def two_sites_through_a_real_serve() -> None:
         north_sender = sender_id("wunderground", "nordhof")
 
         (work / "archives.toml").write_text(
-            f'member_policy_version = {archives.MEMBER_POLICY_VERSION}\n\n'
             '[archives.default]\n'
             'file = "data/sued.sdb"\n'
             'label = "Suedfeld"\n'
@@ -1449,11 +1312,8 @@ def main() -> int:
     an_unknown_name_is_refused()
     station_selections_survive_the_file()
     member_policy_values_are_checked_per_archive()
-    legacy_station_destinations_move_once()
-    legacy_member_policies_move_once()
     a_place_in_another_timezone_is_said_out_loud()
     two_archives_do_not_clear_each_others_work()
-    an_old_database_gains_the_column()
     each_series_takes_only_its_own()
     an_archive_with_no_stations_writes_nothing()
     a_broad_archive_selection_takes_everything()

@@ -246,13 +246,13 @@ def the_page_writes_and_reads_it_back() -> None:
             'identity = "AAAA"\n\n'
             '[stations.garten]\ndriver = "ecowitt"\n'
             'identity = "BBBB"\n', encoding="utf-8")
-        (work / "archives.toml").write_text(
-            '[archives.default]\nfile = "data/weewx.sdb"\n'
-            'stations = ["kirchdorf", "garten"]\n', encoding="utf-8")
-        path = work / "evo.toml"
-        admin = Admin(path, lambda: all_schemas(path), "abcdefghij123456")
         garden = sender_id("ecowitt", "BBBB")
         kirchdorf = sender_id("ecowitt", "AAAA")
+        (work / "archives.toml").write_text(
+            '[archives.default]\nfile = "data/weewx.sdb"\n'
+            f'senders = ["{kirchdorf}", "{garden}"]\n', encoding="utf-8")
+        path = work / "evo.toml"
+        admin = Admin(path, lambda: all_schemas(path), "abcdefghij123456")
 
         error = adminarchives.configure(admin, "default", {
             "_members": "1", f"sender:{garden}": "1",

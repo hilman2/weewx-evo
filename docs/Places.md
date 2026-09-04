@@ -59,8 +59,8 @@ Choose the senders on each Place instead:
 
 - A canonical sender ID may be selected by any number of Places.
 - `senders = []` selects none.
-- `senders = "*"` accepts all arrivals. This is written explicitly for a
-  migrated one-place installation.
+- `senders = "*"` accepts all arrivals, including one nobody has announced.
+  A Place written from the settings starts this way.
 
 The same sender can therefore feed two archives, for example a normal series
 and one rebuilt with different placements. `stations.toml` contains identities

@@ -168,7 +168,6 @@ class Simulator(threading.Thread):
 
 def lay_out(work: Path, port: int) -> Path:
     """Write two Places, three canonical senders, feeds and exports."""
-    from weewx_evo.archives import MEMBER_POLICY_VERSION
     from weewx_evo.db.live import sender_id
 
     (work / "data").mkdir(exist_ok=True)
@@ -180,8 +179,6 @@ def lay_out(work: Path, port: int) -> Path:
     shed_sender = sender_id("json", "nordschuppen")
 
     (work / "archives.toml").write_text(f"""
-member_policy_version = {MEMBER_POLICY_VERSION}
-
 [archives.default]
 file = "data/sued.sdb"
 label = "{SOUTH['label']}"

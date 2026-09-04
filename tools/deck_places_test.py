@@ -783,7 +783,7 @@ def how_often_a_place_reports(room: Path) -> None:
     # Keyed on (driver, identity), which is what the table records. A name is
     # a lookup, so the reader is given a register to make it with.
     conn.execute("CREATE TABLE packet (dateTime INTEGER, driver TEXT, "
-                 "identity TEXT, dialect TEXT, usUnits INTEGER, "
+                 "identity TEXT, sender TEXT, dialect TEXT, usUnits INTEGER, "
                  "interval INTEGER, data TEXT, seq INTEGER)")
     now = int(time.time())
     # One console every 60 s, one every 300 s, one that has said almost
@@ -792,8 +792,9 @@ def how_often_a_place_reports(room: Path) -> None:
                                  ("neu", 60, 2)):
         for step in range(count):
             conn.execute(
-                "INSERT INTO packet VALUES (?, 'json', ?, NULL, 16, 5, '{}', ?)",
-                (now - step * every, source, step))
+                "INSERT INTO packet VALUES (?, 'json', ?, ?, NULL, 16, 5,"
+                " '{}', ?)",
+                (now - step * every, source, f"v1/json/{source}", step))
     conn.commit()
     conn.close()
 
@@ -887,7 +888,7 @@ def a_place_selects_its_stations(room: Path) -> None:
     (where / "evo.toml").write_text('interval = 300\n', encoding="utf-8")
     (where / "archives.toml").write_text(
         '[archives.default]\nfile = "a.sdb"\nlabel = "Kirchdorf"\n'
-        'stations = []\n', encoding="utf-8")
+        'senders = []\n', encoding="utf-8")
     admin = Admin(where / "evo.toml")
 
     # Membership never belongs to the console page, even with one place.
@@ -961,7 +962,7 @@ def moving_a_station_reaches_the_archiver(room: Path) -> None:
 
     def selects(default_members, nordfeld_members):
         """Write the file the way the settings page writes it."""
-        lines = ["member_policy_version = 2", ""]
+        lines = []
         for name, file, members in (("default", "a.sdb", default_members),
                                     ("nordfeld", "b.sdb", nordfeld_members)):
             lines += [f"[archives.{name}]", f'file = "{file}"']

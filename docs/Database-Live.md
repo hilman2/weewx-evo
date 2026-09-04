@@ -159,23 +159,13 @@ weewx-evo archive --spool /data/packets
 connections are thread-bound — that was a real bug that would never have shown
 up in a browser, and is now part of the design. → [Testing](Testing)
 
-### Migration
+### A row nothing can translate
 
-`_migrate()` brings an older file up to date, **additively only**. This file is
-a cache with a few days in it, so a migration going wrong would cost little —
-but the packets are what makes a record reproducible, so nothing is taken away
-regardless.
-
-Rows written before dialect descriptions existed remain visible with their raw
-field names. The archiver reports and skips them: treating a coincidentally
-familiar name as `outTemp` without knowing its scale or units would turn an
-honest gap into plausible false history.
-
-The still older table shape is different: those rows were already placed into
-WeeWX columns. They are copied as passthrough packets with the reserved driver
-`__legacy__` and the old `source` as identity. That preserves any interval
-which was waiting when the upgrade happened, while making the irreversible
-loss of the original hardware names explicit.
+A packet naming a dialect whose description is not stored is an old row or a
+damaged one. It stays visible with its raw field names, and the archiver
+reports and skips it: treating a coincidentally familiar name as `outTemp`
+without knowing its scale or units would turn an honest gap into plausible
+false history.
 
 ## Why this justifies the live table
 

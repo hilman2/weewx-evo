@@ -198,20 +198,6 @@ weewx-evo placement list --config evo.toml
 Reads `placement.toml` and the names noted as unplaced. Asks no hardware and
 writes nothing. → [Placements](Placements)
 
-### `placement import`
-
-Move legacy sender field maps from `stations.toml` into Place-scoped entries
-in `placement.toml`.
-
-```bash
-weewx-evo placement import --config evo.toml
-weewx-evo placement import --config evo.toml --write
-```
-
-Without `--write` it reports the move. Existing decisions are not replaced;
-the obsolete entries in `stations.toml` remain present but are not read by the
-Listener or Archiver.
-
 ### `placement accept`
 
 Write down what inference has worked out about names no catalog knows.

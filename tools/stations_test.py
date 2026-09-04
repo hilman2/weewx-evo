@@ -92,7 +92,6 @@ def the_file() -> None:
                                  note='a "quoted" note'))
         reg.add(stations.Station("garten", "ecowitt", "4F2A9C", learnt=True,
                                  model="GW2000",
-                                 field_map={"tf_ch1": "soilTemp1"},
                                  max_behind=1200, max_ahead=60))
         stations.save(path, reg)
 
@@ -103,42 +102,37 @@ def the_file() -> None:
         check("and whether it was learnt", back.by_name("garten").learnt, True)
         check("console settings survived", (
             back.by_name("garten").model,
-            back.by_name("garten").field_map,
             back.by_name("garten").max_behind,
             back.by_name("garten").max_ahead,
-        ), ("GW2000", {"tf_ch1": "soilTemp1"}, 1200.0, 60.0))
+        ), ("GW2000", 1200.0, 60.0))
 
         # An operator opens this file. It should say what it is.
         text = path.read_text(encoding="utf-8")
         check("the file explains itself", text.startswith("#"), True)
         check("a new file carries no archive assignment", "archive =" in text,
               False)
-        legacy_policy = stations.legacy_member_settings(path)
-        check("a new file carries no station-owned member policy",
-              legacy_policy, {})
 
-        print("\nlegacy routing data is not runtime station state")
+        # A file with the keys that used to route a console. They are not
+        # station state and never were runtime authority; the place selects
+        # its senders and says what each is to it.
+        print("\nrouting keys in this file are not station state")
         path.write_text(text.replace(
             'identity = "4F2A9C"',
             'identity = "4F2A9C"\narchive = "haus"\n'
             'role = "extra"\nchannel = 3\nindoor = false'),
             encoding="utf-8")
-        legacy = stations.load(path)
-        check("the old file still loads", legacy.by_name("garten") is not None,
+        stray = stations.load(path)
+        check("the file still loads", stray.by_name("garten") is not None,
               True)
-        check("the old assignment is not part of the station",
-              hasattr(legacy.by_name("garten"), "archive"), False)
-        check("nor is its old role runtime station state",
-              hasattr(legacy.by_name("garten"), "role"), False)
-        check("but the archive migration can still read it",
-              stations.legacy_member_settings(path), {"garten": {
-                  "role": "extra", "channel": 3, "indoor": False}})
-        stations.save(path, legacy)
-        check("the next save removes the old assignment",
-              "archive =" in path.read_text(encoding="utf-8"), False)
-        check("and preserves policy until the archive has migrated it",
-              stations.legacy_member_settings(path), {"garten": {
-                  "role": "extra", "channel": 3, "indoor": False}})
+        check("the assignment is not part of the station",
+              hasattr(stray.by_name("garten"), "archive"), False)
+        check("nor is a role",
+              hasattr(stray.by_name("garten"), "role"), False)
+        stations.save(path, stray)
+        check("and the next save writes neither back",
+              any(key in path.read_text(encoding="utf-8")
+                  for key in ("archive =", "role =", "channel =", "indoor =")),
+              False)
         check("no file, no stations, not an error",
               len(stations.load(Path(raw) / "nothing.toml")), 0)
 
@@ -308,12 +302,8 @@ def only_sender_clocks_reach_the_driver() -> None:
         config_path = work / "evo.toml"
         config_path.write_text("", encoding="utf-8")
         register = stations.Register(stations=[
-            stations.Station(
-                "clocked", "ecowitt", "AAAA",
-                field_map={"tf_ch1": "soilTemp1"}, max_behind=1800),
-            stations.Station(
-                "map-only", "ecowitt", "BBBB",
-                field_map={"tf_ch1": "extraTemp9"}),
+            stations.Station("clocked", "ecowitt", "AAAA", max_behind=1800),
+            stations.Station("plain", "ecowitt", "BBBB"),
         ])
         stations.save(work / "stations.toml", register)
         schema = option_defs.Schema(
@@ -326,9 +316,11 @@ def only_sender_clocks_reach_the_driver() -> None:
         clocked = configured.stations.get("aaaa") or {}
         check("the sender-specific clock tolerance remains",
               clocked.get("max_behind"), 1800)
-        check("its legacy field map is not injected",
+        # Placement is read when a record is built, so nothing about a
+        # column reaches the driver -- the listener stores raw names.
+        check("no field placement is injected",
               "field_map_extensions" in clocked, False)
-        check("a field map alone creates no driver-side sender entry",
+        check("and a console with nothing to say about its clock gets no entry",
               "bbbb" in configured.stations, False)
 
 
@@ -417,7 +409,6 @@ def the_settings_page() -> None:
         # Place membership is a relation to the canonical live sender, never
         # a setting owned by the sender page.
         (tmp / "archives.toml").write_text(
-            "member_policy_version = 2\n\n"
             "[archives.default]\n"
             f'file = "{(tmp / "default.sdb").as_posix()}"\n'
             'senders = []\n\n'

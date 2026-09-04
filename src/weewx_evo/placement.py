@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from . import roles
-from .db.live import LEGACY_DRIVER, Packet, SenderIdentity, sender_id
+from .db.live import Packet, SenderIdentity, sender_id
 
 log = logging.getLogger(__name__)
 
@@ -78,11 +78,10 @@ MAX_DIAGNOSTICS = 512
 class Takes:
     """One scope, and what it says about the readings in it.
 
-    `archive` is required. An empty value is retained only so an explicit
-    migration can bind an old file to the places that existed at that time;
-    it never matches at runtime. Empty `station` or `dialect` still means any
-    sender or vocabulary *inside that one archive*. The narrowest scope wins,
-    field by field.
+    `archive` is required, and a scope without one never matches: a rule
+    written before a place existed must not start applying to it. Empty
+    `station` or `dialect` still means any sender or vocabulary *inside that
+    one archive*. The narrowest scope wins, field by field.
     """
 
     archive: str = ""
@@ -367,28 +366,6 @@ class Placer:
                 found.append((entry.driver, entry.identity))
         return found
 
-    def _policy_member(self, canonical: str,
-                       selected: Iterable[str] | None) -> str:
-        """The configured member whose policy also governs a legacy alias.
-
-        Pre-journal rows used the friendly station name as their only stable
-        identity.  A modern sender with that copied label is their successor,
-        so the old rows must keep that sender's role instead of silently
-        falling back to ``main``.  An ambiguous label is not guessed.
-        """
-        entry = self._senders.get(canonical)
-        if entry is None or entry.driver != LEGACY_DRIVER:
-            return canonical
-        folded = entry.identity.casefold()
-        candidates = (self._senders if selected is None else selected)
-        matches = []
-        for candidate in candidates:
-            candidate = str(candidate)
-            modern = self._senders.get(candidate)
-            if (modern is not None and modern.driver != LEGACY_DRIVER
-                    and modern.label and modern.label.casefold() == folded):
-                matches.append(candidate)
-        return matches[0] if len(matches) == 1 else canonical
 
     def selected_senders(self, role: str | None = None) -> list[str] | None:
         """This place's live-db selection, optionally narrowed by role.
@@ -396,8 +373,7 @@ class Placer:
         A broad ``senders = "*"`` remains ``None`` when no role is requested,
         because that is the live reader's explicit wildcard.  A role needs a
         concrete list and is therefore resolved against this frozen live
-        sender-directory snapshot.  Legacy aliases inherit the policy of the
-        modern member they represent.
+        sender-directory snapshot.
         """
         if self.archive_definition is None:
             return []
@@ -410,18 +386,11 @@ class Placer:
         found: list[str] = []
         for canonical in candidates:
             canonical = str(canonical)
-            member = self._policy_member(canonical, selected)
             if (role is not None
-                    and self.archive_definition.policy_for(member).role != role):
+                    and self.archive_definition.policy_for(canonical).role != role):
                 continue
             if canonical not in found:
                 found.append(canonical)
-            entry = self._senders.get(canonical)
-            if (entry is not None and entry.label
-                    and entry.driver != LEGACY_DRIVER):
-                legacy = sender_id(LEGACY_DRIVER, entry.label)
-                if legacy in self._senders and legacy not in found:
-                    found.append(legacy)
         return found
 
     def selected_main_senders(self) -> list[str]:
@@ -440,7 +409,7 @@ class Placer:
         station's upload of nothing but wind, or a console whose every reading
         is placed nowhere.
         """
-        member = self._member_for(packet)
+        member = self.sender_of(packet)
         decisions, unlisted = self._for(member, packet.dialect or "")
 
         if packet.dialect is None:
@@ -473,14 +442,6 @@ class Placer:
         if not data:
             return None
         return replace(packet, data=data, usUnits=units, source=member)
-
-    def _member_for(self, packet: Packet) -> str:
-        """Policy key for a packet, including preserved pre-journal rows."""
-        canonical = self.sender_of(packet)
-        if packet.driver != LEGACY_DRIVER or self.archive_definition is None:
-            return canonical
-        selected = getattr(self.archive_definition, "senders", ())
-        return self._policy_member(canonical, selected)
 
     def _install_groups(self, groups: dict[str, str], driver: str,
                         dialect: str) -> None:
@@ -622,29 +583,6 @@ class Placer:
     def dropped(self) -> dict[str, int]:
         """Readings this archive had nowhere to put, by name and count."""
         return dict(self._dropped)
-
-
-def bind_legacy_scopes(placements: Placements,
-                       archives: Iterable[str]) -> bool:
-    """Bind old archive-less scopes to an explicit, closed place snapshot.
-
-    This helper is deliberately not called by :func:`load`: a newly created
-    place must never inherit a formerly global rule merely because it was
-    added later.  Migration/UI code supplies the exact places that exist at
-    migration time and then saves the result.
-    """
-    names = tuple(dict.fromkeys(str(one).strip() for one in archives
-                                if str(one).strip()))
-    unbound = [one for one in placements.takes if not one.archive]
-    if not unbound:
-        return False
-    if not names:
-        raise ValueError("legacy placements need at least one archive to bind to")
-    bound = [one for one in placements.takes if one.archive]
-    for one in unbound:
-        bound.extend(replace(one, archive=name) for name in names)
-    placements.takes = bound
-    return True
 
 
 def promote(proposals: Any, placements: Placements, archive: str = "",
@@ -870,8 +808,8 @@ def from_dict(raw: dict[str, Any], path: Path | None = None) -> Placements:
         ))
     if unbound:
         log.warning(
-            "%s has %d legacy placement scope(s) without an archive; they "
-            "match no place until explicitly bound",
+            "%s has %d placement scope(s) that name no archive; each of them "
+            "reaches nothing. Add `archive = \"<place>\"` to the block.",
             path or FILENAME, unbound)
     groups = {str(k): str(v) for k, v in (raw.get("groups") or {}).items()}
     return Placements(takes=made, groups=groups, path=path)

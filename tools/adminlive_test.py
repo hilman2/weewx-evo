@@ -85,7 +85,6 @@ def an_installation(work: Path, placements: str = "") -> Admin:
                                     f'station = "{SENDER}"')
     (work / "placement.toml").write_text(placements, encoding="utf-8")
     (work / "archives.toml").write_text(
-        "member_policy_version = 2\n\n"
         "[archives.default]\n"
         f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n\n'
         f'[archives.default.members."{SENDER}"]\n'

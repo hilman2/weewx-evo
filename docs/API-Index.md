@@ -3,14 +3,14 @@
 Every public class, function and method, its file, and the wiki page
 that describes it.
 
-**Generated:** 2026-09-04 02:15 · `python tools/docsindex.py`
+**Generated:** 2026-09-04 08:14 · `python tools/docsindex.py`
 
 Private names (`_foo`) are left out, `__init__` is included. To find a
 name, use the browser's search.
 
 ## `src/weewx_evo/admin.py`
 
-[The settings page](Admin-Page) · last changed 2026-09-04 01:59
+[The settings page](Admin-Page) · last changed 2026-09-04 07:36
 
 | | Name | Line | |
 |---|---|---|---|
@@ -62,15 +62,15 @@ name, use the browser's search.
 | f | `website_summary` | 1548 | What the built-in server hands out, and at which address. The question this page exists to answer. Without it… |
 | f | `sub_pages` | 1763 | Pages whose name carries an instance, so no fixed list can hold them. `tools/adminpage.py` enumerates schemas… |
 | f | `page` | 1828 |  |
-| **C** | `AdminServer` | 4254 | The admin page, on its own port. |
-| · | &nbsp;&nbsp;`AdminServer.__init__` | 4257 |  |
-| · | &nbsp;&nbsp;`AdminServer.serve_forever` | 4265 |  |
-| · | &nbsp;&nbsp;`AdminServer.start` | 4268 |  |
-| · | &nbsp;&nbsp;`AdminServer.stop` | 4273 |  |
+| **C** | `AdminServer` | 4293 | The admin page, on its own port. |
+| · | &nbsp;&nbsp;`AdminServer.__init__` | 4296 |  |
+| · | &nbsp;&nbsp;`AdminServer.serve_forever` | 4304 |  |
+| · | &nbsp;&nbsp;`AdminServer.start` | 4307 |  |
+| · | &nbsp;&nbsp;`AdminServer.stop` | 4312 |  |
 
 ## `src/weewx_evo/adminarchives.py`
 
-[Several places](Places) · last changed 2026-09-04 01:59
+[Several places](Places) · last changed 2026-09-04 07:59
 
 | | Name | Line | |
 |---|---|---|---|
@@ -79,17 +79,17 @@ name, use the browser's search.
 | **C** | `SenderChoice` | 84 | A live sender ID and its presentation-only label. |
 | · | &nbsp;&nbsp;`SenderChoice.name` | 93 | Compatibility label for read-only sender diagnostics. |
 | f | `sender_choices` | 98 | Senders observed in live, plus configured ones no longer retained. Nothing here reads ``stations.toml``. The… |
-| f | `settings_of` | 139 | Legacy saved settings, for the one-time archive migration. Not the running `Settings`: this page reads the fi… |
+| f | `settings_of` | 139 | The saved settings, for writing out the first place. Not the running `Settings`: this page reads the file it… |
 | f | `load` | 159 |  |
-| f | `store` | 186 | Write them. Returns an error, or empty if it worked. |
-| f | `from_form` | 330 | An archive from what a form sent. Every field `Archive` has, because `configure` replaces the whole record: o… |
-| f | `create` | 388 | Add a place. Returns (what was added, error). |
-| f | `configure` | 410 | Change one archive in place. |
-| f | `remove` | 433 | Take one off the list. The file stays where it is. |
-| f | `title_for` | 452 | One name at every installation size. |
-| f | `nav` | 457 |  |
-| f | `overview` | 1029 | A master/detail editor with the same shape for one or many places. |
-| f | `new` | 1092 |  |
+| f | `store` | 166 | Write them. Returns an error, or empty if it worked. |
+| f | `from_form` | 310 | An archive from what a form sent. Every field `Archive` has, because `configure` replaces the whole record: o… |
+| f | `create` | 368 | Add a place. Returns (what was added, error). |
+| f | `configure` | 390 | Change one archive in place. |
+| f | `remove` | 413 | Take one off the list. The file stays where it is. |
+| f | `title_for` | 432 | One name at every installation size. |
+| f | `nav` | 437 |  |
+| f | `overview` | 1011 | A master/detail editor with the same shape for one or many places. |
+| f | `new` | 1074 |  |
 
 ## `src/weewx_evo/adminfields.py`
 
@@ -115,7 +115,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminhome.py`
 
-[The settings page](Admin-Page) · last changed 2026-09-04 01:41
+[The settings page](Admin-Page) · last changed 2026-09-04 02:42
 
 | | Name | Line | |
 |---|---|---|---|
@@ -164,14 +164,14 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminpublish.py`
 
-[The settings page](Admin-Page) · last changed 2026-09-04 02:01
+[The settings page](Admin-Page) · last changed 2026-09-04 02:42
 
 | | Name | Line | |
 |---|---|---|---|
-| f | `overview` | 265 |  |
-| f | `nav` | 342 |  |
-| f | `feeds_dir` | 347 |  |
-| f | `context` | 352 | Where the thing being edited sits in the chain, above its form. The Publishing page knows that the `wdc` expo… |
+| f | `overview` | 281 |  |
+| f | `nav` | 366 |  |
+| f | `feeds_dir` | 371 |  |
+| f | `context` | 376 | Where the thing being edited sits in the chain, above its form. The Publishing page knows that the `wdc` expo… |
 
 ## `src/weewx_evo/adminquality.py`
 
@@ -193,15 +193,15 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminsearch.py`
 
-[The settings page](Admin-Page) · last changed 2026-09-04 02:01
+[The settings page](Admin-Page) · last changed 2026-09-04 07:34
 
 | | Name | Line | |
 |---|---|---|---|
 | **C** | `Hit` | 46 | One thing found, and how to reach it. |
 | · | &nbsp;&nbsp;`Hit.__init__` | 51 |  |
 | f | `find` | 71 | Everything matching, best first. |
-| f | `box` | 186 | The search field. On every page, because that is the point of it. |
-| f | `results` | 195 |  |
+| f | `box` | 185 | The search field. On every page, because that is the point of it. |
+| f | `results` | 194 |  |
 
 ## `src/weewx_evo/adminsetup.py`
 
@@ -243,11 +243,11 @@ name, use the browser's search.
 
 ## `src/weewx_evo/adminsystem.py`
 
-[The settings page](Admin-Page) · last changed 2026-09-04 01:54
+[The settings page](Admin-Page) · last changed 2026-09-04 07:34
 
 | | Name | Line | |
 |---|---|---|---|
-| f | `overview` | 43 |  |
+| f | `overview` | 44 |  |
 
 ## `src/weewx_evo/adopt.py`
 
@@ -355,46 +355,45 @@ name, use the browser's search.
 
 ## `src/weewx_evo/archives.py`
 
-[Stations and Archives](Stations-and-Archives) · last changed 2026-09-04 01:45
+[Stations and Archives](Stations-and-Archives) · last changed 2026-09-04 07:53
 
 | | Name | Line | |
 |---|---|---|---|
-| **C** | `MemberPolicy` | 78 | How one archive treats one of the stations it selects. A role is relative to a series. The same console can b… |
-| · | &nbsp;&nbsp;`MemberPolicy.from_dict` | 109 | One strictly checked policy from TOML values. |
-| **C** | `Archive` | 131 | One measurement series, and what is true of the place it measures. |
-| · | &nbsp;&nbsp;`Archive.title` | 222 | What to print. The label if there is one, else the name. |
-| · | &nbsp;&nbsp;`Archive.place` | 226 | The three numbers, in the shape `derive.Station` wants them. |
-| · | &nbsp;&nbsp;`Archive.as_dict` | 231 |  |
-| · | &nbsp;&nbsp;`Archive.policy_for` | 236 | How this archive treats one sender; defaults are intentionally plain. |
-| · | &nbsp;&nbsp;`Archive.senders` | 241 | Canonical live sender IDs selected by this place. ``None`` is only the explicit broad leg… |
-| · | &nbsp;&nbsp;`Archive.selects` | 250 | Whether this place reads one canonical sender ID. |
-| f | `from_settings` | 394 | The archive copied from an installation's legacy settings. This is migration input, never a live fallback. `R… |
-| f | `timezone_gap` | 425 | Hours between this place's sun and the clock this process keeps. None when the archive has no longitude, beca… |
-| f | `timezone_concern` | 447 | Why this archive's days may not be its days, or an empty string. Said rather than fixed. The fix is to run th… |
-| **C** | `Register` | 466 | Every archive, and which file each one is. Re-read when the file changes, for the same reason the station reg… |
-| · | &nbsp;&nbsp;`Register.__init__` | 474 |  |
-| · | &nbsp;&nbsp;`Register.load` | 484 | Read the list without consulting listener configuration. A present file is the whole answ… |
-| · | &nbsp;&nbsp;`Register.refresh` | 520 | Re-read if the file has changed. True when something did. |
-| · | &nbsp;&nbsp;`Register.all` | 553 | Every archive the file names, in storage order. |
-| · | &nbsp;&nbsp;`Register.names` | 557 |  |
-| · | &nbsp;&nbsp;`Register.default_name` | 560 | The unambiguous implicit name, or a clear refusal. A literal `[archives.default]` is an e… |
-| · | &nbsp;&nbsp;`Register.get` | 575 | One archive by exact name. `None` is accepted only through `default_name`; an unknown non… |
-| · | &nbsp;&nbsp;`Register.ordered` | 588 | Every place, in the order pages present them. Separate from `all()` on purpose, and the d… |
-| · | &nbsp;&nbsp;`Register.presented` | 598 | The same list with a colour and a short code filled in. For renderers, never for saving.… |
-| · | &nbsp;&nbsp;`Register.several` | 623 | Whether anything has to be told apart in the presentation. |
-| · | &nbsp;&nbsp;`Register.overriding` | 627 | Compatibility answer: a loaded register always comes from the file. |
-| · | &nbsp;&nbsp;`Register.concerns` | 631 | What is wrong with this arrangement, by archive name. Empty is the ordinary answer. It ex… |
-| · | &nbsp;&nbsp;`Register.add` | 647 |  |
-| · | &nbsp;&nbsp;`Register.replace` | 654 |  |
-| · | &nbsp;&nbsp;`Register.remove` | 661 | Take an archive off the list. The file is left where it is. Deliberately not deleted. It… |
-| · | &nbsp;&nbsp;`Register.why_not` | 674 | Why this archive cannot be added, or an empty string. |
-| · | &nbsp;&nbsp;`Register.render` | 738 |  |
-| · | &nbsp;&nbsp;`Register.save` | 784 | Write the file, atomically. Same as the station register. |
-| f | `migrate_station_ownership` | 847 | Move the committed station-owned layout to canonical sender IDs. This helper is deliberately *not* called by… |
-| **C** | `Placed` | 1028 | The settings as one archive sees them. Everything that formats or draws a page reads `station.latitude` and i… |
-| · | &nbsp;&nbsp;`Placed.__init__` | 1066 |  |
-| · | &nbsp;&nbsp;`Placed.get` | 1070 |  |
-| f | `placed` | 1088 | The settings for one archive; a place is required. |
+| **C** | `MemberPolicy` | 72 | How one archive treats one of the stations it selects. A role is relative to a series. The same console can b… |
+| · | &nbsp;&nbsp;`MemberPolicy.from_dict` | 103 | One strictly checked policy from TOML values. |
+| **C** | `Archive` | 125 | One measurement series, and what is true of the place it measures. |
+| · | &nbsp;&nbsp;`Archive.title` | 216 | What to print. The label if there is one, else the name. |
+| · | &nbsp;&nbsp;`Archive.place` | 220 | The three numbers, in the shape `derive.Station` wants them. |
+| · | &nbsp;&nbsp;`Archive.as_dict` | 225 |  |
+| · | &nbsp;&nbsp;`Archive.policy_for` | 230 | How this archive treats one sender; defaults are intentionally plain. |
+| · | &nbsp;&nbsp;`Archive.senders` | 235 | Canonical live sender IDs selected by this place. ``None`` is only the explicit broad leg… |
+| · | &nbsp;&nbsp;`Archive.selects` | 244 | Whether this place reads one canonical sender ID. |
+| f | `from_settings` | 388 | The archive copied from an installation's legacy settings. This is migration input, never a live fallback. `R… |
+| f | `timezone_gap` | 419 | Hours between this place's sun and the clock this process keeps. None when the archive has no longitude, beca… |
+| f | `timezone_concern` | 441 | Why this archive's days may not be its days, or an empty string. Said rather than fixed. The fix is to run th… |
+| **C** | `Register` | 460 | Every archive, and which file each one is. Re-read when the file changes, for the same reason the station reg… |
+| · | &nbsp;&nbsp;`Register.__init__` | 468 |  |
+| · | &nbsp;&nbsp;`Register.load` | 478 | Read the list without consulting listener configuration. A present file is the whole answ… |
+| · | &nbsp;&nbsp;`Register.refresh` | 504 | Re-read if the file has changed. True when something did. |
+| · | &nbsp;&nbsp;`Register.all` | 537 | Every archive the file names, in storage order. |
+| · | &nbsp;&nbsp;`Register.names` | 541 |  |
+| · | &nbsp;&nbsp;`Register.default_name` | 544 | The unambiguous implicit name, or a clear refusal. A literal `[archives.default]` is an e… |
+| · | &nbsp;&nbsp;`Register.get` | 559 | One archive by exact name. `None` is accepted only through `default_name`; an unknown non… |
+| · | &nbsp;&nbsp;`Register.ordered` | 572 | Every place, in the order pages present them. Separate from `all()` on purpose, and the d… |
+| · | &nbsp;&nbsp;`Register.presented` | 582 | The same list with a colour and a short code filled in. For renderers, never for saving.… |
+| · | &nbsp;&nbsp;`Register.several` | 607 | Whether anything has to be told apart in the presentation. |
+| · | &nbsp;&nbsp;`Register.overriding` | 611 | Compatibility answer: a loaded register always comes from the file. |
+| · | &nbsp;&nbsp;`Register.concerns` | 615 | What is wrong with this arrangement, by archive name. Empty is the ordinary answer. It ex… |
+| · | &nbsp;&nbsp;`Register.add` | 631 |  |
+| · | &nbsp;&nbsp;`Register.replace` | 638 |  |
+| · | &nbsp;&nbsp;`Register.remove` | 645 | Take an archive off the list. The file is left where it is. Deliberately not deleted. It… |
+| · | &nbsp;&nbsp;`Register.why_not` | 658 | Why this archive cannot be added, or an empty string. |
+| · | &nbsp;&nbsp;`Register.render` | 722 |  |
+| · | &nbsp;&nbsp;`Register.save` | 766 | Write the file, atomically. Same as the station register. |
+| **C** | `Placed` | 860 | The settings as one archive sees them. Everything that formats or draws a page reads `station.latitude` and i… |
+| · | &nbsp;&nbsp;`Placed.__init__` | 898 |  |
+| · | &nbsp;&nbsp;`Placed.get` | 902 |  |
+| f | `placed` | 920 | The settings for one archive; a place is required. |
 
 ## `src/weewx_evo/chartdata.py`
 
@@ -415,7 +414,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/cli.py`
 
-[CLI reference](CLI-Reference) · last changed 2026-09-04 02:00
+[CLI reference](CLI-Reference) · last changed 2026-09-04 08:00
 
 | | Name | Line | |
 |---|---|---|---|
@@ -427,123 +426,119 @@ name, use the browser's search.
 | f | `settings_for` | 176 | The process's settings, resolved once. Once, not once per caller. With each component resolving for itself, a… |
 | f | `read_config` | 219 | The whole configuration file, or an empty one. A file that is not there yet is not an error: a first start ha… |
 | f | `configure_drivers` | 230 | Hand each driver its options, and somewhere to keep its own state. Until this runs the drivers are unconfigur… |
-| f | `sender_clock_settings` | 319 | Per-sender clock tolerances for one driver, out of `stations.toml`. These are front-door policy: a timestamp… |
-| f | `install_driver_groups` | 355 | Tell the core what the drivers call their own fields. Without this a station's own columns -- `extraTemp9`, `… |
-| f | `stations_path` | 395 | Where stations.toml lives: beside the configuration, like plots.toml. Not beside the database. Both are usual… |
-| f | `archives_path` | 407 | Where archives.toml lives: beside stations.toml, for the same reason. |
-| f | `placement_path` | 416 | Where placement.toml lives: beside stations.toml, for the same reason. |
-| f | `read_placements` | 425 | Where each console's readings go. A missing file is "wherever the catalog says". |
-| f | `migrate_legacy_placements` | 440 | Bind old global scopes while this listener still knows all places. Archive-only processes deliberately never… |
-| f | `build_placer` | 456 | One archive's placer. |
-| f | `status_placer` | 463 | A placer for the listener's headline, or none when none is implicit. Placement is not part of ingest: the lis… |
-| f | `stranded_field_maps` | 479 | Placements still in `stations.toml` that nothing reads any more. A field map used to live on the station and… |
-| f | `say_if_stranded` | 511 | Report a field map nothing reads. Never fatal. |
-| f | `read_archives` | 528 | Every measurement series this installation keeps. A missing file is the one legacy case: `Register.load` writ… |
-| f | `selected_archive` | 551 | One exact archive, or a short command-line error. An omitted name means the registry's declared default. An u… |
-| f | `archive_path_of` | 572 | An archive path, relative to the configuration that names it. |
-| f | `open_archive` | 580 | The store for one series. Relative paths resolve against the configuration file, the same as every other path… |
-| f | `build_archivers` | 594 | One archiver per series, selected only through live sender ids. The three numbers come off the archive rather… |
-| f | `archive_senders` | 638 | Which canonical live senders write one series. None means explicit *. This answer comes only from the archive… |
-| f | `archive_stations` | 654 | Temporary consumer alias; archive runtime uses ``archive_senders``. |
-| f | `read_stations` | 659 | The announced consoles, and where strangers get noted. Two halves stored two ways, on purpose. `stations.toml… |
-| f | `quality_path` | 682 | Where `quality.toml` lives: beside the configuration unless told. Its own function because the watcher needs… |
-| f | `read_quality` | 702 | The calibration and the limits, from `quality.toml`. Its own file rather than a section in the settings, for… |
-| f | `read_sources` | 723 | Read the retired source-policy format for tools and compatibility. Production archivers do not call this. Pla… |
-| f | `warn_obsolete_sources` | 753 | Say when retired global source routing is present; never interpret it. |
-| f | `open_stores` | 770 |  |
-| f | `make_archiver` | 789 | One archiver, for the series `--series` names or for the default. The single-shot commands work on one at a t… |
-| f | `start_watchdog` | 815 | The watchdog, where this installation asked for one. Built here rather than in each command because all three… |
-| f | `cmd_listen` | 837 |  |
-| f | `cmd_archive` | 909 |  |
-| f | `cmd_upload_list` | 1039 |  |
-| f | `cmd_upload_check` | 1070 | Ask each service whether it accepts the account. Worth more than the equivalent for an export: these services… |
-| f | `cmd_upload_compare` | 1130 | Count both ends, and say where they differ. A second store is a second truth. Trusting that every write lande… |
-| f | `cmd_upload_run` | 1194 | Send now, whatever the trigger says. |
-| f | `cmd_forecast_list` | 1228 |  |
-| f | `cmd_forecast_check` | 1254 | Fetch once and say what came back. This is also how somebody finds a DWD station id or a MeteoAlarm region: a… |
-| f | `cmd_forecast_run` | 1309 | Fetch now and store, whatever the schedule says. |
-| f | `cmd_forecast_show` | 1332 | Print what is stored, which is what a page would draw. |
-| f | `cmd_serve` | 1396 | Listener and archiver in one process, for a small machine. They still speak only through the database. Splitt… |
-| f | `cmd_catchup` | 1742 |  |
-| f | `cmd_rebuild` | 1790 |  |
-| f | `cmd_derive` | 1810 | Fill in derived readings on records that are already in the archive. A calculator that arrives late leaves a… |
-| f | `cmd_weewx_driver_list` | 2025 | What this weewx.conf asks for, and whether it can be built. |
-| f | `cmd_weewx_driver_hardware` | 2066 | Every WeeWX driver on this machine, and what each one asks for. The command behind the hardware list on the c… |
-| f | `cmd_weewx_driver_install` | 2144 | Put a WeeWX driver file where this installation looks for one. A driver is one file, and this is the third pl… |
-| f | `cmd_weewx_driver_check` | 2214 | Build the driver, take a few packets, deliver nothing. The question this answers is the one worth asking befo… |
-| f | `cmd_mqtt_check` | 2336 | Subscribe, print what arrives, deliver nothing. The command somebody runs first, and the reason it exists: a… |
-| f | `cmd_mqtt_run` | 2382 | Subscribe and deliver, until stopped. Its own process, like the WeeWX shim and for the same reason: a broker… |
-| f | `cmd_import_dump` | 2413 | Read a MySQL or Postgres dump into the archive. `--dry-run` first, always, and the command says so: this writ… |
-| f | `cmd_import_csv` | 2471 | Read a CSV of readings into the archive. The format every other weather program can produce, and the one some… |
-| f | `cmd_weewx_driver_run` | 2525 | Run the driver and deliver what it produces to the listener. This is the long-running form, meant for a servi… |
-| f | `cmd_columns` | 2588 | Readings that the archive has no column for. A reading only survives the archive interval if the table has a… |
-| f | `cmd_driver_list` | 2680 |  |
-| f | `cmd_driver_install` | 2702 |  |
-| f | `cmd_driver_remove` | 2736 |  |
-| f | `local_addresses` | 2745 | Addresses this machine can be reached on, as (address, what it is). Only what can be worked out without askin… |
-| f | `cmd_url` | 2777 | Print the addresses of the live view and the upload endpoint. The token is a path segment, so an address with… |
-| f | `driver_directory` | 2845 | Where third-party drivers live, resolved like everything else. The command line first, then the setting, then… |
-| f | `all_schemas` | 2862 | Every configurable thing there is: the core, then each driver. Drivers are asked, not enumerated. One that ga… |
-| f | `replace_group` | 3057 |  |
-| f | `cmd_config_show` | 3063 | Print the configuration as it stands, commented. |
-| f | `cmd_config_set` | 3076 | Set one value, checked against the schema that owns it. |
-| f | `cmd_config_check` | 3107 | Check every value against its schema and say what is wrong. |
-| f | `cmd_config_import` | 3218 | Read a weewx.conf and write what it says into our own file. |
-| f | `cmd_admin` | 3262 | Serve the settings page. Its own port and its own token, deliberately. An upload endpoint can at worst put a… |
-| f | `configured_exports` | 3343 | What the configuration file says about exports, by name. |
-| f | `configured_uploads` | 3351 | What the configuration file says about uploads, by name. |
-| f | `build_upload` | 3359 | Make one upload from its settings. Raises with a usable message. |
-| f | `build_upload_for_place` | 3396 | Make one upload with the settings owned by its Place. The scheduler, the command-line check and the admin-pag… |
-| f | `build_upload_schedule` | 3453 | What the uploads are, right now. They read the archive themselves rather than being handed a record: the comp… |
-| f | `live_readings_locally` | 3559 | The live upload an export has already asked for, with nothing to fill in. An export saying "live readings" ha… |
-| f | `configured_forecasts` | 3679 | What the configuration file says about forecast sources, by name. |
-| f | `forecast_db` | 3687 | The installation's shared forecast store, beside its configuration. |
-| f | `forecast_place` | 3698 | Where a forecast is for. `cfg` is the settings **as one archive sees them** where there is more than one -- `… |
-| f | `build_forecast_source` | 3715 | Make one forecast source. Raises with a usable message. |
-| f | `mirror_forecast` | 3737 | A callback that copies a fresh forecast into every InfluxDB upload. Only InfluxDB. Every other upload in that… |
-| f | `build_forecast_schedule` | 3782 | What the forecast sources are, right now, and which series each is for. One entry, one archive. Not one sourc… |
-| f | `apply_live` | 3821 | Apply a changed configuration to a running process. Everything that can be rebuilt in place, in one function.… |
-| f | `build_schedule` | 3954 | What the exports are, right now. An export pointed at a feed has to be told where that feed writes, or it is… |
-| f | `resolve_paths` | 3978 | Make an export's own paths absolute, against the configuration file. The same rule as plots.toml: a relative… |
-| f | `build_export` | 3998 | Make one export from its settings. Raises with a usable message. `upload_token` is what `live.php`'s token is… |
-| f | `cmd_export_list` | 4026 |  |
-| f | `cmd_export_check` | 4058 | Try each destination without sending anything. |
-| f | `cmd_export_run` | 4086 | Send. This is what a feed would call when it has produced something. |
-| f | `cmd_web` | 4138 | Serve the feeds, and nothing else. Separate from `serve` for the same reason `listen` is: a machine that only… |
-| f | `plots_path` | 4192 | Where plots.toml lives: beside the configuration unless told otherwise. |
-| f | `load_plots` | 4206 | The charts, laying the starter set down on a first run. A station with no charts has no feed with anything to… |
-| f | `configured_feeds` | 4261 | What the configuration says about feeds, by name. A name is one configured feed; `kind` says what it is. Two… |
-| f | `feed_dirs` | 4279 | Where each feed writes, by name. One place, because two things need the answer and they must agree: the feed… |
-| f | `feed_schedule` | 4300 | When each configured feed runs, and which archive it reads. Read here rather than asked of the feed class, be… |
-| f | `build_feeds` | 4363 | The feeds this configuration asks for, in the order they run. Ordered by dependence: anything reading what an… |
-| f | `served_directories` | 4797 | What the built-in server hands out, by name. The local exports, plus anything named directly. The same answer… |
-| f | `cmd_plots_list` | 4819 | What charts exist. Through `load_plots`, so this is the set the feeds draw and not just the file: a site of s… |
-| f | `cmd_plots_show` | 4865 | One chart, in full. |
-| f | `cmd_plots_import` | 4900 | Take the plots out of a WeeWX skin.conf or weewx.conf. Read, reported, and only written when asked. An import… |
-| f | `cmd_plots_compare` | 4959 | One chart per reading per span, drawing every place on one axis. Read, reported, and only written when asked… |
-| f | `cmd_plots_remove` | 5022 | Delete a chart. |
-| f | `cmd_plots_run` | 5034 | Produce the JSON now, and say what came out. |
-| f | `start_feeds` | 5093 | Start the feed runner, or say why there is nothing to run. One function for both loops. They had their own co… |
-| f | `configured_notify` | 5169 | What the configuration file says about notification channels. |
-| f | `build_channel` | 5177 | One channel from its settings. Raises with a usable message. |
-| f | `build_metrics` | 5198 | What the process is doing, or None where it is switched off. |
-| f | `build_api` | 5229 | The read-only API, or None where it is switched off. Every archive, by name, so a client can ask about any of… |
-| f | `build_notify_runner` | 5258 | The notification runner, or None where nothing is configured. What it watches for failures is the exports and… |
-| f | `cmd_backup` | 5339 | Copy the archive safely, while the station carries on. `sqlite3.Connection.backup`, not a file copy. See main… |
-| f | `cmd_verify` | 5386 | Is the file sound, and do the summaries still follow from the records? Two questions, and the second is ours.… |
-| f | `cmd_vacuum` | 5416 | Rewrite a database without its free pages. |
-| f | `cmd_notify_list` | 5434 | What is configured, and what could be. |
-| f | `cmd_notify_check` | 5459 | Send a test message through each channel. |
-| f | `cmd_notify_status` | 5488 | What is wrong right now, whether or not anybody has been told. |
-| f | `cmd_placement_list` | 5524 | What each console sends, and which column it reaches. Reads the two files and the proposals; asks no hardware… |
-| f | `cmd_placement_import` | 5588 | Move a field map out of `stations.toml` and into `placement.toml`. For an installation that had one before pl… |
-| f | `cmd_placement_accept` | 5646 | Turn what inference worked out into lines somebody can read. Nothing is written without `--write`, for the re… |
-| f | `cmd_quality_suggest` | 5690 | Work rules out of what this station has actually recorded. Nobody can type a plausible ceiling for `soilMoist… |
-| f | `cmd_quality_check` | 5770 | Run the configured rules over what is stored, and change nothing. The answer to "what would this cost me". A… |
-| f | `cmd_grafana_list` | 5855 | What would be provisioned, without writing anything. |
-| f | `cmd_grafana_provision` | 5883 | Write the datasource and the dashboards Grafana reads at start. |
-| f | `cmd_status` | 5921 |  |
-| f | `main` | 5975 |  |
+| f | `sender_clock_settings` | 318 | Per-sender clock tolerances for one driver, out of `stations.toml`. These are front-door policy: a timestamp… |
+| f | `install_driver_groups` | 354 | Tell the core what the drivers call their own fields. Without this a station's own columns -- `extraTemp9`, `… |
+| f | `stations_path` | 394 | Where stations.toml lives: beside the configuration, like plots.toml. Not beside the database. Both are usual… |
+| f | `archives_path` | 406 | Where archives.toml lives: beside stations.toml, for the same reason. |
+| f | `placement_path` | 415 | Where placement.toml lives: beside stations.toml, for the same reason. |
+| f | `read_placements` | 424 | Where each console's readings go. A missing file is "wherever the catalog says". |
+| f | `build_placer` | 441 | One archive's placer. |
+| f | `status_placer` | 448 | A placer for the listener's headline, or none when none is implicit. Placement is not part of ingest: the lis… |
+| f | `read_archives` | 466 | Every measurement series this installation keeps. A missing file is the one legacy case: `Register.load` writ… |
+| f | `selected_archive` | 489 | One exact archive, or a short command-line error. An omitted name means the registry's declared default. An u… |
+| f | `archive_path_of` | 510 | An archive path, relative to the configuration that names it. |
+| f | `open_archive` | 518 | The store for one series. Relative paths resolve against the configuration file, the same as every other path… |
+| f | `build_archivers` | 532 | One archiver per series, selected only through live sender ids. The three numbers come off the archive rather… |
+| f | `archive_senders` | 576 | Which canonical live senders write one series. None means explicit *. This answer comes only from the archive… |
+| f | `archive_stations` | 592 | Temporary consumer alias; archive runtime uses ``archive_senders``. |
+| f | `read_stations` | 597 | The announced consoles, and where strangers get noted. Two halves stored two ways, on purpose. `stations.toml… |
+| f | `quality_path` | 620 | Where `quality.toml` lives: beside the configuration unless told. Its own function because the watcher needs… |
+| f | `read_quality` | 640 | The calibration and the limits, from `quality.toml`. Its own file rather than a section in the settings, for… |
+| f | `read_sources` | 661 | Read the retired source-policy format for tools and compatibility. Production archivers do not call this. Pla… |
+| f | `warn_obsolete_sources` | 691 | Say when retired global source routing is present; never interpret it. |
+| f | `open_stores` | 708 |  |
+| f | `make_archiver` | 727 | One archiver, for the series `--series` names or for the default. The single-shot commands work on one at a t… |
+| f | `start_watchdog` | 753 | The watchdog, where this installation asked for one. Built here rather than in each command because all three… |
+| f | `cmd_listen` | 775 |  |
+| f | `cmd_archive` | 844 |  |
+| f | `cmd_upload_list` | 974 |  |
+| f | `cmd_upload_check` | 1005 | Ask each service whether it accepts the account. Worth more than the equivalent for an export: these services… |
+| f | `cmd_upload_compare` | 1065 | Count both ends, and say where they differ. A second store is a second truth. Trusting that every write lande… |
+| f | `cmd_upload_run` | 1129 | Send now, whatever the trigger says. |
+| f | `cmd_forecast_list` | 1163 |  |
+| f | `cmd_forecast_check` | 1189 | Fetch once and say what came back. This is also how somebody finds a DWD station id or a MeteoAlarm region: a… |
+| f | `cmd_forecast_run` | 1244 | Fetch now and store, whatever the schedule says. |
+| f | `cmd_forecast_show` | 1267 | Print what is stored, which is what a page would draw. |
+| f | `cmd_serve` | 1331 | Listener and archiver in one process, for a small machine. They still speak only through the database. Splitt… |
+| f | `cmd_catchup` | 1671 |  |
+| f | `cmd_rebuild` | 1719 |  |
+| f | `cmd_derive` | 1739 | Fill in derived readings on records that are already in the archive. A calculator that arrives late leaves a… |
+| f | `cmd_weewx_driver_list` | 1954 | What this weewx.conf asks for, and whether it can be built. |
+| f | `cmd_weewx_driver_hardware` | 1995 | Every WeeWX driver on this machine, and what each one asks for. The command behind the hardware list on the c… |
+| f | `cmd_weewx_driver_install` | 2073 | Put a WeeWX driver file where this installation looks for one. A driver is one file, and this is the third pl… |
+| f | `cmd_weewx_driver_check` | 2143 | Build the driver, take a few packets, deliver nothing. The question this answers is the one worth asking befo… |
+| f | `cmd_mqtt_check` | 2265 | Subscribe, print what arrives, deliver nothing. The command somebody runs first, and the reason it exists: a… |
+| f | `cmd_mqtt_run` | 2311 | Subscribe and deliver, until stopped. Its own process, like the WeeWX shim and for the same reason: a broker… |
+| f | `cmd_import_dump` | 2342 | Read a MySQL or Postgres dump into the archive. `--dry-run` first, always, and the command says so: this writ… |
+| f | `cmd_import_csv` | 2400 | Read a CSV of readings into the archive. The format every other weather program can produce, and the one some… |
+| f | `cmd_weewx_driver_run` | 2454 | Run the driver and deliver what it produces to the listener. This is the long-running form, meant for a servi… |
+| f | `cmd_columns` | 2517 | Readings that the archive has no column for. A reading only survives the archive interval if the table has a… |
+| f | `cmd_driver_list` | 2609 |  |
+| f | `cmd_driver_install` | 2631 |  |
+| f | `cmd_driver_remove` | 2665 |  |
+| f | `local_addresses` | 2674 | Addresses this machine can be reached on, as (address, what it is). Only what can be worked out without askin… |
+| f | `cmd_url` | 2706 | Print the addresses of the live view and the upload endpoint. The token is a path segment, so an address with… |
+| f | `driver_directory` | 2774 | Where third-party drivers live, resolved like everything else. The command line first, then the setting, then… |
+| f | `all_schemas` | 2791 | Every configurable thing there is: the core, then each driver. Drivers are asked, not enumerated. One that ga… |
+| f | `replace_group` | 2986 |  |
+| f | `cmd_config_show` | 2992 | Print the configuration as it stands, commented. |
+| f | `cmd_config_set` | 3005 | Set one value, checked against the schema that owns it. |
+| f | `cmd_config_check` | 3036 | Check every value against its schema and say what is wrong. |
+| f | `cmd_config_import` | 3147 | Read a weewx.conf and write what it says into our own file. |
+| f | `cmd_admin` | 3192 | Serve the settings page. Its own port and its own token, deliberately. An upload endpoint can at worst put a… |
+| f | `configured_exports` | 3273 | What the configuration file says about exports, by name. |
+| f | `configured_uploads` | 3281 | What the configuration file says about uploads, by name. |
+| f | `build_upload` | 3289 | Make one upload from its settings. Raises with a usable message. |
+| f | `build_upload_for_place` | 3326 | Make one upload with the settings owned by its Place. The scheduler, the command-line check and the admin-pag… |
+| f | `build_upload_schedule` | 3383 | What the uploads are, right now. They read the archive themselves rather than being handed a record: the comp… |
+| f | `live_readings_locally` | 3489 | The live upload an export has already asked for, with nothing to fill in. An export saying "live readings" ha… |
+| f | `configured_forecasts` | 3609 | What the configuration file says about forecast sources, by name. |
+| f | `forecast_db` | 3617 | The installation's shared forecast store, beside its configuration. |
+| f | `forecast_place` | 3628 | Where a forecast is for. `cfg` is the settings **as one archive sees them** where there is more than one -- `… |
+| f | `build_forecast_source` | 3645 | Make one forecast source. Raises with a usable message. |
+| f | `mirror_forecast` | 3667 | A callback that copies a fresh forecast into every InfluxDB upload. Only InfluxDB. Every other upload in that… |
+| f | `build_forecast_schedule` | 3712 | What the forecast sources are, right now, and which series each is for. One entry, one archive. Not one sourc… |
+| f | `apply_live` | 3751 | Apply a changed configuration to a running process. Everything that can be rebuilt in place, in one function.… |
+| f | `build_schedule` | 3884 | What the exports are, right now. An export pointed at a feed has to be told where that feed writes, or it is… |
+| f | `resolve_paths` | 3908 | Make an export's own paths absolute, against the configuration file. The same rule as plots.toml: a relative… |
+| f | `build_export` | 3928 | Make one export from its settings. Raises with a usable message. `upload_token` is what `live.php`'s token is… |
+| f | `cmd_export_list` | 3956 |  |
+| f | `cmd_export_check` | 3988 | Try each destination without sending anything. |
+| f | `cmd_export_run` | 4016 | Send. This is what a feed would call when it has produced something. |
+| f | `cmd_web` | 4068 | Serve the feeds, and nothing else. Separate from `serve` for the same reason `listen` is: a machine that only… |
+| f | `plots_path` | 4122 | Where plots.toml lives: beside the configuration unless told otherwise. |
+| f | `load_plots` | 4136 | The charts, laying the starter set down on a first run. A station with no charts has no feed with anything to… |
+| f | `configured_feeds` | 4191 | What the configuration says about feeds, by name. A name is one configured feed; `kind` says what it is. Two… |
+| f | `feed_dirs` | 4209 | Where each feed writes, by name. One place, because two things need the answer and they must agree: the feed… |
+| f | `feed_schedule` | 4230 | When each configured feed runs, and which archive it reads. Read here rather than asked of the feed class, be… |
+| f | `build_feeds` | 4293 | The feeds this configuration asks for, in the order they run. Ordered by dependence: anything reading what an… |
+| f | `served_directories` | 4727 | What the built-in server hands out, by name. The local exports, plus anything named directly. The same answer… |
+| f | `cmd_plots_list` | 4749 | What charts exist. Through `load_plots`, so this is the set the feeds draw and not just the file: a site of s… |
+| f | `cmd_plots_show` | 4795 | One chart, in full. |
+| f | `cmd_plots_import` | 4830 | Take the plots out of a WeeWX skin.conf or weewx.conf. Read, reported, and only written when asked. An import… |
+| f | `cmd_plots_compare` | 4889 | One chart per reading per span, drawing every place on one axis. Read, reported, and only written when asked… |
+| f | `cmd_plots_remove` | 4952 | Delete a chart. |
+| f | `cmd_plots_run` | 4964 | Produce the JSON now, and say what came out. |
+| f | `start_feeds` | 5023 | Start the feed runner, or say why there is nothing to run. One function for both loops. They had their own co… |
+| f | `configured_notify` | 5099 | What the configuration file says about notification channels. |
+| f | `build_channel` | 5107 | One channel from its settings. Raises with a usable message. |
+| f | `build_metrics` | 5128 | What the process is doing, or None where it is switched off. |
+| f | `build_api` | 5159 | The read-only API, or None where it is switched off. Every archive, by name, so a client can ask about any of… |
+| f | `build_notify_runner` | 5188 | The notification runner, or None where nothing is configured. What it watches for failures is the exports and… |
+| f | `cmd_backup` | 5269 | Copy the archive safely, while the station carries on. `sqlite3.Connection.backup`, not a file copy. See main… |
+| f | `cmd_verify` | 5316 | Is the file sound, and do the summaries still follow from the records? Two questions, and the second is ours.… |
+| f | `cmd_vacuum` | 5346 | Rewrite a database without its free pages. |
+| f | `cmd_notify_list` | 5364 | What is configured, and what could be. |
+| f | `cmd_notify_check` | 5389 | Send a test message through each channel. |
+| f | `cmd_notify_status` | 5418 | What is wrong right now, whether or not anybody has been told. |
+| f | `cmd_placement_list` | 5454 | What each console sends, and which column it reaches. Reads the two files and the proposals; asks no hardware… |
+| f | `cmd_placement_accept` | 5518 | Turn what inference worked out into lines somebody can read. Nothing is written without `--write`, for the re… |
+| f | `cmd_quality_suggest` | 5559 | Work rules out of what this station has actually recorded. Nobody can type a plausible ceiling for `soilMoist… |
+| f | `cmd_quality_check` | 5639 | Run the configured rules over what is stored, and change nothing. The answer to "what would this cost me". A… |
+| f | `cmd_grafana_list` | 5724 | What would be provisioned, without writing anything. |
+| f | `cmd_grafana_provision` | 5752 | Write the datasource and the dashboards Grafana reads at start. |
+| f | `cmd_status` | 5790 |  |
+| f | `main` | 5844 |  |
 
 ## `src/weewx_evo/collectors.py`
 
@@ -617,37 +612,37 @@ name, use the browser's search.
 
 ## `src/weewx_evo/db/live.py`
 
-[The live database](Database-Live) · last changed 2026-09-04 01:11
+[The live database](Database-Live) · last changed 2026-09-04 07:52
 
 | | Name | Line | |
 |---|---|---|---|
-| f | `sender_id` | 70 | The stable, reversible id for one driver/hardware-identity pair. |
-| f | `sender_parts` | 82 | Decode a canonical sender id, rejecting aliases and bad UTF-8. |
-| f | `interval_stop` | 177 | The end of the archive interval a timestamp belongs to. Intervals are half-open at the start, so a packet sta… |
-| **C** | `Packet` | 187 | One reading as it arrived, before anything was done to it. |
-| · | &nbsp;&nbsp;`Packet.sender_id` | 246 | This packet's canonical sender, including for old constructors. |
-| · | &nbsp;&nbsp;`Packet.digest` | 250 | A short hash of the measurements, so a retransmission is not a new packet. |
-| · | &nbsp;&nbsp;`Packet.record` | 258 | The packet as an observation record, ready for the accumulator. |
-| **C** | `SenderIdentity` | 269 | One sender known to the live journal, with optional display metadata. |
-| **C** | `LiveStore` | 294 | The live packet database. |
-| · | &nbsp;&nbsp;`LiveStore.__init__` | 297 |  |
-| · | &nbsp;&nbsp;`LiveStore.conn` | 516 | This thread's connection, opened on first use. |
-| · | &nbsp;&nbsp;`LiveStore.close` | 524 |  |
-| · | &nbsp;&nbsp;`LiveStore.add` | 544 | Store one packet. Returns False if it was already there. Storing is idempotent on (driver… |
-| · | &nbsp;&nbsp;`LiveStore.add_all` | 629 | Store many packets in one transaction. Returns how many were new. |
-| · | &nbsp;&nbsp;`LiveStore.mark_pending` | 635 | Note that the interval containing `ts` needs working out. Marked for every archive rather… |
-| · | &nbsp;&nbsp;`LiveStore.clear_pending` | 654 | One archive is done with this interval. The others are not. |
-| · | &nbsp;&nbsp;`LiveStore.due` | 661 | Intervals that have ended and can be worked out, oldest first. `grace` holds an interval… |
-| · | &nbsp;&nbsp;`LiveStore.packets` | 683 | Every packet in (start, stop], in time order. `with_raw` reads the original upload too. O… |
-| · | &nbsp;&nbsp;`LiveStore.forget_raw` | 744 | Drop the raw uploads of packets received before `before`. The packets themselves stay. On… |
-| · | &nbsp;&nbsp;`LiveStore.raw_of` | 756 | One packet by its sequence number, with its raw upload if still held. |
-| · | &nbsp;&nbsp;`LiveStore.span` | 774 |  |
-| · | &nbsp;&nbsp;`LiveStore.count` | 777 |  |
-| · | &nbsp;&nbsp;`LiveStore.get_meta` | 780 |  |
-| · | &nbsp;&nbsp;`LiveStore.set_meta` | 786 |  |
-| · | &nbsp;&nbsp;`LiveStore.senders` | 793 | Every canonical sender observed here, with optional UI label. |
-| · | &nbsp;&nbsp;`LiveStore.sync_sender_labels` | 802 | Replace listener-owned display labels without changing any id. The station file is a list… |
-| · | &nbsp;&nbsp;`LiveStore.prune` | 832 | Drop packets older than `before`, optionally writing them out first. With `archive_dir` s… |
+| f | `sender_id` | 66 | The stable, reversible id for one driver/hardware-identity pair. |
+| f | `sender_parts` | 78 | Decode a canonical sender id, rejecting aliases and bad UTF-8. |
+| f | `interval_stop` | 176 | The end of the archive interval a timestamp belongs to. Intervals are half-open at the start, so a packet sta… |
+| **C** | `Packet` | 186 | One reading as it arrived, before anything was done to it. |
+| · | &nbsp;&nbsp;`Packet.sender_id` | 245 | This packet's canonical sender, including for old constructors. |
+| · | &nbsp;&nbsp;`Packet.digest` | 249 | A short hash of the measurements, so a retransmission is not a new packet. |
+| · | &nbsp;&nbsp;`Packet.record` | 257 | The packet as an observation record, ready for the accumulator. |
+| **C** | `SenderIdentity` | 268 | One sender known to the live journal, with optional display metadata. |
+| **C** | `LiveStore` | 293 | The live packet database. |
+| · | &nbsp;&nbsp;`LiveStore.__init__` | 296 |  |
+| · | &nbsp;&nbsp;`LiveStore.conn` | 340 | This thread's connection, opened on first use. |
+| · | &nbsp;&nbsp;`LiveStore.close` | 348 |  |
+| · | &nbsp;&nbsp;`LiveStore.add` | 368 | Store one packet. Returns False if it was already there. Storing is idempotent on (driver… |
+| · | &nbsp;&nbsp;`LiveStore.add_all` | 453 | Store many packets in one transaction. Returns how many were new. |
+| · | &nbsp;&nbsp;`LiveStore.mark_pending` | 459 | Note that the interval containing `ts` needs working out. Marked for every archive rather… |
+| · | &nbsp;&nbsp;`LiveStore.clear_pending` | 478 | One archive is done with this interval. The others are not. |
+| · | &nbsp;&nbsp;`LiveStore.due` | 485 | Intervals that have ended and can be worked out, oldest first. `grace` holds an interval… |
+| · | &nbsp;&nbsp;`LiveStore.packets` | 507 | Every packet in (start, stop], in time order. `with_raw` reads the original upload too. O… |
+| · | &nbsp;&nbsp;`LiveStore.forget_raw` | 568 | Drop the raw uploads of packets received before `before`. The packets themselves stay. On… |
+| · | &nbsp;&nbsp;`LiveStore.raw_of` | 580 | One packet by its sequence number, with its raw upload if still held. |
+| · | &nbsp;&nbsp;`LiveStore.span` | 598 |  |
+| · | &nbsp;&nbsp;`LiveStore.count` | 601 |  |
+| · | &nbsp;&nbsp;`LiveStore.get_meta` | 604 |  |
+| · | &nbsp;&nbsp;`LiveStore.set_meta` | 610 |  |
+| · | &nbsp;&nbsp;`LiveStore.senders` | 617 | Every canonical sender observed here, with optional UI label. |
+| · | &nbsp;&nbsp;`LiveStore.sync_sender_labels` | 626 | Replace listener-owned display labels without changing any id. The station file is a list… |
+| · | &nbsp;&nbsp;`LiveStore.prune` | 654 | Drop packets older than `before`, optionally writing them out first. With `archive_dir` s… |
 
 ## `src/weewx_evo/db/schema.py`
 
@@ -1377,7 +1372,7 @@ name, use the browser's search.
 
 ## `src/weewx_evo/ingest/listener.py`
 
-[Listener](Ingest-Listener) · last changed 2026-09-04 01:07
+[Listener](Ingest-Listener) · last changed 2026-09-04 02:34
 
 | | Name | Line | |
 |---|---|---|---|
@@ -1387,18 +1382,18 @@ name, use the browser's search.
 | · | &nbsp;&nbsp;`Ingest.driver_for` | 161 | Which driver reads this upload. The path first, because a console that can be told one ha… |
 | · | &nbsp;&nbsp;`Ingest.submit` | 190 | Take one upload. Returns (packets stored, reason, what to answer with). The response come… |
 | · | &nbsp;&nbsp;`Ingest.status` | 396 |  |
-| **C** | `HttpListener` | 603 | The HTTP half. Threaded, because a slow console must not block the others. |
-| · | &nbsp;&nbsp;`HttpListener.__init__` | 606 |  |
-| · | &nbsp;&nbsp;`HttpListener.serve_forever` | 612 |  |
-| · | &nbsp;&nbsp;`HttpListener.start` | 616 |  |
-| · | &nbsp;&nbsp;`HttpListener.stop` | 621 |  |
-| **C** | `UdpListener` | 652 | The UDP half, for hardware that broadcasts rather than posts. |
-| · | &nbsp;&nbsp;`UdpListener.__init__` | 655 |  |
-| · | &nbsp;&nbsp;`UdpListener.serve_forever` | 663 |  |
-| · | &nbsp;&nbsp;`UdpListener.start` | 667 |  |
-| · | &nbsp;&nbsp;`UdpListener.stop` | 672 |  |
-| f | `push` | 677 | Send packets to a listener. This is how a pull driver delivers. Going over the loopback rather than writing t… |
-| f | `resolve_bind` | 717 | Turn a bind address into something to print. Cosmetic only. |
+| **C** | `HttpListener` | 646 | The HTTP half. Threaded, because a slow console must not block the others. |
+| · | &nbsp;&nbsp;`HttpListener.__init__` | 649 |  |
+| · | &nbsp;&nbsp;`HttpListener.serve_forever` | 655 |  |
+| · | &nbsp;&nbsp;`HttpListener.start` | 659 |  |
+| · | &nbsp;&nbsp;`HttpListener.stop` | 664 |  |
+| **C** | `UdpListener` | 695 | The UDP half, for hardware that broadcasts rather than posts. |
+| · | &nbsp;&nbsp;`UdpListener.__init__` | 698 |  |
+| · | &nbsp;&nbsp;`UdpListener.serve_forever` | 706 |  |
+| · | &nbsp;&nbsp;`UdpListener.start` | 710 |  |
+| · | &nbsp;&nbsp;`UdpListener.stop` | 715 |  |
+| f | `push` | 720 | Send packets to a listener. This is how a pull driver delivers. Going over the loopback rather than writing t… |
+| f | `resolve_bind` | 760 | Turn a bind address into something to print. Cosmetic only. |
 
 ## `src/weewx_evo/ingest/mqttsub.py`
 
@@ -2006,43 +2001,42 @@ name, use the browser's search.
 
 ## `src/weewx_evo/placement.py`
 
-[Placements](Placements) · last changed 2026-09-04 01:52
+[Placements](Placements) · last changed 2026-09-04 07:56
 
 | | Name | Line | |
 |---|---|---|---|
-| **C** | `Takes` | 78 | One scope, and what it says about the readings in it. `archive` is required. An empty value is retained only… |
-| · | &nbsp;&nbsp;`Takes.covers` | 104 |  |
-| · | &nbsp;&nbsp;`Takes.score` | 110 | How specific this scope is. Higher wins. |
-| **C** | `Placements` | 116 | Every placement this installation has decided or been told. |
-| · | &nbsp;&nbsp;`Placements.matching` | 133 | Every scope that covers this console, least specific first. At equal specificity a learne… |
-| · | &nbsp;&nbsp;`Placements.extensions` | 142 | The placements for one console, merged. Raw name -> column or `-`. |
-| · | &nbsp;&nbsp;`Placements.unlisted` | 149 | What happens to a reading with no line, for one console. |
-| · | &nbsp;&nbsp;`Placements.snapshot` | 157 | A copy that will not change under a build. `Takes` is frozen and `decide` replaces rather… |
-| · | &nbsp;&nbsp;`Placements.decide` | 169 | Say where one raw reading goes. An empty column forgets the decision. A learned decision… |
-| · | &nbsp;&nbsp;`Placements.set_unlisted` | 197 | Whether unlisted readings follow the catalog or are dropped. |
-| · | &nbsp;&nbsp;`Placements.refresh` | 213 | Re-read the file if it has changed. True when it did. The same discipline as `stations.Re… |
-| **C** | `Placer` | 261 | Journal packets as WeeWX-named packets, for one archive. A pure lookup. The inferrer is off, so a raw name th… |
-| · | &nbsp;&nbsp;`Placer.__init__` | 269 |  |
-| · | &nbsp;&nbsp;`Placer.refresh` | 315 | Freeze current place policy and live sender metadata for a build. |
-| · | &nbsp;&nbsp;`Placer.station_of` | 329 | Display metadata for this packet, or None for an unknown sender. |
-| · | &nbsp;&nbsp;`Placer.announced` | 333 |  |
-| · | &nbsp;&nbsp;`Placer.sender_of` | 336 | The immutable member key used for every archive decision. |
-| · | &nbsp;&nbsp;`Placer.name_of` | 340 | Friendly UI name, falling back to the canonical sender id. |
-| · | &nbsp;&nbsp;`Placer.named` | 344 | What to call the console behind a (driver, identity) pair. An unannounced one is shown by… |
-| · | &nbsp;&nbsp;`Placer.identities` | 355 | Compatibility lookup for non-archive readers during migration. Archive code selects sende… |
-| · | &nbsp;&nbsp;`Placer.selected_senders` | 393 | This place's live-db selection, optionally narrowed by role. A broad ``senders = "*"`` re… |
-| · | &nbsp;&nbsp;`Placer.selected_main_senders` | 427 | Concrete main-sender addresses for live publishing. |
-| · | &nbsp;&nbsp;`Placer.place` | 436 | One journal packet in this archive's column names, or None. None means the packet said no… |
-| · | &nbsp;&nbsp;`Placer.replace` | 602 | Take up a changed file. Both halves and the cache go together. A caller that swapped the… |
-| · | &nbsp;&nbsp;`Placer.dropped` | 622 | Readings this archive had nowhere to put, by name and count. |
-| f | `bind_legacy_scopes` | 627 | Bind old archive-less scopes to an explicit, closed place snapshot. This helper is deliberately not called by… |
-| f | `promote` | 650 | Write down what inference has worked out. Returns what it added. This is the whole of the migration from a gu… |
-| f | `name_for` | 704 | What to call a console, for anything that has no `Placer`. The table records the pair; a name is a lookup, an… |
-| f | `path_for` | 827 |  |
-| f | `load` | 831 | Read placement.toml. A missing file is an installation with none yet. |
-| f | `from_dict` | 845 |  |
-| f | `save` | 880 | Write placement.toml, keeping the previous one. Written beside and moved into place, like `stations.toml` and… |
-| f | `render` | 904 | The placements as a TOML file somebody can edit. |
+| **C** | `Takes` | 78 | One scope, and what it says about the readings in it. `archive` is required, and a scope without one never ma… |
+| · | &nbsp;&nbsp;`Takes.covers` | 103 |  |
+| · | &nbsp;&nbsp;`Takes.score` | 109 | How specific this scope is. Higher wins. |
+| **C** | `Placements` | 115 | Every placement this installation has decided or been told. |
+| · | &nbsp;&nbsp;`Placements.matching` | 132 | Every scope that covers this console, least specific first. At equal specificity a learne… |
+| · | &nbsp;&nbsp;`Placements.extensions` | 141 | The placements for one console, merged. Raw name -> column or `-`. |
+| · | &nbsp;&nbsp;`Placements.unlisted` | 148 | What happens to a reading with no line, for one console. |
+| · | &nbsp;&nbsp;`Placements.snapshot` | 156 | A copy that will not change under a build. `Takes` is frozen and `decide` replaces rather… |
+| · | &nbsp;&nbsp;`Placements.decide` | 168 | Say where one raw reading goes. An empty column forgets the decision. A learned decision… |
+| · | &nbsp;&nbsp;`Placements.set_unlisted` | 196 | Whether unlisted readings follow the catalog or are dropped. |
+| · | &nbsp;&nbsp;`Placements.refresh` | 212 | Re-read the file if it has changed. True when it did. The same discipline as `stations.Re… |
+| **C** | `Placer` | 260 | Journal packets as WeeWX-named packets, for one archive. A pure lookup. The inferrer is off, so a raw name th… |
+| · | &nbsp;&nbsp;`Placer.__init__` | 268 |  |
+| · | &nbsp;&nbsp;`Placer.refresh` | 314 | Freeze current place policy and live sender metadata for a build. |
+| · | &nbsp;&nbsp;`Placer.station_of` | 328 | Display metadata for this packet, or None for an unknown sender. |
+| · | &nbsp;&nbsp;`Placer.announced` | 332 |  |
+| · | &nbsp;&nbsp;`Placer.sender_of` | 335 | The immutable member key used for every archive decision. |
+| · | &nbsp;&nbsp;`Placer.name_of` | 339 | Friendly UI name, falling back to the canonical sender id. |
+| · | &nbsp;&nbsp;`Placer.named` | 343 | What to call the console behind a (driver, identity) pair. An unannounced one is shown by… |
+| · | &nbsp;&nbsp;`Placer.identities` | 354 | Compatibility lookup for non-archive readers during migration. Archive code selects sende… |
+| · | &nbsp;&nbsp;`Placer.selected_senders` | 370 | This place's live-db selection, optionally narrowed by role. A broad ``senders = "*"`` re… |
+| · | &nbsp;&nbsp;`Placer.selected_main_senders` | 396 | Concrete main-sender addresses for live publishing. |
+| · | &nbsp;&nbsp;`Placer.place` | 405 | One journal packet in this archive's column names, or None. None means the packet said no… |
+| · | &nbsp;&nbsp;`Placer.replace` | 563 | Take up a changed file. Both halves and the cache go together. A caller that swapped the… |
+| · | &nbsp;&nbsp;`Placer.dropped` | 583 | Readings this archive had nowhere to put, by name and count. |
+| f | `promote` | 588 | Write down what inference has worked out. Returns what it added. This is the whole of the migration from a gu… |
+| f | `name_for` | 642 | What to call a console, for anything that has no `Placer`. The table records the pair; a name is a lookup, an… |
+| f | `path_for` | 765 |  |
+| f | `load` | 769 | Read placement.toml. A missing file is an installation with none yet. |
+| f | `from_dict` | 783 |  |
+| f | `save` | 818 | Write placement.toml, keeping the previous one. Written beside and moved into place, like `stations.toml` and… |
+| f | `render` | 842 | The placements as a TOML file somebody can edit. |
 
 ## `src/weewx_evo/planets.py`
 
@@ -2151,15 +2145,15 @@ name, use the browser's search.
 
 ## `src/weewx_evo/roles.py`
 
-[Stations and Archives](Stations-and-Archives) · last changed 2026-09-04 01:55
+[Stations and Archives](Stations-and-Archives) · last changed 2026-09-04 02:33
 
 | | Name | Line | |
 |---|---|---|---|
-| f | `shifted` | 81 | Where an extra station's reading goes, or None if it has nowhere. |
-| f | `keeps` | 87 | Whether this is a field an extra station may write unchanged. |
-| f | `next_channel` | 92 | The lowest channel no extra station has yet, or None if all are used. |
-| f | `apply` | 105 | One extra station's readings, moved out of the main station's way. A `main` station is returned untouched, wh… |
-| f | `collisions` | 140 | Fields more than one station of an archive writes. Sorted, so the answer is the same every time somebody look… |
+| f | `shifted` | 80 | Where an extra station's reading goes, or None if it has nowhere. |
+| f | `keeps` | 86 | Whether this is a field an extra station may write unchanged. |
+| f | `next_channel` | 91 | The lowest channel no extra station has yet, or None if all are used. |
+| f | `apply` | 104 | One extra station's readings, moved out of the main station's way. A `main` station is returned untouched, wh… |
+| f | `collisions` | 139 | Fields more than one station of an archive writes. Sorted, so the answer is the same every time somebody look… |
 
 ## `src/weewx_evo/schedule.py`
 
@@ -2422,30 +2416,28 @@ name, use the browser's search.
 
 ## `src/weewx_evo/stations.py`
 
-[Stations and Archives](Stations-and-Archives) · last changed 2026-09-04 01:52
+[Stations and Archives](Stations-and-Archives) · last changed 2026-09-04 07:57
 
 | | Name | Line | |
 |---|---|---|---|
-| **C** | `Station` | 66 | One console, announced. |
-| · | &nbsp;&nbsp;`Station.matches` | 111 | Whether an upload belongs to this station. The identity is compared without regard to cas… |
-| **C** | `Register` | 123 | The stations this installation has. Held as a list rather than keyed by identity: two drivers may legitimatel… |
-| · | &nbsp;&nbsp;`Register.refresh` | 138 | Re-read the file if it has changed. True when it did. The settings page writes this file… |
-| · | &nbsp;&nbsp;`Register.by_name` | 194 |  |
-| · | &nbsp;&nbsp;`Register.by_identity` | 200 | Which station an upload belongs to, or None if it is a stranger. |
-| · | &nbsp;&nbsp;`Register.drivers` | 207 |  |
-| · | &nbsp;&nbsp;`Register.identities_for` | 210 |  |
-| · | &nbsp;&nbsp;`Register.add` | 216 | Announce a station. Raises if the name or the identity is taken. Refused rather than merg… |
-| · | &nbsp;&nbsp;`Register.why_not` | 229 | Why this station cannot be added, or an empty string. Separate from `add` because the pag… |
-| · | &nbsp;&nbsp;`Register.remove` | 250 |  |
-| · | &nbsp;&nbsp;`Register.rename` | 256 | Rename a station, keeping everything else. Packets are stored under driver and identity,… |
-| · | &nbsp;&nbsp;`Register.identity_for` | 273 | An identity nobody else here has. Handed out rather than chosen, which is the whole point… |
-| f | `path_for` | 294 |  |
-| f | `load` | 298 | Read stations.toml. A missing file is an installation with none yet. |
-| f | `legacy_member_settings` | 315 | Old role/channel/indoor values, without making them runtime authority. Only complete station announcements co… |
-| f | `clear_legacy_member_settings` | 347 | Remove copied role settings from a writable station file. Called only after ``archives.toml`` has committed t… |
-| f | `from_dict` | 388 |  |
-| f | `save` | 424 | Write stations.toml, keeping the previous one. Written beside and moved into place, like the configuration an… |
-| f | `render` | 448 | The stations as a TOML file somebody can edit. |
+| **C** | `Station` | 61 | One console, announced. |
+| · | &nbsp;&nbsp;`Station.matches` | 94 | Whether an upload belongs to this station. The identity is compared without regard to cas… |
+| **C** | `Register` | 106 | The stations this installation has. Held as a list rather than keyed by identity: two drivers may legitimatel… |
+| · | &nbsp;&nbsp;`Register.refresh` | 121 | Re-read the file if it has changed. True when it did. The settings page writes this file… |
+| · | &nbsp;&nbsp;`Register.by_name` | 177 |  |
+| · | &nbsp;&nbsp;`Register.by_identity` | 183 | Which station an upload belongs to, or None if it is a stranger. |
+| · | &nbsp;&nbsp;`Register.drivers` | 190 |  |
+| · | &nbsp;&nbsp;`Register.identities_for` | 193 |  |
+| · | &nbsp;&nbsp;`Register.add` | 199 | Announce a station. Raises if the name or the identity is taken. Refused rather than merg… |
+| · | &nbsp;&nbsp;`Register.why_not` | 212 | Why this station cannot be added, or an empty string. Separate from `add` because the pag… |
+| · | &nbsp;&nbsp;`Register.remove` | 233 |  |
+| · | &nbsp;&nbsp;`Register.rename` | 239 | Rename a station, keeping everything else. Packets are stored under driver and identity,… |
+| · | &nbsp;&nbsp;`Register.identity_for` | 256 | An identity nobody else here has. Handed out rather than chosen, which is the whole point… |
+| f | `path_for` | 277 |  |
+| f | `load` | 281 | Read stations.toml. A missing file is an installation with none yet. |
+| f | `from_dict` | 321 |  |
+| f | `save` | 352 | Write stations.toml, keeping the previous one. Written beside and moved into place, like the configuration an… |
+| f | `render` | 376 | The stations as a TOML file somebody can edit. |
 
 ## `src/weewx_evo/sun.py`
 
@@ -2778,23 +2770,23 @@ name, use the browser's search.
 
 ## `src/weewx_evo/uploads/records.py`
 
-[Uploads](Uploads) · last changed 2026-09-04 02:07
+[Uploads](Uploads) · last changed 2026-09-04 07:59
 
 | | Name | Line | |
 |---|---|---|---|
-| **C** | `Archive` | 78 | Read-only access to the archive, one connection per thread. |
-| · | &nbsp;&nbsp;`Archive.__init__` | 81 |  |
-| · | &nbsp;&nbsp;`Archive.close` | 98 |  |
-| · | &nbsp;&nbsp;`Archive.after` | 104 | Up to `limit` records newer than `ts`, oldest first. `ts` of 0 means "the newest one", no… |
-| · | &nbsp;&nbsp;`Archive.augment` | 125 | Add the rain totals these services ask for. Leaves the record alone if the database has n… |
-| f | `source` | 187 | A `records(after, limit)` callable over an archive file. What the runner wants, without the runner knowing th… |
-| **C** | `Live` | 196 | Read-only access to the live packets, one connection per thread. Why this exists beside `Archive`: an archive… |
-| · | &nbsp;&nbsp;`Live.__init__` | 252 |  |
-| · | &nbsp;&nbsp;`Live.for_sources` | 301 | The same table, seen through one site's consoles. |
-| · | &nbsp;&nbsp;`Live.rhythm` | 402 | How often this place's consoles report, in seconds, or None. The mean over the consoles t… |
-| · | &nbsp;&nbsp;`Live.after` | 582 | The newest packets after `ts`, oldest first. `limit` is honoured but a live publisher wan… |
-| · | &nbsp;&nbsp;`Live.close` | 863 |  |
-| f | `live_source` | 872 | A `records(after, limit)` callable over the live table. |
+| **C** | `Archive` | 75 | Read-only access to the archive, one connection per thread. |
+| · | &nbsp;&nbsp;`Archive.__init__` | 78 |  |
+| · | &nbsp;&nbsp;`Archive.close` | 95 |  |
+| · | &nbsp;&nbsp;`Archive.after` | 101 | Up to `limit` records newer than `ts`, oldest first. `ts` of 0 means "the newest one", no… |
+| · | &nbsp;&nbsp;`Archive.augment` | 122 | Add the rain totals these services ask for. Leaves the record alone if the database has n… |
+| f | `source` | 184 | A `records(after, limit)` callable over an archive file. What the runner wants, without the runner knowing th… |
+| **C** | `Live` | 193 | Read-only access to the live packets, one connection per thread. Why this exists beside `Archive`: an archive… |
+| · | &nbsp;&nbsp;`Live.__init__` | 249 |  |
+| · | &nbsp;&nbsp;`Live.for_sources` | 298 | The same table, seen through one site's consoles. |
+| · | &nbsp;&nbsp;`Live.rhythm` | 373 | How often this place's consoles report, in seconds, or None. The mean over the consoles t… |
+| · | &nbsp;&nbsp;`Live.after` | 536 | The newest packets after `ts`, oldest first. `limit` is honoured but a live publisher wan… |
+| · | &nbsp;&nbsp;`Live.close` | 817 |  |
+| f | `live_source` | 826 | A `records(after, limit)` callable over the live table. |
 
 ## `src/weewx_evo/uploads/runner.py`
 

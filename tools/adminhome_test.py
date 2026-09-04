@@ -34,6 +34,10 @@ failures = 0
 TOKEN = "abcdefghij123456"
 INTERVAL = 300
 
+#: The consoles these fixtures announce, by the id a place selects on.
+DEFAULT_SENDER = "v1/wunderground/evo-3f9a2c"
+ECOWITT_A = "v1/ecowitt/aaaa"
+
 
 def check(what: str, got: object, want: object) -> bool:
     global failures
@@ -77,7 +81,7 @@ def an_installation(work: Path, *, token: str = TOKEN,
         f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
         'label = "Kirchdorf"\nlatitude = 48.4012\n'
         'longitude = 11.6301\naltitude = 440.0\n'
-        'stations = ["kirchdorf"]\n', encoding="utf-8")
+        f'senders = ["{DEFAULT_SENDER}"]\n', encoding="utf-8")
 
     now = int(time.time())
     live = LiveStore(work / "data" / "live.sdb", interval_seconds=INTERVAL)
@@ -237,6 +241,8 @@ def two_stations_claiming_one_archive() -> None:
             'identity = "AAAA"\n\n'
             '[stations.garten]\ndriver = "ecowitt"\n'
             'identity = "BBBB"\n')
+    kirchdorf = "v1/ecowitt/aaaa"
+    garten = "v1/ecowitt/bbbb"
     with tempfile.TemporaryDirectory() as raw:
         work = Path(raw)
         admin = an_installation(work)
@@ -245,7 +251,7 @@ def two_stations_claiming_one_archive() -> None:
         (work / "archives.toml").write_text(
             '[archives.default]\n'
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf", "garten"]\n', encoding="utf-8")
+            f'senders = ["{kirchdorf}", "{garten}"]\n', encoding="utf-8")
 
         state = adminhome.read(admin)
         # The words the place settings use are `main` and `extra`, so the
@@ -256,21 +262,20 @@ def two_stations_claiming_one_archive() -> None:
         check("naming both",
               any("garten, kirchdorf" in one for one in state.concerns), True)
 
-        # An old station-owned role must no longer decide this relationship.
+        # A role written beside a console in stations.toml decides nothing.
         (work / "stations.toml").write_text(
             both + 'role = "extra"\nchannel = 1\n', encoding="utf-8")
         state = adminhome.read(admin)
-        check("a station-owned legacy role is ignored",
+        check("a role in the station file is ignored",
               any("uses 2 senders for primary readings" in one
                   for one in state.concerns), True)
 
         # One of each is the arrangement, but it is the place that says so.
         (work / "archives.toml").write_text(
-            'member_policy_version = 1\n\n'
             '[archives.default]\n'
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf", "garten"]\n\n'
-            '[archives.default.members.garten]\n'
+            f'senders = ["{kirchdorf}", "{garten}"]\n\n'
+            f'[archives.default.members."{garten}"]\n'
             'role = "extra"\nchannel = 1\nindoor = true\n',
             encoding="utf-8")
         state = adminhome.read(admin)
@@ -281,15 +286,14 @@ def two_stations_claiming_one_archive() -> None:
         # The same station may be extra in the first place and main in a
         # second. The dashboard must judge each place with its own policy.
         (work / "archives.toml").write_text(
-            'member_policy_version = 1\n\n'
             "[archives.default]\n"
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf", "garten"]\n\n'
-            '[archives.default.members.garten]\n'
+            f'senders = ["{kirchdorf}", "{garten}"]\n\n'
+            f'[archives.default.members."{garten}"]\n'
             'role = "extra"\nchannel = 1\nindoor = true\n\n'
             "[archives.nordfeld]\n"
             f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
-            'stations = ["kirchdorf", "garten"]\n',
+            f'senders = ["{kirchdorf}", "{garten}"]\n',
             encoding="utf-8")
         state = adminhome.read(admin)
         clashes = [one for one in state.concerns
@@ -313,13 +317,13 @@ def place_membership_drives_the_console_card() -> None:
         (work / "archives.toml").write_text(
             '[archives.sued]\n'
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'label = "South"\nstations = ["kirchdorf"]\n\n'
+            f'label = "South"\nsenders = ["{ECOWITT_A}"]\n\n'
             '[archives.nord]\n'
             f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
-            'label = "North"\nstations = ["kirchdorf"]\n\n'
+            f'label = "North"\nsenders = ["{ECOWITT_A}"]\n\n'
             '[archives.empty]\n'
             f'file = "{(work / "data" / "empty.sdb").as_posix()}"\n'
-            'stations = []\n', encoding="utf-8")
+            'senders = []\n', encoding="utf-8")
 
         state = adminhome.read(admin)
         details = {one.name: one.detail for one in state.stations}
@@ -331,11 +335,11 @@ def place_membership_drives_the_console_card() -> None:
               [one for one in state.concerns if "'empty' uses" in one], [])
 
         # `*` is an explicit broad selection and is deliberately different
-        # from `[]`. A missing key is reserved for one-time legacy migration.
+        # from `[]`: one takes every arrival, the other takes none.
         (work / "archives.toml").write_text(
             '[archives.all]\n'
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            'label = "All"\nstations = "*"\n', encoding="utf-8")
+            'label = "All"\nsenders = "*"\n', encoding="utf-8")
         state = adminhome.read(admin)
         details = {one.name: one.detail for one in state.stations}
         check("a broad selection uses every console",
@@ -644,7 +648,7 @@ def a_sole_custom_place_is_implicit() -> None:
             '[archives.north]\n'
             f'file = "{(work / "data" / "north.sdb").as_posix()}"\n'
             'label = "North"\n'
-            'stations = ["kirchdorf"]\n', encoding="utf-8")
+            f'senders = ["{DEFAULT_SENDER}"]\n', encoding="utf-8")
 
         feed_dir = work / "data" / "feeds" / "deck"
         feed_dir.mkdir(parents=True)

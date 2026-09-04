@@ -49,8 +49,6 @@ installation:
 
 ```toml
 # archives.toml
-member_policy_version = 2
-
 [archives.default]
 file = "data/weewx.sdb"
 label = "Kirchdorf an der Amper"
@@ -144,10 +142,10 @@ weewx-evo config import /etc/weewx/weewx.conf --config evo.toml --write
 Without `--write` it only reports. The report also names what was **not**
 taken over, and why — silence reads like "lost".
 
-On an installation without `archives.toml`, the imported `archive_db` and
-`station.*` values are migration input: the first read writes them once to
-`[archives.default]`. From then on, edit the place; the old central values are
-not consulted again.
+With no `archives.toml` yet, the imported `archive_db` and `station.*` values
+become the first Place: the first read writes them once to
+`[archives.default]`. From then on, edit the place; the central values are not
+consulted again.
 → [WeeWX-Compatibility](WeeWX-Compatibility)
 
 ### Taking the plots from a skin

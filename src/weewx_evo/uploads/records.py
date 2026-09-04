@@ -37,7 +37,7 @@ from typing import Any, ClassVar
 
 from .. import units
 from ..aggregate import start_of_archive_day
-from ..db.live import LEGACY_DRIVER, LiveStore, Packet, sender_id, sender_parts
+from ..db.live import LiveStore, Packet, sender_id, sender_parts
 
 log = logging.getLogger(__name__)
 
@@ -70,9 +70,6 @@ class _PacketSQL:
     relation: str
     grouping: str
     sequence: str
-    has_sender: bool
-    has_pair: bool
-    legacy: bool
 
 
 class Archive:
@@ -314,59 +311,30 @@ class Live:
         resolves to no console, and must stay different: treating both as an
         empty SQL clause publishes every console under an empty place.
 
-        During the sender-id migration a placer can return either the former
-        ``(driver, identity)`` pair or its canonical string. The SQL adapter
-        below accepts both, so listener and uploader need not be restarted in
-        lockstep.
+        A placer may answer with either the ``(driver, identity)`` pair or
+        its canonical string; the SQL adapter below accepts both, so a
+        listener and an uploader need not be restarted in lockstep.
         """
         if names is None:
             return None
         if self.placer is None:
             return []
         resolver = getattr(self.placer, "identities", None)
-        found = list(resolver(names) if resolver is not None else names)
-        # Before migration `source` was the configured display name. Keep it
-        # reachable while an independently restarted uploader is still
-        # looking at that table shape. On a pair/sender table these reserved
-        # addresses simply match no new row.
-        legacy_names = list(names)
-        label_for = getattr(self.placer, "named", None)
-        if label_for is not None:
-            for address in found:
-                if isinstance(address, (tuple, list)) and len(address) == 2:
-                    legacy_names.append(label_for(str(address[0]), str(address[1])))
-        for name in legacy_names:
-            legacy = (LEGACY_DRIVER, str(name))
-            if legacy not in found:
-                found.append(legacy)
-        return found
+        return list(resolver(names) if resolver is not None else names)
 
     @staticmethod
     def _where(addresses: list[Any] | None,
                schema: _PacketSQL) -> tuple[str, list[Any]]:
-        """A sender filter for this table generation and its parameters.
+        """A sender filter and its parameters.
 
-        Canonical sender ids and old pairs are values, never identifiers, and
-        are therefore always bound. A malformed address matches nothing.
+        Canonical sender ids and the pair they decode to are values, never
+        identifiers, and are therefore always bound. A malformed address
+        matches nothing.
         """
         if addresses is None:
             return "", []
         if not addresses:
             return " AND 0", []
-
-        if schema.legacy:
-            # The source-only table stored a configured station name, not a
-            # hardware identity. Placer represents those retained rows with
-            # the reserved legacy driver, which is the only honest reversible
-            # match. Prefer it even if an interrupted additive migration has
-            # already introduced an unfilled sender column.
-            names = [str(address[1]) for address in addresses
-                     if (isinstance(address, (tuple, list)) and len(address) == 2
-                         and str(address[0]) == LEGACY_DRIVER)]
-            if not names:
-                return " AND 0", []
-            marks = ",".join("?" for _ in names)
-            return f" AND {schema.identity} IN ({marks})", names
 
         senders: list[str] = []
         pairs: list[tuple[str, str]] = []
@@ -385,11 +353,14 @@ class Live:
 
         clauses: list[str] = []
         params: list[Any] = []
-        if schema.has_sender and senders:
+        # Both, joined with OR. A row written before `sender` was filled and
+        # one written after it are the same console, and asking on the pair
+        # as well costs one index lookup.
+        if senders:
             marks = ",".join("?" for _ in senders)
             clauses.append(f"{schema.sender} IN ({marks})")
             params.extend(senders)
-        if schema.has_pair and pairs:
+        if pairs:
             marks = ",".join(["(?,?)"] * len(pairs))
             clauses.append(
                 f"({schema.driver}, {schema.identity}) IN (VALUES {marks})")
@@ -501,12 +472,9 @@ class Live:
         tables = {row[0] for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'")}
 
-        has_pair = {"driver", "identity"}.issubset(columns)
-        has_sender = "sender" in columns
-        legacy = not has_pair and "source" in columns
-        if not (has_pair or has_sender or legacy):
+        if not {"driver", "identity", "sender"}.issubset(columns):
             raise sqlite3.DatabaseError(
-                "packet table has no source, sender, or driver/identity key")
+                "packet table has no driver/identity/sender key")
 
         relation = " FROM packet "
         mapping = "packet.mapping" if "mapping" in columns else "NULL"
@@ -517,23 +485,19 @@ class Live:
                         " ON dialect_mapping.digest = packet.mapping ")
 
         schema = _PacketSQL(
-            sender="packet.sender" if has_sender else "NULL",
-            driver="packet.driver" if has_pair else "NULL",
-            identity=("packet.identity" if has_pair else
-                      "packet.source" if legacy else "NULL"),
+            sender="packet.sender",
+            driver="packet.driver",
+            identity="packet.identity",
             dialect="packet.dialect" if "dialect" in columns else "NULL",
             mapping=mapping,
             described=described,
             relation=relation,
-            grouping=("packet.source" if legacy else
-                      ("CASE WHEN packet.sender IS NOT NULL AND packet.sender <> ''"
-                       " THEN packet.sender ELSE packet.driver || char(0) ||"
-                       " packet.identity END")
-                      if has_sender and has_pair else
-                      "packet.sender" if has_sender else
-                      "packet.driver, packet.identity"),
-            sequence="packet.seq" if "seq" in columns else "packet.rowid",
-            has_sender=has_sender, has_pair=has_pair, legacy=legacy)
+            # The pair where `sender` has not been filled in, so a console
+            # is one group either way rather than two half-empty ones.
+            grouping=("CASE WHEN packet.sender IS NOT NULL AND packet.sender <> ''"
+                      " THEN packet.sender ELSE packet.driver || char(0) ||"
+                      " packet.identity END"),
+            sequence="packet.seq" if "seq" in columns else "packet.rowid")
         self._local.packet_sql = (version, schema)
         return schema
 
@@ -542,15 +506,13 @@ class Live:
                  schema: _PacketSQL) -> str | tuple[str, str] | None:
         """A selected identity row in the form `_where` accepts."""
         sender, driver, identity = row
-        if schema.legacy and identity is not None:
-            return LEGACY_DRIVER, str(identity)
-        if schema.has_sender and sender:
+        if sender:
             try:
                 sender_parts(str(sender))
             except ValueError:
                 return None
             return str(sender)
-        if schema.has_pair and driver is not None and identity is not None:
+        if driver is not None and identity is not None:
             return str(driver), str(identity)
         return None
 
@@ -559,14 +521,6 @@ class Live:
         """Decode one normalized select row without trusting stored JSON."""
         (when, sender, driver, identity, dialect, mapping, described, system,
          interval, data) = row
-        if not schema.has_pair:
-            if schema.legacy:
-                driver = LEGACY_DRIVER
-            elif sender:
-                try:
-                    driver, identity = sender_parts(str(sender))
-                except ValueError:
-                    return None
         try:
             readings = json.loads(data)
         except (TypeError, ValueError):

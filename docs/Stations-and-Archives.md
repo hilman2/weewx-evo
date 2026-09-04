@@ -71,8 +71,8 @@ indoor = true
 
 Each table is one place and is the sole source for that place's settings. A
 sender may appear in several tables. An empty `senders = []` deliberately
-selects none. `senders = "*"` explicitly selects all arrivals and is retained
-for migrated one-place installations.
+selects none. `senders = "*"` explicitly selects all arrivals, which is what a
+Place written from the settings starts with.
 
 `members` says how this Place uses a selected sender. `main` writes the
 ordinary columns. `extra` is a relationship preset: it moves temperature,

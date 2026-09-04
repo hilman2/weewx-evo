@@ -54,10 +54,6 @@ log = logging.getLogger(__name__)
 #: ours and is the better for it. The two constants are checked against each
 #: other in the tests.
 DEFAULT_ARCHIVE = "default"
-#: Rows from the live-table shape that already held WeeWX column names. The
-#: reserved driver keeps them selectable without pretending a real plugin
-#: produced them.
-LEGACY_DRIVER = "__legacy__"
 
 #: A sender is what an archive selects.  Driver plus hardware identity was
 #: already the real key; spelling it as one versioned value lets
@@ -131,6 +127,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS packet_identity
     ON packet(driver, identity, kind, dateTime, digest);
 CREATE INDEX IF NOT EXISTS packet_dateTime ON packet(dateTime);
 CREATE INDEX IF NOT EXISTS packet_station ON packet(driver, identity, dateTime);
+-- What an archive selects on. The pair above is what the listener writes and
+-- what the pages group by; this is the one the reader asks with.
+CREATE INDEX IF NOT EXISTS packet_sender ON packet(sender, dateTime);
 
 -- A mapping is normally stable for the life of a console. Keep each JSON
 -- document once, addressed by its full digest, rather than beside every
@@ -321,183 +320,8 @@ class LiveStore:
         # nothing naming a database.
         self._all: weakref.WeakSet[_Held] = weakref.WeakSet()
         self._lock = threading.Lock()
-        # Before the schema, not after it. `CREATE TABLE IF NOT EXISTS` is a
-        # no-op against a table that is already there, so the *indexes* are
-        # the first thing to touch the new columns -- and `CREATE INDEX ... ON
-        # packet(driver, identity, dateTime)` against a table from before the
-        # journal fails with "no such column: driver", which is a service that
-        # will not start rather than one that migrates.
-        self._retire_old_shape()
         self.conn.executescript(SCHEMA)
-        self._migrate()
 
-    def _retire_old_shape(self) -> None:
-        """Stage a packet table that predates the sensor journal for import.
-
-        Its rows hold WeeWX names under a station name, and there is no way
-        back to their raw hardware vocabulary. They are nevertheless honest
-        passthrough packets: keeping the WeeWX names preserves an interval not
-        archived before the upgrade. `_migrate_legacy_packets` copies them
-        after the new table and its columns exist.
-
-        Rename before `SCHEMA`: `CREATE TABLE IF NOT EXISTS` cannot add the
-        journal columns to the old shape, and its indexes refer to columns the
-        old table does not have. A crash after this rename is safe; the next
-        opening sees `packet_pre_journal` and resumes the copy.
-        """
-        have = {row[1] for row in self.conn.execute("PRAGMA table_info(packet)")}
-        if not have or "source" not in have:
-            return
-        staged = self.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table'"
-            " AND name = 'packet_pre_journal'").fetchone()
-        if staged:
-            raise RuntimeError(
-                f"{self.path}: both legacy packet tables exist; refusing to overwrite")
-        self.conn.execute("ALTER TABLE packet RENAME TO packet_pre_journal")
-
-    def _migrate(self) -> None:
-        """Bring a database made by an older version up to date.
-
-        Additive wherever it can be. This file is a cache with a few days in
-        it, so a migration that went wrong would cost little -- but the packets
-        that have not been archived yet are not replaceable, and the point of
-        the live table is that nothing is lost.
-        """
-        have = {row[1] for row in self.conn.execute("PRAGMA table_info(packet)")}
-        if have and "raw" not in have:
-            self.conn.execute("ALTER TABLE packet ADD COLUMN raw TEXT")
-        if have and "mapping" not in have:
-            self.conn.execute("ALTER TABLE packet ADD COLUMN mapping TEXT")
-        if have and "sender" not in have:
-            # Filled and indexed below. SQLite cannot add a NOT NULL column
-            # without inventing a default for all old rows, and an invented
-            # sender is precisely what archive selection must not see.
-            self.conn.execute("ALTER TABLE packet ADD COLUMN sender TEXT")
-
-        self._migrate_legacy_packets()
-        self._repair_senders()
-        self._migrate_pending()
-
-    def _migrate_legacy_packets(self) -> None:
-        """Copy already-placed rows into the raw journal without losing one."""
-        columns = {row[1] for row in self.conn.execute(
-            "PRAGMA table_info(packet_pre_journal)")}
-        if not columns:
-            return
-        required = {"dateTime", "source", "kind", "usUnits", "data"}
-        missing = required - columns
-        if missing:
-            raise RuntimeError(
-                f"{self.path}: legacy packet table lacks {', '.join(sorted(missing))}")
-
-        count, first, last = self.conn.execute(
-            "SELECT count(*), min(dateTime), max(dateTime)"
-            " FROM packet_pre_journal").fetchone()
-        names = ["dateTime", "received", "driver", "identity", "sender",
-                 "dialect", "mapping", "kind", "usUnits", "interval",
-                 "digest", "data", "raw"]
-        values = [
-            "dateTime",
-            "received" if "received" in columns else "dateTime",
-            "?",
-            "source",
-            "''",  # backfilled from (__legacy__, source) before commit
-            "NULL",
-            "NULL",
-            "kind",
-            "usUnits",
-            "interval" if "interval" in columns else "NULL",
-            ("digest" if "digest" in columns else
-             "lower(hex(randomblob(16)))"),
-            "data",
-            "raw" if "raw" in columns else "NULL",
-        ]
-        with self.conn:
-            self.conn.execute("BEGIN")
-            self.conn.execute(
-                f"INSERT OR IGNORE INTO packet ({', '.join(names)})"
-                f" SELECT {', '.join(values)} FROM packet_pre_journal",
-                (LEGACY_DRIVER,))
-            self.conn.execute("DROP TABLE packet_pre_journal")
-            # The renamed table carried these index names with it, so
-            # SCHEMA could not create them on the new table. Dropping it frees
-            # the names; ensure every new index now exists on `packet`.
-            self.conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS packet_identity"
-                " ON packet(driver, identity, kind, dateTime, digest)")
-            self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS packet_dateTime ON packet(dateTime)")
-            self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS packet_station"
-                " ON packet(driver, identity, dateTime)")
-        log.warning(
-            "%s: migrated %s already-placed live packet(s) as %s; span %s",
-            self.path, count, LEGACY_DRIVER,
-            f"{first} to {last}" if count else "empty")
-
-    def _repair_senders(self) -> None:
-        """Backfill the canonical packet key and its live-side directory."""
-        rows = self.conn.execute(
-            "SELECT DISTINCT driver, identity, sender FROM packet").fetchall()
-        with self.conn:
-            self.conn.execute("BEGIN")
-            for driver, identity, stored in rows:
-                canonical = sender_id(driver, identity)
-                if stored != canonical:
-                    self.conn.execute(
-                        "UPDATE packet SET sender = ?"
-                        " WHERE driver = ? AND identity = ?",
-                        (canonical, driver, identity))
-                label = identity if driver == LEGACY_DRIVER else None
-                self.conn.execute(
-                    "INSERT INTO sender_identity"
-                    " (sender, driver, identity, label) VALUES (?, ?, ?, ?)"
-                    " ON CONFLICT(sender) DO UPDATE SET"
-                    " driver = excluded.driver, identity = excluded.identity,"
-                    " label = COALESCE(sender_identity.label, excluded.label)",
-                    (canonical, driver, identity, label))
-            self.conn.execute(
-                "CREATE INDEX IF NOT EXISTS packet_sender"
-                " ON packet(sender, dateTime)")
-
-    def _migrate_pending(self) -> None:
-        """Give pending rows an archive, resuming safely after either rename."""
-        pending = {row[1] for row in self.conn.execute(
-            "PRAGMA table_info(pending)")}
-        staged = {row[1] for row in self.conn.execute(
-            "PRAGMA table_info(pending_one_archive)")}
-        if not staged and (not pending or "archive" in pending):
-            return
-        if staged and not {"stop", "seconds"} <= staged:
-            raise RuntimeError(f"{self.path}: staged pending table is not readable")
-
-        with self.conn:
-            self.conn.execute("BEGIN")
-            if pending and "archive" not in pending:
-                if staged:
-                    raise RuntimeError(
-                        f"{self.path}: two old pending tables exist; refusing to overwrite")
-                self.conn.execute(
-                    "ALTER TABLE pending RENAME TO pending_one_archive")
-                staged = pending
-                self.conn.execute("""
-                    CREATE TABLE pending (
-                        stop    INTEGER NOT NULL,
-                        seconds INTEGER NOT NULL,
-                        archive TEXT    NOT NULL DEFAULT 'default',
-                        PRIMARY KEY (stop, archive)
-                    )
-                """)
-            # After a crash immediately after RENAME, SCHEMA has already made
-            # the new empty table. Merge rather than replacing: a listener may
-            # have put new markers in it before this opener resumed migration.
-            self.conn.execute(
-                "INSERT OR IGNORE INTO pending (stop, seconds, archive)"
-                " SELECT stop, seconds, ? FROM pending_one_archive",
-                (DEFAULT_ARCHIVE,))
-            self.conn.execute("DROP TABLE pending_one_archive")
-        log.info("%s: the pending table now names an archive", self.path)
 
     def _connect(self) -> _Held:
         conn = sqlite3.connect(self.path, isolation_level=None, timeout=10.0)
@@ -814,11 +638,9 @@ class LiveStore:
             labels.append((sender_id(driver, identity), driver, identity, label))
         with self.conn:
             self.conn.execute("BEGIN")
-            # Legacy labels describe the already-normalised rows themselves;
-            # they are not a copy of stations.toml and survive this refresh.
-            self.conn.execute(
-                "UPDATE sender_identity SET label = NULL WHERE driver != ?",
-                (LEGACY_DRIVER,))
+            # Cleared first, so a station taken out of the file loses its
+            # label rather than keeping the one it had when it was there.
+            self.conn.execute("UPDATE sender_identity SET label = NULL")
             self.conn.executemany(
                 "INSERT INTO sender_identity"
                 " (sender, driver, identity, label) VALUES (?, ?, ?, ?)"

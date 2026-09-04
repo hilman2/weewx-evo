@@ -92,8 +92,6 @@ The archive is configured in the mounted `/data/archives.toml`, also when
 there is only one:
 
 ```toml
-member_policy_version = 2
-
 [archives.default]
 file = "/data/weewx.sdb"
 label = "Kirchdorf an der Amper"
@@ -103,8 +101,8 @@ altitude = 440.0
 senders = "*"
 ```
 
-`WEEWX_EVO_ARCHIVE` is accepted only as input to the one-time migration when
-that file does not exist. It is not a runtime archive setting.
+`WEEWX_EVO_ARCHIVE` is read only when that file does not exist, to write the
+first Place. It is not a runtime archive setting.
 
 **The tokens live in `deploy/.env`, which is not in the repo.**
 

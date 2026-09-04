@@ -853,7 +853,7 @@ def an_installation(work: Path, *, second: bool = False,
         f'archive_db = "{archive_db or (work / "data" / "one.sdb").as_posix()}"\n',
         encoding="utf-8")
     sender = sender_id("unknown", "s")
-    entries = ["member_policy_version = 2", "", "[archives.default]",
+    entries = ["[archives.default]",
                f'file = "{(work / "data" / "one.sdb").as_posix()}"',
                f'senders = ["{sender}"]']
     if second:
