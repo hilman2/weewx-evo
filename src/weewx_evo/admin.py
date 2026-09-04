@@ -410,9 +410,9 @@ class Admin:
             return ("A name may hold lowercase letters, digits, - and _, and "
                     "must start with a letter. Its readings arrive under it, "
                     "so name it for where the console is.")
-        if kind not in collector_defs.KINDS:
+        if kind not in collector_defs.kinds():
             return (f"{kind!r} is not one of: "
-                    f"{', '.join(collector_defs.KINDS)}")
+                    f"{', '.join(collector_defs.kinds())}")
 
         taken = collector_defs.reserved()
         if name in taken:
@@ -1468,7 +1468,7 @@ def new_collector_page(admin: Admin, error: str = "",
         f'<option value="{html.escape(kind)}"'
         f'{" selected" if chosen == kind else ""}>'
         f"{html.escape(say(one.label))}</option>"
-        for kind, one in collector_defs.KINDS.items())
+        for kind, one in collector_defs.kinds().items())
     # Both kinds, from the same table the menu is built from. Written out by
     # hand, this list described the WeeWX driver and never mentioned the
     # broker -- so half of what the menu offered was unexplained, and the
@@ -1478,24 +1478,40 @@ def new_collector_page(admin: Admin, error: str = "",
         f"<li><strong>{html.escape(say(one.label))}</strong>: "
         f"{html.escape(say(one.reads))} {started} "
         f"<code>weewx-evo {html.escape(one.command)}</code>.</li>"
-        for one in collector_defs.KINDS.values())
+        for one in collector_defs.kinds().values())
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
 
-    # The hardware, asked for here rather than on the page after. Which
-    # driver was chosen decides which fields that page has, so leaving it
-    # until then means arriving at a form with nothing on it -- and the
-    # driver's own settings are the reason somebody came.
-    picked = str(form.get("driver", ""))
-    hardware = NEWLINE.join(
-        f'<option value="{html.escape(value)}"'
-        f'{" selected" if picked == value else ""}>'
-        f"{html.escape(say(label))}</option>"
-        for value, label in
-        [("", "-- from a weewx.conf --"),
-         *collector_defs._hardware_choices(picked)])
-    reuse = html.escape(admin.language.fill(
-        "Leave this on {choice} to reuse that driver's configuration.",
-        choice=say("from a weewx.conf")))
+    # What each kind wants decided before its own page exists. The kind
+    # supplies it: choosing a WeeWX driver decides which fields that driver's
+    # page has, and the list of drivers belongs to the add-on that runs them.
+    picking = []
+    for kind, one in collector_defs.kinds().items():
+        choice = getattr(one, "choosing", None)
+        if choice is None:
+            continue
+        picked = str(form.get(choice.name, ""))
+        try:
+            offered = list(choice.options(picked))
+        except Exception:
+            # A kind that cannot list what it offers must not take the page
+            # with it: everything else on it still works, and the empty
+            # dropdown is visible where a 500 is not.
+            log.exception("the collector kind %r could not list its choices",
+                          kind)
+            offered = []
+        picking.append(f'''
+    <div class="field" data-when="kind" data-when-is="{html.escape(kind)}">
+      <label for="f-{html.escape(choice.name)}">
+        {html.escape(say(choice.label))}</label>
+      <select id="f-{html.escape(choice.name)}"
+              name="{html.escape(choice.name)}">{NEWLINE.join(
+          f'<option value="{html.escape(str(value))}"'
+          f'{" selected" if picked == str(value) else ""}>'
+          f"{html.escape(say(str(label)))}</option>"
+          for value, label in offered)}</select>
+      <p class="help">{html.escape(say(choice.help))}</p>
+    </div>''')
+    chosen_fields = "".join(picking)
 
     return f'''
 <section class="group">
@@ -1522,11 +1538,7 @@ def new_collector_page(admin: Admin, error: str = "",
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
-    <div class="field" data-when="kind" data-when-is="weewx-driver">
-      <label for="f-driver">{html.escape(say("The hardware"))}</label>
-      <select id="f-driver" name="driver">{hardware}</select>
-      <p class="help">{reuse}</p>
-    </div>
+    {chosen_fields}
     <div class="actions">
       <button type="submit">{html.escape(say("Continue"))}</button>
       <a class="button quiet" href="./system">

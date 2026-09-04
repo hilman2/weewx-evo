@@ -239,27 +239,12 @@ def tests() -> list[Test]:
         Test("restart", ["restart_test.py"],
              "a restart re-does nothing, and the site is up meanwhile",
              slow=True),
-        Test("shim", ["shim_test.py"],
-             "a WeeWX driver, run in its own process, delivering to us",
-             needs=("weewx",)),
-        # No `needs` on any of these four: the point is that WeeWX is not
-        # required. Each finds the driver file it wants or says so and skips,
-        # and where WeeWX *is* installed it is used as the thing to compare
-        # against rather than as a thing to run on.
         Test("collector", ["collector_test.py"],
              "a collector is a station: its own name, its own rules"),
-        Test("weewxdrivers", ["weewxdrivers_test.py"],
-             "a driver's own form, and a console with no weewx.conf"),
-        Test("standin", ["standin_test.py"],
-             "a WeeWX driver decodes a record with no WeeWX installed"),
-        Test("vantage", ["vantage_test.py"],
-             "a Davis console, simulated to the serial port and back"),
-        Test("fousb", ["fousb_test.py"],
-             "a Fine Offset console, simulated down to the USB bus"),
-        Test("sdr", ["sdr_test.py"],
-             "weewx-sdr, against an rtl_433 that is a child process"),
-        Test("alldrivers", ["alldrivers_test.py"],
-             "every driver behaves the same on the stand-in as on WeeWX"),
+        # Running a WeeWX driver is an add-on, and its seven tests went with
+        # it -- the shim, the stand-ins, and the three simulated devices that
+        # compare our stand-in against WeeWX's own code field for field. They
+        # run in weewx-evo-weewx-driver, beside the code they measure.
         Test("wunderground", ["wunderground_test.py"],
              "the WU protocol, against our own upload of the same protocol",
              needs=("weewx_evo_wunderground",)),

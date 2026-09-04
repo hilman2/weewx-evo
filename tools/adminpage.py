@@ -45,11 +45,23 @@ def the_hardware_form(base: str, path: Path) -> int:
     A driver file of its own rather than one out of an installed WeeWX,
     because whether WeeWX is installed is a different question from whether
     the form works, and this test is run on machines that do not have it.
+
+    The kind of collector this configures comes from an add-on now
+    (weewx-evo-weewx-driver), so without it there is no hardware form to
+    drive -- and the rest of this file, which is the settings page itself,
+    still has to run. What is measured here is the core's half: a driver's
+    own options are namespaced so they cannot collide with ours.
     """
     from weewx_evo import collectors as collector_defs
-    from weewx_evo.ingest import weewxdrivers
 
     print("\nthe hardware form: a driver's own settings, chosen and saved")
+    try:
+        from weewx_evo_weewx_driver import weewxdrivers
+    except ImportError:
+        print("  --   weewx-evo-weewx-driver is not installed, so there is "
+              "no hardware form on this machine")
+        return 0
+
     bad = 0
 
     # Where the settings page will look. A relative Place archive path counts
@@ -1339,7 +1351,7 @@ def main() -> int:
                 ("upload", sorted(upload_kinds())),
                 ("export", sorted(export_registry.DEFAULT.kinds())),
                 ("notify", sorted(notify_registry.kinds())),
-                ("collector", sorted(collector_defs.KINDS)),
+                ("collector", sorted(collector_defs.kinds())),
                 ("feed", sorted(feed_registry.kinds()))):
             for kind in kinds:
                 name = f"t{what[0]}{kind}".replace("-", "").replace("_", "")
@@ -1397,7 +1409,7 @@ def main() -> int:
         # fail there, and look like a console that had stopped.
         print("\na collector cannot take a name something already answers to")
         code, rendered = post(f"{base}/{TOKEN}/new-collector",
-                              {"name": "json", "kind": "weewx-driver"})
+                              {"name": "json", "kind": "mqtt"})
         failures += not check("a reserved name is refused", code, 200)
         failures += not check("and it says why",
                               "already answers to" in rendered, True)
@@ -1405,17 +1417,20 @@ def main() -> int:
         # And the settings really reach the file, which is the whole point of
         # the page: `--collector shed` reads them back.
         print("\nwhat its page saves is what the collector runs with")
+        # A broker rather than a WeeWX driver: that kind comes from an
+        # add-on now, and what is being measured -- short names posted, the
+        # right section written -- is the same whichever kind it is.
         post(f"{base}/{TOKEN}/new-collector",
-             {"name": "shed", "kind": "weewx-driver"})
+             {"name": "shed", "kind": "mqtt"})
         # The form posts short names -- the page knows from its own path
         # which section they belong to. Sending `collectors.shed.conf` saved
         # nothing and looked like the page not working.
         code, _ = post(f"{base}/{TOKEN}/collector:shed",
-                       {"kind": "weewx-driver",
-                        "conf": "/etc/weewx/shed.conf",
-                        "driver_file": "/opt/fousb.py",
+                       {"kind": "mqtt",
+                        "host": "broker.lan",
+                        "topic": "weather/#",
                         "source": "WH1080 (USB)",
-                        "catchup": "0", "batch": "5"})
+                        "unit_system": "metricwx"})
         failures += not check("its settings save", code, 303)
 
         # `config_file` is imported at the top. Importing it again here
@@ -1426,16 +1441,16 @@ def main() -> int:
 
         written = saved_defs.configured(config_file.read(path))
         failures += not check("and are in the file", "shed" in written, True)
-        failures += not check("with the driver file it was given",
-                              (written.get("shed") or {}).get("driver_file"),
-                              "/opt/fousb.py")
+        failures += not check("with the setting it was given",
+                              (written.get("shed") or {}).get("host"),
+                              "broker.lan")
 
         failures += the_hardware_form(base, path)
 
         print("\nthe collector page offers every registered kind")
         code, rendered = get(f"{base}/{TOKEN}/new-collector")
         failures += not check("the add page renders", code, 200)
-        for kind in saved_defs.KINDS:
+        for kind in saved_defs.kinds():
             failures += not check(f"{kind}: offered as a selectable value",
                                   f'<option value="{kind}"' in rendered, True)
 
@@ -1445,7 +1460,7 @@ def main() -> int:
         # with no hint that a process somewhere else had to be started.
         code, rendered = get(f"{base}/{TOKEN}/collector:shed")
         failures += not check("its own page says how to start it",
-                              "weewx-evo weewx-driver run --collector shed"
+                              saved_defs.start_command("mqtt", "shed")
                               in rendered, True)
 
         # A collector could be created from the page and only ever removed

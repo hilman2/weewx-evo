@@ -90,7 +90,13 @@ ARG WUNDERGROUND=390a13402845924a38b321d9177b2bd6556303e7
 ARG ACURITE=029cc9b35e97b2cd3e4b4b41e696d2775b8d3717
 ARG LACROSSE=4ae4c03df5af3950256fd79808c07833ba85a92b
 ARG WEATHERFLOW=e75158e51be8a476f4269ea896ded07273af83f0
+# Running a WeeWX driver is an add-on too. Here because `adminpage.py` drives
+# the form that is read out of a driver file, and because the collector menu
+# with only one kind in it does not exercise the entry point that puts a
+# second one there.
+ARG WEEWX_DRIVER=8ac28ffd7a5b155bd7333f46c46a8e9ef8bf9219
 RUN pip install --no-cache-dir --no-deps \
+   "weewx-evo-weewx-driver @ git+https://github.com/weewx-evo/weewx-evo-weewx-driver@${WEEWX_DRIVER}" \
    "weewx-evo-push-common @ git+https://github.com/weewx-evo/weewx-evo-push-common@${PUSH_COMMON}" \
    "weewx-evo-ecowitt @ git+https://github.com/weewx-evo/weewx-evo-ecowitt@${ECOWITT}" \
    "weewx-evo-ambient @ git+https://github.com/weewx-evo/weewx-evo-ambient@${AMBIENT}" \

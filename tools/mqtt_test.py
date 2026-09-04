@@ -425,7 +425,7 @@ def test_the_collector_kinds_include_it() -> None:
     """A collector is a name at the listener and a page, whatever it fetches."""
     from weewx_evo import collectors
 
-    check("mqtt is one", "mqtt" in collectors.KINDS, True)
+    check("mqtt is one", "mqtt" in collectors.kinds(), True)
     check("and it is described", bool(collectors.describe("mqtt")), True)
 
 
