@@ -359,16 +359,16 @@ def _live_state(admin: Any, state: State) -> None:
         last = _last_from(path, one.driver, one.identity)
         selected = [place.title for place in places
                     if _selected_by(place, one)]
-        detail = (f"Used by {', '.join(selected)}" if selected
-                  else "Not assigned")
+        detail = (lang.fill("Used by {places}", places=", ".join(selected))
+                  if selected else lang.say("Not assigned"))
         state.stations.append(Link(
             adminstations._readable(one.name),
             detail,
             when=last, href="./senders"))
     if not announced and sources:
         state.stations.append(Link(
-            f"{len(sources)} unregistered sender(s)",
-            "Not assigned",
+            lang.fill("{n} unregistered sender(s)", n=len(sources)),
+            lang.say("Not assigned"),
             href="./senders"))
 
 
