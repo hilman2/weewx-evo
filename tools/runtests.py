@@ -216,6 +216,8 @@ def tests() -> list[Test]:
              needs=("weewx_evo_ecowitt", "weewx_evo_ambient",
                     "weewx_evo_wunderground", "weewx_evo_acurite",
                     "weewx_evo_lacrosse", "weewx_evo_weatherflow")),
+        Test("unitgroup", ["unitgroup_test.py"],
+             "when a driver and the schema disagree about what a column is"),
         Test("adminfields", ["adminfields_test.py"],
              "a reading can be placed, and what is already there is said",
              needs=("weewx_evo_ecowitt",)),

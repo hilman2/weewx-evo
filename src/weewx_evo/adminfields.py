@@ -51,6 +51,7 @@ A station may be selected by several archives. Each gets its own answer.
 from __future__ import annotations
 
 import html
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -440,12 +441,36 @@ def save_for_place(admin: Any, place_name: str, sender_id: str,
             return f"{field!r} is not a usable column name."
         decisions.append((raw, field))
 
-    if decisions:
+    # What a column measures, where the schema and the driver disagree. Only
+    # the operator can settle that: `soilMoist1` is centibar in WeeWX's schema
+    # because it was written for a Watermark probe, and an Ecowitt sensor puts
+    # a percentage in the same column. Nothing can read which one is in the
+    # ground, and both are plausible numbers.
+    wanted_groups: dict[str, str] = {}
+    for key, value in sorted(form.items()):
+        if not str(key).startswith("group:"):
+            continue
+        column, group = str(key)[6:], str(value or "").strip()
+        if group and not group.replace("_", "").isalnum():
+            return f"{group!r} is not a usable unit group."
+        wanted_groups[column] = group
+
+    if decisions or wanted_groups:
         path = placement.path_for(Path(admin.path).parent)
         try:
             plans = placement.load(path)
             for raw, field in decisions:
                 plans.decide(archive.name, sender, dialect, raw, field)
+            for column, group in wanted_groups.items():
+                # Empty means "no opinion", which puts the schema back in
+                # charge. Storing the schema's own answer would look the same
+                # on the page and freeze it: a better default in a later
+                # version would never reach a station that had ever opened
+                # this page. Same reason `Register.presented` writes nothing.
+                if group:
+                    plans.groups[column] = group
+                else:
+                    plans.groups.pop(column, None)
             placement.save(path, plans, f"{archive.name} / {sender}")
         except Exception as exc:
             log.exception("could not write the placements")
@@ -701,6 +726,30 @@ def _table_for_archive(admin: Any, station: Any, sent: dict[str, Any],
     here = context["holders"]
     nothing = html.escape(say("no reading"))
 
+    disputed = disagreements(admin)
+
+    def measurement(one: Placement) -> str:
+        """What the column measures -- a word, or a choice where it is
+        disputed.
+
+        A select on every row would be a control nobody needs on thirty
+        rows and would bury the two that matter. It is here only where the
+        driver and the schema actually disagree.
+        """
+        wanted = disputed.get(one.field) if one.field else None
+        if not wanted or wanted == one.group or admin.read_only:
+            return f'<span class="note">{html.escape(say(measures(one.group)))}</span>'
+        choices = "".join(
+            f'<option value="{html.escape(value)}"'
+            f'{" selected" if value == one.group else ""}>'
+            f"{html.escape(say(measures(value)))}</option>"
+            for value in (one.group, wanted))
+        told = html.escape(lang.fill(
+            "The {driver} driver says this is {what}.",
+            driver=station.driver, what=say(measures(wanted))))
+        return (f'<select name="group:{html.escape(one.field)}">{choices}'
+                f'</select><span class="hint">{told}</span>')
+
     def row(one: Placement) -> str:
         value = (f'<span class="note">{nothing}</span>' if one.value is None
                  else html.escape(str(one.value)))
@@ -709,7 +758,7 @@ def _table_for_archive(admin: Any, station: Any, sent: dict[str, Any],
         <td class="mono">{html.escape(one.raw)}</td>
         <td class="mono">{value}{sparkline(series.get(one.raw) or [])}</td>
         <td>{_chooser(one, offered, groups, here, _sender_of(station), say)}</td>
-        <td class="note">{html.escape(say(measures(one.group)))}</td>
+        <td>{measurement(one)}</td>
         <td>{_status(one, archive, admin.read_only, lang)}</td>
       </tr>'''
 
@@ -776,6 +825,48 @@ def measures(group: str) -> str:
     five characters of noise on every row.
     """
     return group[6:].replace("_", " ") if group.startswith("group_") else group
+
+
+def disagreements(admin: Any) -> dict[str, str]:
+    """Columns a driver measures differently from the schema, and how.
+
+    `soilMoist1` is the case this is for. WeeWX's schema calls it
+    `group_moisture` -- centibars, because it was written when a soil probe
+    was a Watermark sensor -- and an Ecowitt probe puts a percentage in the
+    same column. The value is right either way and must not be touched; what
+    is wrong is the unit word beside it, and nothing in the data can settle
+    which sensor is in the ground.
+
+    So it is offered rather than decided. Read out of the live table because
+    that is where the process building records left it: this page is another
+    process, and the same channel carries what an export last did.
+    """
+    from contextlib import closing
+
+    from . import config as config_file
+    from . import placement as placement_defs
+    from .db.live import LiveStore
+
+    try:
+        where = config_file.resolved_path(
+            admin.config(), "live_db", Path(admin.path).parent,
+            "data/live.sdb")
+        if not where.exists():
+            return {}
+        with closing(LiveStore(where)) as live:
+            raw = live.get_meta(placement_defs.GROUP_CONFLICTS)
+    except Exception:
+        log.debug("could not read the unit group disagreements", exc_info=True)
+        return {}
+
+    found: dict[str, str] = {}
+    try:
+        for wanted in (json.loads(raw or "{}") or {}).values():
+            if isinstance(wanted, dict):
+                found.update({str(k): str(v) for k, v in wanted.items()})
+    except Exception:
+        log.debug("the recorded disagreements are not readable", exc_info=True)
+    return found
 
 
 def _groups_of(admin: Any) -> dict[str, str]:

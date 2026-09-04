@@ -47,6 +47,7 @@ would disagree with itself halfway through a span.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from collections.abc import Iterable
@@ -70,6 +71,12 @@ NOWHERE = "-"
 #: What happens to a reading no line mentions.
 CATALOG = "catalog"   # the driver places it, which is what one console wants
 NOWHERE_ELSE = "nowhere"  # only what is listed is written -- an extra station
+
+#: Where a driver's disagreement with the schema about what a column measures
+#: is left for the settings page. In the live table because that is the one
+#: channel between a process that builds records and a process that renders
+#: pages -- `exports/record.py` uses it for the same reason.
+GROUP_CONFLICTS = "unit_group_conflicts"
 UNLISTED = (CATALOG, NOWHERE_ELSE)
 MAX_DIAGNOSTICS = 512
 
@@ -491,10 +498,67 @@ class Placer:
             unit_defs.contribute({**current, **added})
         key = (_safe_name(driver), _safe_name(dialect))
         if conflicts and _first(_group_conflicts, key):
-            log.error(
-                "the stored %r/%r dialect disagrees with existing unit groups "
-                "for %s; the existing groups remain authoritative",
-                key[0], key[1], ", ".join(sorted(conflicts)[:8]))
+            # A warning, not an error: nothing is broken and no reading is
+            # lost. What it costs is a unit word, and the reason it has to be
+            # said at all is that nothing on the page can show it -- a soil
+            # probe reading 43 prints "43 cb" where the console meant 43 %,
+            # and both are plausible numbers.
+            #
+            # It names what to do, because the alternative is a line that
+            # tells somebody a thing is wrong and not how to make it right.
+            # `[groups]` in placement.toml beats everything here, which is
+            # what makes this the operator's decision rather than ours: the
+            # column is shared, and only whoever owns the sensor knows which
+            # kind is on it.
+            shown = sorted(conflicts)[:8]
+            log.warning(
+                "%s: the %s driver says %s, the schema says %s. The schema "
+                "wins; set [groups] in placement.toml, or on the Fields "
+                "page, to say otherwise.%s",
+                ", ".join(shown), key[0],
+                ", ".join(sorted({groups[one] for one in shown})),
+                ", ".join(sorted({
+                    str(self.placements.groups.get(one)
+                        or unit_defs.GROUPS.get(one)) for one in shown})),
+                "" if len(conflicts) <= 8
+                else f" ({len(conflicts) - 8} more)")
+        if conflicts:
+            self._record_conflicts(driver, {one: groups[one]
+                                            for one in conflicts})
+
+    def _record_conflicts(self, driver: str, wanted: dict[str, str]) -> None:
+        """Leave the disagreement where the settings page can read it.
+
+        A record is built here and the page runs in another process, so the
+        live table is the only channel between them -- the same one
+        `exports/record.py` uses, for the same reason. Without it the page
+        cannot know a driver ever disagreed, and the only way to settle it is
+        a log line and a hand-edited file.
+
+        Replaced rather than appended, and only what still disagrees: this is
+        the current state of a question, not a history of it.
+        """
+        # `directory` is a LiveStore in the archive service and a station
+        # Register in the narrow callers. Only the first can hold this, and
+        # asking rather than testing the type is what lets the second go on
+        # working without knowing about it.
+        store = self.directory
+        setter = getattr(store, "set_meta", None)
+        if setter is None or not hasattr(store, "get_meta"):
+            return
+        try:
+            held = json.loads(store.get_meta(GROUP_CONFLICTS) or "{}")
+        except Exception:
+            held = {}
+        if not isinstance(held, dict):
+            held = {}
+        held[str(driver)] = wanted
+        try:
+            setter(GROUP_CONFLICTS, json.dumps(held))
+        except Exception:
+            # A page hint. Losing it must not cost the record being built.
+            log.debug("could not record the unit group disagreement",
+                      exc_info=True)
 
     def _as_the_place_says(self, data: dict[str, Any], name: str,
                            decisions: dict[str, str]) -> dict[str, Any]:
