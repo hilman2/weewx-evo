@@ -93,8 +93,11 @@ def find(admin: Any, query: str) -> list[Hit]:
                 if schema.kind == "core" and option.name in archive_defs.FROM_SETTINGS:
                     hits.extend(_place_option_hits(admin, option, rank))
                     continue
+                lang = admin.language
+                title = lang.setting(option.name, "label") or option.label
                 hits.append(Hit(
-                    option.label, f"{schema.label} / {group.label}",
+                    title,
+                    f"{lang.say(schema.label)} / {lang.say(group.label)}",
                     f"./{schema.name}#{anchor(group.label)}",
                     option.name, rank))
 
@@ -106,6 +109,8 @@ def find(admin: Any, query: str) -> list[Hit]:
 def _place_option_hits(admin: Any, option: Any, rank: int) -> list[Hit]:
     from . import adminarchives
 
+    lang = admin.language
+    label = lang.setting(option.name, "label") or option.label
     try:
         places = adminarchives.load(admin).ordered()
     except Exception:
@@ -113,8 +118,8 @@ def _place_option_hits(admin: Any, option: Any, rank: int) -> list[Hit]:
                   exc_info=True)
         places = []
     if not places:
-        return [Hit(option.label, "Places", "./places", option.name, rank)]
-    return [Hit(option.label, f"Place: {place.title}",
+        return [Hit(label, lang.say("Places"), "./places", option.name, rank)]
+    return [Hit(label, lang.fill("Place: {name}", name=place.title),
                 f"./places?open={quote(place.name)}", option.name, rank)
             for place in places]
 
@@ -123,11 +128,12 @@ def _place_settings(admin: Any, needle: str) -> list[Hit]:
     """Fields owned by archives.toml, including the first Place."""
     from . import adminarchives
 
+    lang = admin.language
     matched = []
     for name, label in adminarchives.SEARCH_FIELDS:
         rank = _rank(needle, name, label)
         if rank is not None:
-            matched.append((name, label, rank))
+            matched.append((name, lang.say(label), rank))
     if not matched:
         return []
     try:
@@ -137,17 +143,18 @@ def _place_settings(admin: Any, needle: str) -> list[Hit]:
                   exc_info=True)
         places = []
     if not places:
-        return [Hit(label, "Places", "./new-place", name, rank)
+        return [Hit(label, lang.say("Places"), "./new-place", name, rank)
                 for name, label, rank in matched]
 
     hits = []
     for place in places:
+        where = lang.fill("Place: {name}", name=place.title)
         for name, label, rank in matched:
             section = ("senders" if name == "senders" else
                        "fields" if name == "fields" else "general")
             href = (f"./places?open={quote(place.name)}"
                     f"#place-{section}-{quote(place.name)}")
-            hits.append(Hit(label, f"Place: {place.title}", href, name, rank))
+            hits.append(Hit(label, where, href, name, rank))
     return hits
 
 
@@ -174,10 +181,12 @@ def _charts(admin: Any, needle: str) -> list[Hit]:
             if not any(needle in one.casefold() for one in drawn):
                 continue
             rank = 2
+        lang = admin.language
         shown = ", ".join(drawn[:4])
         if len(drawn) > 4:
-            shown += f", and {len(drawn) - 4} more"
-        found.append(Hit(plot.name, f"Charts / {plot.span}",
+            shown += ", " + lang.fill("and {n} more", n=len(drawn) - 4)
+        found.append(Hit(plot.name,
+                         f"{lang.say('Charts')} / {lang.say(plot.span)}",
                          f"./plot:{plot.name}", shown, rank))
     return found
 
@@ -196,20 +205,26 @@ def box(query: str = "", lang: Any = None) -> str:
 
 
 def results(admin: Any, query: str) -> str:
+    lang = admin.language
+    heading = html.escape(lang.say("Find a setting"))
     query = (query or "").strip()
     if len(query.casefold()) < SHORTEST:
+        least = html.escape(lang.fill("Type at least {n} letters.",
+                                      n=SHORTEST))
         return f'''
-<h2>Find a setting</h2>
-{box(query)}
-<p class="lede">Type at least {SHORTEST} letters.</p>
+<h2>{heading}</h2>
+{box(query, lang)}
+<p class="lede">{least}</p>
 '''
 
     hits = find(admin, query)
     if not hits:
+        none = html.escape(lang.fill("Nothing matches {query}.",
+                                     query=repr(query)))
         return f'''
-<h2>Find a setting</h2>
-{box(query)}
-<p class="navempty">Nothing matches {html.escape(query)!r}.</p>
+<h2>{heading}</h2>
+{box(query, lang)}
+<p class="navempty">{none}</p>
 '''
 
     rows = NEWLINE.join(f'''
@@ -220,11 +235,14 @@ def results(admin: Any, query: str) -> str:
       </li>''' for one in hits)
     more = ""
     if len(hits) == MOST:
-        more = f'<p class="note">First {MOST} shown.</p>'
+        more = (f'<p class="note">'
+                f'{html.escape(lang.fill("First {n} shown.", n=MOST))}</p>')
+    counted = html.escape(lang.fill("{n} match(es) for {query}.",
+                                    n=len(hits), query=repr(query)))
     return f'''
-<h2>Find a setting</h2>
-{box(query)}
-<p class="lede">{len(hits)} match(es) for {html.escape(query)!r}.</p>
+<h2>{heading}</h2>
+{box(query, lang)}
+<p class="lede">{counted}</p>
 <section class="flow">
   <ul class="sends plain">{rows}</ul>
 </section>

@@ -56,6 +56,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
+from . import language as language_defs
 from . import quality as quality_defs
 from . import units
 
@@ -350,87 +351,108 @@ def nav(admin: Any, active: str) -> list[str]:
     # The link says what the page it opens is called. It said "Quality" and
     # opened a page headed "Quality control", which is the same defect the
     # rest of this sidebar had four times over.
-    return [f'<a href="./quality"{current}>Sensor checks{count}</a>']
+    return [f'<a href="./quality"{current}>'
+            f'{html.escape(admin.say("Sensor checks"))}{count}</a>']
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
+    say, lang = admin.say, admin.language
     policy = load(admin)
     seen, dropped, records = survey(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     obsolete = ""
     if policy.obsolete_calibration:
         names = ", ".join(sorted(policy.obsolete_calibration))
-        obsolete = (f'<p class="err">Ignored calibration labels: '
-                    f'{html.escape(names)}. Use canonical Sender IDs.</p>')
+        said = html.escape(lang.fill(
+            "Ignored calibration labels: {names}. Use canonical Sender IDs.",
+            names=names))
+        obsolete = f'<p class="err">{said}</p>'
 
     # Readings with a rule first, then the ones the archive holds. A page
     # that lists a hundred schema columns is a page nobody scrolls.
     named = sorted(policy.limits)
     rest = sorted(one for one in seen if one not in policy.limits)
-    rows = [_row(obs, policy, seen, dropped, records) for obs in named]
-    others = [_row(obs, policy, seen, dropped, records)
+    rows = [_row(obs, policy, seen, dropped, records, lang) for obs in named]
+    others = [_row(obs, policy, seen, dropped, records, lang)
               for obs in rest[:SHOWN]]
 
     hidden = ""
     if others:
+        more = html.escape(lang.fill(
+            "{n} more reading(s) the archive holds", n=len(rest)))
         hidden = f'''
 <details class="more">
-  <summary>{len(rest)} more reading(s) the archive holds</summary>
-  <table class="rules">{_head()}{NEWLINE.join(others)}</table>
+  <summary>{more}</summary>
+  <table class="rules">{_head(say)}{NEWLINE.join(others)}</table>
 </details>'''
 
+    system = html.escape(units.name(policy.system).lower())
     return f'''
 <section class="group">
-  <h3>Sensor checks</h3>
-  <p class="lede">Limits applied before readings are archived. No saved
-     rule means no check.</p>
+  <h3>{html.escape(say("Sensor checks"))}</h3>
+  <p class="lede">{html.escape(say(
+     "Limits applied before readings are archived. No saved rule means no "
+     "check."))}</p>
   {problem}
   {obsolete}
-  {_dry_run(dropped, records)}
+  {_dry_run(dropped, records, lang)}
   <div class="actions">
     <form method="post" action="./quality/suggest">
-      <button class="button" type="submit">Suggest from archive</button>
+      <button class="button" type="submit">
+        {html.escape(say("Suggest from archive"))}</button>
     </form>
   </div>
-  <p class="help">Uses the last year. Existing rules stay unchanged.</p>
+  <p class="help">{html.escape(say(
+     "Uses the last year. Existing rules stay unchanged."))}</p>
 
   <form method="post" action="./quality">
-    <table class="rules">{_head()}{NEWLINE.join(rows) or _empty()}</table>
+    <table class="rules">{_head(say)}{NEWLINE.join(rows) or _empty(say)}</table>
     <div class="actions">
-      <button class="button" type="submit">Save</button>
+      <button class="button" type="submit">{html.escape(say("Save"))}</button>
     </div>
   </form>
   {hidden}
-  <p class="help">Units: <strong>{html.escape(units.name(policy.system).lower())}</strong>.
-     Spike: per minute. Stuck: identical readings; requires resolution.</p>
+  <p class="help">{html.escape(say("Units:"))} <strong>{system}</strong>.
+     {html.escape(say(
+       "Spike: per minute. Stuck: identical readings; requires "
+       "resolution."))}</p>
 </section>'''
 
 
-def _head() -> str:
-    return '''
+def _head(say: Any = None) -> str:
+    say = say or str
+    return f'''
 <thead><tr>
-  <th>Reading</th><th>Seen</th><th>Floor</th><th>Ceiling</th>
-  <th>Spike / min</th><th>Stuck</th><th>Resolution</th>
+  <th>{html.escape(say("Reading"))}</th><th>{html.escape(say("Seen"))}</th>
+  <th>{html.escape(say("Floor"))}</th><th>{html.escape(say("Ceiling"))}</th>
+  <th>{html.escape(say("Spike / min"))}</th>
+  <th>{html.escape(say("Stuck"))}</th>
+  <th>{html.escape(say("Resolution"))}</th>
 </tr></thead>'''
 
 
-def _empty() -> str:
-    return ('<tr><td colspan="7" class="quiet">No rules. Nothing is being '
-            'refused.</td></tr>')
+def _empty(say: Any = None) -> str:
+    say = say or str
+    return (f'<tr><td colspan="7" class="quiet">'
+            f'{html.escape(say("No rules. Nothing is being refused."))}'
+            "</td></tr>")
 
 
 def _row(obs: str, policy: quality_defs.Policy, seen: dict,
-         dropped: dict, records: int) -> str:
+         dropped: dict, records: int, lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
     rule = policy.limits.get(obs) or quality_defs.Rule()
     entry = seen.get(obs)
     unit, _group = units.unit_of(obs, policy.system)
     label = units.label(unit) if unit else ""
 
     if entry is not None and entry.count > 1:
-        range_said = (f"{entry.lowest:g} to {entry.highest:g}"
-                      f"{html.escape(label)}")
+        range_said = html.escape(lang.fill(
+            "{low} to {high}", low=f"{entry.lowest:g}",
+            high=f"{entry.highest:g}")) + html.escape(label)
     else:
-        range_said = '<span class="quiet">not recorded</span>'
+        range_said = (f'<span class="quiet">'
+                      f'{html.escape(lang.say("not recorded"))}</span>')
 
     refused = dropped.get(obs, 0)
     note = ""
@@ -439,8 +461,9 @@ def _row(obs: str, policy: quality_defs.Policy, seen: dict,
         # A rule refusing a large share of a station's own history is a rule
         # about the rule, not about the sensor.
         tone = "warn" if share > 5 else "quiet"
-        note = (f'<div class="{tone}">would refuse {refused} '
-                f'({share:.1f}%)</div>')
+        said = html.escape(lang.fill("would refuse {n} ({share}%)",
+                                     n=refused, share=f"{share:.1f}"))
+        note = f'<div class="{tone}">{said}</div>'
 
     return f'''
 <tr>
@@ -463,21 +486,26 @@ def _box(obs: str, what: str, value: Any) -> str:
             f'autocomplete="off" spellcheck="false"></td>')
 
 
-def _dry_run(dropped: dict, records: int) -> str:
+def _dry_run(dropped: dict, records: int, lang: Any = None) -> str:
     """What the rules as they stand would cost, before anything is saved."""
+    lang = lang if lang is not None else language_defs.get("en")
     if not records:
         return ""
     if not dropped:
-        return ('<p class="ok">Over the last year of records, these rules '
-                'would refuse nothing.</p>')
+        return (f'<p class="ok">{html.escape(lang.say(
+            "Over the last year of records, these rules would refuse "
+            "nothing."))}</p>')
     total = sum(dropped.values())
     worst = max(dropped.values())
     said = ", ".join(f"{html.escape(obs)} ({count})"
                      for obs, count in sorted(dropped.items(),
                                               key=lambda x: -x[1])[:5])
     tone = "err" if worst > records * 0.05 else "note"
-    extra = ("<br>More than one record in twenty is refused, which is "
-             "usually a limit set too tightly rather than a sensor at fault."
-             if worst > records * 0.05 else "")
-    return (f'<p class="{tone}">Over {records} record(s), these rules would '
-            f'refuse {total} reading(s): {said}.{extra}</p>')
+    extra = ("<br>" + html.escape(lang.say(
+        "More than one record in twenty is refused, which is usually a limit "
+        "set too tightly rather than a sensor at fault."))
+        if worst > records * 0.05 else "")
+    counted = html.escape(lang.fill(
+        "Over {records} record(s), these rules would refuse {n} reading(s):",
+        records=records, n=total))
+    return f'<p class="{tone}">{counted} {said}.{extra}</p>'
