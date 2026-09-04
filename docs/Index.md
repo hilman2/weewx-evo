@@ -3,7 +3,7 @@
 Which file belongs to which wiki page, and where the page is behind
 the code.
 
-**Generated:** 2026-09-04 09:08 · `python tools/docsindex.py`
+**Generated:** 2026-09-04 14:52 · `python tools/docsindex.py`
 
 This page is generated. Edited by hand, it is overwritten on the next
 run — the mapping lives in the `covers` blocks at the end of every wiki
@@ -28,37 +28,37 @@ python tools/docsindex.py --accept <page>.md
 
 | | |
 |---|---|
-| Wiki pages | 52 |
-| Files covered | 247 of 249 |
+| Wiki pages | 53 |
+| Files covered | 207 of 213 |
 | Pages to look at | 31 |
-| Files with no page | 5 |
+| Files with no page | 9 |
 
 ## To look at
 
 | Page | Changed since the page | File last | Page last |
 |---|---|---|---|
-| ⚠️ [Contributing](Contributing) | `CLAUDE.md`, `.gitignore` | 2026-09-04 09:08 | 2026-09-04 02:09 |
-| ⚠️ [weewx-evo](Home) | `CLAUDE.md` | 2026-09-04 09:08 | 2026-09-04 02:13 |
-| ⚠️ [Several places](Places) | `src/weewx_evo/adminarchives.py` | 2026-09-04 09:06 | 2026-09-04 09:03 |
-| ⚠️ [Testing](Testing) | `tools/roles_test.py`, `tools/stations_test.py`, `tools/multisource.py` (+18) | 2026-09-04 09:03 | 2026-09-04 02:15 |
+| ⚠️ [weewx-evo](Home) | `CLAUDE.md`, `pyproject.toml` | 2026-09-04 14:49 | 2026-09-04 02:13 |
+| ⚠️ [The settings page](Admin-Page) | `src/weewx_evo/admin.py`, `src/weewx_evo/adminsystem.py`, `src/weewx_evo/adminhome.py` (+7) | 2026-09-04 14:42 | 2026-09-04 02:42 |
+| ⚠️ [CLI reference](CLI-Reference) | `src/weewx_evo/cli.py` | 2026-09-04 14:32 | 2026-09-04 08:09 |
+| ⚠️ [Getting started](Getting-Started) | `src/weewx_evo/cli.py`, `src/weewx_evo/options.py` | 2026-09-04 14:32 | 2026-09-04 08:10 |
+| ⚠️ [Stations and Archives](Stations-and-Archives) | `src/weewx_evo/collectors.py` | 2026-09-04 14:21 | 2026-09-04 09:03 |
+| ⚠️ [Placements](Placements) | `tools/placement_test.py` | 2026-09-04 13:59 | 2026-09-04 09:03 |
+| ⚠️ [Configuration](Configuration) | `tools/settings_test.py`, `src/weewx_evo/options.py` | 2026-09-04 13:54 | 2026-09-04 09:03 |
+| ⚠️ [Several places](Places) | `src/weewx_evo/adminstations.py`, `src/weewx_evo/adminarchives.py` | 2026-09-04 13:29 | 2026-09-04 09:03 |
+| ⚠️ [Settings A–Z](Settings-Reference) | `src/weewx_evo/options.py` | 2026-09-04 13:16 | 2026-09-04 09:03 |
+| ⚠️ [Listener](Ingest-Listener) | `src/weewx_evo/ingest/listener.py` | 2026-09-04 13:15 | 2026-09-04 09:03 |
+| ⚠️ [Charts](Charts) | `src/weewx_evo/adminplots.py`, `src/weewx_evo/chartdata.py`, `src/weewx_evo/plots.py` | 2026-09-04 10:42 | 2026-08-30 12:26 |
+| ⚠️ [Plots](Plots) | `src/weewx_evo/adminplots.py`, `src/weewx_evo/chartdata.py` | 2026-09-04 10:42 | 2026-09-04 00:17 |
+| ⚠️ [Publishing a website](Publishing-a-website) | `src/weewx_evo/adminpublish.py`, `src/weewx_evo/feeds/__init__.py`, `src/weewx_evo/feeds/cheetah/__init__.py` (+1) | 2026-09-04 10:42 | 2026-08-30 12:26 |
+| ⚠️ [Quality control](Quality) | `src/weewx_evo/adminquality.py`, `src/weewx_evo/quality.py` | 2026-09-04 10:42 | 2026-09-04 02:05 |
+| ⚠️ [Sensor checks](Sensor-checks) | `src/weewx_evo/adminquality.py`, `src/weewx_evo/quality.py` | 2026-09-04 10:42 | 2026-09-04 02:05 |
 | ⚠️ [Multiple senders](Multiple-Sources) | `tools/multisource.py` | 2026-09-04 09:03 | 2026-09-04 09:03 |
-| ⚠️ [Placements](Placements) | `tools/placement_test.py` | 2026-09-04 09:03 | 2026-09-04 09:03 |
-| ⚠️ [The settings page](Admin-Page) | `src/weewx_evo/adminhome.py`, `tools/adminlive_test.py`, `src/weewx_evo/admin.py` (+3) | 2026-09-04 09:03 | 2026-09-04 02:42 |
-| ⚠️ [Charts](Charts) | `src/weewx_evo/chartdata.py`, `src/weewx_evo/adminplots.py`, `src/weewx_evo/plots.py` | 2026-09-04 09:03 | 2026-08-30 12:26 |
 | ⚠️ [The live database](Database-Live) | `src/weewx_evo/db/live.py` | 2026-09-04 09:03 | 2026-09-04 08:10 |
-| ⚠️ [Plots](Plots) | `src/weewx_evo/chartdata.py`, `src/weewx_evo/adminplots.py` | 2026-09-04 09:03 | 2026-09-04 00:17 |
-| ⚠️ [CLI reference](CLI-Reference) | `src/weewx_evo/cli.py` | 2026-09-04 08:17 | 2026-09-04 08:09 |
-| ⚠️ [Getting started](Getting-Started) | `src/weewx_evo/cli.py` | 2026-09-04 08:17 | 2026-09-04 08:10 |
 | ⚠️ [Sending readings on](Sending-readings-on) | `src/weewx_evo/uploads/records.py`, `src/weewx_evo/uploads/runner.py`, `src/weewx_evo/uploads/__init__.py` | 2026-09-04 07:59 | 2026-08-30 12:26 |
 | ⚠️ [Uploads](Uploads) | `src/weewx_evo/uploads/records.py`, `src/weewx_evo/uploads/runner.py` | 2026-09-04 07:59 | 2026-09-04 00:42 |
-| ⚠️ [Connecting a console](Connecting-a-console) | `src/weewx_evo/stations.py`, `src/weewx_evo/ingest/listener.py` | 2026-09-04 07:57 | 2026-09-04 02:13 |
-| ⚠️ [Publishing a website](Publishing-a-website) | `src/weewx_evo/adminpublish.py`, `src/weewx_evo/feeds/__init__.py`, `src/weewx_evo/feeds/cheetah/__init__.py` (+1) | 2026-09-04 02:42 | 2026-08-30 12:26 |
-| ⚠️ [Quality control](Quality) | `src/weewx_evo/adminquality.py`, `src/weewx_evo/quality.py` | 2026-09-04 02:07 | 2026-09-04 02:05 |
-| ⚠️ [Sensor checks](Sensor-checks) | `src/weewx_evo/adminquality.py`, `src/weewx_evo/quality.py` | 2026-09-04 02:07 | 2026-09-04 02:05 |
 | ⚠️ [Alerts](Alerts) | `src/weewx_evo/notify/rules.py`, `src/weewx_evo/notify/runner.py` | 2026-09-04 01:09 | 2026-08-30 12:26 |
 | ⚠️ [Notifications](Notifications) | `src/weewx_evo/notify/rules.py`, `src/weewx_evo/notify/runner.py` | 2026-09-04 01:09 | 2026-08-30 11:51 |
 | ⚠️ [Metrics](Metrics) | `src/weewx_evo/metrics.py` | 2026-09-04 01:09 | 2026-08-30 11:51 |
-| ⚠️ [Feeds](Feeds) | `src/weewx_evo/feeds/__init__.py`, `src/weewx_evo/feeds/cheetah/__init__.py`, `src/weewx_evo/feedrunner.py` | 2026-09-04 00:50 | 2026-08-30 12:22 |
 | ⚠️ [API](API) | `src/weewx_evo/api.py` | 2026-09-04 00:50 | 2026-09-04 00:37 |
 | ⚠️ [Derived readings](Derived-Readings) | `src/weewx_evo/derive.py`, `tools/derive_test.py` | 2026-09-04 00:46 | 2026-08-27 11:03 |
 | ⚠️ [MQTT](MQTT) | `src/weewx_evo/ingest/mqttsub.py` | 2026-09-04 00:40 | 2026-08-30 11:51 |
@@ -79,78 +79,82 @@ python tools/docsindex.py --accept <page>.md
 | ✅ | [Architecture](Architecture) | 2 | 2026-09-04 00:29 | 2026-09-04 02:01 |
 | ✅ | [Archiver](Archiver) | 2 | 2026-09-04 02:07 | 2026-09-04 02:15 |
 | ✅ | [Backups](Backups) | 1w | 2026-08-29 15:59 | 2026-08-30 12:26 |
-| ⚠️ | [Charts](Charts) | 4w | 2026-09-04 09:03 | 2026-08-30 12:26 |
-| ⚠️ | [CLI reference](CLI-Reference) | 3 +1w | 2026-09-04 08:17 | 2026-09-04 08:09 |
-| ✅ | [Configuration](Configuration) | 4 | 2026-09-04 02:02 | 2026-09-04 09:03 |
-| ⚠️ | [Connecting a console](Connecting-a-console) | 40w | 2026-09-04 07:57 | 2026-09-04 02:13 |
-| ⚠️ | [Contributing](Contributing) | 5 +20w | 2026-09-04 09:08 | 2026-09-04 02:09 |
+| ⚠️ | [Charts](Charts) | 4w | 2026-09-04 10:42 | 2026-08-30 12:26 |
+| ⚠️ | [CLI reference](CLI-Reference) | 3 +1w | 2026-09-04 14:32 | 2026-09-04 08:09 |
+| ⚠️ | [Configuration](Configuration) | 4 | 2026-09-04 13:54 | 2026-09-04 09:03 |
+| ✅ | [Connecting a console](Connecting-a-console) | 15w | 2026-09-04 14:21 | 2026-09-04 14:50 |
+| ✅ | [Contributing](Contributing) | 5 +20w | 2026-09-04 14:49 | 2026-09-04 14:51 |
 | ✅ | [Daily summaries](Daily-Summaries) | 1 | 2026-08-26 23:56 | 2026-08-27 11:03 |
 | ✅ | [Deck](Deck) | 6 | 2026-08-30 14:53 | 2026-09-04 00:18 |
 | ✅ | [Deployment](Deployment) | 3 +9w | 2026-09-04 00:29 | 2026-09-04 08:10 |
 | ⚠️ | [Derived readings](Derived-Readings) | 2 | 2026-09-04 00:46 | 2026-08-27 11:03 |
-| ✅ | [Drivers](Drivers) | 32 | 2026-09-04 02:11 | 2026-09-04 02:14 |
+| ✅ | [Drivers](Drivers) | 12 | 2026-09-04 14:42 | 2026-09-04 14:50 |
 | ⚠️ | [Exports](Exports) | 7 | 2026-08-28 22:56 | 2026-08-27 11:11 |
-| ⚠️ | [Feeds](Feeds) | 10 | 2026-09-04 00:50 | 2026-08-30 12:22 |
+| ✅ | [Feeds](Feeds) | 10 | 2026-09-04 00:50 | 2026-09-04 14:51 |
 | ⚠️ | [Forecast](Forecast) | 9 | 2026-09-04 00:38 | 2026-09-04 00:33 |
-| ⚠️ | [Getting started](Getting-Started) | 1 +2w | 2026-09-04 08:17 | 2026-09-04 08:10 |
+| ⚠️ | [Getting started](Getting-Started) | 1 +2w | 2026-09-04 14:32 | 2026-09-04 08:10 |
 | — | [Glossary](Glossary) | — | — | 2026-09-04 09:03 |
 | ✅ | [Grafana](Grafana) | 9 | 2026-08-30 11:51 | 2026-09-04 01:52 |
-| ✅ | [Listener](Ingest-Listener) | 4 | 2026-09-04 02:34 | 2026-09-04 09:03 |
+| ⚠️ | [Listener](Ingest-Listener) | 4 | 2026-09-04 13:15 | 2026-09-04 09:03 |
 | ✅ | [Maintenance](Maintenance) | 1 | 2026-08-29 15:59 | 2026-08-30 11:51 |
 | ⚠️ | [Metrics](Metrics) | 1 | 2026-09-04 01:09 | 2026-08-30 11:51 |
 | ⚠️ | [MQTT](MQTT) | 4 | 2026-09-04 00:40 | 2026-08-30 11:51 |
 | ⚠️ | [Multiple senders](Multiple-Sources) | 2 | 2026-09-04 09:03 | 2026-09-04 09:03 |
 | ⚠️ | [Notifications](Notifications) | 6 | 2026-09-04 01:09 | 2026-08-30 11:51 |
-| ⚠️ | [Placements](Placements) | 3 | 2026-09-04 09:03 | 2026-09-04 09:03 |
-| ⚠️ | [Plots](Plots) | 8 | 2026-09-04 09:03 | 2026-09-04 00:17 |
+| ⚠️ | [Placements](Placements) | 3 | 2026-09-04 13:59 | 2026-09-04 09:03 |
+| — | [Plan: every driver an add-on](Plan-Drivers-As-Addons) | — | — | 2026-09-04 10:55 |
+| ⚠️ | [Plots](Plots) | 8 | 2026-09-04 10:42 | 2026-09-04 00:17 |
 | — | [Plugins](Plugins) | — | — | 2026-09-03 22:26 |
-| ⚠️ | [Publishing a website](Publishing-a-website) | 22w | 2026-09-04 02:42 | 2026-08-30 12:26 |
-| ✅ | [Push drivers](Driver-Ecowitt) | 11 | 2026-08-28 17:39 | 2026-09-04 02:09 |
-| ⚠️ | [Quality control](Quality) | 2 | 2026-09-04 02:07 | 2026-09-04 02:05 |
+| ⚠️ | [Publishing a website](Publishing-a-website) | 22w | 2026-09-04 10:42 | 2026-08-30 12:26 |
+| — | [Push drivers](Driver-Ecowitt) | — | — | 2026-09-04 14:52 |
+| ⚠️ | [Quality control](Quality) | 2 | 2026-09-04 10:42 | 2026-09-04 02:05 |
 | ⚠️ | [Security](Security) | 2 | 2026-08-27 11:41 | 2026-08-27 11:08 |
 | ⚠️ | [Sending readings on](Sending-readings-on) | 12w | 2026-09-04 07:59 | 2026-08-30 12:26 |
-| ⚠️ | [Sensor checks](Sensor-checks) | 2w | 2026-09-04 02:07 | 2026-09-04 02:05 |
+| ⚠️ | [Sensor checks](Sensor-checks) | 2w | 2026-09-04 10:42 | 2026-09-04 02:05 |
 | ⚠️ | [Series](Series) | 2 | 2026-08-29 17:25 | 2026-08-27 11:04 |
-| ✅ | [Settings A–Z](Settings-Reference) | 5 +2w | 2026-09-04 09:03 | 2026-09-04 09:03 |
-| ⚠️ | [Several places](Places) | 2 +1w | 2026-09-04 09:06 | 2026-09-04 09:03 |
-| ✅ | [Stations and Archives](Stations-and-Archives) | 5 | 2026-09-04 09:03 | 2026-09-04 09:03 |
+| ⚠️ | [Settings A–Z](Settings-Reference) | 5 +2w | 2026-09-04 13:16 | 2026-09-04 09:03 |
+| ⚠️ | [Several places](Places) | 2 +1w | 2026-09-04 13:29 | 2026-09-04 09:03 |
+| ⚠️ | [Stations and Archives](Stations-and-Archives) | 5 | 2026-09-04 14:21 | 2026-09-04 09:03 |
 | ✅ | [Sun](Sun) | 5 | 2026-08-26 23:56 | 2026-08-30 11:51 |
-| ⚠️ | [Testing](Testing) | 73 | 2026-09-04 09:03 | 2026-09-04 02:15 |
+| ✅ | [Testing](Testing) | 66 | 2026-09-04 14:49 | 2026-09-04 14:51 |
 | ✅ | [The archive database](Database-Archive) | 3 | 2026-09-03 23:25 | 2026-09-04 02:11 |
 | ⚠️ | [The live database](Database-Live) | 1 | 2026-09-04 09:03 | 2026-09-04 08:10 |
-| ⚠️ | [The settings page](Admin-Page) | 10 | 2026-09-04 09:03 | 2026-09-04 02:42 |
+| ⚠️ | [The settings page](Admin-Page) | 10 | 2026-09-04 14:42 | 2026-09-04 02:42 |
 | ✅ | [Units](Units) | 2 | 2026-08-29 15:29 | 2026-08-30 11:51 |
 | ⚠️ | [Uploads](Uploads) | 11 | 2026-09-04 07:59 | 2026-09-04 00:42 |
 | ⚠️ | [Weather forecast](Weather-forecast) | 9w | 2026-09-04 00:38 | 2026-09-04 00:16 |
 | ⚠️ | [Web server](Web-Server) | 2 | 2026-08-30 11:51 | 2026-08-27 11:05 |
 | ✅ | [WeeWX compatibility](WeeWX-Compatibility) | 2 | 2026-08-29 12:47 | 2026-09-04 08:10 |
-| ⚠️ | [weewx-evo](Home) | 7 | 2026-09-04 09:08 | 2026-09-04 02:13 |
+| ⚠️ | [weewx-evo](Home) | 7 | 2026-09-04 14:49 | 2026-09-04 02:13 |
 
 ## Files
 
 | File | Lines | Wiki page | Last changed |
 |---|---|---|---|
 | `src/weewx_evo/__init__.py` | 8 | [Architecture](Architecture) · [weewx-evo](Home) | 2026-08-26 10:53 |
-| `src/weewx_evo/admin.py` | 4314 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 07:36 |
-| `src/weewx_evo/adminarchives.py` | 1119 | ⚠️ [Several places](Places) | 2026-09-04 09:06 |
-| `src/weewx_evo/adminfields.py` | 774 | [The settings page](Admin-Page) | 2026-09-04 01:52 |
-| `src/weewx_evo/adminhome.py` | 1102 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 09:03 |
-| `src/weewx_evo/adminlive.py` | 609 | [The settings page](Admin-Page) | 2026-09-04 01:45 |
-| `src/weewx_evo/adminplots.py` | 1009 | ⚠️ [Plots](Plots) | 2026-09-04 02:05 |
-| `src/weewx_evo/adminpublish.py` | 450 | [The settings page](Admin-Page) | 2026-09-04 02:42 |
-| `src/weewx_evo/adminquality.py` | 483 | ⚠️ [Quality control](Quality) | 2026-09-04 02:07 |
-| `src/weewx_evo/adminsearch.py` | 228 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 07:34 |
-| `src/weewx_evo/adminsetup.py` | 426 | [The settings page](Admin-Page) | 2026-09-04 02:05 |
-| `src/weewx_evo/adminstations.py` | 1138 | [Several places](Places) | 2026-09-04 01:52 |
-| `src/weewx_evo/adminsystem.py` | 82 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 07:34 |
+| `src/weewx_evo/addons.py` | 252 | [Drivers](Drivers) | 2026-09-04 14:35 |
+| `src/weewx_evo/admin.py` | 4505 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 14:42 |
+| `src/weewx_evo/adminaddons.py` | 212 | [Drivers](Drivers) | 2026-09-04 14:42 |
+| `src/weewx_evo/adminarchives.py` | 1182 | ⚠️ [Several places](Places) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminfields.py` | 796 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminhome.py` | 1189 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 14:29 |
+| `src/weewx_evo/adminlive.py` | 612 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminplots.py` | 1079 | ⚠️ [Plots](Plots) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminpublish.py` | 490 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminquality.py` | 511 | ⚠️ [Quality control](Quality) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminsearch.py` | 250 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminsetup.py` | 467 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 10:42 |
+| `src/weewx_evo/adminstations.py` | 1276 | ⚠️ [Several places](Places) | 2026-09-04 13:29 |
+| `src/weewx_evo/adminsystem.py` | 97 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 14:31 |
 | `src/weewx_evo/adopt.py` | 400 | [Stations and Archives](Stations-and-Archives) | 2026-08-29 14:31 |
 | `src/weewx_evo/aggregate.py` | 497 | [Aggregation](Aggregation) · [Contributing](Contributing) | 2026-08-26 23:43 |
 | `src/weewx_evo/api.py` | 529 | ⚠️ [API](API) | 2026-09-04 00:50 |
 | `src/weewx_evo/archiver.py` | 543 | [Archiver](Archiver) | 2026-09-04 02:07 |
 | `src/weewx_evo/archives.py` | 1010 | [Stations and Archives](Stations-and-Archives) | 2026-09-04 09:03 |
+| `src/weewx_evo/catalogue.py` | 205 | [Drivers](Drivers) | 2026-09-04 14:34 |
 | `src/weewx_evo/chartdata.py` | 829 | ⚠️ [Plots](Plots) | 2026-09-04 09:03 |
-| `src/weewx_evo/cli.py` | 6458 | ⚠️ [CLI reference](CLI-Reference) | 2026-09-04 08:17 |
-| `src/weewx_evo/collectors.py` | 452 | [Stations and Archives](Stations-and-Archives) | 2026-09-04 00:40 |
+| `src/weewx_evo/cli.py` | 6073 | ⚠️ [CLI reference](CLI-Reference) | 2026-09-04 14:32 |
+| `src/weewx_evo/collectors.py` | 366 | ⚠️ [Stations and Archives](Stations-and-Archives) | 2026-09-04 14:21 |
 | `src/weewx_evo/config.py` | 324 | [Configuration](Configuration) | 2026-08-30 14:53 |
 | `src/weewx_evo/db/__init__.py` | 0 | [weewx-evo](Home) | 2026-08-26 10:58 |
 | `src/weewx_evo/db/archive.py` | 481 | [The archive database](Database-Archive) | 2026-09-03 23:25 |
@@ -169,9 +173,9 @@ python tools/docsindex.py --accept <page>.md
 | `src/weewx_evo/exports/rsync.py` | 351 | ⚠️ [Exports](Exports) · [Settings A–Z](Settings-Reference) | 2026-08-28 21:54 |
 | `src/weewx_evo/exports/runner.py` | 509 | ⚠️ [Exports](Exports) | 2026-08-28 22:56 |
 | `src/weewx_evo/exports/tracker.py` | 165 | [Exports](Exports) | 2026-08-26 13:31 |
-| `src/weewx_evo/feedrunner.py` | 358 | ⚠️ [Feeds](Feeds) | 2026-09-04 00:35 |
-| `src/weewx_evo/feeds/__init__.py` | 372 | ⚠️ [Feeds](Feeds) | 2026-09-04 00:50 |
-| `src/weewx_evo/feeds/cheetah/__init__.py` | 2534 | ⚠️ [Feeds](Feeds) | 2026-09-04 00:37 |
+| `src/weewx_evo/feedrunner.py` | 358 | [Feeds](Feeds) | 2026-09-04 00:35 |
+| `src/weewx_evo/feeds/__init__.py` | 372 | [Feeds](Feeds) | 2026-09-04 00:50 |
+| `src/weewx_evo/feeds/cheetah/__init__.py` | 2534 | [Feeds](Feeds) | 2026-09-04 00:37 |
 | `src/weewx_evo/feeds/diagnostic/__init__.py` | 557 | [Feeds](Feeds) | 2026-08-30 11:51 |
 | `src/weewx_evo/feeds/diagnostic/vendor/LICENSE` | 21 | [Feeds](Feeds) | 2026-08-26 15:12 |
 | `src/weewx_evo/feeds/imagegenerator/__init__.py` | 821 | [Plots](Plots) | 2026-08-30 11:51 |
@@ -196,43 +200,18 @@ python tools/docsindex.py --accept <page>.md
 | `src/weewx_evo/grafana/style.py` | 240 | [Grafana](Grafana) | 2026-08-29 14:34 |
 | `src/weewx_evo/grafana/words.py` | 130 | [Grafana](Grafana) | 2026-08-29 17:02 |
 | `src/weewx_evo/ingest/__init__.py` | 0 | [weewx-evo](Home) | 2026-08-26 11:20 |
-| `src/weewx_evo/ingest/drivers.py` | 729 | [Drivers](Drivers) | 2026-09-04 02:02 |
+| `src/weewx_evo/ingest/drivers.py` | 874 | [Drivers](Drivers) | 2026-09-04 13:39 |
 | `src/weewx_evo/ingest/envelope.py` | 83 | [Drivers](Drivers) | 2026-09-03 23:25 |
-| `src/weewx_evo/ingest/listener.py` | 764 | [Listener](Ingest-Listener) | 2026-09-04 02:34 |
+| `src/weewx_evo/ingest/listener.py` | 987 | ⚠️ [Listener](Ingest-Listener) | 2026-09-04 13:15 |
 | `src/weewx_evo/ingest/mqttsub.py` | 374 | ⚠️ [MQTT](MQTT) | 2026-09-04 00:40 |
 | `src/weewx_evo/ingest/parsers.py` | 136 | [Drivers](Drivers) | 2026-09-03 23:25 |
-| `src/weewx_evo/ingest/plugins/__init__.py` | 71 | [Drivers](Drivers) | 2026-08-26 11:50 |
-| `src/weewx_evo/ingest/plugins/push/__init__.py` | 13 | [Drivers](Drivers) | 2026-08-28 17:33 |
-| `src/weewx_evo/ingest/plugins/push/catalogs/__init__.py` | 31 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/catalogs/acurite.py` | 88 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/catalogs/ambient.py` | 308 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/catalogs/ecowitt.py` | 1074 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/catalogs/lacrosse.py` | 98 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/catalogs/weatherflow.py` | 169 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/catalogs/wunderground.py` | 316 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/driver.py` | 637 | [Drivers](Drivers) | 2026-09-04 02:02 |
-| `src/weewx_evo/ingest/plugins/push/infer.py` | 204 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/mapping.py` | 245 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/protocols/__init__.py` | 296 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/protocols/acurite.py` | 143 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/protocols/ambient.py` | 90 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/protocols/ecowitt.py` | 88 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/protocols/lacrosse.py` | 121 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/protocols/weatherflow.py` | 178 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/protocols/wunderground.py` | 186 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/report.py` | 72 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/roles.py` | 94 | [Drivers](Drivers) | 2026-08-28 17:09 |
-| `src/weewx_evo/ingest/plugins/push/transport.py` | 201 | [Drivers](Drivers) | 2026-08-28 17:09 |
 | `src/weewx_evo/ingest/proposals.py` | 233 | [Placements](Placements) | 2026-09-03 23:23 |
 | `src/weewx_evo/ingest/sightings.py` | 243 | [Drivers](Drivers) | 2026-08-27 23:12 |
 | `src/weewx_evo/ingest/state.py` | 157 | [Drivers](Drivers) | 2026-09-04 02:11 |
 | `src/weewx_evo/ingest/statuspage.py` | 498 | [Listener](Ingest-Listener) | 2026-09-03 23:25 |
 | `src/weewx_evo/ingest/userdrivers.py` | 321 | [Drivers](Drivers) | 2026-08-26 23:56 |
-| `src/weewx_evo/ingest/weewxdrivers.py` | 910 | [Drivers](Drivers) | 2026-08-30 19:19 |
-| `src/weewx_evo/ingest/weewxnames.py` | 613 | [Drivers](Drivers) | 2026-08-29 04:59 |
-| `src/weewx_evo/ingest/weewxshim.py` | 601 | [Drivers](Drivers) | 2026-09-03 23:25 |
-| `src/weewx_evo/lang/de.toml` | 228 | **none** | 2026-08-30 11:51 |
-| `src/weewx_evo/language.py` | 314 | **none** | 2026-08-29 14:34 |
+| `src/weewx_evo/lang/de.toml` | 1430 | **none** | 2026-09-04 10:42 |
+| `src/weewx_evo/language.py` | 375 | **none** | 2026-09-04 09:21 |
 | `src/weewx_evo/maintenance.py` | 511 | [Maintenance](Maintenance) | 2026-08-29 15:59 |
 | `src/weewx_evo/metrics.py` | 340 | ⚠️ [Metrics](Metrics) | 2026-09-04 01:09 |
 | `src/weewx_evo/moon.py` | 569 | [Sun](Sun) | 2026-08-26 20:42 |
@@ -245,7 +224,7 @@ python tools/docsindex.py --accept <page>.md
 | `src/weewx_evo/notify/smtp.py` | 161 | [Notifications](Notifications) | 2026-08-29 15:27 |
 | `src/weewx_evo/notify/webhook.py` | 224 | [Notifications](Notifications) | 2026-08-29 15:36 |
 | `src/weewx_evo/obstypes.py` | 80 | [Aggregation](Aggregation) · [Contributing](Contributing) | 2026-08-26 10:54 |
-| `src/weewx_evo/options.py` | 877 | [Configuration](Configuration) · [Settings A–Z](Settings-Reference) | 2026-09-04 02:02 |
+| `src/weewx_evo/options.py` | 881 | ⚠️ [Configuration](Configuration) · [Settings A–Z](Settings-Reference) | 2026-09-04 13:16 |
 | `src/weewx_evo/placement.py` | 920 | [Placements](Placements) | 2026-09-04 09:03 |
 | `src/weewx_evo/planets.py` | 625 | [Sun](Sun) | 2026-08-26 23:56 |
 | `src/weewx_evo/plots.py` | 1114 | [Plots](Plots) | 2026-08-30 14:53 |
@@ -285,99 +264,85 @@ python tools/docsindex.py --accept <page>.md
 | `src/weewx_evo/watchdog.py` | 302 | **none** | 2026-08-28 13:02 |
 | `src/weewx_evo/webserver.py` | 512 | ⚠️ [Web server](Web-Server) | 2026-08-30 11:51 |
 | `src/weewx_evo/weewxconf.py` | 544 | [WeeWX compatibility](WeeWX-Compatibility) | 2026-08-29 12:47 |
-| `tools/adminfields_test.py` | 726 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
-| `tools/adminhome_test.py` | 914 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/addons_test.py` | 287 | [Drivers](Drivers) · [Testing](Testing) | 2026-09-04 14:34 |
+| `tools/adminfields_test.py` | 729 | [Testing](Testing) | 2026-09-04 14:00 |
+| `tools/adminhome_test.py` | 914 | [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/adminlang_test.py` | 281 | **none** | 2026-09-04 09:37 |
 | `tools/adminlive_test.py` | 505 | ⚠️ [The settings page](Admin-Page) | 2026-09-04 09:03 |
-| `tools/adminpage.py` | 1455 | ⚠️ [The settings page](Admin-Page) · [Testing](Testing) | 2026-09-04 07:34 |
+| `tools/adminpage.py` | 1488 | ⚠️ [The settings page](Admin-Page) · [Testing](Testing) | 2026-09-04 14:22 |
 | `tools/adminsearch_test.py` | 177 | [Testing](Testing) | 2026-09-04 02:02 |
-| `tools/alldrivers_test.py` | 344 | [Testing](Testing) | 2026-08-29 05:23 |
 | `tools/api_test.py` | 495 | [Testing](Testing) | 2026-09-04 00:52 |
-| `tools/archives_e2e.py` | 717 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
-| `tools/archives_test.py` | 1355 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/archives_e2e.py` | 717 | [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/archives_test.py` | 1355 | [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/catalogue_test.py` | 202 | **none** | 2026-09-04 12:48 |
 | `tools/cheetah_test.py` | 753 | [Testing](Testing) | 2026-08-29 15:29 |
-| `tools/collector_test.py` | 243 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
-| `tools/console_setup_test.py` | 316 | **none** | 2026-09-03 23:23 |
+| `tools/collector_test.py` | 243 | [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/console_setup_test.py` | 332 | **none** | 2026-09-04 14:02 |
 | `tools/deck_dead_test.py` | 261 | [Testing](Testing) | 2026-08-29 01:55 |
-| `tools/deck_live_test.py` | 1056 | ⚠️ [Testing](Testing) | 2026-09-04 07:30 |
-| `tools/deck_places_test.py` | 1057 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/deck_live_test.py` | 1056 | [Testing](Testing) | 2026-09-04 07:30 |
+| `tools/deck_places_test.py` | 1069 | [Testing](Testing) | 2026-09-04 10:42 |
 | `tools/deck_test.py` | 864 | [Testing](Testing) | 2026-09-04 00:34 |
 | `tools/derive_test.py` | 521 | ⚠️ [Derived readings](Derived-Readings) · [Testing](Testing) | 2026-08-27 19:38 |
 | `tools/difftest.py` | 133 | [Aggregation](Aggregation) · [Testing](Testing) | 2026-08-26 23:54 |
-| `tools/driverinstall.py` | 225 | [Drivers](Drivers) · [Testing](Testing) | 2026-09-03 23:25 |
+| `tools/driverinstall.py` | 230 | [Drivers](Drivers) · [Testing](Testing) | 2026-09-04 13:55 |
 | `tools/driversim.py` | 266 | [Testing](Testing) | 2026-08-29 05:23 |
-| `tools/ecowittsim.py` | 254 | [Testing](Testing) | 2026-08-30 11:51 |
+| `tools/ecowittsim.py` | 254 | [Testing](Testing) | 2026-09-04 13:47 |
 | `tools/export_test.py` | 1068 | ⚠️ [Exports](Exports) · [Testing](Testing) | 2026-08-28 22:09 |
-| `tools/feeds_test.py` | 201 | ⚠️ [Testing](Testing) | 2026-09-04 02:27 |
-| `tools/feedtiming_test.py` | 337 | ⚠️ [Testing](Testing) | 2026-09-04 08:00 |
+| `tools/feeds_test.py` | 201 | [Testing](Testing) | 2026-09-04 02:27 |
+| `tools/feedtiming_test.py` | 337 | [Testing](Testing) | 2026-09-04 08:00 |
 | `tools/forecast_test.py` | 840 | [Testing](Testing) | 2026-08-30 11:51 |
-| `tools/fousb_test.py` | 287 | [Testing](Testing) | 2026-08-29 05:23 |
-| `tools/fousbsim.py` | 245 | [Testing](Testing) | 2026-08-29 08:23 |
 | `tools/grafana_test.py` | 836 | [Testing](Testing) | 2026-08-29 17:14 |
 | `tools/image_test.py` | 392 | [Testing](Testing) | 2026-08-29 15:29 |
 | `tools/import_test.py` | 751 | [Testing](Testing) | 2026-08-29 18:00 |
 | `tools/influx_test.py` | 1026 | [Testing](Testing) | 2026-09-03 23:25 |
-| `tools/livedb_test.py` | 318 | ⚠️ [Testing](Testing) | 2026-09-04 08:11 |
-| `tools/livesource_test.py` | 371 | ⚠️ [Testing](Testing) | 2026-09-04 08:05 |
+| `tools/livedb_test.py` | 318 | [Testing](Testing) | 2026-09-04 08:11 |
+| `tools/livesource_test.py` | 371 | [Testing](Testing) | 2026-09-04 08:05 |
 | `tools/maintenance_test.py` | 510 | [Testing](Testing) | 2026-08-29 17:08 |
-| `tools/metrics_test.py` | 428 | ⚠️ [Testing](Testing) | 2026-09-04 02:25 |
+| `tools/metrics_test.py` | 428 | [Testing](Testing) | 2026-09-04 02:25 |
 | `tools/mooncheck.py` | 208 | [Testing](Testing) | 2026-08-26 23:43 |
-| `tools/mqtt_test.py` | 823 | [Testing](Testing) | 2026-09-03 23:25 |
+| `tools/mqtt_test.py` | 823 | [Testing](Testing) | 2026-09-04 14:10 |
 | `tools/multisource.py` | 262 | ⚠️ [Multiple senders](Multiple-Sources) · [Testing](Testing) | 2026-09-04 09:03 |
 | `tools/netaccess_test.py` | 156 | [Listener](Ingest-Listener) · [Testing](Testing) | 2026-08-26 23:43 |
 | `tools/notify_test.py` | 690 | [Testing](Testing) | 2026-09-03 23:25 |
-| `tools/placement_test.py` | 1197 | ⚠️ [Placements](Placements) | 2026-09-04 09:03 |
+| `tools/placement_test.py` | 1198 | ⚠️ [Placements](Placements) | 2026-09-04 13:59 |
 | `tools/planetcheck.py` | 295 | [Testing](Testing) | 2026-08-26 23:56 |
-| `tools/quality_test.py` | 1085 | ⚠️ [Testing](Testing) | 2026-09-04 08:08 |
+| `tools/polling_test.py` | 224 | **none** | 2026-09-04 11:15 |
+| `tools/quality_test.py` | 1085 | [Testing](Testing) | 2026-09-04 08:08 |
 | `tools/ratelimit_test.py` | 168 | [Listener](Ingest-Listener) · [Testing](Testing) | 2026-08-26 23:43 |
 | `tools/realtime_test.py` | 201 | [Testing](Testing) | 2026-08-27 10:37 |
-| `tools/resilience_test.py` | 474 | ⚠️ [Testing](Testing) | 2026-09-04 07:37 |
+| `tools/resilience_test.py` | 474 | [Testing](Testing) | 2026-09-04 07:37 |
 | `tools/restart_test.py` | 287 | [Testing](Testing) | 2026-09-03 23:25 |
-| `tools/roles_test.py` | 361 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/roles_test.py` | 361 | [Testing](Testing) | 2026-09-04 09:03 |
 | `tools/roundtrip.py` | 239 | [Archiver](Archiver) · [Testing](Testing) | 2026-08-26 23:54 |
-| `tools/runtests.py` | 488 | ⚠️ [Testing](Testing) | 2026-09-04 02:31 |
+| `tools/runtests.py` | 513 | [Testing](Testing) | 2026-09-04 14:35 |
 | `tools/scaletest.py` | 302 | [Testing](Testing) | 2026-08-27 10:29 |
 | `tools/schedule_test.py` | 234 | [Testing](Testing) | 2026-08-28 22:58 |
-| `tools/sdr_test.py` | 312 | [Testing](Testing) | 2026-08-29 05:23 |
-| `tools/sdrsim.py` | 148 | [Testing](Testing) | 2026-08-29 08:23 |
 | `tools/seriestest.py` | 375 | [Series](Series) · [Testing](Testing) | 2026-08-26 23:54 |
-| `tools/settings_test.py` | 430 | [Configuration](Configuration) · [Testing](Testing) | 2026-09-04 00:22 |
+| `tools/settings_test.py` | 461 | ⚠️ [Configuration](Configuration) · [Testing](Testing) | 2026-09-04 13:54 |
 | `tools/setup_test.py` | 467 | [Testing](Testing) | 2026-09-04 02:07 |
-| `tools/shim_test.py` | 411 | [Testing](Testing) | 2026-09-03 23:25 |
 | `tools/smoke.py` | 321 | [Testing](Testing) | 2026-09-03 23:25 |
-| `tools/standin_test.py` | 557 | [Testing](Testing) | 2026-08-29 08:22 |
-| `tools/stations_test.py` | 622 | ⚠️ [Testing](Testing) | 2026-09-04 09:03 |
+| `tools/stations_test.py` | 622 | [Testing](Testing) | 2026-09-04 09:03 |
 | `tools/stillweewx_test.py` | 472 | [Testing](Testing) | 2026-08-29 13:18 |
 | `tools/suncheck.py` | 243 | [Sun](Sun) · [Testing](Testing) | 2026-08-26 23:55 |
 | `tools/tagcheck.py` | 343 | [Testing](Testing) | 2026-08-26 23:56 |
+| `tools/tokenless_test.py` | 299 | [Testing](Testing) | 2026-09-04 13:15 |
 | `tools/unitcheck.py` | 247 | [Testing](Testing) · [Units](Units) | 2026-08-27 13:03 |
-| `tools/upload_test.py` | 411 | ⚠️ [Testing](Testing) | 2026-09-04 07:34 |
-| `tools/vantage_test.py` | 317 | [Testing](Testing) | 2026-08-29 05:23 |
-| `tools/vantagesim.py` | 401 | [Testing](Testing) | 2026-08-29 08:23 |
+| `tools/unread_test.py` | 175 | **none** | 2026-09-04 12:37 |
+| `tools/upload_test.py` | 411 | [Testing](Testing) | 2026-09-04 07:34 |
 | `tools/vsop87trim.py` | 282 | [Testing](Testing) | 2026-08-26 23:48 |
-| `tools/watchdog_test.py` | 386 | ⚠️ [Testing](Testing) | 2026-09-04 02:27 |
+| `tools/watchdog_test.py` | 386 | [Testing](Testing) | 2026-09-04 02:27 |
 | `tools/web_test.py` | 219 | [Testing](Testing) · [Web server](Web-Server) | 2026-08-26 23:43 |
-| `tools/weewxdrivers_test.py` | 495 | [Testing](Testing) | 2026-08-30 19:19 |
-| `tools/wunderground_test.py` | 314 | [Testing](Testing) | 2026-09-04 01:18 |
-| `tests/push/conftest.py` | 88 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:39 |
-| `tests/push/fixtures/README.md` | 12 | [Testing](Testing) | 2026-08-28 17:37 |
-| `tests/push/helpers.py` | 70 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_ambient.py` | 110 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_bridges.py` | 169 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_infer.py` | 108 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_mapping.py` | 292 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_protocols.py` | 149 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_report.py` | 52 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_transport.py` | 124 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_weatherflow.py` | 207 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
-| `tests/push/test_wunderground.py` | 248 | [Push drivers](Driver-Ecowitt) | 2026-08-28 17:37 |
+| `tools/wizard_test.py` | 301 | [Drivers](Drivers) · [Testing](Testing) | 2026-09-04 13:27 |
+| `tools/wunderground_test.py` | 315 | [Testing](Testing) | 2026-09-04 13:59 |
+| `tests/uploads/README.md` | 17 | [Testing](Testing) | 2026-09-04 13:47 |
 | `deploy/compose.grafana.yml` | 120 | [Grafana](Grafana) | 2026-08-29 17:13 |
 | `deploy/compose.yml` | 96 | [Deployment](Deployment) | 2026-09-04 00:29 |
 | `deploy/Dockerfile` | 56 | [Deployment](Deployment) | 2026-08-26 20:40 |
 | `deploy/split.yml` | 88 | [Architecture](Architecture) · [Deployment](Deployment) | 2026-09-04 00:29 |
 | `README.md` | 140 | [Getting started](Getting-Started) · [weewx-evo](Home) | 2026-09-04 02:01 |
-| `CLAUDE.md` | 2796 | ⚠️ [Contributing](Contributing) · [weewx-evo](Home) | 2026-09-04 09:08 |
-| `pyproject.toml` | 147 | [weewx-evo](Home) · [Testing](Testing) | 2026-08-28 17:40 |
-| `.gitignore` | 74 | ⚠️ [Contributing](Contributing) | 2026-09-04 07:38 |
+| `CLAUDE.md` | 2643 | ⚠️ [Contributing](Contributing) · [weewx-evo](Home) | 2026-09-04 14:49 |
+| `pyproject.toml` | 127 | ⚠️ [weewx-evo](Home) · [Testing](Testing) | 2026-09-04 14:49 |
+| `.gitignore` | 78 | [Contributing](Contributing) | 2026-09-04 14:45 |
 | `LICENSE` | 674 | [weewx-evo](Home) | 2026-08-26 15:37 |
 
 ## With no page
@@ -387,11 +352,15 @@ existing page, or one is missing.
 
 | File | Last changed |
 |---|---|
-| `src/weewx_evo/lang/de.toml` | 2026-08-30 11:51 |
-| `src/weewx_evo/language.py` | 2026-08-29 14:34 |
+| `src/weewx_evo/lang/de.toml` | 2026-09-04 10:42 |
+| `src/weewx_evo/language.py` | 2026-09-04 09:21 |
 | `src/weewx_evo/skins/deck/LICENSE` | 2026-08-26 22:35 |
 | `src/weewx_evo/watchdog.py` | 2026-08-28 13:02 |
-| `tools/console_setup_test.py` | 2026-09-03 23:23 |
+| `tools/adminlang_test.py` | 2026-09-04 09:37 |
+| `tools/catalogue_test.py` | 2026-09-04 12:48 |
+| `tools/console_setup_test.py` | 2026-09-04 14:02 |
+| `tools/polling_test.py` | 2026-09-04 11:15 |
+| `tools/unread_test.py` | 2026-09-04 12:37 |
 
 ---
 

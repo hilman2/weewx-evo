@@ -124,11 +124,16 @@ three, in one place each.
 
 ## Adding a driver
 
-A directory under `ingest/plugins/<name>/` with a `load(registry)`. Nothing is
-listed by hand.
+Its own repository, with an entry point:
 
-If it is not a driver we maintain: `weewx-evo driver install`, and leave it
-outside the package.
+```toml
+[project.entry-points."weewx_evo.drivers"]
+mine = "my_package:MyDriver"
+```
+
+The core ships none, so this is the only shape there is. To have it offered
+alongside the rest, open a pull request against `weewx-evo/weewx-evo-plugins`;
+that file says in its own comments what is checked before one is merged.
 
 → [Drivers](Drivers)
 
@@ -157,7 +162,7 @@ All tests run without a network and without state outside a temp directory.
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
-  cd /mnt/d/Git/weewx-evo && python -m pytest tests/push -q'
+  cd /mnt/d/Git/weewx-evo && python tools/runtests.py'
 ```
 
 The default WSL distro is `docker-desktop` and has no Python — hence always an

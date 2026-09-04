@@ -2,6 +2,18 @@
 
 Getting the readings out of the box on the pole and into the record.
 
+**First, install the driver for it.** weewx-evo ships none, so a fresh
+installation can receive nothing until one is installed:
+
+```bash
+weewx-evo addon list                       # what exists
+weewx-evo addon install weewx-evo-ecowitt
+```
+
+The settings page does the same under System -> Add-ons. If a console is
+already uploading and nothing here can read it, that page says which add-on
+would -- so the order above is a convenience, not a requirement.
+
 Three ways in, and which one you get is decided by the hardware, not by you:
 
 * **It uploads to you.** Anything with a *Custom Server* field — Ecowitt
@@ -68,21 +80,21 @@ actually has.
 The same list from a terminal, when there is no browser to hand:
 
 ```bash
-weewx-evo weewx-driver hardware           # everything this machine can run
-weewx-evo weewx-driver hardware Vantage   # and every setting one of them takes
+weewx-evo-weewx-driver hardware           # everything this machine can run
+weewx-evo-weewx-driver hardware Vantage   # and every setting one of them takes
 ```
 
 Then start it, where the hardware is:
 
 ```bash
-weewx-evo weewx-driver check --collector shed   # builds it, sends nothing
-weewx-evo weewx-driver run   --collector shed   # delivers
+weewx-evo-weewx-driver check --collector shed   # builds it, sends nothing
+weewx-evo-weewx-driver run   --collector shed   # delivers
 ```
 
 `check` first: it says what the driver needs and what is missing, and it does
 not touch the hardware. A serial port that does not answer is a driver hanging
 in its own process, where it cannot stop the recording.
-→ [Drivers](Drivers#running-a-weewx-driver--ingestweewxshimpy)
+→ [Drivers](Drivers#running-a-weewx-driver)
 
 ### If your driver is not in the list
 
@@ -91,8 +103,8 @@ installed, anything under `user`, and any driver file you have added. A driver
 is one Python file, and adding it is one command:
 
 ```bash
-weewx-evo weewx-driver install ./vantage.py
-weewx-evo weewx-driver install https://example.org/some-driver.py
+weewx-evo-weewx-driver install ./vantage.py
+weewx-evo-weewx-driver install https://example.org/some-driver.py
 ```
 
 A driver that needs a library says so rather than going missing — `needs
@@ -104,7 +116,7 @@ Leave the hardware on *from a weewx.conf* and give the path instead. Nothing
 is copied out of that file and nothing is written into it.
 
 ```bash
-weewx-evo weewx-driver run --conf /etc/weewx/weewx.conf
+weewx-evo-weewx-driver run --conf /etc/weewx/weewx.conf
 ```
 
 ## Two consoles in one garden

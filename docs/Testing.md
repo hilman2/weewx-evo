@@ -23,12 +23,10 @@ python tools/export_test.py                     # FTP and rsync
 python tools/web_test.py                        # routing and the directory boundary
 ```
 
-Plus the six built-in push protocols:
-
-```bash
-wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
-  cd /mnt/d/Git/weewx-evo && python -m pytest tests/push -q'
-```
+The add-ons are installed in the test image, pinned to commits, and a test
+that needs one says so and skips where it is absent. That is deliberate: a
+machine with no driver installed is a valid installation and exactly what a
+fresh one looks like.
 
 ## What a test is worth here
 
@@ -282,18 +280,18 @@ wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
   python3 tools/upload_test.py'
 ```
 
-## The driver tests
+## The add-ons' own tests
 
-135 tests under `tests/push/`, covering all six built-in push protocols.
+Each add-on tests itself, in its own repository, next to the code it
+measures. The push protocols' suite went with them -- it covers `protocols/`
+and `catalogs/`, which are byte-identical to weewx-ultimate-push, so a fix to
+a field placement is one diff in one place. The WeeWX shim took its seven
+tests and three simulated devices the same way.
 
-```bash
-python -m pytest tests/push -q
-```
-
-They belong here now and are allowed to grow: the driver is core, not a mirrored
-foreign repo.
-
-→ [Push drivers](Driver-Ecowitt#the-tests)
+What stayed is `tests/uploads/`: real bodies consoles actually sent, with the
+PASSKEY replaced. They are evidence rather than an implementation, and the
+question they answer is the core's -- `placement_test.py` runs all of them
+through a driver and then through the read side.
 
 ## The reference data
 
@@ -330,46 +328,32 @@ Venvs live under `~/venvs/<project>` **inside** WSL, not in the repo on `/mnt/d`
 (NTFS long-path bug).
 
 <!-- covers
-tools/difftest.py
-tools/roundtrip.py
-tools/derive_test.py
-tools/seriestest.py
-tools/unitcheck.py
-tools/suncheck.py
-tools/smoke.py
-tools/multisource.py
-tools/driverinstall.py
-tools/adminpage.py
-tools/netaccess_test.py
-tools/ratelimit_test.py
-tools/settings_test.py
-tools/export_test.py
-tools/web_test.py
-tests/push/fixtures/README.md
 pyproject.toml
+tests/uploads/README.md
+tools/addons_test.py
 tools/adminfields_test.py
 tools/adminhome_test.py
+tools/adminpage.py
 tools/adminsearch_test.py
-tools/alldrivers_test.py
 tools/api_test.py
 tools/archives_e2e.py
 tools/archives_test.py
 tools/cheetah_test.py
 tools/collector_test.py
-tools/weewxdrivers_test.py
-tools/restart_test.py
 tools/deck_dead_test.py
 tools/deck_live_test.py
 tools/deck_places_test.py
 tools/deck_test.py
+tools/derive_test.py
+tools/difftest.py
 tools/docsindex.py
+tools/driverinstall.py
 tools/driversim.py
 tools/ecowittsim.py
+tools/export_test.py
 tools/feeds_test.py
 tools/feedtiming_test.py
 tools/forecast_test.py
-tools/fousb_test.py
-tools/fousbsim.py
 tools/grafana_test.py
 tools/image_test.py
 tools/import_test.py
@@ -380,27 +364,34 @@ tools/maintenance_test.py
 tools/metrics_test.py
 tools/mooncheck.py
 tools/mqtt_test.py
+tools/multisource.py
+tools/netaccess_test.py
 tools/notify_test.py
 tools/planetcheck.py
 tools/quality_test.py
+tools/ratelimit_test.py
 tools/realtime_test.py
 tools/resilience_test.py
+tools/restart_test.py
 tools/roles_test.py
+tools/roundtrip.py
 tools/runtests.py
 tools/scaletest.py
 tools/schedule_test.py
-tools/sdr_test.py
-tools/sdrsim.py
+tools/seriestest.py
+tools/settings_test.py
 tools/setup_test.py
-tools/shim_test.py
-tools/standin_test.py
+tools/smoke.py
 tools/stations_test.py
 tools/stillweewx_test.py
+tools/suncheck.py
 tools/tagcheck.py
+tools/tokenless_test.py
+tools/unitcheck.py
 tools/upload_test.py
-tools/vantage_test.py
-tools/vantagesim.py
 tools/vsop87trim.py
 tools/watchdog_test.py
+tools/web_test.py
+tools/wizard_test.py
 tools/wunderground_test.py
 -->

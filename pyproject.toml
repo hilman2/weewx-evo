@@ -118,30 +118,10 @@ ignore = [
 # doing its job: the run has to reach the end to report a count.
 "tools/*" = ["S101", "S105", "S106", "S112", "S310", "S603", "S607"]
 "tests/*" = ["S101", "S105", "S106", "S112", "S310", "S603", "S607"]
-# `plugins/push` and its tests come from weewx-ultimate-push and are kept
-# byte-identical to it, because `protocols/` and `catalogs/` import nothing --
-# not WeeWX, not this program -- and a fix to a field placement belongs in both
-# repositories. Reformatting them here would mean every such fix arriving as a
-# diff nobody can read.
-#
-# This was written down once before as a debt, when the Ecowitt driver was ours
-# alone and the same findings were the same `"%s" % x`. It is a policy again
-# now, and the difference is not cosmetic: then it was work not done, now it is
-# work that must not be done.
-"src/weewx_evo/ingest/plugins/push/*" = ["UP031", "ISC004", "SIM115",
-                                         "PLW1641", "E501", "RUF012", "PLR0912",
-                                         "PLR0915", "C901", "PLR2004", "N803",
-                                         "N806", "SIM102", "SIM108", "RET504",
-                                         "PLW2901", "B007", "TRY300", "TRY400",
-                                         "S110", "BLE001", "PERF401", "RUF005",
-                                         "RUF023", "PLR0911", "PLR0913", "ARG003",
-                                         "ARG004", "I001", "S105", "FURB188"]
-"tests/push/*" = ["UP031", "ISC004", "SIM115", "B017", "E501", "PLR2004",
-                  "PT011", "PT018", "N806", "S101", "E402", "F401", "I001",
-                  "RUF100", "S105"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
+# The push protocols and their suite moved to their own repositories, and the
+# exemption went with them: they are byte-identical to weewx-ultimate-push,
+# so a fix to a field placement belongs in both -- and reformatting either
+# side would mean every such fix arriving as a diff nobody can read.
 
 [project.scripts]
 weewx-evo = "weewx_evo.cli:main"

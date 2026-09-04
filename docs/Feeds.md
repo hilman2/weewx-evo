@@ -24,7 +24,7 @@ section. One page for two destinations means running the renderer twice.
 
 ## One folder per feed
 
-Like drivers under `ingest/plugins/`:
+A feed is a named instance, and its assets live with its code:
 
 ```
 feeds/
