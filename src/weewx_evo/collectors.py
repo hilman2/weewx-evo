@@ -211,7 +211,7 @@ def describe(kind: str, name: str = "") -> str:
     """
     one = kinds().get(kind)
     if one is None:
-        return "A collector"
+        return "A driver"
     if not name:
         return one.label
     # Three lines rather than a sentence: the command is the useful half and
@@ -229,7 +229,7 @@ def start_command(kind: str, name: str = "<name>") -> str:
     if one is None:
         # No kind installed at all. Saying nothing would leave the page
         # with a blank where the command goes.
-        return "no collector add-on is installed"
+        return "no driver add-on is installed"
     return f"weewx-evo {one.command} --collector {name}"
 
 
@@ -286,13 +286,18 @@ def options(kind: str = "mqtt", settings: dict | None = None) -> list:
 
     table = kinds()
     kind = kind if kind in table else next(iter(table), "")
-    which = Group("The collector", "What this one is.", (
-        Option("kind", "What kind of collector this is",
+    # "The driver", not "The collector". The split is real and it stays in
+    # the code, but it is ours: to somebody with a weather station this is a
+    # driver, whether it listens on a socket or asks a USB console. What the
+    # reader has to know is that this one runs somewhere else, and that is
+    # what the group and the help say instead of the word.
+    which = Group("The driver", "What this one runs.", (
+        Option("kind", "What kind of driver this is",
                kind="choice", default=kind,
                choices=tuple((name, one.label) for name, one in table.items()),
-               help="Each runs in its own process and delivers over the "
-                    "loopback, so a serial port or a broker that stops "
-                    "answering cannot stop the archiver."),
+               help="It runs in its own process, where the hardware is, and "
+                    "delivers over the network -- so a serial port or a "
+                    "broker that stops answering cannot stop the archiver."),
     ))
 
     # The kind says what else it needs. A kind an add-on contributed answers
@@ -322,7 +327,7 @@ def _mqtt_options(settings: dict) -> list:
         Group("The readings", "What the topics mean.", (
             Option("source", "Record its readings under this name",
                    kind="text", default="",
-                   help="Empty means the collector's own name. This is "
+                   help="Empty means this driver's own name. This is "
                         "the identity a station is matched on, so it is "
                         "what to announce on the Stations page."),
             Option("unit_system", "Units the broker publishes in",

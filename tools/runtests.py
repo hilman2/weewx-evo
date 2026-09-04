@@ -227,6 +227,8 @@ def tests() -> list[Test]:
              "a word finds its setting, and the link lands on it"),
         Test("adminlang", ["adminlang_test.py"],
              "how much of the settings page asks for its words"),
+        Test("adminwords", ["adminwords_test.py"],
+             "the interface says driver, and never our word for the split"),
         Test("adminhome", ["adminhome_test.py"],
              "the overview says what is wrong, and only when something is"),
         Test("archives", ["archives_test.py"],

@@ -2627,7 +2627,12 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
         if kind not in collectors.kinds():
             continue
         schemas.append(option_defs.Schema(
-            name=f"collector:{name}", label=f"Collector: {name} ({kind})",
+            # "Driver", not "Collector": the label is the page's heading and
+            # its entry in every list, and the reader's word for this is
+            # driver whatever it reads. The schema's *name* keeps the split,
+            # because that is what routes the page and what `page()` asks
+            # for when it decides whether to print the start command.
+            name=f"collector:{name}", label=f"Driver: {name} ({kind})",
             # Named, so the comment this becomes in the configuration file
             # carries the command that starts this one. Somebody reading the
             # file is the reader least likely to have the page open.
@@ -5656,11 +5661,20 @@ def main(argv: list[str] | None = None) -> int:
 
     def add_mqtt_common(q):
         add_common(q)
+        # `--collector` and not `--driver`, which is the one place the
+        # interface's word cannot be used. The settings site says driver
+        # throughout, because that is what this is to somebody with a weather
+        # station -- but `weewx-evo-weewx-driver run --driver vantage` already
+        # means the driver *module*, and the same flag meaning a named entry
+        # here and a Python module there is the trap `--series` against
+        # `--archive` is written down for. The configuration key is
+        # `[collectors.<name>]` for the same reason: `[drivers]` is taken, by
+        # the settings of the drivers that run in this process.
         q.add_argument("--collector", default=None,
-                       help="a collector named in the configuration file. Its "
-                            "settings are used, and its packets arrive under "
-                            "its own name, so a station can be announced "
-                            "for it.")
+                       help="an entry named under [collectors] in the "
+                            "configuration file. Its settings are used, and "
+                            "its packets arrive under its own name, so a "
+                            "station can be announced for it.")
         # None everywhere, so a value here does not silently outrank the
         # configuration file. Same trap as anywhere else in this parser.
         q.add_argument("--broker", dest="host", default=None,

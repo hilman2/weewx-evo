@@ -38,6 +38,16 @@ log = logging.getLogger(__name__)
 
 NEWLINE = "\n"
 
+#: What a catalogue entry's `kind` is called on this page. Only one entry is
+#: in here and it is the whole of point 4: a package that hosts a WeeWX
+#: driver is filed as `collector` because it runs as its own process, and
+#: that is a fact about us. What somebody installing it gets is a driver --
+#: for hardware on a serial port instead of hardware on the wifi, which is
+#: not a difference they chose and not one they can act on. The catalogue
+#: keeps its own word so that a station and the shop agree on what a package
+#: is; the column says what it means.
+SAID = {"collector": "driver"}
+
 
 def nav(admin: Any, active: str) -> list[str]:
     """This page's entry in the System section."""
@@ -69,7 +79,7 @@ def _rows(plugins: list, installed: dict, admin: Any, suggested: bool = False
                 f'value="{html.escape(one.name)}">'
                 f'<button type="submit"{style}>{html.escape(say(verb))}'
                 f"</button></form>")
-        kind = html.escape(say(one.kind or "add-on"))
+        kind = html.escape(say(SAID.get(one.kind, one.kind) or "add-on"))
         note = ""
         if suggested:
             # Why it is being suggested, in the row. A list of add-ons with

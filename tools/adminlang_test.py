@@ -145,7 +145,13 @@ def an_installation(work: Path) -> Recorded:
         f'archive_db = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
         f'feeds_dir = "{(work / "data" / "feeds").as_posix()}"\n'
         '[station]\nname = "Kirchdorf"\n'
-        "latitude = 48.4012\nlongitude = 11.6301\naltitude = 440.0\n",
+        "latitude = 48.4012\nlongitude = 11.6301\naltitude = 440.0\n"
+        # One driver that runs elsewhere, so its page is rendered too. Without
+        # it the run walked past three of them -- the settings page generated
+        # from the schema, the note saying what to type where the hardware is,
+        # and the removal box -- and reported their strings as dead weight in
+        # de.toml, which is how a working translation gets deleted.
+        '[collectors.shed]\nkind = "mqtt"\n',
         encoding="utf-8")
     admin = Recorded(path, lambda: all_schemas(path), TOKEN,
                      limits=Limits(rate=0, failures=0))

@@ -23,8 +23,8 @@ Three ways in, and which one you get is decided by the hardware, not by you:
   WeatherFlow hub. There is no field to type an address into, so it is
   brought here by other means and adopted once it arrives.
 * **You fetch from it.** A Davis Vantage on a serial cable, a Fine Offset over
-  USB, an SDR receiver. Those run as a collector: a process of its own that
-  reads the hardware and posts to the same place a console would.
+  USB, an SDR receiver. Their driver runs as a process of its own, where the
+  hardware is, and posts to the same place a console would.
 
 ## A console that uploads
 
@@ -69,13 +69,11 @@ its serial — so there is nothing to type in.
 
 ## Hardware you have to fetch from
 
-`weewx-evo` runs any WeeWX driver as a collector, in its own process, without
-WeeWX installed.
+`weewx-evo` runs any WeeWX driver in its own process, without WeeWX installed.
 
-Add a collector on the **Collectors** page, pick your hardware from the list,
-and its own settings — serial port, model, whatever else it takes — appear on
-the page after. They are read out of the driver, so they are the ones it
-actually has.
+Add it under **System → Drivers**, pick your hardware from the list, and its
+own settings — serial port, model, whatever else it takes — appear on the page
+after. They are read out of the driver, so they are the ones it actually has.
 
 The same list from a terminal, when there is no browser to hand:
 
@@ -108,7 +106,7 @@ weewx-evo-weewx-driver install https://example.org/some-driver.py
 ```
 
 A driver that needs a library says so rather than going missing — `needs
-pyusb` beside its name. Install that where the collector runs.
+pyusb` beside its name. Install that where the driver runs.
 
 ### If you already have a weewx.conf
 

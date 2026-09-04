@@ -49,6 +49,34 @@ def _instance_rows(schemas: list[Any], empty: str, say: Any = None) -> str:
                    for schema in schemas)
 
 
+def _driver_rows(collectors: list[Any], drivers: list[Any],
+                 say: Any = None) -> str:
+    """Everything that brings readings in, as one list.
+
+    Two panels before, and the split was ours rather than the reader's: a
+    driver that listens on HTTP and one that asks a USB console every minute
+    are one thing to somebody with a weather station. What differs is where
+    the process runs, and that is worth saying on the row where it is true --
+    a driver somebody has to start on another machine is not a setting they
+    can save here.
+    """
+    say = say or str
+    if not collectors and not drivers:
+        return (f'<p class="system-empty">'
+                f'{html.escape(say("No driver settings."))}</p>')
+
+    out = []
+    for schema in collectors:
+        # Named for what it is rather than for how it is wired: "runs where
+        # the hardware is" is the whole of what a reader needs from the
+        # distinction, and it is the half that costs them something.
+        out.append(_row(f"./{schema.name}", schema.label,
+                        "Runs where the hardware is", say=say))
+    for schema in drivers:
+        out.append(_row(f"./{schema.name}", schema.label, say=say))
+    return "".join(out)
+
+
 def _addon_rows(admin: Any, say: Any = None) -> str:
     """What is installed, or the sentence a fresh installation needs.
 
@@ -106,14 +134,10 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     {_row("./quality", "Sensor checks", "Global acceptance rules", say=say)}
   </section>
   <section class="system-panel">
-    <div class="system-panel-head"><h3>{html.escape(say("Collectors"))}</h3>
+    <div class="system-panel-head"><h3>{html.escape(say("Drivers"))}</h3>
       <a class="small-action" href="./new-collector">
         {html.escape(say("Add"))}</a></div>
-    {_instance_rows(collectors, "None configured.", say)}
-  </section>
-  <section class="system-panel">
-    <h3>{html.escape(say("Drivers"))}</h3>
-    {_instance_rows(drivers, "No driver settings.", say)}
+    {_driver_rows(collectors, drivers, say)}
   </section>
   <section class="system-panel">
     <h3 class="system-central">

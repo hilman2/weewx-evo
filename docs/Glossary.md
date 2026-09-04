@@ -29,6 +29,16 @@ Replaces WeeWX's `StdArchive`. → [Archiver](Archiver)
 **Channel** — With Ecowitt: a sensor position, `ch1` through `ch8`.
 → [Push drivers](Driver-Ecowitt)
 
+**Collector** — A word the interface never uses. In the code it is a driver
+that runs as a process of its own, where the hardware is: a serial Vantage, a
+Fine Offset on USB, an SDR receiver, a broker subscription. What it costs is a
+process, and that is a real difference — but it is a difference between two
+ways of writing a driver, not between two things somebody with a weather
+station has. On the settings site all of them are **drivers**, and the pages
+say where each one runs instead. The name survives in `[collectors.<name>]` in
+the configuration file and in `--collector` on the command line, because
+`[drivers]` and `--driver` are both taken already.
+
 **Console** — The physical box that sends readings. It may be one sender, or a
 gateway for several sensors.
 

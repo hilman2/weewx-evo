@@ -424,7 +424,7 @@ class Admin:
         with self._lock:
             current = self.config()
             if config_file.get(current, f"collectors.{name}") is not None:
-                return f"There is already a collector called {name!r}."
+                return f"There is already a driver called {name!r}."
             config_file.put(current, f"collectors.{name}.kind", kind)
             if driver and kind == "weewx-driver":
                 config_file.put(current, f"collectors.{name}.driver", driver)
@@ -449,7 +449,7 @@ class Admin:
         with self._lock:
             current = self.config()
             if config_file.get(current, f"collectors.{name}") is None:
-                return f"There is no collector called {name!r}."
+                return f"There is no driver called {name!r}."
             (current.get("collectors") or {}).pop(name, None)
             try:
                 config_file.write(self.path, current, self.schemas)
@@ -1446,19 +1446,26 @@ def new_forecast_page(admin: Admin, error: str = "",
 
 def new_collector_page(admin: Admin, error: str = "",
                        form: dict | None = None) -> str:
-    """A collector: a name and what it runs.
+    """A driver that runs elsewhere: a name and what it runs.
 
     The page says what happens next, because most of it happens elsewhere.
-    Everything else on this site configures something this process runs; a
-    collector is a process somebody else has to start, possibly on another
+    Everything else on this site configures something this process runs;
+    this is a process somebody else has to start, possibly on another
     machine, and creating one here does nothing visible at all. Without the
     three steps written down, the page reads as a form that had no effect.
 
     The name is the field that matters and the page says so, because it is
-    not cosmetic here the way a feed's name is. A collector's packets arrive
-    under it, and a station is matched on the pair (driver, identity) -- so
-    the name typed here is the one to put on the Stations page, and two
-    consoles reporting the same model are told apart by nothing else.
+    not cosmetic here the way a feed's name is. Its packets arrive under it,
+    and a station is matched on the pair (driver, identity) -- so the name
+    typed here is the one to put on the Stations page, and two consoles
+    reporting the same model are told apart by nothing else.
+
+    The word "collector" is not on this page, or on any other. It is a real
+    distinction and it stays in the code, but it is ours: somebody with a
+    weather station has a driver, whether it listens on HTTP or asks a USB
+    console every minute. What differs is where the process runs, and that
+    is what the page says instead -- because that is the half that costs
+    them something.
     """
     from . import collectors as collector_defs
 
@@ -1517,10 +1524,11 @@ def new_collector_page(admin: Admin, error: str = "",
     return f'''
 <section class="group">
   <p class="lede">{html.escape(say(
-     "A collector reads hardware and sends packets to the listener. "
-     "It runs as a separate process."))}</p>
+     "A driver that runs where the hardware is and sends its readings "
+     "here. It is a process of its own, so it can be on another machine."))}
+  </p>
   <ol class="steps">
-    <li>{html.escape(say("Name the collector and choose its kind."))}</li>
+    <li>{html.escape(say("Name the driver and choose what it runs."))}</li>
     <li>{html.escape(say("Set its hardware or broker options."))}</li>
     <li>{html.escape(say("Start it where the hardware is connected."))}</li>
   </ol>
@@ -1549,10 +1557,10 @@ def new_collector_page(admin: Admin, error: str = "",
 
 
 def _collector_note(schema: Any, lang: Any = None) -> str:
-    """How to start this collector, at the top of its own page.
+    """How to start this driver, at the top of its own page.
 
     Every other page on this site configures something this process runs, so
-    saving is the end of it. A collector is a process somebody has to start
+    saving is the end of it. This one is a process somebody has to start
     somewhere else -- and its page, generated from the schema like all the
     others, said so nowhere: `Schema.help` is written into the configuration
     file as a comment and never rendered. Landing here after creating one
@@ -1572,7 +1580,7 @@ def _collector_note(schema: Any, lang: Any = None) -> str:
         link=f'<a href="./senders">{html.escape(lang.say("Senders"))}</a>')
     return f'''
 <section class="group">
-  <h3>{html.escape(lang.say("Start collector"))}</h3>
+  <h3>{html.escape(lang.say("Start it where the hardware is"))}</h3>
   <p><code>{html.escape(collector_defs.start_command(kind, name))}</code></p>
   <p class="help">{where}</p>
 </section>'''
@@ -1796,105 +1804,6 @@ def _addresses() -> list[tuple[str, str]]:
         pass
     found.append(("127.0.0.1", "on this machine only"))
     return found
-
-
-def _forecast_nav(admin: Any, active: str) -> list[str]:
-    """The forecast sources, and the way to add one when there are none.
-
-    Named children past the first, because the count said two and the link
-    reached one: the entry printed `len(forecasts)` and always went to
-    `forecasts[0]`. Two sources is the ordinary arrangement here -- one
-    service for the numbers, one for the warnings -- so the second one was
-    reachable from an Overview card and from nowhere else.
-    """
-    sources = [s for s in admin.schemas if s.kind == "forecast"]
-    here = active in ("forecast", "new-forecast") or active.startswith(
-        "forecast:")
-    current = " aria-current='page'" if here else ""
-    if not sources:
-        if admin.read_only:
-            return []
-        return [(f'<a class="add" href="./new-forecast"{current}>'
-                 "+ Add a forecast</a>")]
-    out = [(f'<a href="./{html.escape(sources[0].name)}"{current}>Forecast'
-            f'<span class="count">{len(sources)}</span></a>')]
-    if len(sources) > 1:
-        for one in sources:
-            on = " aria-current='page'" if active == one.name else ""
-            # The label is "Forecast: open-meteo"; under an entry already
-            # saying Forecast, the half after the colon is the whole name.
-            said = one.label.split(":", 1)[-1].strip() or one.name
-            out.append(f'<a class="sub" href="./{html.escape(one.name)}"'
-                       f'{on}>{html.escape(said)}</a>')
-    return out
-
-
-def _collector_nav(admin: Any, active: str) -> list[str]:
-    """The collectors, and the way to add one when there are none.
-
-    The add link is outside the "none configured" branch and not inside it.
-    That mistake has already been made once here -- "Add an upload" sat
-    inside its empty state, so the moment one existed there was no way from
-    this page to a second, which reads as the feature not existing.
-    """
-    # By name. `Schema` has no ordering, so a bare `sorted` raises the
-    # moment there are two of them -- and it is the navigation, so
-    # every page of the settings site answers 500 at once.
-    found = sorted((s for s in admin.schemas if s.kind == "collector"),
-                   key=lambda one: one.name)
-    current = (" aria-current='page'"
-               if active == "new-collector"
-               or active.startswith("collector:") else "")
-    out = []
-    for one in found:
-        here = " aria-current='page'" if one.name == active else ""
-        out.append(f'<a href="./{html.escape(one.name)}"{here}>'
-                   f'{html.escape(one.label.split(": ", 1)[-1].split(" (")[0])}'
-                   f"</a>")
-    if not admin.read_only:
-        out.append(f'<a class="add" href="./new-collector"{current}>'
-                   "+ Add a collector</a>")
-    return out
-
-
-def _driver_nav(admin: Any, active: str) -> list[str]:
-    """The drivers, with the ones nobody uses folded away.
-
-    Six protocols arrived at once and the sidebar grew six lines, on an
-    installation running one of them. A driver no station uses has no setting
-    anybody wants to read -- but it has to stay reachable, because setting one
-    up is exactly when it is needed. So: in use first, by name, and the rest
-    behind one line that says how many.
-    """
-    drivers = [s for s in admin.schemas if s.kind == "driver"]
-    if not drivers:
-        return []
-    try:
-        used = {getattr(one, "driver", "") for one in adminstations.load(admin)}
-    except Exception:
-        log.debug("could not read the stations for the driver list",
-                  exc_info=True)
-        used = {one.name for one in drivers}
-
-    def link(one: Any) -> str:
-        current = " aria-current='page'" if one.name == active else ""
-        # "Driver: ecowitt" under a heading that already says Readings in,
-        # beside a link called Consoles. The name is the whole of it.
-        shown = one.label.split(": ", 1)[-1]
-        return (f'<a href="./{html.escape(one.name)}"{current}>'
-                f"{html.escape(shown)}</a>")
-
-    out = [link(one) for one in drivers if one.name in used]
-    rest = [one for one in drivers if one.name not in used]
-    if rest:
-        # Open when one of them is the page being looked at, so following a
-        # search result does not land somewhere the navigation denies.
-        opened = " open" if any(one.name == active for one in rest) else ""
-        out.append(
-            f'<details class="more"{opened}><summary>{len(rest)} more '
-            f'{"driver" if len(rest) == 1 else "drivers"}</summary>'
-            + "".join(link(one) for one in rest) + "</details>")
-    return out
 
 
 def sub_pages(admin: Admin) -> list[str]:
@@ -2154,15 +2063,15 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         extra += _removal(schema, lang, "Already published readings remain.",
                           "Remove the upload {name}?")
 
-    # Its own, because what removal means here is different: the collector
-    # is a process this one does not run, so nothing is stopped. The route
-    # and `remove_collector` were both here already and nothing called them
-    # -- a collector could be created from the page and only ever removed by
-    # editing the file.
+    # Its own, because what removal means here is different: this is a
+    # process this one does not run, so nothing is stopped. The route and
+    # `remove_collector` were both here already and nothing called them --
+    # one could be created from the page and only ever removed by editing
+    # the file.
     if schema is not None and schema.kind == "collector" and not admin.read_only:
-        extra += _removal(schema, lang, "Removes the endpoint. The collector "
-                          "process keeps running.",
-                          "Remove the collector {name}?")
+        extra += _removal(schema, lang, "Removes the endpoint. The process "
+                          "where the hardware is keeps running.",
+                          "Remove the driver {name}?")
 
     if schema is not None and schema.kind == "export" and not admin.read_only:
         extra += _where_it_lands(admin, schema.name.split(":", 1)[-1])
@@ -2226,7 +2135,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         # export" over a form that was nothing of the sort.
         headings = {"new-feed": "Add a feed", "new-export": "Add an export",
                     "new-upload": "Add an upload",
-                    "new-collector": "Add a collector",
+                    "new-collector": "Add a driver",
                     "new-forecast": "Add a forecast",
                     "new-notify": "Add a notification channel",
                     "new-station": "Add a sender", "new-sender": "Add a sender",

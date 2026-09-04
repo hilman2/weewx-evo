@@ -40,15 +40,19 @@ class EnvelopeDriver(BaseDriver):
         """
         return Setup(
             label="weewx-evo envelope",
-            hardware=("A collector you run yourself, or any WeeWX driver "
-                      "through `weewx-evo weewx-driver run`."),
+            hardware=("A driver you run yourself, wherever the hardware is. "
+                      "Anything that can post JSON, in any language."),
             fields=(("Address", "%(base)s%(path)s"),
                     ("source", "%(identity)s")),
+            # The second note named `weewx-evo weewx-driver run`, which was a
+            # subcommand of this program until the WeeWX shim became a
+            # package of its own. A command in a note is copied and typed, so
+            # one that no longer exists reads as a broken installation.
             notes=(("Post the envelope to that address, one object or a list "
                     "of them, with `source` set to the identity."),
-                   ("`weewx-evo weewx-driver run --conf /etc/weewx/weewx.conf`"
-                    " does it for a WeeWX driver, and `weewx-evo collector "
-                    "run --collector <name>` for one configured here.")),
+                   ("A driver configured here is started with the command "
+                    "its own page prints, on the machine the hardware is "
+                    "on.")),
             # The token is in the path, like every other protocol whose
             # address is ours to choose. Not a password: S106 reads the
             # keyword name, and what this says is which kind of secret the
