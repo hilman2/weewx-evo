@@ -148,6 +148,19 @@ Both may declare:
 The last one is the difference from the current arrangement, where a driver
 in the tree could reach anything and simply chose not to.
 
+## One thing to fix on the way
+
+`plugins.load()` registers the bundled six with `replace=True`, and it runs
+*after* the entry points. So an installed add-on is loaded, registered, and
+then overwritten by the copy in the tree: today, `pip install
+weewx-evo-ecowitt` gets you the bundled Ecowitt.
+
+It resolves itself when the tree is emptied, which is why it is a note and
+not a fix. It is worth knowing because it makes a test lie: a run that
+installs an add-on and then asks the registry for it gets an answer, and the
+answer is the wrong object. `type(driver).protocol_class.__module__` is what
+tells the two apart.
+
 ## The catalogue
 
 A single file in the organisation, fetched to show the list. It has to
