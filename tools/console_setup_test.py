@@ -258,6 +258,57 @@ def the_form_offers_them(where: Path) -> None:
     check("pointed at this machine", "weather.lan" in page, True)
 
 
+def one_protocol_is_explained_once(where: Path) -> None:
+    """Reported from the beta, with a screenshot: the same line three times.
+
+    Every driver configured to run elsewhere claims a name of its own at the
+    listener and answers with the envelope's setup, so two of them plus the
+    envelope itself put "weewx-evo envelope: A driver you run yourself ..."
+    on the page three times, word for word.
+
+    The endpoint stays the choice -- a sender is matched on the pair (driver,
+    identity), so picking `json` for readings arriving at `/shed/` matches
+    nothing. What must not repeat is the explanation, and the menu entries
+    have to be told apart.
+    """
+    print("\ntwo endpoints of one driver")
+    from weewx_evo.ingest import drivers as driver_defs
+    from weewx_evo.ingest.envelope import EnvelopeDriver
+
+    registry = driver_defs.DEFAULT
+    was = dict(getattr(registry, "_drivers", {}) or {})
+    # Registered exactly as `collectors.register_names` does it: the same
+    # class under a name of its own. Faking a second *class* would prove
+    # something about a fake.
+    for name in ("shed", "roof"):
+        registry.register(name, EnvelopeDriver())
+    try:
+        page = adminstations.new(FakeAdmin(where))
+    finally:
+        drivers = getattr(registry, "_drivers", None)
+        if isinstance(drivers, dict):
+            drivers.clear()
+            drivers.update(was)
+
+    label = EnvelopeDriver.setup().label
+    hardware = EnvelopeDriver.setup().hardware
+    check("the explanation appears once", page.count(hardware), 1)
+    check("each endpoint is still choosable",
+          [one for one in ('value="json"', 'value="shed"', 'value="roof"')
+           if one not in page], [])
+    # And named, or the menu is three entries reading the same.
+    check("and named by its endpoint",
+          f"{label} (shed)" in page and f"{label} (roof)" in page, True)
+
+    # A driver that is the only one with its label keeps the bare label:
+    # "Ecowitt (ecowitt)" would be noise on every ordinary installation.
+    plain = [one for one in adminstations.tellable().values()
+             if one.label != label]
+    if plain:
+        check("a driver that stands alone is not renamed",
+              f"{plain[0].label} (" in page, False)
+
+
 def a_broadcast_finds_its_driver(where: Path) -> None:
     """A WeatherFlow datagram reaches the WeatherFlow driver.
 
@@ -320,6 +371,7 @@ def main() -> int:
         a_stranger_is_offered()
         what_to_type_in(where)
         the_form_offers_them(where)
+        one_protocol_is_explained_once(where)
         a_broadcast_finds_its_driver(where)
     finally:
         shutil.rmtree(where, ignore_errors=True)

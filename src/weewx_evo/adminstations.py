@@ -662,28 +662,65 @@ def new(admin: Any, error: str = "", form: dict | None = None,
     offered = tellable()
     chosen = form.get("driver") or ("wunderground" if "wunderground" in offered
                                     else next(iter(offered), ""))
+    # Two endpoints can be the same driver. Every driver configured to run
+    # elsewhere claims a name of its own at the listener and answers with the
+    # envelope's setup, so a station with two of them offered "weewx-evo
+    # envelope" three times -- one menu entry per endpoint, all reading the
+    # same, and the reader has to guess which is which.
+    #
+    # The endpoint stays the choice, because that is what it is: a sender is
+    # matched on the pair (driver, identity), so picking `json` for readings
+    # that arrive at `/shed/` matches nothing. What changes is that the name
+    # is shown where the label alone does not tell them apart.
+    seen_label: dict[str, int] = {}
+    for one in offered.values():
+        said = say(one.label)
+        seen_label[said] = seen_label.get(said, 0) + 1
+
+    def shown(name: str, one: Any) -> str:
+        said = say(one.label)
+        return f"{said} ({name})" if seen_label.get(said, 0) > 1 else said
+
     options = NEWLINE.join(
         f'<option value="{html.escape(kind)}"'
         f'{" selected" if chosen == kind else ""}>'
-        f"{html.escape(say(one.label))}</option>"
+        f"{html.escape(shown(kind, one))}</option>"
         for kind, one in offered.items())
+    # And the explanation is per protocol, not per endpoint. Three endpoints
+    # of one driver have one sentence between them, and printing it three
+    # times says nothing the first one did not.
+    once: dict[str, Any] = {}
+    for one in offered.values():
+        # setdefault and not a comprehension: `{k: v for ...}` keeps the
+        # *last* of a repeated key, so the obvious one-liner would have to be
+        # reversed to keep the first -- and then the list itself comes out
+        # backwards, which is the sort of fix that trades one fault for one
+        # nobody is looking for.
+        once.setdefault(say(one.label), one)
     explained = "".join(
-        f"<li><strong>{html.escape(say(one.label))}</strong>: "
+        f"<li><strong>{html.escape(said)}</strong>: "
         f"{html.escape(say(one.hardware))}</li>"
-        for one in offered.values())
+        for said, one in once.items())
     # Named rather than described in general terms. "Hardware that cannot be
     # told where to upload" leaves somebody holding an AcuRite bridge to work
     # out which sentence is about them; the protocols say what they are, and
     # each of them carries the steps for pointing DNS at us.
     host, port, _guessed = _where_consoles_reach_us(admin)
     token = admin.config().get("token") or ""
+    # Per protocol here too, and for a second reason: the steps inside each
+    # one name the endpoint, so two entries of the same driver would be the
+    # same instructions with one word different, under the same heading.
+    adopt_once: dict[str, tuple[str, Any]] = {}
+    for name, one in setups().items():
+        if not one.tellable:
+            adopt_once.setdefault(say(one.label), (name, one))
     adopting = "".join(
-        f'<details class="kind"><summary>{html.escape(say(one.label))}: '
+        f'<details class="kind"><summary>{html.escape(said)}: '
         f'{html.escape(say(one.hardware))}</summary><ol class="steps">'
         + "".join(_step(fill(say(note), host, port, token, name))
                   for note in one.notes)
         + "</ol></details>"
-        for name, one in setups().items() if not one.tellable)
+        for said, (name, one) in adopt_once.items())
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     other = ""
     if adopting:
