@@ -21,6 +21,7 @@ from urllib.parse import quote
 
 from . import archives as archive_defs
 from . import config as config_file
+from . import language as language_defs
 
 log = logging.getLogger(__name__)
 
@@ -62,17 +63,18 @@ CHAIN_SAID = ("Senders write live readings. Places select and archive them. "
 
 def chain(admin: Any, step: str) -> str:
     """The stable data path, with the current step marked."""
+    say = admin.say
     out = []
     for name, said, href in CHAIN:
         if name == "archives":
             href = "./places"
+        word = html.escape(say(said))
         if name == step:
-            out.append(f'<span class="on" aria-current="step">'
-                       f"{html.escape(said)}</span>")
+            out.append(f'<span class="on" aria-current="step">{word}</span>')
         else:
-            out.append(f'<a href="{href}">{html.escape(said)}</a>')
-    return ('<nav class="chain" aria-label="Where this sits">'
-            + "".join(out) + "</nav>")
+            out.append(f'<a href="{href}">{word}</a>')
+    where = html.escape(say("Where this sits"))
+    return f'<nav class="chain" aria-label="{where}">' + "".join(out) + "</nav>"
 
 
 def path_for(admin: Any) -> Path:
@@ -386,7 +388,7 @@ def _with(archive: archive_defs.Archive, **changes: Any) -> archive_defs.Archive
 
 def title_for(admin: Any) -> str:
     """One name at every installation size."""
-    return "Places"
+    return admin.say("Places")
 
 
 def nav(admin: Any, active: str, opened: str = "") -> list[str]:
@@ -396,10 +398,11 @@ def nav(admin: Any, active: str, opened: str = "") -> list[str]:
     trouble = register.concerns()
     mark = ""
     if trouble:
+        said = html.escape(admin.say("need looking at"))
         mark = (f'<span class="alarm">{len(trouble)}'
-                '<span class="sr"> need looking at</span></span>')
-    return [(f'<a href="./places"{current}>Places{mark}'
-             f'<span class="count">{len(register)}</span></a>')]
+                f'<span class="sr"> {said}</span></span>')
+    return [(f'<a href="./places"{current}>{html.escape(admin.say("Places"))}'
+             f'{mark}<span class="count">{len(register)}</span></a>')]
 
 
 
@@ -435,7 +438,8 @@ def _swatch(colour: str, said: str) -> str:
 
 
 def _field(prefix: str, name: str, label: str, value: Any = "",
-           hint: str = "", kind: str = "text", extra: str = "") -> str:
+           hint: str = "", kind: str = "text", extra: str = "",
+           say: Any = None) -> str:
     """One box of the archive form.
 
     `prefix` is in the id and nowhere else. N rows on one page means N of
@@ -443,8 +447,11 @@ def _field(prefix: str, name: str, label: str, value: Any = "",
     place's box -- which on a page where every row has a field called
     "Latitude" is a mistake nobody would notice they were making.
     """
+    say = say or str
     shown = "" if value is None else html.escape(str(value))
+    hint = html.escape(say(hint)) if hint else ""
     note = f'<span class="hint">{hint}</span>' if hint else ""
+    label = html.escape(say(label))
     return f'''
   <label for="a-{prefix}-{name}">{label}
     <input id="a-{prefix}-{name}" name="{name}" type="{kind}"
@@ -463,6 +470,7 @@ def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
     sender to primary, and the archiver then accumulated all of them into the
     same columns -- which for rain is a sum.
     """
+    say = admin.say
     choices = sender_choices(admin, archive)
     primary = archive.primary_sender(choices)
     # A radio with one option is a question with one answer. The single
@@ -478,15 +486,18 @@ def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
         is_primary = sender == primary
         checked = archive.selects(sender)
         detail = one.driver + (f" · {one.identity}" if one.identity else "")
+        role = html.escape(say("Primary readings"))
         if alone and is_primary:
-            role_field = ('<p class="place-member-role">Primary readings'
-                          '<span class="hint">The only sender here, so this '
-                          'place takes its series from it.</span></p>')
+            only = html.escape(say(
+                "The only sender here, so this place takes its series "
+                "from it."))
+            role_field = (f'<p class="place-member-role">{role}'
+                          f'<span class="hint">{only}</span></p>')
         else:
             role_field = f'''<label class="tick place-member-role">
           <input name="member-primary" type="radio" value="{safe}"
                  data-place-member-primary{" checked" if is_primary else ""}>
-          Primary readings</label>'''
+          {role}</label>'''
         rows.append(f'''
     <article class="place-member{' is-selected' if checked else ''}"
              data-place-member>
@@ -499,30 +510,34 @@ def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
       </label>
       <fieldset class="place-member-policy" data-place-member-policy
                 {"" if checked else "disabled hidden"}>
-        <legend class="sr">Settings for {html.escape(one.label)}</legend>
+        <legend class="sr">{html.escape(admin.language.fill(
+          "Settings for {sender}", sender=one.label))}</legend>
         <input type="hidden" name="member-policy:{safe}" value="1">
         {role_field}
         <label class="tick"><input name="member-indoor:{safe}"
                    type="checkbox" value="1"
-                   {"checked" if policy.indoor else ""}> Indoor readings</label>
+                   {"checked" if policy.indoor else ""}>
+          {html.escape(say("Indoor readings"))}</label>
         <p class="place-member-extra-note" data-place-member-extra-note
-           {"hidden" if is_primary else ""}>Writes only what it has been given
-           a column under Fields. Nothing is guessed for it: a second sender
-           may be a full weather station, a soil probe or one thermometer, and
-           the protocol does not say which.</p>
+           {"hidden" if is_primary else ""}>{html.escape(say(
+           "Writes only what it has been given a column under Fields. "
+           "Nothing is guessed for it: a second sender may be a full weather "
+           "station, a soil probe or one thermometer, and the protocol does "
+           "not say which."))}</p>
       </fieldset>
     </article>''')
     body = (NEWLINE.join(rows) if rows else
-            '<p class="note">No senders received yet.</p>')
+            f'<p class="note">{html.escape(say("No senders received yet."))}'
+            "</p>")
     return f'''
   <input type="hidden" name="_members" value="1">
   <section class="place-section place-members"
            id="place-members-{html.escape(archive.name)}">
-    <header><h4>Senders</h4></header>
+    <header><h4>{html.escape(say("Senders"))}</h4></header>
     <label class="place-broad tick">
       <input name="all-senders" type="checkbox" value="1"
              {"checked" if archive.senders is None else ""}>
-      Include new senders automatically
+      {html.escape(say("Include new senders automatically"))}
     </label>
     <div class="place-member-list">{body}</div>
   </section>
@@ -575,7 +590,8 @@ def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
   </script>'''
 
 
-def _colour_field(prefix: str, chosen: str, would_be: str) -> str:
+def _colour_field(prefix: str, chosen: str, would_be: str,
+                  say: Any = None) -> str:
     """The palette, as a row of ticks, plus whatever the file already holds.
 
     The checked palette and not a free hex box. A free box is how somebody
@@ -595,11 +611,12 @@ def _colour_field(prefix: str, chosen: str, would_be: str) -> str:
     quietly change a hand-picked colour the first time anybody saved anything
     else in the row.
     """
+    say = say or str
     out = ['<div class="palette">']
-    entries = [("", would_be, "picked for it")]
+    entries = [("", would_be, say("picked for it"))]
     entries += [(one, one, one) for one in archive_defs.PLACE_COLORS]
     if chosen and chosen not in archive_defs.PLACE_COLORS:
-        entries.append((chosen, chosen, "as written in the file"))
+        entries.append((chosen, chosen, say("as written in the file")))
     for value, shown, said in entries:
         ticked = " checked" if chosen == value else ""
         out.append(
@@ -614,11 +631,12 @@ def _colour_field(prefix: str, chosen: str, would_be: str) -> str:
     # hand-picked colour with no submit and nothing said. Nested labels are
     # not legal either, and that is what let the shape grow.
     return (f'<fieldset class="colourfield" id="a-{prefix}-color">'
-            "<legend>Colour</legend>" + "".join(out) + "</fieldset>")
+            f'<legend>{html.escape(say("Colour"))}</legend>'
+            + "".join(out) + "</fieldset>")
 
 
 def _form_fields(prefix: str, values: dict[str, Any], would_be: str,
-                 members: str = "") -> str:
+                 members: str = "", say: Any = None) -> str:
     """Every field an archive has, in one place.
 
     One renderer for the add form and for each row's edit form, because the
@@ -629,32 +647,34 @@ def _form_fields(prefix: str, values: dict[str, Any], would_be: str,
     """
     return f'''
   {_field(prefix, "label", "What to call it", values.get("label", ""),
-          "Printed on every page built from this series.")}
+          "Printed on every page built from this series.", say=say)}
   {members}
   {_field(prefix, "code", "Short code", values.get("code", ""),
           "Up to four letters or digits, for a chip beside a value and a "
           "legend where the label will not fit. Left empty, one is made "
-          "from the label.", extra=' size="6" maxlength="4"')}
-  {_colour_field(prefix, str(values.get("color") or ""), would_be)}
+          "from the label.", extra=' size="6" maxlength="4"', say=say)}
+  {_colour_field(prefix, str(values.get("color") or ""), would_be, say)}
   {_field(prefix, "file", "File", values.get("file", ""),
           "A relative name counts against the configuration file, not "
-          "against the directory the service happened to start in.")}
+          "against the directory the service happened to start in.", say=say)}
   {_field(prefix, "latitude", "Latitude", values.get("latitude", ""),
-          "Decimal degrees. A comma is fine.")}
-  {_field(prefix, "longitude", "Longitude", values.get("longitude", ""))}
+          "Decimal degrees. A comma is fine.", say=say)}
+  {_field(prefix, "longitude", "Longitude", values.get("longitude", ""),
+          say=say)}
   {_field(prefix, "altitude", "Altitude", values.get("altitude", ""),
-          "Metres above sea level. The pressure reduction depends on it.")}
+          "Metres above sea level. The pressure reduction depends on it.",
+          say=say)}
   {_field(prefix, "url", "Address its pages are served at",
           values.get("url", ""),
-          "Printed by a skin that links to itself. Empty is fine.")}
+          "Printed by a skin that links to itself. Empty is fine.", say=say)}
   {_field(prefix, "rain_year_start", "Rain year starts in month",
           values.get("rain_year_start", "") or 1,
           "1 is January. Some regions count rain from October.",
-          kind="number", extra=' min="1" max="12"')}
+          kind="number", extra=' min="1" max="12"', say=say)}
   {_field(prefix, "order", "Where it comes in a list",
           values.get("order", "") or 0,
           "Lowest first; places that agree keep the file's order.",
-          kind="number")}'''
+          kind="number", say=say)}'''
 
 
 def _values_of(one: archive_defs.Archive) -> dict[str, Any]:
@@ -665,7 +685,7 @@ def _values_of(one: archive_defs.Archive) -> dict[str, Any]:
     return values
 
 
-def _file_note(row: Any) -> str:
+def _file_note(row: Any, lang: Any = None) -> str:
     """What the file column says under the path. Facts, not judgements.
 
     `row` cannot be None while the rows and the state come from the same
@@ -674,17 +694,20 @@ def _file_note(row: Any) -> str:
     this whole page answering 500, on the page somebody opens to find out
     what is wrong.
     """
+    lang = lang if lang is not None else language_defs.get("en")
     if row is None:
         return ""
     if not row.exists:
-        return "not written yet"
+        return lang.say("not written yet")
     if row.unreachable:
         # SQLite files are input, not markup. In particular, a malformed
         # ``usUnits`` value can appear verbatim in the ValueError kept here.
-        return f"cannot be read: {html.escape(str(row.unreachable))}"
+        return lang.fill("cannot be read: {why}",
+                         why=html.escape(str(row.unreachable)))
     if not row.count:
-        return "no records yet"
-    bits = [f"{row.size:.1f} MB", f"{row.count:,} records"]
+        return lang.say("no records yet")
+    bits = [f"{row.size:.1f} MB",
+            lang.fill("{n} records", n=f"{row.count:,}")]
     if row.system:
         # A fact, not a problem -- and the fact behind the failure that has
         # already shipped once: 68.2 printed on a page that said Celsius,
@@ -705,12 +728,13 @@ def _feeds_adrift(admin: Any, known: set[str]) -> list[str]:
             continue
         wanted = str(settings.get("archive") or "").strip()
         if wanted and wanted not in known:
-            out.append(f"The feed {name} reads {wanted}, which is not one of "
-                       "these. It will not run.")
+            out.append(admin.language.fill(
+                "The feed {feed} reads {place}, which is not one of these. "
+                "It will not run.", feed=name, place=wanted))
     return out
 
 
-def _sun_check(one: archive_defs.Archive) -> str:
+def _sun_check(one: archive_defs.Archive, lang: Any = None) -> str:
     """Today's sunrise and sunset, from the numbers in the boxes above.
 
     The one check a person can actually run on a latitude. Nobody knows
@@ -718,6 +742,7 @@ def _sun_check(one: archive_defs.Archive) -> str:
     a quarter past six -- so a transposed pair or a dropped minus sign shows
     up here and nowhere else on the page.
     """
+    lang = lang if lang is not None else language_defs.get("en")
     if one.latitude is None or one.longitude is None:
         return ""
     try:
@@ -734,27 +759,30 @@ def _sun_check(one: archive_defs.Archive) -> str:
         if rise is None or sets is None:
             # Inside the arctic circle in the right week there is no sunrise
             # to print, and that is an answer rather than a failure.
-            return "No sunrise or sunset today"
-        return ("Sunrise "
-                + clock.strftime("%H:%M", clock.localtime(rise))
-                + " · sunset " + clock.strftime("%H:%M", clock.localtime(sets)))
+            return lang.say("No sunrise or sunset today")
+        return lang.fill(
+            "Sunrise {rise} · sunset {set}",
+            rise=clock.strftime("%H:%M", clock.localtime(rise)),
+            set=clock.strftime("%H:%M", clock.localtime(sets)))
     except Exception:
         log.debug("could not work out sunrise for the place", exc_info=True)
         return ""
 
 
-def _map_link(one: archive_defs.Archive) -> str:
+def _map_link(one: archive_defs.Archive, say: Any = None) -> str:
     """Somewhere to look, because a pair of decimals is not checkable."""
+    say = say or str
     if one.latitude is None or one.longitude is None:
         return ""
     at = f"{one.latitude:.4f}/{one.longitude:.4f}"
     return (f'<a href="https://www.openstreetmap.org/?mlat={one.latitude:.4f}'
             f'&amp;mlon={one.longitude:.4f}#map=13/{at}" '
-            'rel="noreferrer">Open map</a>')
+            f'rel="noreferrer">{html.escape(say("Open map"))}</a>')
 
 
 def _what_reads_it(admin: Any, archive: archive_defs.Archive) -> str:
     """Explicitly configured consumers of one place."""
+    say = admin.say
     rows: list[tuple[str, str]] = []
     try:
         config = admin.config()
@@ -777,14 +805,17 @@ def _what_reads_it(admin: Any, archive: archive_defs.Archive) -> str:
     except Exception:
         log.debug("could not list what reads the place", exc_info=True)
 
-    manage = '<p><a href="./publishing">Open publishing</a></p>'
+    manage = (f'<p><a href="./publishing">'
+              f'{html.escape(say("Open publishing"))}</a></p>')
     if not rows:
-        return '<p class="note">No explicit outputs.</p>' + manage
-    body = "".join(f"<dt>{name}</dt><dd>{said}</dd>" for name, said in rows)
+        return (f'<p class="note">{html.escape(say("No explicit outputs."))}'
+                "</p>" + manage)
+    body = "".join(f"<dt>{html.escape(say(name))}</dt><dd>{said}</dd>"
+                   for name, said in rows)
     return f'<dl class="facts">{body}</dl>{manage}'
 
 
-def _colour_clash(register: archive_defs.Register) -> str:
+def _colour_clash(register: archive_defs.Register, lang: Any = None) -> str:
     """Which two places are drawn the same, said once, with the fix as a link.
 
     Per row it was two warnings that are one warning, each written from the
@@ -793,6 +824,7 @@ def _colour_clash(register: archive_defs.Register) -> str:
     them may be published on pages nobody ever sees together, and refusing
     would be this page deciding that on their behalf.
     """
+    lang = lang if lang is not None else language_defs.get("en")
     shared: dict[str, list[Any]] = {}
     for one in register.presented():
         shared.setdefault(one.color.lower(), []).append(one)
@@ -802,35 +834,39 @@ def _colour_clash(register: archive_defs.Register) -> str:
             continue
         names = ", ".join(html.escape(one.title) for one in group)
         last = group[-1]
-        out.append(
-            f'<p class="warn">{names} use the same colour. '
-            f'<a href="./places?open={html.escape(last.name)}'
-            f'#place-detail-{html.escape(last.name)}">Change '
-            f'{html.escape(last.title)}</a>.</p>')
+        where = (f"./places?open={html.escape(last.name)}"
+                 f"#place-detail-{html.escape(last.name)}")
+        change = lang.fill("Change {place}", place=html.escape(last.title))
+        said = lang.fill("{places} use the same colour.", places=names)
+        out.append(f'<p class="warn">{said} '
+                   f'<a href="{where}">{change}</a>.</p>')
     return "".join(out)
 
 
 def _field_mappings(admin: Any, archive: archive_defs.Archive) -> str:
     """Mapping editors for every sender selected by this Place."""
+    say = admin.say
     try:
         from . import adminfields, adminstations, placement
 
         plans = placement.load(placement.path_for(Path(admin.path).parent))
     except Exception:
         log.debug("could not list field mappings", exc_info=True)
-        return '<p class="note">Field mappings unavailable.</p>'
+        return (f'<p class="note">'
+                f'{html.escape(say("Field mappings unavailable."))}</p>')
 
     selected = [one for one in sender_choices(admin, archive)
                 if archive.selects(one.sender)]
     if not selected:
-        return '<p class="note">Select a sender first.</p>'
+        return (f'<p class="note">'
+                f'{html.escape(say("Select a sender first."))}</p>')
 
     out = []
     for sender in selected:
         encoded = quote(sender.sender, safe="")
         anchor = quote(f"sender-{sender.sender}", safe="")
         diagnostic = (f'<a href="./senders?open={encoded}#{anchor}">'
-                      "View sender data</a>")
+                      f'{html.escape(say("View sender data"))}</a>')
         rendered = []
         seen: set[str] = set()
         found = adminstations.what_it_sends(admin, sender)
@@ -861,12 +897,13 @@ def _field_mappings(admin: Any, archive: archive_defs.Archive) -> str:
                 dict.fromkeys(sorted(raw_names)), {}, dialect, {}))
 
         if not rendered:
-            status = ("Mapping metadata unavailable."
-                      if found and not found.get("mapping")
-                      else "No readings yet.")
+            status = say("Mapping metadata unavailable."
+                         if found and not found.get("mapping")
+                         else "No readings yet.")
             rendered.append(
                 f'<div class="place-member"><strong>{html.escape(sender.label)}'
-                f'</strong><p class="note">{status}</p>{diagnostic}</div>')
+                f'</strong><p class="note">{html.escape(status)}</p>'
+                f"{diagnostic}</div>")
         else:
             rendered.append(f'<p class="place-field-link">{diagnostic}</p>')
         out.extend(rendered)
@@ -877,6 +914,8 @@ def _place_detail(admin: Any, register: archive_defs.Register,
                   archive: archive_defs.Archive, state: Any,
                   error: str, form: dict[str, Any]) -> str:
     """The one stable detail editor used for every place count."""
+    say = admin.say
+    lang = admin.language
     values = _values_of(archive)
     if str(form.get("_open") or "") == archive.name:
         values.update({key: value for key, value in form.items()
@@ -884,22 +923,24 @@ def _place_detail(admin: Any, register: archive_defs.Register,
     shown = next((one for one in register.presented()
                   if one.name == archive.name), archive)
     position = " &middot; ".join(
-        part for part in (_map_link(archive), _sun_check(archive)) if part)
-    file_note = _file_note(state)
+        part for part in (_map_link(archive, say), _sun_check(archive, lang))
+        if part)
+    file_note = _file_note(state, lang)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
 
     save = ""
     remove = ""
     if not admin.read_only:
-        save = '''
+        save = f'''
       <div class="place-save actions">
-        <button type="submit">Save changes</button>
+        <button type="submit">{html.escape(say("Save changes"))}</button>
       </div>'''
         if archive.name != archive_defs.DEFAULT:
             remove = f'''
       <form method="post" action="./places/{html.escape(archive.name)}/remove"
             class="place-remove">
-        <button class="quiet" type="submit">Remove place</button>
+        <button class="quiet" type="submit">
+          {html.escape(say("Remove place"))}</button>
       </form>'''
 
     where = f'<p class="check">{position}</p>' if position else ""
@@ -913,53 +954,59 @@ def _place_detail(admin: Any, register: archive_defs.Register,
         <code>{html.escape(archive.name)}</code>
       </div>
     </header>
-    <nav class="place-tabs" aria-label="Place settings">
-      <a class="place-tab" href="#place-general-{html.escape(archive.name)}">General</a>
-      <a class="place-tab" href="#place-members-{html.escape(archive.name)}">Senders</a>
-      <a class="place-tab" href="#place-fields-{html.escape(archive.name)}">Fields</a>
-      <a class="place-tab" href="#place-outputs-{html.escape(archive.name)}">Outputs</a>
+    <nav class="place-tabs" aria-label="{html.escape(say("Place settings"))}">
+      <a class="place-tab" href="#place-general-{html.escape(archive.name)}"
+         >{html.escape(say("General"))}</a>
+      <a class="place-tab" href="#place-members-{html.escape(archive.name)}"
+         >{html.escape(say("Senders"))}</a>
+      <a class="place-tab" href="#place-fields-{html.escape(archive.name)}"
+         >{html.escape(say("Fields"))}</a>
+      <a class="place-tab" href="#place-outputs-{html.escape(archive.name)}"
+         >{html.escape(say("Outputs"))}</a>
     </nav>
     {problem}
     <form method="post" action="./places/{html.escape(archive.name)}/set"
           class="props place-form">
       <section class="place-section" id="place-general-{html.escape(archive.name)}">
-        <header><h4>General</h4></header>
-        {_field(archive.name, "label", "Name", values.get("label", ""))}
+        <header><h4>{html.escape(say("General"))}</h4></header>
+        {_field(archive.name, "label", "Name", values.get("label", ""),
+                say=say)}
         <div class="place-coordinates">
           {_field(archive.name, "latitude", "Latitude",
-                  values.get("latitude", ""))}
+                  values.get("latitude", ""), say=say)}
           {_field(archive.name, "longitude", "Longitude",
-                  values.get("longitude", ""))}
+                  values.get("longitude", ""), say=say)}
           {_field(archive.name, "altitude", "Altitude in metres",
-                  values.get("altitude", ""))}
+                  values.get("altitude", ""), say=say)}
         </div>
         {where}
         {_field(archive.name, "rain_year_start", "Rain year starts in month",
                 values.get("rain_year_start", "") or 1,
-                kind="number", extra=' min="1" max="12"')}
+                kind="number", extra=' min="1" max="12"', say=say)}
         <details class="more">
-          <summary>Advanced</summary>
+          <summary>{html.escape(say("Advanced"))}</summary>
           {_field(archive.name, "code", "Short code", values.get("code", ""),
-                  extra=' size="6" maxlength="4"')}
+                  extra=' size="6" maxlength="4"', say=say)}
           {_colour_field(archive.name, str(values.get("color") or ""),
-                         shown.color)}
-          {_field(archive.name, "file", "Archive file", values.get("file", ""))}
+                         shown.color, say)}
+          {_field(archive.name, "file", "Archive file", values.get("file", ""),
+                  say=say)}
           {kept}
           {_field(archive.name, "url", "Published address",
-                  values.get("url", ""))}
+                  values.get("url", ""), say=say)}
           {_field(archive.name, "order", "List position",
-                  values.get("order", "") or 0, kind="number")}
+                  values.get("order", "") or 0, kind="number", say=say)}
         </details>
       </section>
       {_member_fields(admin, archive)}
       {save}
     </form>
       <section class="place-section" id="place-fields-{html.escape(archive.name)}">
-        <header><h4>Field mappings</h4></header>
+        <header><h4>{html.escape(say("Field mappings"))}</h4></header>
         {_field_mappings(admin, archive)}
       </section>
       <section class="place-section" id="place-outputs-{html.escape(archive.name)}">
-        <header><h4>Outputs</h4></header>
+        <header><h4>{html.escape(say("Outputs"))}</h4></header>
         {_what_reads_it(admin, archive)}
       </section>
     {remove}
@@ -993,14 +1040,20 @@ def _interval_note(admin: Any) -> str:
         # An unreadable value is the settings page's own problem to show. A
         # note about it must not take the Places page down with it.
         return ""
-    shown = (f"{seconds // 60} min" if seconds % 60 == 0
-             else f"{seconds} seconds")
+    lang = admin.language
+    shown = (lang.fill("{n} min", n=seconds // 60) if seconds % 60 == 0
+             else lang.fill("{n} seconds", n=seconds))
     # `f-interval`, not `interval`: the form builder prefixes every control's
     # id. Named without it the link still opens the page and simply does not
     # jump, which is the sort of thing nobody reports.
-    return ('<p class="note">One archive record covers '
-            f'<strong>{html.escape(shown)}</strong>, for every place. '
-            '<a href="./core#f-interval">Change it</a>.</p>')
+    # The value goes in as plain text and the link comes after the full stop.
+    # A tag in the middle of a sentence splits it into runs, and a run
+    # between two of them is one no translator was ever offered.
+    said = html.escape(lang.fill(
+        "One archive record covers {span}, for every place.", span=shown))
+    change = html.escape(lang.say("Change it"))
+    return (f'<p class="note">{said} '
+            f'<a href="./core#f-interval">{change}</a>.</p>')
 
 
 def overview(admin: Any, message: str = "", error: str = "",
@@ -1021,20 +1074,25 @@ def overview(admin: Any, message: str = "", error: str = "",
     except Exception:
         log.debug("could not read place state", exc_info=True)
 
+    say = admin.say
+    lang = admin.language
     shown = {one.name: one for one in register.presented()}
     concerns = register.concerns()
     choices = []
     for one in ordered:
         display = shown.get(one.name, one)
-        senders = ("All senders" if one.senders is None else
-                   f"{len(one.senders)} sender"
-                   + ("" if len(one.senders) == 1 else "s"))
+        # Two keys, not a stem and an "s": a language that does not build a
+        # plural that way has nowhere to put its own.
+        senders = (say("All senders") if one.senders is None else
+                   lang.fill("{n} sender", n=1) if len(one.senders) == 1 else
+                   lang.fill("{n} senders", n=len(one.senders)))
         warning = ""
         if one.senders == ():
-            warning = '<span class="warn">No sender</span>'
+            warning = f'<span class="warn">{html.escape(say("No sender"))}</span>'
         elif concerns.get(one.name):
-            warning = '<span class="warn">Needs attention</span>'
-        file_state = _file_note(state.get(one.name))
+            warning = (f'<span class="warn">'
+                       f'{html.escape(say("Needs attention"))}</span>')
+        file_state = _file_note(state.get(one.name), lang)
         active = one.name == selected.name
         choices.append(f'''
       <a class="place-choice{' is-active' if active else ''}"
@@ -1048,18 +1106,20 @@ def overview(admin: Any, message: str = "", error: str = "",
 
     add = ""
     if not admin.read_only:
-        add = '<a class="button" href="./new-place">Add place</a>'
+        add = (f'<a class="button" href="./new-place">'
+               f'{html.escape(say("Add place"))}</a>')
     notices = "".join(
         f'<p class="warn">{html.escape(text)}</p>'
         for text in _feeds_adrift(admin, set(register.names())))
-    notices += _colour_clash(register)
+    notices += _colour_clash(register, lang)
+    places = html.escape(say("Places"))
     return f'''
-<h2>Places</h2>
+<h2>{places}</h2>
 {_interval_note(admin)}
 {notices}
 <div class="place-shell">
-  <aside class="place-list" aria-label="Places">
-    <header><h3>Places</h3>{add}</header>
+  <aside class="place-list" aria-label="{places}">
+    <header><h3>{places}</h3>{add}</header>
     <nav>{NEWLINE.join(choices)}</nav>
   </aside>
   {_place_detail(admin, register, selected, state.get(selected.name),
@@ -1069,6 +1129,7 @@ def overview(admin: Any, message: str = "", error: str = "",
 
 def new(admin: Any, error: str = "", form: dict | None = None) -> str:
     form = form or {}
+    say = admin.say
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     register = load(admin)
     # What the next place would be given if it chose nothing. `presented()`
@@ -1083,37 +1144,39 @@ def new(admin: Any, error: str = "", form: dict | None = None) -> str:
 <form method="post" action="./places/add"
       class="props place-detail place-form">
   <section class="place-section" id="place-general-new">
-    <header><h3>General</h3></header>
-    {_field("new", "label", "Name", form.get("label", ""))}
+    <header><h3>{html.escape(say("General"))}</h3></header>
+    {_field("new", "label", "Name", form.get("label", ""), say=say)}
     <div class="place-coordinates">
-      {_field("new", "latitude", "Latitude", form.get("latitude", ""))}
-      {_field("new", "longitude", "Longitude", form.get("longitude", ""))}
+      {_field("new", "latitude", "Latitude", form.get("latitude", ""),
+              say=say)}
+      {_field("new", "longitude", "Longitude", form.get("longitude", ""),
+              say=say)}
       {_field("new", "altitude", "Altitude in metres",
-              form.get("altitude", ""))}
+              form.get("altitude", ""), say=say)}
     </div>
     {_field("new", "rain_year_start", "Rain year starts in month",
             form.get("rain_year_start", "") or 1,
-            kind="number", extra=' min="1" max="12"')}
+            kind="number", extra=' min="1" max="12"', say=say)}
   </section>
   {members}
   <section class="place-section">
     <details class="more">
-      <summary>Advanced</summary>
+      <summary>{html.escape(say("Advanced"))}</summary>
       {_field("new", "name", "Internal name", form.get("name", ""),
-              "Generated from the name when empty.")}
+              "Generated from the name when empty.", say=say)}
       {_field("new", "file", "Archive file", form.get("file", ""),
-              "Generated from the name when empty.")}
+              "Generated from the name when empty.", say=say)}
       {_field("new", "code", "Short code", form.get("code", ""),
-            extra=' size="6" maxlength="4"')}
-      {_colour_field("new", str(form.get("color") or ""), would_be)}
-      {_field("new", "url", "Published address", form.get("url", ""))}
+            extra=' size="6" maxlength="4"', say=say)}
+      {_colour_field("new", str(form.get("color") or ""), would_be, say)}
+      {_field("new", "url", "Published address", form.get("url", ""), say=say)}
       {_field("new", "order", "List position", form.get("order", "") or 0,
-              kind="number")}
+              kind="number", say=say)}
     </details>
   </section>
   <div class="place-save actions">
-    <a class="button quiet" href="./places">Cancel</a>
-    <button type="submit">Add place</button>
+    <a class="button quiet" href="./places">{html.escape(say("Cancel"))}</a>
+    <button type="submit">{html.escape(say("Add place"))}</button>
   </div>
 </form>
 '''

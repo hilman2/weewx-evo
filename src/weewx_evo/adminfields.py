@@ -57,6 +57,7 @@ from typing import Any
 
 from . import adminarchives, placement
 from . import archives as archive_defs
+from . import language as language_defs
 from . import stations as station_defs
 from .db.archive import ArchiveStore
 
@@ -492,40 +493,48 @@ def add_column(admin: Any, station: Any, field: str,
 # -- the table ---------------------------------------------------------
 
 
+#: What each state is called, and the tone it is said in. The word is the
+#: key rather than the finished markup: the tone is ours and the wording is
+#: the language's, and a stored `<span>` would carry the English into every
+#: file that translates the rest of the page.
 SAYS = {
-    "nowhere": ('<span class="note">Ignored</span>', ""),
-    "unplaced": ('<span class="note">Not assigned</span>', ""),
-    "ready": ('<span class="ok">Ready</span>', ""),
+    "nowhere": ("note", "Ignored"),
+    "unplaced": ("note", "Not assigned"),
+    "ready": ("ok", "Ready"),
 }
 
 
-def _on(when: int | None) -> str:
+def _on(when: int | None, lang: Any = None) -> str:
     """The date a column was last written, for the warning to be actionable.
 
-    No `%-d`: it is a glibc extension, and this renders on Windows too.
+    Through the language rather than `strftime`: `%b` follows the *process*
+    locale, which is unset in the container, so a German page printed "Aug".
     """
     if not when:
         return ""
     import datetime
 
+    lang = lang if lang is not None else language_defs.get("en")
     stamp = datetime.datetime.fromtimestamp(when)
-    return f"{stamp.day} {stamp:%b %Y}"
+    return f"{stamp.day} {lang.spell('%b %Y', stamp.timestamp())}"
 
 
 def _status(one: Placement, archive: archive_defs.Archive,
-            read_only: bool) -> str:
+            read_only: bool, lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
     if one.state in SAYS:
-        return SAYS[one.state][0]
+        tone, word = SAYS[one.state]
+        return f'<span class="{tone}">{html.escape(lang.say(word))}</span>'
     if one.state == "taken":
-        return (f'<span class="warn">Used by {html.escape(one.holder)}'
-                "</span>")
+        used = lang.fill("Used by {who}", who=one.holder)
+        return f'<span class="warn">{html.escape(used)}</span>'
     if one.state == "mine":
         # Not a warning. The column holds this station's own history, which
         # is what a working installation looks like, and orange beside every
         # row is how the one row that matters gets missed.
         # A tick and the count. Thirty-five rows saying "writing here" is
         # the same wall of repeated text the orange warning was, only green.
-        return f'<span class="ok">✓ {one.holds:,}</span>'
+        return f'<span class="ok">&#10003; {one.holds:,}</span>'
     if one.state == "occupied":
         # This one is the warning the page exists for: readings in the
         # column, none of them from the record this station just wrote.
@@ -534,30 +543,33 @@ def _status(one: Placement, archive: archive_defs.Archive,
         # else" would be a guess: a sensor whose battery died stops filling
         # its column too, and it is the same sensor. The date is the fact,
         # and whoever reads it knows which of the two it is.
-        return (f'<span class="warn">{one.holds:,}; last '
-                f'{html.escape(_on(one.last)) or "unknown"}</span>')
+        held = lang.fill("{n}; last {when}", n=f"{one.holds:,}",
+                         when=_on(one.last, lang) or lang.say("unknown"))
+        return f'<span class="warn">{html.escape(held)}</span>'
     # No column. The button is the point of the row.
+    missing = html.escape(lang.say("Column missing"))
     if read_only:
-        return '<span class="bad">Column missing</span>'
+        return f'<span class="bad">{missing}</span>'
     # Which archive is the column heading above, not four words on every
     # such row: "Create it in Kirchdorf an der Amper" wrapped to two lines
     # and pushed the row it belongs to twice as tall as its neighbours.
-    return (f'<span class="bad">Column missing</span>'
+    adds = html.escape(lang.fill("Adds it to {place}", place=archive.title))
+    return (f'<span class="bad">{missing}</span>'
             f'<br><button class="quiet" type="submit" name="addcolumn"'
-            f' value="{html.escape(one.field)}"'
-            f' title="Adds it to {html.escape(archive.title)}">'
-            "Add column</button>")
+            f' value="{html.escape(one.field)}" title="{adds}">'
+            f'{html.escape(lang.say("Add column"))}</button>')
 
 
 def _chooser(one: Placement, offered: list[str], groups: dict[str, str],
              holders_here: dict[str, tuple[tuple[str, str], ...]],
-             station: str = "") -> str:
+             station: str = "", say: Any = None) -> str:
     """Where this reading could go.
 
     The ones that measure the same thing first: a wind speed offered as a
     home for a temperature is worse than no suggestion, because somebody
     will pick it.
     """
+    say = say or str
     fits, others = [], []
     for name in offered:
         (fits if one.group and groups.get(name) == one.group
@@ -579,16 +591,18 @@ def _chooser(one: Placement, offered: list[str], groups: dict[str, str],
 
     groups_html = ""
     if fits:
-        groups_html += ('<optgroup label="Measures the same thing">'
+        same = html.escape(say("Measures the same thing"))
+        groups_html += (f'<optgroup label="{same}">'
                         + "".join(option(n) for n in fits) + "</optgroup>")
-    groups_html += ('<optgroup label="Everything else">'
+    rest = html.escape(say("Everything else"))
+    groups_html += (f'<optgroup label="{rest}">'
                     + "".join(option(n) for n in others) + "</optgroup>")
     settled = one.field or one.nowhere
     return (f'<select name="place:{html.escape(one.raw)}">'
             f'<option value=""{"" if settled else " selected"}>'
-            "Use catalog mapping</option>"
+            f'{html.escape(say("Use catalog mapping"))}</option>'
             f'<option value="{NOWHERE}"{" selected" if one.nowhere else ""}>'
-            "Ignore</option>"
+            f'{html.escape(say("Ignore"))}</option>'
             + groups_html + "</select>")
 
 
@@ -676,6 +690,7 @@ def _table_for_archive(admin: Any, station: Any, sent: dict[str, Any],
     finding them meant reading every row. They are their own list now, and
     the rest folds away behind a line saying how many there are.
     """
+    say, lang = admin.say, admin.language
     rows = placements(admin, station, sent, catalog, dialect, archive.name)
     series = series or {}
     if not rows:
@@ -684,24 +699,28 @@ def _table_for_archive(admin: Any, station: Any, sent: dict[str, Any],
     groups = _groups_of(admin)
     offered = context["offered"]
     here = context["holders"]
+    nothing = html.escape(say("no reading"))
 
     def row(one: Placement) -> str:
-        value = ('<span class="note">no reading</span>' if one.value is None
+        value = (f'<span class="note">{nothing}</span>' if one.value is None
                  else html.escape(str(one.value)))
         return f'''
       <tr>
         <td class="mono">{html.escape(one.raw)}</td>
         <td class="mono">{value}{sparkline(series.get(one.raw) or [])}</td>
-        <td>{_chooser(one, offered, groups, here, _sender_of(station))}</td>
-        <td class="note">{html.escape(measures(one.group))}</td>
-        <td>{_status(one, archive, admin.read_only)}</td>
+        <td>{_chooser(one, offered, groups, here, _sender_of(station), say)}</td>
+        <td class="note">{html.escape(say(measures(one.group)))}</td>
+        <td>{_status(one, archive, admin.read_only, lang)}</td>
       </tr>'''
 
     def grid(some: list[Placement]) -> str:
         return f'''
     <table class="stations fields">
-      <thead><tr><th>Sender field</th><th>Latest reading</th><th>Archive field</th>
-                 <th>Measurement</th><th>Status</th>
+      <thead><tr><th>{html.escape(say("Sender field"))}</th>
+                 <th>{html.escape(say("Latest reading"))}</th>
+                 <th>{html.escape(say("Archive field"))}</th>
+                 <th>{html.escape(say("Measurement"))}</th>
+                 <th>{html.escape(say("Status"))}</th>
       </tr></thead>
       <tbody>{NEWLINE.join(row(one) for one in some)}</tbody>
     </table>'''
@@ -712,29 +731,32 @@ def _table_for_archive(admin: Any, station: Any, sent: dict[str, Any],
 
     parts = []
     if waiting:
-        parts.append(f'<p class="warn">{len(waiting)} need attention.</p>')
+        said = html.escape(lang.fill("{n} need attention.", n=len(waiting)))
+        parts.append(f'<p class="warn">{said}</p>')
         parts.append(grid(waiting))
     if settled:
-        word = "field" if len(settled) == 1 else "fields"
+        mapped = html.escape(
+            lang.fill("{n} mapped field", n=1) if len(settled) == 1
+            else lang.fill("{n} mapped fields", n=len(settled)))
         # Shut by default when there is something waiting, open when there is
         # not: with nothing to decide, the fold would be the whole table.
         opened = "" if waiting else " open"
-        parts.append(
-            f'<details class="settled"{opened}><summary>{len(settled)} mapped '
-            f"{word}</summary>{grid(settled)}"
-            "</details>")
+        parts.append(f'<details class="settled"{opened}>'
+                     f"<summary>{mapped}</summary>{grid(settled)}</details>")
 
     save = ""
     if not admin.read_only:
         save = ('<div class="place-save actions">'
-                '<button type="submit">Save field mappings</button></div>')
+                f'<button type="submit">'
+                f'{html.escape(say("Save field mappings"))}</button></div>')
     sender = _sender_of(station)
     sender_label = str(getattr(station, "label", "")
                        or getattr(station, "name", "") or sender)
     return f'''
   <section class="place-section place-field-scope"
            id="place-fields-{html.escape(archive.name)}-{html.escape(sender)}">
-    <header><span class="note">Place · Sender</span>
+    <header><span class="note">{html.escape(say("Place"))} ·
+      {html.escape(say("Sender"))}</span>
       <h4>{html.escape(archive.title)} · {html.escape(sender_label)}</h4>
       <code>{html.escape(sender)}</code></header>
   <form method="post" action="./places/{html.escape(archive.name)}/fields">

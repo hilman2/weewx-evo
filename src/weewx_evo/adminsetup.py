@@ -148,7 +148,7 @@ def page(admin: Any, step: str = "", error: str = "",
     return f"""
 <section class="group setup">
   {_progress(admin, step)}
-  <h3>{html.escape(TITLES[step])}</h3>
+  <h3>{html.escape(admin.say(TITLES[step]))}</h3>
   {problem}{told}
   {body}
 </section>"""
@@ -171,141 +171,166 @@ def _progress(admin: Any, active: str) -> str:
             classes.append("did")
         out.append(
             f'<a class="{" ".join(classes)}" href="./setup/{one}">'
-            f"{html.escape(TITLES[one])}</a>")
+            f"{html.escape(admin.say(TITLES[one]))}</a>")
     return f'<nav class="steps">{"".join(out)}</nav>'
 
 
 def _start(admin: Any, now: dict, form: dict) -> str:
     """New, or moving over. The question the rest of it hangs on."""
+    say = admin.say
     weewx = now["weewx"]
     found = ""
     if weewx is not None:
         found = f"""
     <div class="field found">
-      <p><strong>WeeWX installation found</strong>
+      <p><strong>{html.escape(say("WeeWX installation found"))}</strong>
          <code>{html.escape(str(weewx))}</code></p>
-      <p class="help">Configuration is read only.</p>
+      <p class="help">{html.escape(say(
+         "Configuration is read only."))}</p>
       <form method="post" action="./setup/adopt">
         <input type="hidden" name="conf" value="{html.escape(str(weewx))}">
-        <button type="submit">Read this installation</button>
+        <button type="submit">
+          {html.escape(say("Read this installation"))}</button>
       </form>
     </div>"""
 
     return f"""
-  <p class="lede">New installation or import from WeeWX.</p>
+  <p class="lede">{html.escape(say(
+     "New installation or import from WeeWX."))}</p>
 
   <div class="field notice">
-    <h4>WeeWX stays untouched</h4>
-    <p class="help"><code>weewx.conf</code> is read only. The archive is
-       copied. Imported exports remain off.</p>
-    <p class="help"><strong>Do not run both against the same database or
-       output directory.</strong></p>
-    <p class="help">The copied database remains WeeWX-compatible.</p>
+    <h4>{html.escape(say("WeeWX stays untouched"))}</h4>
+    <p class="help">{html.escape(say(
+       "weewx.conf is read only. The archive is copied. Imported exports "
+       "remain off."))}</p>
+    <p class="help"><strong>{html.escape(say(
+       "Do not run both against the same database or output "
+       "directory."))}</strong></p>
+    <p class="help">{html.escape(say(
+       "The copied database remains WeeWX-compatible."))}</p>
   </div>
   {found}
 
   <div class="field">
-    <h4>Moving over from WeeWX</h4>
-    <p class="help">Imports the Place, archive interval, skins and publishing
-       settings from <code>weewx.conf</code>.</p>
+    <h4>{html.escape(say("Moving over from WeeWX"))}</h4>
+    <p class="help">{html.escape(say(
+       "Imports the Place, archive interval, skins and publishing settings "
+       "from weewx.conf."))}</p>
     <form method="post" action="./setup/adopt" enctype="multipart/form-data">
       <label>weewx.conf
         <input type="file" name="upload" accept=".conf,.txt,text/plain">
       </label>
-      <div class="actions"><button type="submit">Read it</button></div>
+      <div class="actions">
+        <button type="submit">{html.escape(say("Read it"))}</button></div>
     </form>
   </div>
 
   <div class="field">
-    <h4>New installation</h4>
-    <p class="help">Configure a Place, then connect a Sender.</p>
+    <h4>{html.escape(say("New installation"))}</h4>
+    <p class="help">{html.escape(say(
+       "Configure a Place, then connect a Sender."))}</p>
     <div class="actions">
-      <a class="button" href="./setup/place">Start here</a>
+      <a class="button" href="./setup/place">
+        {html.escape(say("Start here"))}</a>
     </div>
   </div>"""
 
 
 def _place(admin: Any, now: dict, form: dict) -> str:
     """Name and coordinates. Everything astronomical hangs off these."""
+    say = admin.say
+
     def value(field: str, fallback: Any = "") -> str:
         got = form.get(field, now.get(field, fallback))
         return html.escape("" if got is None else str(got))
 
     return f"""
-  <p class="lede">Coordinates set sunrise, sunset and forecasts.</p>
+  <p class="lede">{html.escape(say(
+     "Coordinates set sunrise, sunset and forecasts."))}</p>
   <form method="post" action="./setup/place">
     <div class="field">
-      <label for="s-name">Name</label>
+      <label for="s-name">{html.escape(say("Name"))}</label>
       <input type="text" id="s-name" name="name" required
              value="{value('name')}" placeholder="Kirchdorf an der Amper">
     </div>
     <div class="row">
       <div class="field">
-        <label for="s-lat">Latitude</label>
+        <label for="s-lat">{html.escape(say("Latitude"))}</label>
         <input type="text" id="s-lat" name="latitude" required
                value="{value('latitude')}" placeholder="48.3858">
       </div>
       <div class="field">
-        <label for="s-lon">Longitude</label>
+        <label for="s-lon">{html.escape(say("Longitude"))}</label>
         <input type="text" id="s-lon" name="longitude" required
                value="{value('longitude')}" placeholder="11.7050">
       </div>
       <div class="field">
-        <label for="s-alt">Altitude</label>
+        <label for="s-alt">{html.escape(say("Altitude"))}</label>
         <input type="text" id="s-alt" name="altitude"
                value="{value('altitude')}" placeholder="440">
-        <p class="help">Metres. Used for pressure at sea level.</p>
+        <p class="help">{html.escape(say(
+           "Metres. Used for pressure at sea level."))}</p>
       </div>
     </div>
     <div class="field">
       <label class="tick">
         <input type="checkbox" name="forecast" value="1"
                {"checked" if not now["forecast"] else ""}>
-        Fetch a forecast for this place
+        {html.escape(say("Fetch a forecast for this place"))}
       </label>
-      <p class="help">Open-Meteo. No account.</p>
+      <p class="help">{html.escape(say("Open-Meteo. No account."))}</p>
     </div>
-    <div class="actions"><button type="submit">Save and carry on</button></div>
+    <div class="actions">
+      <button type="submit">
+        {html.escape(say("Save and carry on"))}</button></div>
   </form>"""
 
 
 def _readings(admin: Any, now: dict, form: dict) -> str:
     """Charts and the archive: what a station arriving from WeeWX brings."""
+    say, lang = admin.say, admin.language
     records = now["records"]
     archive = now["archive"]
     holding = ""
     if records:
-        holding = f"""
-    <p class="ok">This installation already has an archive:
-       {records} records in <code>{html.escape(str(archive))}</code>.</p>"""
+        said = html.escape(lang.fill(
+            "This installation already has an archive: {n} records in {path}.",
+            n=records, path=str(archive)))
+        holding = f'<p class="ok">{said}</p>'
+    counted = html.escape(lang.fill("{n} chart definitions configured.",
+                                    n=now["charts"]))
     return f"""
-  <p class="lede">{now["charts"]} chart definitions configured.</p>
+  <p class="lede">{counted}</p>
   {holding}
 
   <div class="field">
-    <h4>Charts from a skin</h4>
-    <p class="help">Imports <code>[ImageGenerator]</code> from
-       <code>skin.conf</code>.</p>
+    <h4>{html.escape(say("Charts from a skin"))}</h4>
+    <p class="help">{html.escape(lang.fill(
+       "Imports {section} from {file}.",
+       section="[ImageGenerator]", file="skin.conf"))}</p>
     <form method="post" action="./setup/charts" enctype="multipart/form-data">
       <label>skin.conf
         <input type="file" name="upload" accept=".conf,.txt,text/plain">
       </label>
       <label class="tick">
         <input type="checkbox" name="replace" value="1" checked>
-        Replace the charts that are here now
+        {html.escape(say("Replace the charts that are here now"))}
       </label>
-      <div class="actions"><button type="submit">Import them</button></div>
+      <div class="actions">
+        <button type="submit">{html.escape(say("Import them"))}</button></div>
     </form>
   </div>
 
   <div class="field">
-    <h4>An existing archive</h4>
-    <p class="help">Copied without conversion. The source remains untouched.</p>
+    <h4>{html.escape(say("An existing archive"))}</h4>
+    <p class="help">{html.escape(say(
+       "Copied without conversion. The source remains untouched."))}</p>
     {_archive_form(admin, now)}
   </div>
 
   <div class="actions">
-    <a class="button" href="./setup/publish">Carry on</a>
+    <a class="button" href="./setup/publish">
+      {html.escape(say("Carry on"))}</a>
   </div>"""
 
 
@@ -318,9 +343,11 @@ def _archive_form(admin: Any, now: dict) -> str:
     rather than held in memory -- see `admin.py`, where the limit for this
     one form is raised for exactly that reason.
     """
+    say = admin.say
     if now["records"]:
-        return ('<p class="help">The archive already contains readings and '
-                "will not be overwritten.</p>")
+        kept = html.escape(say("The archive already contains readings and "
+                               "will not be overwritten."))
+        return f'<p class="help">{kept}</p>'
     weewx = now["weewx"]
     suggested = ""
     if weewx is not None:
@@ -331,77 +358,88 @@ def _archive_form(admin: Any, now: dict) -> str:
             suggested = html.escape(str(found.archive))
     return f"""
     <form method="post" action="./setup/archive">
-      <label>Path on this machine
+      <label>{html.escape(say("Path on this machine"))}
         <input type="text" name="source" value="{suggested}"
                placeholder="/var/lib/weewx/weewx.sdb">
       </label>
-      <div class="actions"><button type="submit">Copy it here</button></div>
+      <div class="actions">
+        <button type="submit">{html.escape(say("Copy it here"))}</button></div>
     </form>
     <form method="post" action="./setup/upload-archive"
           enctype="multipart/form-data" class="upload">
-      <label>or send the file
+      <label>{html.escape(say("or send the file"))}
         <input type="file" name="upload" accept=".sdb,.db,.sqlite">
       </label>
-      <div class="actions"><button type="submit">Upload it</button></div>
+      <div class="actions">
+        <button type="submit">{html.escape(say("Upload it"))}</button></div>
     </form>"""
 
 
 def _publish(admin: Any, now: dict, form: dict) -> str:
     """Where the pages go. Optional, and it says so."""
+    say = admin.say
+    counted = html.escape(admin.language.fill(
+        "{n} feed(s) configured. FTP is optional.", n=len(now["feeds"])))
     return f"""
-  <p class="lede">{len(now["feeds"])} feed(s) configured. FTP is optional.</p>
+  <p class="lede">{counted}</p>
 
   <form method="post" action="./setup/publish">
     <div class="field">
-      <label for="p-host">FTP server</label>
+      <label for="p-host">{html.escape(say("FTP server"))}</label>
       <input type="text" id="p-host" name="host"
              placeholder="ftp.example.org">
-      <p class="help">Leave empty to skip FTP.</p>
+      <p class="help">{html.escape(say("Leave empty to skip FTP."))}</p>
     </div>
     <div class="row">
       <div class="field">
-        <label for="p-user">User</label>
+        <label for="p-user">{html.escape(say("User"))}</label>
         <input type="text" id="p-user" name="user" autocomplete="off">
       </div>
       <div class="field">
-        <label for="p-pass">Password</label>
+        <label for="p-pass">{html.escape(say("Password"))}</label>
         <input type="password" id="p-pass" name="password"
                autocomplete="new-password">
       </div>
       <div class="field">
-        <label for="p-dir">Directory</label>
+        <label for="p-dir">{html.escape(say("Directory"))}</label>
         <input type="text" id="p-dir" name="directory" placeholder="/">
       </div>
     </div>
     <div class="field">
-      <label for="p-url">Address the pages are served at</label>
+      <label for="p-url">
+        {html.escape(say("Address the pages are served at"))}</label>
       <input type="text" id="p-url" name="live_push_url"
              placeholder="https://example.org/">
-      <p class="help">Optional. Enables live readings on published pages.</p>
+      <p class="help">{html.escape(say(
+         "Optional. Enables live readings on published pages."))}</p>
     </div>
     <div class="actions">
-      <button type="submit">Save</button>
-      <a class="button quiet" href="./setup/done">Skip this</a>
+      <button type="submit">{html.escape(say("Save"))}</button>
+      <a class="button quiet" href="./setup/done">
+        {html.escape(say("Skip this"))}</a>
     </div>
   </form>"""
 
 
 def _done(admin: Any, now: dict, form: dict) -> str:
     """What is set up, and the one thing that is left."""
+    say, lang = admin.say, admin.language
     stations = now["stations"]
     rows = []
-    rows.append(("Place", now["name"] or "not set yet",
+    rows.append((say("Place"), now["name"] or say("not set yet"),
                  bool(now["name"])))
-    rows.append((f"{now['charts']} charts", "ready", bool(now["charts"])))
-    rows.append((f"{len(now['feeds'])} feed(s)",
-                 ", ".join(now["feeds"]) or "none", bool(now["feeds"])))
+    rows.append((lang.fill("{n} charts", n=now["charts"]), say("ready"),
+                 bool(now["charts"])))
+    rows.append((lang.fill("{n} feed(s)", n=len(now["feeds"])),
+                 ", ".join(now["feeds"]) or say("none"), bool(now["feeds"])))
     if now["records"]:
-        rows.append((f"{now['records']} records", "carried over", True))
-    rows.append((f"{len(now['exports'])} export(s)",
-                 ", ".join(now["exports"]) or "publishing on this machine "
-                 "only", True))
-    rows.append(("Sender",
-                 ", ".join(one.name for one in stations) or "none yet",
+        rows.append((lang.fill("{n} records", n=now["records"]),
+                     say("carried over"), True))
+    rows.append((lang.fill("{n} export(s)", n=len(now["exports"])),
+                 ", ".join(now["exports"])
+                 or say("publishing on this machine only"), True))
+    rows.append((say("Sender"),
+                 ", ".join(one.name for one in stations) or say("none yet"),
                  bool(stations)))
 
     listed = "".join(
@@ -411,16 +449,19 @@ def _done(admin: Any, now: dict, form: dict) -> str:
 
     left = ""
     if not stations:
-        left = """
+        left = f"""
     <div class="field">
-      <h4>Connect a sender</h4>
-      <p class="help">Create a Sender before readings can be identified.</p>
+      <h4>{html.escape(say("Connect a sender"))}</h4>
+      <p class="help">{html.escape(say(
+         "Create a Sender before readings can be identified."))}</p>
       <div class="actions">
-        <a class="button" href="./new-sender">Add sender</a>
+        <a class="button" href="./new-sender">
+          {html.escape(say("Add sender"))}</a>
       </div>
     </div>"""
 
     return f"""
   <table class="summary">{listed}</table>
   {left}
-  <p class="help">Setup can be reopened from Overview.</p>"""
+  <p class="help">{html.escape(say(
+     "Setup can be reopened from Overview."))}</p>"""

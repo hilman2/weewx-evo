@@ -352,7 +352,8 @@ def plot_defs_vectors() -> set[str]:
     return set(VECTORS)
 
 
-def _colour_field(name: str, line: Any, index: int) -> str:
+def _colour_field(name: str, line: Any, index: int,
+                  say: Any = None) -> str:
     """A colour, and the ability not to have one.
 
     `<input type="color">` always submits something, so rendering the
@@ -373,13 +374,15 @@ def _colour_field(name: str, line: Any, index: int) -> str:
     the first labelable thing inside it -- so clicking "its own" would fire
     at the colour input as well. The caller wraps this in a fieldset.
     """
+    say = say or str
     own = bool(line.color)
     shown = line.color or line.resolved(index).color or "#4282b4"
     return (
         f'<span class="colourpick">'
         f'<input type="color" name="{name}" value="{html.escape(shown)}">'
         f'<label class="tick"><input type="checkbox" name="{name}_own"'
-        f' value="1"{" checked" if own else ""}> its own</label>'
+        f' value="1"{" checked" if own else ""}> '
+        f'{html.escape(say("its own"))}</label>'
         f'</span>')
 
 
@@ -520,14 +523,15 @@ def _compare_button(admin: Any) -> str:
             return ""
     except Exception:
         return ""
+    what = html.escape(admin.say(
+        "One chart per reading, drawing every place on one axis"))
     return (
         '<form method="post" action="./compare-plots" class="inline">'
         '<input type="hidden" name="obs" '
         'value="outTemp,outHumidity,windSpeed,rain">'
         '<input type="hidden" name="span" value="day,week,month,year">'
-        '<button class="button quiet" type="submit" '
-        'title="One chart per reading, drawing every place on one axis">'
-        "Generate comparisons</button></form>")
+        f'<button class="button quiet" type="submit" title="{what}">'
+        f'{html.escape(admin.say("Generate comparisons"))}</button></form>')
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
@@ -538,6 +542,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     chart draws -- and "outTemp, dewpoint" beside the name is the difference
     between finding one and opening six.
     """
+    say = admin.say
     charts = load(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     # The banner above the page says it. Printing it a second time in the
@@ -548,36 +553,42 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     add = ""
     if not admin.read_only:
         add = ('<div class="actions">'
-               '<a class="button" href="./new-plot">Add a chart</a>'
+               '<a class="button" href="./new-plot">'
+               f'{html.escape(say("Add a chart"))}</a>'
                '<a class="button quiet" href="./import-plots">'
-               "Import from a skin</a>"
+               f'{html.escape(say("Import from a skin"))}</a>'
                + _compare_button(admin) + "</div>")
 
+    heading = html.escape(say("Charts"))
+    lede = html.escape(say("Definitions shared by all feeds."))
     if not len(charts):
         return f'''
-<h2>Charts</h2>
+<h2>{heading}</h2>
 {problem}{said}
-<p class="lede">Definitions shared by all feeds.</p>
+<p class="lede">{lede}</p>
 {add}
-<p class="navempty">None yet. Add one, or bring a whole set over from an
-   existing WeeWX skin -- the importer reads a skin.conf and reports what it
-   could not take.</p>
+<p class="navempty">{html.escape(say(
+   "None yet. Add one, or bring a whole set over from an existing WeeWX "
+   "skin -- the importer reads a skin.conf and reports what it could not "
+   "take."))}</p>
 '''
 
     groups = charts.by_span()
     # The same strip the long forms have. Ninety-two charts in four blocks
     # is a page somebody scrolls past three times to reach the fourth.
     jump = "".join(
-        f'<a href="#span-{html.escape(span)}">{html.escape(span)}'
+        f'<a href="#span-{html.escape(span)}">{html.escape(say(span))}'
         f'<span class="count">{len(groups[span])}</span></a>'
         for span in sorted(groups))
-    blocks = [f'<nav class="jump" aria-label="Spans">{jump}</nav>']
+    spans = html.escape(say("Spans"))
+    blocks = [f'<nav class="jump" aria-label="{spans}">{jump}</nav>']
     for span in sorted(groups):
         rows = []
         for plot in groups[span]:
             drawn = ", ".join(line.obs for line in plot.lines[:4])
             if len(plot.lines) > 4:
-                drawn += f", and {len(plot.lines) - 4} more"
+                drawn += ", " + admin.language.fill(
+                    "and {n} more", n=len(plot.lines) - 4)
             # Which of a hundred charts go to the site rather than under
             # each place, without opening a hundred charts. Asked of
             # `names_a_place()` because that is the question the feed asks;
@@ -586,24 +597,27 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
             # on it, which is the one this exists to show.
             mark = ('<span class="chip" title="'
                     + html.escape(", ".join(plot.places()))
-                    + '">site chart</span>' if plot.names_a_place() else "")
+                    + f'">{html.escape(say("site chart"))}</span>'
+                    if plot.names_a_place() else "")
             rows.append(f'''
       <li>
         <a href="./plot:{html.escape(plot.name)}">{html.escape(plot.name)}</a>
         {mark}
         <span class="note">{html.escape(drawn)}</span>
       </li>''')
+        counted = html.escape(admin.language.fill("{n} chart(s)",
+                                                  n=len(groups[span])))
         blocks.append(f'''
   <section class="flow" id="span-{html.escape(span)}">
-    <div class="made"><span class="title">{html.escape(span)}</span>
-      <span class="note aside">{len(groups[span])} chart(s)</span></div>
+    <div class="made"><span class="title">{html.escape(say(span))}</span>
+      <span class="note aside">{counted}</span></div>
     <ul class="sends plain">{NEWLINE.join(rows)}</ul>
   </section>''')
 
     return f'''
-<h2>Charts</h2>
+<h2>{heading}</h2>
 {problem}{said}
-<p class="lede">Definitions shared by all feeds.</p>
+<p class="lede">{lede}</p>
 {add}
 {NEWLINE.join(blocks)}
 '''
@@ -808,7 +822,7 @@ def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
         </label>
         <fieldset class="colourfield">
           <legend>{html.escape(say("Colour"))}</legend>
-          {_colour_field(f"{prefix}_color", line, index)}
+          {_colour_field(f"{prefix}_color", line, index, say)}
         </fieldset>
       </div>
       <div class="row">
@@ -933,35 +947,44 @@ def new(admin: Any, columns: set[str], error: str = "",
         form: dict[str, Any] | None = None) -> str:
     """The add-a-chart form. Three fields; the rest waits."""
     form = form or {}
+    say = admin.say
     known = sorted(columns | plot_defs_vectors())
+    # The whole label is the key, not the span word on its own: German turns
+    # "day -- 27h" into "Tag -- 27 h", and the space before the unit is part
+    # of what has to be translatable.
     spans = tuple((s, f"{s} -- {format_duration(v)}")
                   for s, v in plot_defs.SPANS.items())
+    counted = html.escape(admin.language.fill("{n} in this archive.",
+                                              n=len(known)))
     return f'''
 <section class="group">
-  <p class="lede">Name, time span and first reading.</p>
+  <p class="lede">{html.escape(say(
+     "Name, time span and first reading."))}</p>
   {f'<p class="err">{html.escape(error)}</p>' if error else ""}
   <form method="post" action="./new-plot">
     <datalist id="readings">
       {"".join(f'<option value="{html.escape(c)}">' for c in known)}
     </datalist>
     <div class="row">
-      <label>Name
+      <label>{html.escape(say("Name"))}
         <input name="name" required pattern="[a-z][a-z0-9_-]*"
                value="{html.escape(str(form.get("name", "")))}"
                placeholder="daytempdew">
-        <span class="hint">Lowercase. It becomes the filename.</span>
+        <span class="hint">{html.escape(say(
+           "Lowercase. It becomes the filename."))}</span>
       </label>
-      <label>Group
-        {_select("span", spans, form.get("span", "day"))}
+      <label>{html.escape(say("Group"))}
+        {_select("span", spans, form.get("span", "day"), say=say)}
       </label>
-      <label>First reading
+      <label>{html.escape(say("First reading"))}
         <input name="obs" list="readings" required
                value="{html.escape(str(form.get("obs", "")))}"
                placeholder="outTemp">
-        <span class="hint">{len(known)} in this archive.</span>
+        <span class="hint">{counted}</span>
       </label>
     </div>
-    <div class="actions"><button type="submit">Add it</button></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Add it"))}</button></div>
   </form>
 </section>'''
 
@@ -976,29 +999,41 @@ def importer(admin: Any, message: str = "", error: str = "",
     container and there is no path from here that reaches the skin at all.
     """
     form = form or {}
+    say = admin.say
+    # Plain text in the placeholders. A `<code>` in the middle of a sentence
+    # cuts it into runs, and the run between two of them is one no translator
+    # is ever shown.
+    what = html.escape(admin.language.fill(
+        "Imports {section} from {file}. Existing charts remain unless "
+        "Replace is selected.",
+        section="[ImageGenerator]", file="skin.conf"))
+    usual = html.escape(admin.language.fill(
+        "Usually {path} in a WeeWX installation. It is read here and not "
+        "kept.", path="skins/Seasons/skin.conf"))
+    part = html.escape(admin.language.fill(
+        "The whole file, or just the {section} part of it.",
+        section="[ImageGenerator]"))
     return f'''
 <section class="group">
-  <h3>Import from a WeeWX skin</h3>
-  <p class="lede">Imports <code>[ImageGenerator]</code> from
-     <code>skin.conf</code>. Existing charts remain unless Replace is selected.</p>
+  <h3>{html.escape(say("Import from a WeeWX skin"))}</h3>
+  <p class="lede">{what}</p>
   {f'<p class="err">{html.escape(error)}</p>' if error else ""}
 
   <form method="post" action="./import-plots" enctype="multipart/form-data">
     <fieldset class="line">
-      <legend>A file</legend>
+      <legend>{html.escape(say("A file"))}</legend>
       <div class="row">
         <label>skin.conf
           <input type="file" name="upload" accept=".conf,.txt,text/plain">
-          <span class="hint">Usually <code>skins/Seasons/skin.conf</code> in a
-            WeeWX installation. It is read here and not kept.</span>
+          <span class="hint">{usual}</span>
         </label>
       </div>
     </fieldset>
 
     <fieldset class="line">
-      <legend>Or paste it</legend>
+      <legend>{html.escape(say("Or paste it"))}</legend>
       <div class="row">
-        <label>The text of a skin.conf
+        <label>{html.escape(say("The text of a skin.conf"))}
           <textarea name="pasted" rows="8" spellcheck="false"
                     placeholder="[ImageGenerator]&#10;"
                                 "    [[day_images]]&#10;"
@@ -1006,20 +1041,21 @@ def importer(admin: Any, message: str = "", error: str = "",
                                 "            [[[[outTemp]]]]&#10;"
                                 "            [[[[dewpoint]]]]"
                     >{html.escape(str(form.get("pasted", "")))}</textarea>
-          <span class="hint">The whole file, or just the
-            <code>[ImageGenerator]</code> part of it.</span>
+          <span class="hint">{part}</span>
         </label>
       </div>
     </fieldset>
 
     <details>
-      <summary>Or a path on the machine this is running on</summary>
+      <summary>{html.escape(say(
+        "Or a path on the machine this is running on"))}</summary>
       <div class="row">
-        <label>Path
+        <label>{html.escape(say("Path"))}
           <input name="source" value="{html.escape(str(form.get("source", "")))}"
                  placeholder="/etc/weewx/skins/Seasons/skin.conf">
-          <span class="hint">Only useful where weewx-evo and WeeWX share a
-            filesystem. In a container they do not.</span>
+          <span class="hint">{html.escape(say(
+            "Only useful where weewx-evo and WeeWX share a filesystem. In a "
+            "container they do not."))}</span>
         </label>
       </div>
     </details>
@@ -1027,12 +1063,14 @@ def importer(admin: Any, message: str = "", error: str = "",
     <div class="row">
       <label class="tick">
         <input type="checkbox" name="replace" value="1">
-        Replace everything
-        <span class="hint">Off, it adds what is not already here and leaves
-          charts you have changed alone.</span>
+        {html.escape(say("Replace everything"))}
+        <span class="hint">{html.escape(say(
+          "Off, it adds what is not already here and leaves charts you have "
+          "changed alone."))}</span>
       </label>
     </div>
-    <div class="actions"><button type="submit">Read it</button></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Read it"))}</button></div>
   </form>
 </section>'''
 

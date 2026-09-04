@@ -107,6 +107,17 @@ class FakeAdmin:
     def config(self):
         return self._config
 
+    # Every word on these pages goes through the language. A stand-in that
+    # cannot answer this is one the page raises on rather than renders.
+    @property
+    def language(self):
+        from weewx_evo import language as language_defs
+
+        return language_defs.get("en")
+
+    def say(self, english: str) -> str:
+        return self.language.say(english)
+
 
 def installed() -> None:
     """Every pushing protocol, plus the envelope, into the registry."""

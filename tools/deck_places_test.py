@@ -865,6 +865,18 @@ def a_place_selects_its_stations(room: Path) -> None:
         def config(self):
             return {}
 
+        # The settings pages write every word through the language. A
+        # stand-in without these answers nothing, and the page it is
+        # standing in for raises rather than rendering.
+        @property
+        def language(self):
+            from weewx_evo import language as language_defs
+
+            return language_defs.get("en")
+
+        def say(self, english):
+            return self.language.say(english)
+
     class Sighting:
         identity = "0000000000000000000000000000AAAA"
         driver = "ecowitt"

@@ -356,20 +356,23 @@ def _goes_to(placer: Any, row: dict) -> dict[str, str]:
 
 def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if active == "live" else ""
-    return [f'<a href="./live"{current}>Live journal</a>']
+    return [(f'<a href="./live"{current}>'
+             f'{html.escape(admin.say("Live journal"))}</a>')]
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
     """Read-only journal rows and a bounded status summary."""
+    say = admin.say
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
-  <h2>Live journal</h2>
+  <h2>{html.escape(say("Live journal"))}</h2>
   {problem}
-  <p class="note"><strong>Read-only diagnosis.</strong> Stored packets, newest first.</p>
-  <div id="livestate" class="note">reading…</div>
-  <h3>Senders in the last hour</h3>
+  <p class="note"><strong>{html.escape(say("Read-only diagnosis."))}</strong>
+     {html.escape(say("Stored packets, newest first."))}</p>
+  <div id="livestate" class="note">{html.escape(say("reading…"))}</div>
+  <h3>{html.escape(say("Senders in the last hour"))}</h3>
   <div id="livesenders"></div>
-  <h3>Packets</h3>
+  <h3>{html.escape(say("Packets"))}</h3>
   <div class="scroller"><div id="liverows"></div></div>
   <script>{_SCRIPT}</script>'''
 

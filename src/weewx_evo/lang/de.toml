@@ -418,6 +418,597 @@ no_unit = "gibt dafür keine Einheit an, dieses Diagramm ist in {chart}"
 "not if there is nothing in a week" = "nicht, wenn in einer Woche nichts da ist"
 "not if there is nothing in a month" = "nicht, wenn in einem Monat nichts da ist"
 "How" = "Wie"
+"Spans" = "Zeitspannen"
+"Import from a skin" = "Aus einer Skin importieren"
+"Definitions shared by all feeds." = "Definitionen, die alle Feeds teilen."
+"None yet. Add one, or bring a whole set over from an existing WeeWX skin -- the importer reads a skin.conf and reports what it could not take." = "Noch keine. Leg eines an, oder hol einen ganzen Satz aus einer vorhandenen WeeWX-Skin -- der Import liest eine skin.conf und berichtet, was er nicht übernehmen konnte."
+"site chart" = "Site-Diagramm"
+"{n} chart(s)" = "{n} Diagramm(e)"
+"and {n} more" = "und {n} weitere"
+"Generate comparisons" = "Vergleiche erzeugen"
+"One chart per reading, drawing every place on one axis" = "Ein Diagramm je Messwert, alle Orte auf einer Achse"
+"its own" = "eigene"
+"Name, time span and first reading." = "Name, Zeitspanne und erster Messwert."
+"Lowercase. It becomes the filename." = "Kleinbuchstaben. Es wird der Dateiname."
+"First reading" = "Erster Messwert"
+"{n} in this archive." = "{n} in diesem Archiv."
+"Add it" = "Anlegen"
+"day -- 27h" = "Tag -- 27 h"
+"week -- 7d" = "Woche -- 7 d"
+"month -- 30d" = "Monat -- 30 d"
+"year -- 365d" = "Jahr -- 365 d"
+"Import from a WeeWX skin" = "Aus einer WeeWX-Skin importieren"
+"Imports {section} from {file}. Existing charts remain unless Replace is selected." = "Übernimmt {section} aus {file}. Vorhandene Diagramme bleiben, außer es ist Alles ersetzen gewählt."
+"Imports {section} from {file}." = "Übernimmt {section} aus {file}."
+"A file" = "Eine Datei"
+"Usually {path} in a WeeWX installation. It is read here and not kept." = "Meist {path} in einer WeeWX-Installation. Sie wird hier gelesen und nicht behalten."
+"Or paste it" = "Oder einfügen"
+"The text of a skin.conf" = "Der Text einer skin.conf"
+"The whole file, or just the {section} part of it." = "Die ganze Datei, oder nur ihr Teil {section}."
+"Or a path on the machine this is running on" = "Oder ein Pfad auf der Maschine, auf der das hier läuft"
+"Path" = "Pfad"
+"Only useful where weewx-evo and WeeWX share a filesystem. In a container they do not." = "Nur nützlich, wo weewx-evo und WeeWX dasselbe Dateisystem haben. In einem Container haben sie das nicht."
+"Replace everything" = "Alles ersetzen"
+"Off, it adds what is not already here and leaves charts you have changed alone." = "Aus ergänzt es, was noch nicht da ist, und lässt geänderte Diagramme in Ruhe."
+"Read it" = "Einlesen"
+
+# Was ein Formular gemeinsam hat.
+"Name" = "Name"
+"Kind" = "Art"
+"Destination" = "Ziel"
+"Service" = "Dienst"
+"Source" = "Quelle"
+"Continue" = "Weiter"
+"Cancel" = "Abbrechen"
+"Add" = "Hinzufügen"
+"Add {what}" = "{what} hinzufügen"
+"Advanced" = "Erweitert"
+"Sections" = "Abschnitte"
+"unit" = "Einheit"
+"seconds" = "Sekunden"
+"minutes" = "Minuten"
+"hours" = "Stunden"
+"days" = "Tage"
+"per second" = "je Sekunde"
+"Lowercase letters, digits, - and _." = "Kleinbuchstaben, Ziffern, - und _."
+"Move up" = "Nach oben"
+"Move down" = "Nach unten"
+"+ another line" = "+ noch eine Zeile"
+"something not in the list" = "etwas, das nicht auf der Liste steht"
+"not one of the ones offered" = "keines der angebotenen"
+"Ticked ones are used, top to bottom. The arrows move a row." = "Die angehakten werden benutzt, von oben nach unten. Die Pfeile verschieben eine Zeile."
+"Try it" = "Ausprobieren"
+"Send files produced by a feed to a destination." = "Dateien, die ein Feed erzeugt, an ein Ziel schicken."
+"Send operational alerts through this channel." = "Betriebsmeldungen über diesen Kanal schicken."
+"Send readings from a Place to a weather service." = "Messwerte eines Ortes an einen Wetterdienst schicken."
+"Add forecast data for a Place." = "Vorhersagedaten für einen Ort hinzufügen."
+"Generate files from one or more Places." = "Dateien aus einem oder mehreren Orten erzeugen."
+"A collector reads hardware and sends packets to the listener. It runs as a separate process." = "Ein Sammler liest Hardware und schickt Pakete an den Empfänger. Er läuft als eigener Prozess."
+"Name the collector and choose its kind." = "Den Sammler benennen und seine Art wählen."
+"Set its hardware or broker options." = "Seine Hardware- oder Broker-Einstellungen setzen."
+"Start it where the hardware is connected." = "Ihn dort starten, wo die Hardware angeschlossen ist."
+"What it runs" = "Was er ausführt"
+"The hardware" = "Die Hardware"
+"Started with" = "Gestartet mit"
+"-- from a weewx.conf --" = "-- aus einer weewx.conf --"
+"from a weewx.conf" = "aus einer weewx.conf"
+"Leave this on {choice} to reuse that driver's configuration." = "Auf {choice} lassen, um die Konfiguration dieses Treibers weiterzubenutzen."
+"Start collector" = "Sammler starten"
+"Its data appears under {link}." = "Seine Daten erscheinen unter {link}."
+"Existing files remain. Linked exports stop." = "Vorhandene Dateien bleiben. Verknüpfte Exporte hören auf."
+"Remove the feed {name}?" = "Den Feed {name} entfernen?"
+"Remove the export {name}?" = "Den Export {name} entfernen?"
+"Remove the upload {name}?" = "Den Upload {name} entfernen?"
+"Remove the collector {name}?" = "Den Sammler {name} entfernen?"
+"Remove the forecast source {name}?" = "Die Vorhersagequelle {name} entfernen?"
+"Fetch once without storing." = "Einmal holen, ohne zu speichern."
+"Fetch once" = "Einmal holen"
+"Cached forecasts remain until cleanup." = "Zwischengespeicherte Vorhersagen bleiben bis zum Aufräumen."
+"Check the account without publishing." = "Das Konto prüfen, ohne zu veröffentlichen."
+"Test the account" = "Konto prüfen"
+"Already published readings remain." = "Bereits veröffentlichte Messwerte bleiben."
+"Removes the endpoint. The collector process keeps running." = "Entfernt den Endpunkt. Der Sammlerprozess läuft weiter."
+"Connects and looks, without sending anything." = "Verbindet und sieht nach, ohne etwas zu senden."
+"Test the connection" = "Verbindung prüfen"
+"Remote files remain." = "Die Dateien am fernen Ende bleiben."
+
+# Der Webserver und wo ein lokaler Export landet.
+"Where it lands" = "Wo es landet"
+"-- no directory set --" = "-- kein Verzeichnis gesetzt --"
+"In {directory} on this machine. Point a web server at it, or" = "In {directory} auf dieser Maschine. Richte einen Webserver darauf, oder"
+"turn the built-in one on" = "schalte den eingebauten ein"
+"and it is readable straight away." = "und es ist sofort lesbar."
+"In {directory}{typed}, and the built-in server hands it out at" = "In {directory}{typed}, und der eingebaute Server liefert es aus unter"
+"(you wrote {directory}, which is relative to the settings file)" = "(du hast {directory} geschrieben, das zählt gegen die Einstellungsdatei)"
+"The name in the address is this export's name." = "Der Name in der Adresse ist der Name dieses Exports."
+"Nothing is being served" = "Es wird nichts ausgeliefert"
+"Turn the server on above and whatever a local export published becomes readable in a browser. Until then the exports still run and still write their files." = "Schalte den Server oben ein, und was ein lokaler Export veröffentlicht hat, wird im Browser lesbar. Bis dahin laufen die Exporte weiter und schreiben ihre Dateien."
+"Serving nothing yet" = "Noch nichts ausgeliefert"
+"The server is on, at {address}, and there is nothing to hand out." = "Der Server läuft, unter {address}, und es gibt nichts auszuliefern."
+"A feed writes into its own working directory. What puts it somewhere readable is an export of kind local: choose the feed, say which directory, and it appears here under the export's own name." = "Ein Feed schreibt in sein eigenes Arbeitsverzeichnis. Lesbar wird es durch einen Export der Art local: Feed wählen, Verzeichnis angeben, und es erscheint hier unter dem Namen des Exports."
+"What is being served" = "Was ausgeliefert wird"
+"The name in the address is the name of the export that published it. Rename the export and the address follows." = "Der Name in der Adresse ist der Name des Exports, der es veröffentlicht hat. Wird der Export umbenannt, folgt die Adresse."
+"{name} is also at the address itself, without a name after it." = "{name} liegt außerdem direkt unter der Adresse, ohne Namen dahinter."
+"name" = "Name"
+"address" = "Adresse"
+"files" = "Dateien"
+"from" = "aus"
+
+# Die Ortsseiten.
+"Add place" = "Ort hinzufügen"
+"Remove place" = "Ort entfernen"
+"Place settings" = "Ortseinstellungen"
+"General" = "Allgemein"
+"Fields" = "Felder"
+"Outputs" = "Ausgaben"
+"Field mappings" = "Feldzuordnungen"
+"Field mappings unavailable." = "Feldzuordnungen nicht verfügbar."
+"Select a sender first." = "Erst einen Sender wählen."
+"View sender data" = "Senderdaten ansehen"
+"Mapping metadata unavailable." = "Zuordnungsdaten nicht verfügbar."
+"No readings yet." = "Noch keine Messwerte."
+"Latitude" = "Breitengrad"
+"Longitude" = "Längengrad"
+"Altitude" = "Höhe"
+"Altitude in metres" = "Höhe in Metern"
+"Rain year starts in month" = "Regenjahr beginnt im Monat"
+"Short code" = "Kürzel"
+"List position" = "Listenposition"
+"Published address" = "Veröffentlichte Adresse"
+"Archive file" = "Archivdatei"
+"Internal name" = "Interner Name"
+"Generated from the name when empty." = "Wird aus dem Namen erzeugt, wenn leer."
+"What to call it" = "Wie es heißen soll"
+"Printed on every page built from this series." = "Steht auf jeder Seite, die aus dieser Reihe gebaut wird."
+"Up to four letters or digits, for a chip beside a value and a legend where the label will not fit. Left empty, one is made from the label." = "Bis zu vier Buchstaben oder Ziffern, für ein Schild neben einem Wert und für Legenden, in die der Name nicht passt. Leer gelassen wird eines aus dem Namen gemacht."
+"File" = "Datei"
+"A relative name counts against the configuration file, not against the directory the service happened to start in." = "Ein relativer Name zählt gegen die Konfigurationsdatei, nicht gegen das Verzeichnis, in dem der Dienst zufällig gestartet ist."
+"Decimal degrees. A comma is fine." = "Dezimalgrad. Ein Komma ist in Ordnung."
+"Metres above sea level. The pressure reduction depends on it." = "Meter über dem Meer. Die Druckreduktion hängt davon ab."
+"Address its pages are served at" = "Adresse, unter der seine Seiten ausgeliefert werden"
+"Printed by a skin that links to itself. Empty is fine." = "Wird von einer Skin gedruckt, die auf sich selbst verlinkt. Leer ist in Ordnung."
+"1 is January. Some regions count rain from October." = "1 ist Januar. Manche Gegenden zählen Regen ab Oktober."
+"Where it comes in a list" = "Wo es in einer Liste steht"
+"Lowest first; places that agree keep the file's order." = "Kleinste zuerst; Orte mit gleichem Wert behalten die Reihenfolge der Datei."
+"picked for it" = "die zugeteilte"
+"as written in the file" = "wie in der Datei geschrieben"
+"Include new senders automatically" = "Neue Sender automatisch aufnehmen"
+"All senders" = "Alle Sender"
+"{n} sender" = "{n} Sender"
+"{n} senders" = "{n} Sender"
+"No sender" = "Kein Sender"
+"Needs attention" = "Braucht Aufmerksamkeit"
+"No senders received yet." = "Noch keine Sender empfangen."
+"Primary readings" = "Hauptmesswerte"
+"The only sender here, so this place takes its series from it." = "Der einzige Sender hier, also nimmt dieser Ort seine Reihe von ihm."
+"Indoor readings" = "Innenmesswerte"
+"Settings for {sender}" = "Einstellungen für {sender}"
+"Writes only what it has been given a column under Fields. Nothing is guessed for it: a second sender may be a full weather station, a soil probe or one thermometer, and the protocol does not say which." = "Schreibt nur, wofür ihm unter Felder eine Spalte gegeben wurde. Für ihn wird nichts geraten: ein zweiter Sender kann eine ganze Wetterstation sein, eine Bodensonde oder ein einzelnes Thermometer, und das Protokoll sagt nicht, welches."
+"Open map" = "Karte öffnen"
+"Open publishing" = "Veröffentlichen öffnen"
+"No explicit outputs." = "Keine ausdrücklichen Ausgaben."
+"Weather services" = "Wetterdienste"
+"Sunrise {rise} · sunset {set}" = "Aufgang {rise} · Untergang {set}"
+"No sunrise or sunset today" = "Heute kein Sonnenauf- oder -untergang"
+"not written yet" = "noch nicht geschrieben"
+"cannot be read: {why}" = "nicht lesbar: {why}"
+"no records yet" = "noch keine Sätze"
+"{n} records" = "{n} Sätze"
+"{n} record" = "{n} Satz"
+"{places} use the same colour." = "{places} werden in derselben Farbe gezeichnet."
+"Change {place}" = "{place} ändern"
+"The feed {feed} reads {place}, which is not one of these. It will not run." = "Der Feed {feed} liest {place}, und das ist keiner von diesen. Er läuft nicht."
+"One archive record covers {span}, for every place." = "Ein Archivsatz deckt {span} ab, für jeden Ort."
+"Change it" = "Ändern"
+"{n} min" = "{n} min"
+"{n} seconds" = "{n} Sekunden"
+"need looking at" = "brauchen einen Blick"
+
+# Die Senderseiten.
+"Add sender" = "Sender hinzufügen"
+"Protocol" = "Protokoll"
+"Other hardware" = "Weitere Hardware"
+"Connect {name}" = "{name} anschließen"
+"Sender created" = "Sender angelegt"
+"It is uploading now" = "Er lädt gerade hoch"
+"Connection settings" = "Verbindungseinstellungen"
+"This sender names itself with a {field} of its own and cannot be told what to call itself, so press that once it is sending. The first upload from {kind} hardware this installation does not know yet becomes {name}." = "Dieser Sender benennt sich mit einem eigenen {field} und kann nicht angewiesen werden, wie er heißen soll -- also drück das, sobald er sendet. Der erste Upload von {kind}-Hardware, die diese Anlage noch nicht kennt, wird {name}."
+"Waiting for the first upload. Return to" = "Wartet auf den ersten Upload. Zurück zu"
+"to check its status." = "um seinen Zustand zu sehen."
+"This driver does not provide connection instructions." = "Dieser Treiber liefert keine Anschlusshinweise."
+"This address is what this machine sees of itself. Behind a reverse proxy or a published container port it is not the one a device can reach -- set 'Address consoles reach it at' under Listener, and this will say that instead." = "Diese Adresse ist das, was diese Maschine von sich selbst sieht. Hinter einem Reverse Proxy oder einem veröffentlichten Container-Port ist es nicht die, die ein Gerät erreicht -- trag unter Empfänger 'Adresse, unter der Konsolen ihn erreichen' ein, dann steht hier diese."
+"Address" = "Adresse"
+"Identity" = "Kennung"
+"Status" = "Zustand"
+"Used by" = "Benutzt von"
+"Remove name" = "Namen entfernen"
+"No named senders." = "Keine benannten Sender."
+"New senders" = "Neue Sender"
+"sender name" = "Sendername"
+"Save name" = "Namen speichern"
+"Ignore" = "Ignorieren"
+"Ignored" = "Ignoriert"
+"Restore" = "Zurückholen"
+"Last seen" = "Zuletzt gesehen"
+"Technical ID" = "Technische ID"
+"(none)" = "(keine)"
+"Receiving" = "Empfängt"
+"Stale" = "Veraltet"
+"Waiting for first data" = "Wartet auf die ersten Daten"
+"No data" = "Keine Daten"
+"Change assignment" = "Zuordnung ändern"
+"Not assigned" = "Nicht zugeordnet"
+"Assign to a Place" = "Einem Ort zuordnen"
+"Create a Place" = "Einen Ort anlegen"
+"Latest readings ({n})" = "Neueste Messwerte ({n})"
+"mapping unavailable" = "Zuordnung nicht verfügbar"
+"Raw field" = "Rohfeld"
+"Latest value" = "Neuester Wert"
+"Stored description" = "Gespeicherte Beschreibung"
+"Redacted upload" = "Redigierter Upload"
+"Save clock" = "Uhr speichern"
+"Sender clock" = "Senderuhr"
+"Allowed timestamp drift. Empty uses the global setting." = "Erlaubte Abweichung des Zeitstempels. Leer nimmt die allgemeine Einstellung."
+"behind" = "zurück"
+"ahead" = "vor"
+"as configured" = "wie eingestellt"
+"never" = "nie"
+"None" = "Keine"
+"{n} s ago" = "vor {n} s"
+"{n} min ago" = "vor {n} min"
+"{n} h ago" = "vor {n} h"
+"{n} d ago" = "vor {n} d"
+"{n} days ago" = "vor {n} Tagen"
+
+# Die Übersicht.
+"something needs looking at" = "etwas braucht einen Blick"
+"Setup" = "Einrichtung"
+"Open" = "Öffnen"
+"Open {stage}" = "{stage} öffnen"
+"Review" = "Ansehen"
+"Review: {what}" = "Ansehen: {what}"
+"Intake" = "Eingang"
+"Sender" = "Sender"
+"Live" = "Live"
+"Live data" = "Live-Daten"
+"No senders." = "Keine Sender."
+"No places." = "Keine Orte."
+"Not configured." = "Nicht eingerichtet."
+"Not configured" = "Nicht eingerichtet"
+"Feeds" = "Feeds"
+"Exports" = "Exporte"
+"Uploads" = "Uploads"
+"Notifications" = "Benachrichtigungen"
+"Forecasts" = "Vorhersagen"
+"{n} place" = "{n} Ort"
+"{n} places" = "{n} Orte"
+"{n} configured item" = "{n} eingerichtete Sache"
+"{n} configured items" = "{n} eingerichtete Sachen"
+"{n} failure" = "{n} Fehlschlag"
+"{n} failures" = "{n} Fehlschläge"
+"last reading {when}" = "letzter Messwert {when}"
+"last record {when}" = "letzter Satz {when}"
+"{n} packets" = "{n} Pakete"
+"{n} waiting" = "{n} wartend"
+"no database at {path}" = "keine Datenbank unter {path}"
+"no file at {path} yet" = "noch keine Datei unter {path}"
+"Place {name}: {why}" = "Ort {name}: {why}"
+
+# Die Systemseite.
+"Data flow" = "Datenfluss"
+"Identity and latest readings" = "Kennung und neueste Messwerte"
+"Archive status and configuration" = "Archivzustand und Konfiguration"
+"Incoming packets" = "Eingehende Pakete"
+"Global acceptance rules" = "Allgemeine Annahmeregeln"
+"Collectors" = "Sammler"
+"Drivers" = "Treiber"
+"None configured." = "Nichts eingerichtet."
+"No driver settings." = "Keine Treibereinstellungen."
+"Installation-wide settings" = "Anlagenweite Einstellungen"
+"No installation settings." = "Keine Anlageneinstellungen."
+"Archiver" = "Archivierer"
+"Service status is shown on each Place." = "Der Dienstzustand steht bei jedem Ort."
+"No controls" = "Keine Steuerung"
+"read-only" = "nur lesend"
+
+# Die Veröffentlichungsseite.
+"New feed" = "Neuer Feed"
+"New export" = "Neuer Export"
+"New upload" = "Neuer Upload"
+"New notification" = "Neue Benachrichtigung"
+"New forecast" = "Neue Vorhersage"
+"No feeds." = "Keine Feeds."
+"No exports." = "Keine Exporte."
+"No uploads." = "Keine Uploads."
+"No notifications." = "Keine Benachrichtigungen."
+"No forecasts." = "Keine Vorhersagen."
+"Off" = "Aus"
+"Not run" = "Nie gelaufen"
+"Automatic" = "Automatisch"
+"Place:" = "Ort:"
+"No place selected" = "Kein Ort gewählt"
+"Destinations:" = "Ziele:"
+"No destination" = "Kein Ziel"
+"Feeds:" = "Feeds:"
+"No feed selected" = "Kein Feed gewählt"
+"Trigger:" = "Auslöser:"
+"To:" = "Nach:"
+"a directory" = "ein Verzeichnis"
+"somewhere" = "irgendwohin"
+"Nothing publishes this yet." = "Noch veröffentlicht das niemand."
+"Published by" = "Veröffentlicht von"
+"Publishes the" = "Veröffentlicht den"
+"and" = "und"
+"feed" = "Feed"
+"feeds" = "Feeds"
+"into" = "nach"
+"Not tied to a feed" = "An keinen Feed gebunden"
+"Sends readings from" = "Schickt Messwerte aus"
+"the default place" = "dem Standardort"
+"it does not wait for a feed" = "wartet auf keinen Feed"
+"Operational notifications" = "Betriebsmeldungen"
+"Forecast for" = "Vorhersage für"
+"the time series everything else draws from" = "die Zeitreihen, auf denen alles andere steht"
+"the same charts as PNG files, for a page or a forum post" = "dieselben Diagramme als PNG, für eine Seite oder einen Forenbeitrag"
+"a skin written for WeeWX, rendered unchanged" = "eine für WeeWX geschriebene Skin, unverändert gerendert"
+"one page that draws whatever JSON is on disk" = "eine Seite, die zeichnet, welches JSON auf der Platte liegt"
+"one line of current conditions, in Cumulus's realtime.txt format" = "eine Zeile aktueller Werte, im realtime.txt-Format von Cumulus"
+
+# Der Einrichtungsassistent.
+"Archive and charts" = "Archiv und Diagramme"
+# Zweimal gebraucht: der letzte Schritt des Assistenten und der Zustand
+# einer Feldzuordnung. `say` ist auf das Englische geschlüsselt, also ist es
+# ein Schlüssel und braucht ein Wort, das für beides trägt.
+"Ready" = "Bereit"
+"New installation or import from WeeWX." = "Neue Anlage oder Übernahme aus WeeWX."
+"WeeWX stays untouched" = "WeeWX bleibt unangetastet"
+"weewx.conf is read only. The archive is copied. Imported exports remain off." = "weewx.conf wird nur gelesen. Das Archiv wird kopiert. Übernommene Exporte bleiben aus."
+"Do not run both against the same database or output directory." = "Nicht beide auf dieselbe Datenbank oder dasselbe Ausgabeverzeichnis laufen lassen."
+"The copied database remains WeeWX-compatible." = "Die kopierte Datenbank bleibt WeeWX-kompatibel."
+"WeeWX installation found" = "WeeWX-Installation gefunden"
+"Configuration is read only." = "Die Konfiguration wird nur gelesen."
+"Read this installation" = "Diese Installation einlesen"
+"Moving over from WeeWX" = "Von WeeWX herüberziehen"
+"Imports the Place, archive interval, skins and publishing settings from weewx.conf." = "Übernimmt Ort, Archivintervall, Skins und Veröffentlichungseinstellungen aus der weewx.conf."
+"New installation" = "Neue Anlage"
+"Configure a Place, then connect a Sender." = "Einen Ort einrichten, dann einen Sender anschließen."
+"Start here" = "Hier anfangen"
+"Coordinates set sunrise, sunset and forecasts." = "Die Koordinaten bestimmen Sonnenauf- und -untergang und die Vorhersage."
+"Metres. Used for pressure at sea level." = "Meter. Wird für den Druck auf Meereshöhe gebraucht."
+"Fetch a forecast for this place" = "Eine Vorhersage für diesen Ort holen"
+"Open-Meteo. No account." = "Open-Meteo. Kein Konto nötig."
+"Save and carry on" = "Speichern und weiter"
+"{n} chart definitions configured." = "{n} Diagrammdefinitionen eingerichtet."
+"This installation already has an archive: {n} records in {path}." = "Diese Anlage hat schon ein Archiv: {n} Sätze in {path}."
+"Charts from a skin" = "Diagramme aus einer Skin"
+"Replace the charts that are here now" = "Die jetzt vorhandenen Diagramme ersetzen"
+"Import them" = "Übernehmen"
+"An existing archive" = "Ein vorhandenes Archiv"
+"Copied without conversion. The source remains untouched." = "Wird ohne Umwandlung kopiert. Die Quelle bleibt unangetastet."
+"The archive already contains readings and will not be overwritten." = "Das Archiv enthält bereits Messwerte und wird nicht überschrieben."
+"Path on this machine" = "Pfad auf dieser Maschine"
+"Copy it here" = "Hierher kopieren"
+"or send the file" = "oder die Datei schicken"
+"Upload it" = "Hochladen"
+"Carry on" = "Weiter"
+"{n} feed(s) configured. FTP is optional." = "{n} Feed(s) eingerichtet. FTP ist freiwillig."
+"FTP server" = "FTP-Server"
+"Leave empty to skip FTP." = "Leer lassen, um FTP zu überspringen."
+"User" = "Benutzer"
+"Password" = "Passwort"
+"Directory" = "Verzeichnis"
+"Address the pages are served at" = "Adresse, unter der die Seiten ausgeliefert werden"
+"Optional. Enables live readings on published pages." = "Freiwillig. Schaltet Live-Werte auf den veröffentlichten Seiten ein."
+"Skip this" = "Überspringen"
+"not set yet" = "noch nicht gesetzt"
+"{n} charts" = "{n} Diagramme"
+"ready" = "fertig"
+"{n} feed(s)" = "{n} Feed(s)"
+"none" = "keine"
+"carried over" = "übernommen"
+"{n} export(s)" = "{n} Export(e)"
+"publishing on this machine only" = "veröffentlicht nur auf dieser Maschine"
+"none yet" = "noch keiner"
+"Connect a sender" = "Einen Sender anschließen"
+"Create a Sender before readings can be identified." = "Erst ein Sender, dann lassen sich Messwerte zuordnen."
+"Setup can be reopened from Overview." = "Die Einrichtung lässt sich von der Übersicht aus wieder öffnen."
+
+# Die Sensorprüfungen.
+"Limits applied before readings are archived. No saved rule means no check." = "Grenzen, die vor dem Archivieren greifen. Keine gespeicherte Regel heißt keine Prüfung."
+"Ignored calibration labels: {names}. Use canonical Sender IDs." = "Ignorierte Kalibrierungsnamen: {names}. Benutze die kanonischen Sender-IDs."
+"{n} more reading(s) the archive holds" = "{n} weitere(r) Messwert(e), die das Archiv hält"
+"Suggest from archive" = "Aus dem Archiv vorschlagen"
+"Uses the last year. Existing rules stay unchanged." = "Nimmt das letzte Jahr. Vorhandene Regeln bleiben unverändert."
+"Units:" = "Einheiten:"
+"Spike: per minute. Stuck: identical readings; requires resolution." = "Sprung: je Minute. Stillstand: gleiche Messwerte; braucht die Auflösung."
+"Seen" = "Gesehen"
+"Floor" = "Untergrenze"
+"Ceiling" = "Obergrenze"
+"Spike / min" = "Sprung / min"
+"Stuck" = "Stillstand"
+"Resolution" = "Auflösung"
+"No rules. Nothing is being refused." = "Keine Regeln. Es wird nichts abgewiesen."
+"not recorded" = "nicht aufgezeichnet"
+"{low} to {high}" = "{low} bis {high}"
+"would refuse {n} ({share}%)" = "würde {n} abweisen ({share} %)"
+"Over the last year of records, these rules would refuse nothing." = "Über das letzte Jahr an Sätzen würden diese Regeln nichts abweisen."
+"Over {records} record(s), these rules would refuse {n} reading(s):" = "Über {records} Satz/Sätze würden diese Regeln {n} Messwert(e) abweisen:"
+"More than one record in twenty is refused, which is usually a limit set too tightly rather than a sensor at fault." = "Mehr als einer von zwanzig Sätzen wird abgewiesen, und das ist meist eine zu eng gesetzte Grenze und kein defekter Sensor."
+
+# Die Live-Tabelle und die Suche.
+"Live journal" = "Live-Journal"
+"Read-only diagnosis." = "Nur zur Diagnose, nur lesend."
+"Stored packets, newest first." = "Gespeicherte Pakete, neueste zuerst."
+"reading…" = "wird gelesen…"
+"Senders in the last hour" = "Sender der letzten Stunde"
+"Packets" = "Pakete"
+"Where this sits" = "Wo das steht"
+"Type at least {n} letters." = "Mindestens {n} Buchstaben eingeben."
+"Nothing matches {query}." = "Nichts passt zu {query}."
+"{n} match(es) for {query}." = "{n} Treffer für {query}."
+"First {n} shown." = "Die ersten {n} werden gezeigt."
+"Place: {name}" = "Ort: {name}"
+
+# Was die Treiber über ihre eigene Hardware sagen.
+"GW1000, GW1100, GW1200, GW2000, GW3000, HP2551, HP2561, WS3800, WS3900, WS3910, WN1980 and their relatives" = "GW1000, GW1100, GW1200, GW2000, GW3000, HP2551, HP2561, WS3800, WS3900, WS3910, WN1980 und ihre Verwandten"
+"Fine Offset Observer and its rebadges (Ambient WS-1000 series, Sainlogic, Misol), any Ecowitt console set to protocol Wunderground, Meteobridge, and weather software generally" = "Fine Offset Observer und seine Umetikettierungen (Ambient WS-1000-Reihe, Sainlogic, Misol), jede Ecowitt-Konsole mit Protokoll Wunderground, Meteobridge und Wettersoftware allgemein"
+"WS-2902, WS-5000, WS-1965 and the rest of the Ambient range with 'Custom' upload in the awnet app" = "WS-2902, WS-5000, WS-1965 und der Rest der Ambient-Reihe mit 'Custom'-Upload in der awnet-App"
+"Tempest, and the AIR, SKY and hub that came before it" = "Tempest, und die AIR, SKY und der Hub davor"
+"smartHUB and Access bridges, with a 5-in-1, towers, Pro sensors and the 899 rain gauge" = "smartHUB- und Access-Bridges, mit 5-in-1, Türmen, Pro-Sensoren und dem Regenmesser 899"
+"LW301 and LW302 gateways, with the wind, rain, UV and T/H sensors" = "LW301- und LW302-Gateways, mit den Wind-, Regen-, UV- und T/H-Sensoren"
+"A collector you run yourself, or any WeeWX driver through `weewx-evo weewx-driver run`." = "Ein Sammler, den du selbst betreibst, oder jeder WeeWX-Treiber über `weewx-evo weewx-driver run`."
+"Once it is pointed here it no longer reaches its own servers." = "Sobald sie hierher zeigt, erreicht sie ihre eigenen Server nicht mehr."
+"Once it is pointed here it no longer reaches Chaney, so the app and the website stop showing the station." = "Sobald sie hierher zeigt, erreicht sie Chaney nicht mehr, also zeigen App und Website die Station nicht mehr an."
+"This one arrives over UDP rather than HTTP, so the listener has to be told to open a second socket: set UDP port to 50222 under Listener and restart. A datagram carries no path, so that port is the whole of the access control -- the upload token cannot reach it." = "Das kommt über UDP statt HTTP, also muss dem Empfänger gesagt werden, dass er einen zweiten Socket öffnet: UDP-Port unter Empfänger auf 50222 setzen und neu starten. Ein Datagramm trägt keinen Pfad, also ist dieser Port die ganze Zugangskontrolle -- das Upload-Token erreicht ihn nicht."
+"The hub and this machine have to be on the same network segment. A broadcast does not cross a router." = "Der Hub und diese Maschine müssen im selben Netzsegment liegen. Ein Broadcast kommt nicht über einen Router."
+"Nothing to set on the hub. It broadcasts whether or not anybody listens." = "Am Hub ist nichts einzustellen. Er sendet, ob jemand zuhört oder nicht."
+"A bridge cannot be told where to post. It goes to Chaney's servers, over plain HTTP on port 80, and there is no setting for it." = "Einer Bridge kann man nicht sagen, wohin sie senden soll. Sie geht über einfaches HTTP auf Port 80 zu den Servern von Chaney, und dafür gibt es keine Einstellung."
+"So hubapi.myacurite.com has to resolve to %(address)s on your network. With dnsmasq:" = "Also muss hubapi.myacurite.com in deinem Netz auf %(address)s auflösen. Mit dnsmasq:"
+"A gateway cannot be told where to post, so box.weatherdirect.com has to resolve to %(address)s on your network. With dnsmasq:" = "Einem Gateway kann man nicht sagen, wohin es senden soll, also muss box.weatherdirect.com in deinem Netz auf %(address)s auflösen. Mit dnsmasq:"
+"Most routers can do the same under a name like 'local DNS'. A hosts file on this machine will not do: the entry has to be seen by the bridge." = "Die meisten Router können dasselbe unter einem Namen wie 'lokales DNS'. Eine hosts-Datei auf dieser Maschine reicht nicht: der Eintrag muss von der Bridge gesehen werden."
+"It posts to port 80, so redirect that:" = "Sie sendet auf Port 80, also leite den um:"
+"It posts to port 80, so redirect that rather than running this as root:" = "Sie sendet auf Port 80, also leite den um, statt das hier als root laufen zu lassen:"
+
+# Was die Ziele, Dienste und Kanäle sind.
+"local directory" = "lokales Verzeichnis"
+"A directory on this machine. The built-in web server serves it, so a feed is readable on the local network with nothing else installed." = "Ein Verzeichnis auf dieser Maschine. Der eingebaute Webserver liefert es aus, also ist ein Feed im Heimnetz lesbar, ohne dass sonst etwas installiert wird."
+"A web host over FTP. What shared hosting gives you, and the reason the record of what was already sent has to exist." = "Ein Webspace über FTP. Was Shared Hosting hergibt, und der Grund, warum es die Merkliste des schon Gesendeten geben muss."
+"A machine reachable over SSH. rsync works out what changed itself, which makes it the cheapest destination over a slow line." = "Eine über SSH erreichbare Maschine. rsync findet selbst heraus, was sich geändert hat, und ist damit über eine langsame Leitung das billigste Ziel."
+"The largest network of personal weather stations. Free, and what most people mean by publishing their readings." = "Das größte Netz privater Wetterstationen. Kostenlos, und das, was die meisten mit dem Veröffentlichen ihrer Messwerte meinen."
+"A second network, same protocol. Costs nothing and takes the readings a station is already sending elsewhere." = "Ein zweites Netz, dasselbe Protokoll. Kostet nichts und nimmt die Messwerte, die eine Station ohnehin schon woandershin schickt."
+"The Citizen Weather Observer Program. Feeds NOAA's MADIS, so the readings reach the same place the airports do." = "Das Citizen Weather Observer Program. Speist NOAAs MADIS, also landen die Messwerte dort, wo auch die Flughäfen landen."
+"What people sailing and flying look at. Metric, JSON, and the one service here that is not the Ambient protocol." = "Worauf Segler und Flieger schauen. Metrisch, JSON, und der einzige Dienst hier, der nicht das Ambient-Protokoll spricht."
+"The UK Met Office's observations site. Takes stations from anywhere, not only the UK." = "Die Beobachtungsseite des britischen Met Office. Nimmt Stationen von überall, nicht nur aus dem Vereinigten Königreich."
+"A map and a dashboard, popular in Europe. Metric, and every reading goes as an integer in tenths." = "Eine Karte und ein Dashboard, in Europa verbreitet. Metrisch, und jeder Messwert geht als ganze Zahl in Zehnteln."
+"The archive in a time series database, so Grafana can ask it questions. One upload per archive." = "Das Archiv in einer Zeitreihendatenbank, damit Grafana es fragen kann. Ein Upload je Archiv."
+"A broker, so a skin updates while somebody is looking at it. What Belchertown, jas and weewx-wdc take their live data from." = "Ein Broker, damit eine Skin sich aktualisiert, während jemand sie ansieht. Woher Belchertown, jas und weewx-wdc ihre Live-Daten nehmen."
+"A message to an address. Needs an SMTP server, which is usually the one that already sends this machine's mail." = "Eine Nachricht an eine Adresse. Braucht einen SMTP-Server, meist denselben, der schon die Mail dieser Maschine verschickt."
+"One POST. Covers ntfy, Gotify, Slack, Discord, Telegram and anything else that takes a message over HTTP." = "Ein POST. Deckt ntfy, Gotify, Slack, Discord, Telegram und alles ab, was eine Nachricht über HTTP nimmt."
+"Publishes to a broker, retained, one topic per symptom. For an installation that already has Home Assistant or Node-RED." = "Veröffentlicht an einen Broker, retained, ein Topic je Symptom. Für eine Anlage, die schon Home Assistant oder Node-RED hat."
+"A forecast for anywhere, without an account. Picks the best model for the location by itself -- the right answer for almost every station." = "Eine Vorhersage für überall, ohne Konto. Wählt selbst das beste Modell für den Ort -- die richtige Antwort für fast jede Station."
+"Germany's own station forecast: ICON corrected for a specific place, which is what German weather pages show." = "Die deutsche Stationsvorhersage: ICON, auf einen bestimmten Ort korrigiert, und das, was deutsche Wetterseiten zeigen."
+"Germany's official warnings, with the DWD's own wording and description -- which MeteoAlarm translates away." = "Die amtlichen deutschen Warnungen, im Wortlaut und in der Beschreibung des DWD -- die MeteoAlarm wegübersetzt."
+"Official weather warnings for 38 European countries, from the aggregator EUMETNET runs. No account needed." = "Amtliche Wetterwarnungen für 38 europäische Länder, vom Aggregator, den EUMETNET betreibt. Kein Konto nötig."
+"The United States: official alerts, and a forecast, with no account. The alerts are what it is best at." = "Die Vereinigten Staaten: amtliche Warnungen und eine Vorhersage, ohne Konto. Am besten ist es bei den Warnungen."
+"A WeeWX driver, running in its own process" = "Ein WeeWX-Treiber, in einem eigenen Prozess"
+"Any of the hundred-odd drivers written for WeeWX, unchanged -- a serial console, one on the USB bus, a radio. WeeWX itself does not have to be installed: point at the driver file and what it imports is stood in for." = "Jeder der gut hundert für WeeWX geschriebenen Treiber, unverändert -- eine serielle Konsole, eine am USB-Bus, ein Funkempfänger. WeeWX selbst muss nicht installiert sein: zeig auf die Treiberdatei, und was sie importiert, wird ersetzt."
+"A broker to subscribe to, in its own process" = "Ein Broker zum Abonnieren, in einem eigenen Prozess"
+"Readings a broker already carries, from a console that publishes them itself or from a home-automation system. The command weewx-evo mqtt check prints what a broker publishes, which is how the topic names its page asks for are found." = "Messwerte, die ein Broker schon führt, von einer Konsole, die sie selbst veröffentlicht, oder aus einer Hausautomation. Das Kommando weewx-evo mqtt check druckt, was ein Broker veröffentlicht, und so findet man die Topic-Namen, nach denen seine Seite fragt."
+"Email" = "E-Mail"
+"DWD warnings" = "DWD-Warnungen"
+
+# Die Feldtabelle einer Station.
+"Sender field" = "Senderfeld"
+"Latest reading" = "Neuester Messwert"
+"Archive field" = "Archivfeld"
+"Measurement" = "Messgröße"
+"no reading" = "kein Wert"
+"Use catalog mapping" = "Zuordnung aus dem Katalog"
+"Measures the same thing" = "Misst dasselbe"
+"Everything else" = "Alles andere"
+"Used by {who}" = "Benutzt von {who}"
+"Used by {places}" = "Benutzt von {places}"
+"{n} unregistered sender(s)" = "{n} unangemeldete(r) Sender"
+"{n}; last {when}" = "{n}; zuletzt {when}"
+"unknown" = "unbekannt"
+"Column missing" = "Spalte fehlt"
+"Adds it to {place}" = "Legt sie in {place} an"
+"Add column" = "Spalte anlegen"
+"{n} need attention." = "{n} brauchen einen Blick."
+"{n} mapped field" = "{n} zugeordnetes Feld"
+"{n} mapped fields" = "{n} zugeordnete Felder"
+"Save field mappings" = "Feldzuordnungen speichern"
+
+# Was eine Spalte misst. Das Präfix `group_` ist schon weg.
+"temperature" = "Temperatur"
+"pressure" = "Druck"
+"pressurerate" = "Druckänderung"
+"rain" = "Regen"
+"rainrate" = "Regenrate"
+"speed" = "Geschwindigkeit"
+"speed2" = "Geschwindigkeit"
+"direction" = "Richtung"
+"percent" = "Prozent"
+"fraction" = "Anteil"
+"humidity absolute" = "absolute Feuchte"
+"mixingratio" = "Mischungsverhältnis"
+"moisture" = "Feuchtigkeit"
+"radiation" = "Strahlung"
+"illuminance" = "Beleuchtungsstärke"
+"uv" = "UV"
+"altitude" = "Höhe"
+"distance" = "Entfernung"
+"volt" = "Spannung"
+"db" = "Dezibel"
+"count" = "Anzahl"
+"concentration" = "Konzentration"
+"degree day" = "Gradtage"
+"deltatime" = "Zeitdifferenz"
+"interval" = "Intervall"
+"time" = "Zeit"
+
+# Die Werte, die zur Auswahl stehen. Der Wert selbst bleibt englisch -- er
+# steht in der Konfigurationsdatei; übersetzt wird nur, was daneben steht.
+"the local network" = "das Heimnetz"
+"this machine only" = "nur diese Maschine"
+"this machine only, via SSH tunnel" = "nur diese Maschine, über einen SSH-Tunnel"
+"one network" = "ein Netz"
+"anywhere, including the internet" = "überall, auch aus dem Internet"
+"Place whatever can be named" = "Alles platzieren, was benennbar ist"
+"Place them when they continue a known series, list the rest" = "Platzieren, wo sie eine bekannte Reihe fortsetzen, den Rest nur auflisten"
+"Only list them" = "Nur auflisten"
+"with the archive, whenever a record lands" = "mit dem Archiv, sobald ein Satz landet"
+"on its own clock" = "auf eigenem Takt"
+"the only MQTT upload there is" = "der einzige MQTT-Upload, den es gibt"
+"-- none chosen --" = "-- keiner gewählt --"
+"-- a list of what there is --" = "-- eine Liste dessen, was es gibt --"
+"-- as the system above --" = "-- wie das System darüber --"
+"-- nothing; leave the skin alone --" = "-- nichts; die Skin in Ruhe lassen --"
+"deck (shipped)" = "deck (mitgeliefert)"
+"overview (shipped)" = "overview (mitgeliefert)"
+"METRICWX -- Celsius, millimetres, metres per second" = "METRICWX -- Celsius, Millimeter, Meter je Sekunde"
+"METRIC -- Celsius, centimetres, kilometres per hour" = "METRIC -- Celsius, Zentimeter, Kilometer je Stunde"
+"US -- Fahrenheit, inches, miles per hour" = "US -- Fahrenheit, Zoll, Meilen je Stunde"
+"Metric (m/s, mm)" = "Metrisch (m/s, mm)"
+"Metric (km/h, cm)" = "Metrisch (km/h, cm)"
+"As the skin says" = "Wie die Skin es sagt"
+"As the skin asks" = "Wie die Skin es verlangt"
+"HTML entities -- plain ASCII, safest" = "HTML-Entities -- reines ASCII, am sichersten"
+"ASCII, with accents stripped" = "ASCII, ohne Akzente"
+"ASCII, dropping anything else" = "ASCII, alles andere wird verworfen"
+"Classic -- sections in a column" = "Klassisch -- Abschnitte in einer Spalte"
+"Alternative -- tiles in a grid" = "Alternativ -- Kacheln in einem Raster"
+"Follow the visitor's browser" = "Dem Browser des Besuchers folgen"
+"Light" = "Hell"
+"Dark" = "Dunkel"
+"Small" = "Klein"
+"Medium" = "Mittel"
+"Large" = "Groß"
+"Not at all" = "Gar nicht"
+"Above the diagrams" = "Über den Diagrammen"
+"Below the diagrams" = "Unter den Diagrammen"
+"Day" = "Tag"
+"Week" = "Woche"
+"Month" = "Monat"
+"Year" = "Jahr"
+"all of them" = "alle"
+"just the short ones" = "nur die kurzen"
+
+# Die klimatologischen Tage. Die Schwellen sind die des DWD, die Namen also
+# auch: "Wüstentag" und "Tropennacht" stehen so in seinen Definitionen.
+"Rain days" = "Regentage"
+"Heavy rain days (10 mm)" = "Starkregentage (10 mm)"
+"Very heavy rain (20 mm)" = "Ergiebiger Regen (20 mm)"
+"Snow days" = "Schneetage"
+"Frost days" = "Frosttage"
+"Ice days" = "Eistage"
+"Summer days" = "Sommertage"
+"Hot days" = "Heiße Tage"
+"Desert days" = "Wüstentage"
+"Tropical nights" = "Tropennächte"
+"Storm days" = "Sturmtage"
+"Thunder days" = "Gewittertage"
+"Heating days" = "Heiztage"
 
 # Die Einstellungen selbst, auf ihren eigenen Namen geschlüsselt und nicht auf
 # ihren englischen Wortlaut: `help` ist mehrere Sätze lang und ein Absatz ist
@@ -588,3 +1179,252 @@ help = "Eine Wetterseite ist kein Geheimnis, aber es ist trotzdem diese Maschine
 [settings."web.host"]
 label = "Lauschen auf"
 help = "An alles gebunden und antwortet nur privaten Netzen. Was es privat hält, ist die Zeile darüber, nicht diese."
+
+# Was jeder Feed und jeder Export gemeinsam hat.
+[settings.trigger]
+label = "Erzeugen"
+help = "Mit dem Archiv ist richtig für alles, was aus Archivsätzen gebaut wird: vor dem nächsten Satz gibt es nichts Neues zu zeichnen. Ein eigener Takt ist für das, was den Sätzen nicht folgt -- eine nächtliche Zusammenfassung, oder teure Diagramme auf einer Maschine, die sie nicht alle fünf Minuten neu zeichnen soll."
+
+[settings.every]
+label = "Wie oft"
+help = "Gilt nur, wenn es auf eigenem Takt läuft. Auf die Uhr gerundet, damit ein stündlicher Feed zur vollen Stunde erzeugt und nicht eine Stunde nach dem Start des Dienstes."
+
+[settings.archive]
+label = "Ort"
+help = "Der Ort, um den es auf diesen Seiten geht. Bei einem Ort gibt es nichts zu wählen. Bei zweien ist es der, dessen Heute, dessen Woche und dessen Rekorde die Seiten drucken -- und er ist immer der erste der Orte unter „Auch zeigen“ darunter, ob er dort genannt ist oder nicht."
+
+[settings.enabled]
+label = "Das JSON erzeugen"
+help = "Nur aus, wenn es niemand liest. Jeder andere Feed, der ein Diagramm zeichnet, tut es."
+
+[settings.destination]
+label = "Verzeichnis"
+help = "Unter dem Ausgabeverzeichnis des Feeds. Ein Unterverzeichnis statt der obersten Ebene, damit die Daten nicht zwischen den Seiten liegen."
+
+[settings.manifest]
+label = "index.json schreiben"
+help = "Eine Liste dessen, was es gibt, damit ein Client seine Seite aufbauen kann, bevor er etwas holt, und nie nach einem Sensor fragt, den diese Station nicht hat."
+
+[settings.rewrite_unchanged]
+label = "Unveränderte Dateien neu schreiben"
+help = "Ein Jahr Tagesmittel sagt um zehn nach dasselbe wie um zehn. Aus gelassen wird eine Datei mit gleichen Daten nicht angefasst -- was zählt, wenn ein Export alles Geänderte über eine Leitung schickt, die jemand nach Megabyte bezahlt."
+
+[settings.rounding]
+label = "Nachkommastellen"
+help = "Drei sind schon feiner als jeder Wettersensor und sparen rund ein Drittel der Dateigröße. Nur für etwas erhöhen, das kein Wetter ist."
+
+[settings.indent]
+label = "Die Dateien einrücken"
+help = "0 schreibt sie so klein wie möglich, und das will man auf einer laufenden Site. 2 macht sie lesbar, während man herausfindet, warum ein Diagramm falsch aussieht."
+
+[settings.places]
+label = "Nur diese Orte"
+help = "Einer je Zeile. Leer schreibt für jeden Ort ein Diagrammverzeichnis, und das ist die sichere Seite: ein Verzeichnis, auf das nichts verlinkt, kostet Platz, und eines, auf das eine Seite verlinkt und das fehlt, ist eine kaputte Seite. Nur da einengen, wo eine bezahlte Leitung hundert Dateien je Ort zum Nachdenken macht. Nicht dieselbe Einstellung wie die einer Skin: die sagt, welche Orte eine Site zeigt, diese, welche ein Diagrammverzeichnis abdeckt."
+
+[settings.spans]
+label = "Nur diese Gruppen"
+help = "Kommagetrennt, passend zur Gruppe, in der ein Diagramm steht. Leer erzeugt alle. Ein Jahresdiagramm über zehn Jahre Sätze ist das teure; es wegzulassen ist der Weg, wie eine kleine Maschine mitkommt."
+
+[settings.units]
+label = "Messwerte anzeigen in"
+help = "Worin die Dateien geschrieben werden, gleich was im Archiv steht. Eine Konsole, die Fahrenheit meldet, und eine Site in Celsius ist der Normalfall: das Archiv behält, was die Station geschrieben hat, und umgerechnet wird auf dem Weg nach draußen."
+
+[settings."unit.group_temperature"]
+label = "Temperatur"
+help = "Schlägt das System für diese eine Gruppe. So kommt jemand zu Grad Celsius und Zoll Quecksilbersäule auf einer Seite, weil seine Leser das erwarten."
+
+[settings."unit.group_pressure"]
+label = "Druck"
+
+[settings."unit.group_rain"]
+label = "Regen"
+
+[settings."unit.group_speed"]
+label = "Windgeschwindigkeit"
+
+[settings."unit.group_altitude"]
+label = "Höhe"
+
+[settings."unit.group_distance"]
+label = "Entfernung"
+
+[settings.twilight]
+label = "Dämmerung mitliefern"
+help = "Die Dämmerung ist keine Kante: das Licht geht über die halbe Stunde der bürgerlichen Dämmerung, und in hohen Breiten im Sommer über weit längere Zeit. Damit kann ein Diagramm das Echte zeichnen statt einer Stufe. Kostet ein paar hundert Byte je Datei."
+
+[settings.live_from]
+label = "Live-Werte nehmen von"
+help = "Zählt nur bei mehr als einem MQTT-Upload -- eine Station, die auf einen Broker für Home Assistant und auf einen anderen für ihre Website veröffentlicht. Eine Skin, die ihren eigenen Broker in der skin.conf nennt, behält ihn so oder so."
+
+# Der Cheetah-Feed und die Skin, die er fährt.
+[settings.skin]
+label = "Skin"
+help = "Ein Verzeichnis mit Cheetah-Vorlagen, für WeeWX geschrieben. Richte das Skin-Verzeichnis darunter auf eine vorhandene Installation, und ihre Skins erscheinen hier."
+
+[settings.skins_dir]
+label = "Skin-Verzeichnis"
+help = "Wo nach Skins gesucht wird. Eine WeeWX-Installation hält sie in `skins`; dieses Verzeichnis lässt sich direkt benutzen."
+
+[settings.charts_path]
+label = "Wo die Diagrammdateien liegen"
+help = "Die Adresse, unter der ein Browser die Diagrammdateien dieser Station erreicht, also dorthin, wo der `json`-Feed veröffentlicht. Einer Skin, die ihre Diagramme aus diesen Dateien zeichnet, muss man das sagen: sie sind ein eigener Export neben diesen Seiten, womöglich auf einen anderen Host, also kann es hier nichts ausrechnen. Leer lässt stehen, was die Skin sagt, und das ist bei der mitgelieferten `/json/` -- die Stelle, an der der eingebaute Webserver einen lokalen Export namens `json` ausliefert."
+
+[settings.units_other_path]
+label = "Adresse derselben Site in anderen Einheiten"
+help = "Für eine Station, die zweimal veröffentlicht, einmal je System: ein zweiter Feed derselben Skin mit einem anderen `Messwerte anzeigen in`, in ein eigenes Verzeichnis. Damit bekommen die Seiten einen Umschalter zwischen beiden und merken sich, was jemand gewählt hat. Leer gibt es keinen Umschalter, und das ist richtig für eine Station, die einmal veröffentlicht."
+
+[settings.units_other_label]
+label = "Wie diese Einheiten heißen sollen"
+help = "Was der Umschalter für die andere Seite sagt. Zwei oder drei Zeichen: er sitzt im Kopf neben dem Hell-Dunkel-Schalter."
+
+[settings.extras]
+label = "Die eigenen Einstellungen der Skin"
+help = "Ein `name = wert` je Zeile, in die [Extras] der Skin gelegt, über das, was sie selbst sagt. Dort legt der Autor einer Skin ab, was ein Betreiber ändern soll, und wer dafür die Skin editiert, verliert es beim nächsten Update. weewx-wdc braucht hier `base_path = /wdc/`, wenn es irgendwo anders als in der Wurzel einer Site veröffentlicht wird, sonst werden sein Stylesheet und seine Diagramme an der falschen Stelle gesucht."
+
+[settings.lang]
+label = "Sprache"
+help = "Eine WeeWX-Skin hält ihre Übersetzungen in ihrem eigenen lang-Verzeichnis, und diese Dateien tragen neben den Wörtern auch das Einheitensystem, die Beschriftungen und die Himmelsrichtungen. Die Liste ist das, was die gewählte Skin hat."
+
+[settings.encoding]
+label = "Die Seiten schreiben als"
+help = "WeeWX' Vorgabe sind HTML-Entities, und die überleben einen Webserver, der nichts über seine Kodierung sagt."
+
+[settings.copy_static]
+label = "Stylesheets und Bilder mitkopieren"
+help = "Das eigene CSS, die Schriften und die Skripte einer Skin. Nur aus, wenn etwas anderes sie dorthin legt."
+
+[settings.stale_ok]
+label = "stale_age einer Vorlage beachten"
+help = "Eine Skin markiert Seiten, die nicht jedes Intervall neu geschrieben werden müssen. Aus rendert jedes Mal alles, was langsamer und nie falsch ist."
+
+# Das Deck-Layout.
+[settings.layout]
+label = "Aufbau"
+help = "Der alternative Aufbau legt die aktuellen Werte, die Zeiger und die Diagramme in ein Raster. Der klassische hält die Abschnitte auseinander."
+
+[settings.default_theme]
+label = "Farben"
+help = "Was ein Besucher sieht, bevor er wählt. Die Seite hat so oder so einen Schalter und merkt sich die Wahl."
+
+[settings.gauges_display]
+label = "Zeiger"
+help = "Rundinstrumente für die aktuellen Werte."
+
+[settings.gauges_size]
+label = "Zeigergröße"
+
+[settings.stat_tile_observations]
+label = "Messwerte mit Kachel"
+help = "Je eine Kachel, in dieser Reihenfolge. Ein Messwert, den die Datenbank nicht hat, wird weggelassen statt leer gezeigt."
+
+[settings.table_tile_observations]
+label = "Messwerte in der Tabelle"
+
+[settings.stat_tiles_show_min]
+label = "Minimum zeigen für"
+help = "Eine Kachel zeigt voreingestellt das Maximum. Diese zeigen auch das Minimum -- eine Temperatur ist in beide Richtungen interessant, eine Regenrate nicht."
+
+[settings.stat_tiles_show_max]
+label = "Nur das Maximum zeigen für"
+
+[settings.stat_tiles_show_sum]
+label = "Summe zeigen für"
+help = "Regen, Verdunstung, Windweg: die Messwerte, bei denen die Summe die Zahl ist, die etwas bedeutet."
+
+[settings.show_min_max_time_day]
+label = "Uhrzeit nennen, auf der Tagesseite"
+help = "Wann das Tageshoch und -tief erreicht wurden, unter dem Wert."
+
+[settings.show_min_max_time_yesterday]
+label = "Uhrzeit nennen, gestern"
+
+[settings.show_min_max_time_week]
+label = "Uhrzeit nennen, auf der Wochenseite"
+
+[settings.show_min_max_time_month]
+label = "Uhrzeit nennen, auf der Monatsseite"
+
+[settings.outTemp_stat_tile_color]
+label = "Kachel einfärben"
+
+[settings.outTemp_stat_tile_color_min]
+label = "Am kältesten"
+help = "Die Temperatur, für die die kälteste Farbe steht, in der Einheit, in der die Seiten angezeigt werden."
+
+[settings.outTemp_stat_tile_color_max]
+label = "Am wärmsten"
+
+[settings.outTemp_stat_tile_color_transparency]
+label = "Stärke"
+help = "0 ist gar keine Färbung, 1 die volle Farbe."
+
+[settings.stat_tile_winddir_ordinal]
+label = "Himmelsrichtungen auf Kacheln"
+help = "NNW statt 337 Grad."
+
+[settings.diagram_tile_winddir_ordinal]
+label = "Himmelsrichtungen auf Diagrammen"
+
+[settings.windRose_show_beaufort]
+label = "Windrose in Beaufort"
+help = "Bänder nach Stärke statt nach Geschwindigkeit."
+
+[settings.windRose_legend_show_units]
+label = "Einheiten in der Windrosen-Legende"
+
+[settings.windRose_colors]
+label = "Farben der Windrose"
+help = "Eine Farbe je Band, das ruhigste zuerst. Voreingestellt sind sechs."
+
+[settings.climatological_days]
+label = "Zu zählende Tage"
+help = "Benannte Schwellen, je Monat und je Jahr gezählt. Die Schwellen sind die des Deutschen Wetterdienstes: ein Regentag ist 0,1 mm, ein Sommertag 25 °C, ein Sturmtag eine Bö von 8 Beaufort. Sie überschneiden sich absichtlich -- ein Wüstentag ist auch ein heißer Tag -- also gibt es keine Summe, und die letzte Zeile ist, wie viele Tage der Zeitraum hat. Ein Messwert, den diese Station nicht aufzeichnet, wird weggelassen statt als Null gezählt."
+
+[settings.climatological_days_per_month]
+label = "Nach Monaten aufschlüsseln"
+
+[settings.climatogram_enable_stats]
+label = "Klimadiagramm auf der Jahresseite"
+
+[settings.climatogram_enable_year_stats]
+label = "Klimadiagramm auf der Statistikseite"
+
+[settings.show_last_rain]
+label = "Wann es zuletzt geregnet hat"
+
+[settings.show_most_days_with_rain]
+label = "Längste nasse Strecke"
+
+[settings.show_most_days_without_rain]
+label = "Längste trockene Strecke"
+
+[settings.show_most_rain_within_one_day]
+label = "Nassester Tag"
+
+[settings.sensor_diagram_period]
+label = "Zeitraum"
+
+[settings.sensor_stat_tile_observations]
+label = "Messwerte mit Kachel"
+
+[settings.sensor_diagram_observations]
+label = "Messwerte mit Diagramm"
+
+[settings.sensor_table_observations]
+label = "Messwerte in der Tabelle"
+
+[settings.sensor_battery_status]
+label = "Batteriewerte"
+help = "Werden als gut oder schwach gezeigt statt als Zahl."
+
+[settings.computer_monitor_diagram_period]
+label = "Zeitraum"
+
+[settings.computer_monitor_stat_tile_observations]
+label = "Messwerte mit Kachel"
+
+[settings.computer_monitor_diagram_observations]
+label = "Messwerte mit Diagramm"
+
+[settings.computer_monitor_table_observations]
+label = "Messwerte in der Tabelle"
