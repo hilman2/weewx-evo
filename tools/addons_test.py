@@ -309,6 +309,61 @@ def what_is_installed_disappears_from_the_shelf() -> None:
           any(name in page for name in have), True)
 
 
+def the_hardware_is_named_on_both_lists() -> None:
+    """"Does it do my Vantage" is asked of an installed add-on too.
+
+    On the shelf only, it was answered only before installing -- and this
+    installation ships eight add-ons in its image, so on the beta the whole
+    of the answer was in a list nothing was in. Somebody with a second
+    console asks it afterwards.
+
+    Built here rather than measured off the running interpreter: which
+    add-ons are installed differs between this laptop and the image these
+    run in, and a check that only measures on one of them stops measuring.
+    """
+    print()
+    print("the boxes, on the row that is installed")
+    from weewx_evo import adminaddons, catalogue
+
+    class FakeAdmin:
+        read_only = True
+
+        @property
+        def language(self):
+            from weewx_evo import language as language_defs
+
+            return language_defs.get("en")
+
+        def say(self, english: str) -> str:
+            return self.language.say(english)
+
+    one = addons.Installed(package="weewx-evo-weewx-driver", version="0.1.0",
+                           provides=(("weewx_evo.collectors", "weewx-driver"),))
+    entry = catalogue.Plugin(name="weewx-evo-weewx-driver",
+                             hardware=("Davis Vantage Pro, Pro2, Vue",))
+    row = adminaddons._installed_rows({one.package: one}, FakeAdmin(), {},
+                                      [entry])
+    check("an installed add-on names its hardware",
+          "Davis Vantage Pro, Pro2, Vue" in row, True)
+    check("beside what it registers", "weewx-driver" in row, True)
+
+    # The cell holds markup now, so what goes into it has to be escaped
+    # where it is built. An entry point's name is a string from a package
+    # this machine installed, which is exactly the sort of string that is
+    # trusted right up until it is not.
+    sharp = addons.Installed(package="p", version="1",
+                             provides=(("g", "<b>x</b>"),))
+    check("and a name that looks like markup is text",
+          "<b>x</b>" in adminaddons._installed_rows({"p": sharp}, FakeAdmin(),
+                                                    {}, []), False)
+
+    # Without a catalogue entry, no line and no exception: an add-on
+    # installed by name from a file is not in the catalogue at all.
+    check("one the catalogue does not carry renders anyway",
+          "<tr>" in adminaddons._installed_rows({one.package: one},
+                                                FakeAdmin(), {}, []), True)
+
+
 def an_update_is_a_string_comparison() -> None:
     """The catalogue carries the version, so the check costs no request.
 
@@ -492,6 +547,7 @@ def main() -> int:
     a_dependency_comes_too_and_only_from_the_list()
     the_command_line_may_install_anything()
     what_is_installed_disappears_from_the_shelf()
+    the_hardware_is_named_on_both_lists()
     an_update_is_a_string_comparison()
     what_pip_says_is_reported()
     removing_asks_what_is_here()

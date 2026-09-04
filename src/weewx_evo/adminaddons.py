@@ -109,12 +109,27 @@ def _rows(plugins: list, installed: dict, admin: Any, suggested: bool = False
     return "".join(out)
 
 
-def _installed_rows(installed: dict, admin: Any, newer: dict) -> str:
-    """What is here, what each registers, and what a newer one would be."""
+def _installed_rows(installed: dict, admin: Any, newer: dict,
+                    offered: list | None = None) -> str:
+    """What is here, what each registers, and what a newer one would be.
+
+    The catalogue comes in as well, for one thing that is not in the entry
+    points: the hardware. "Does this do my Vantage" is asked of an add-on
+    that is already installed at least as often as of one on the shelf --
+    somebody with two consoles, or somebody wondering whether to buy one --
+    and the answer was on the shelf only.
+    """
     say, lang = admin.say, admin.language
+    boxes_of = {one.name: one.hardware for one in (offered or [])}
     out = []
     for one in installed.values():
-        provides = ", ".join(one.names) or say("nothing on its own")
+        provides = html.escape(", ".join(one.names)
+                               or say("nothing on its own"))
+        boxes = boxes_of.get(one.package) or ()
+        if boxes:
+            # Not translated: they are model names.
+            provides += (f'<p class="help hardware">'
+                         f'{html.escape(", ".join(boxes))}</p>')
         version = html.escape(one.version)
         buttons = ""
         if not admin.read_only:
@@ -142,7 +157,7 @@ def _installed_rows(installed: dict, admin: Any, newer: dict) -> str:
   <tr>
     <td><strong>{html.escape(one.package)}</strong></td>
     <td>{version}</td>
-    <td>{html.escape(provides)}</td>
+    <td>{provides}</td>
     <td>{buttons}</td>
   </tr>''')
     return "".join(out)
@@ -223,7 +238,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     <tr><th>{html.escape(say("Package"))}</th>
         <th>{html.escape(say("Version"))}</th>
         <th>{html.escape(say("Provides"))}</th><th></th></tr>
-    {_installed_rows(have, admin, newer)}
+    {_installed_rows(have, admin, newer, offered)}
   </table>
 </section>'''
     else:

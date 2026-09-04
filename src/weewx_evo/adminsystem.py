@@ -65,15 +65,22 @@ def _driver_rows(collectors: list[Any], drivers: list[Any],
         return (f'<p class="system-empty">'
                 f'{html.escape(say("No driver settings."))}</p>')
 
+    # "Driver: shed (weewx-driver)" under a heading that already says Drivers
+    # is the word twice, and the half in front of the colon is built in
+    # `all_schemas`, where there is no language -- so on a German page it was
+    # the one English word in the panel. The name is the whole of it here.
+    def said(schema: Any) -> str:
+        return schema.label.split(": ", 1)[-1]
+
     out = []
     for schema in collectors:
         # Named for what it is rather than for how it is wired: "runs where
         # the hardware is" is the whole of what a reader needs from the
         # distinction, and it is the half that costs them something.
-        out.append(_row(f"./{schema.name}", schema.label,
+        out.append(_row(f"./{schema.name}", said(schema),
                         "Runs where the hardware is", say=say))
     for schema in drivers:
-        out.append(_row(f"./{schema.name}", schema.label, say=say))
+        out.append(_row(f"./{schema.name}", said(schema), say=say))
     return "".join(out)
 
 
