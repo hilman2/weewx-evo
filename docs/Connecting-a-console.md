@@ -94,19 +94,31 @@ not touch the hardware. A serial port that does not answer is a driver hanging
 in its own process, where it cannot stop the recording.
 → [Drivers](Drivers#running-a-weewx-driver)
 
-### If your driver is not in the list
+The thirteen WeeWX ships come with the add-on: Davis Vantage, Fine Offset,
+AcuRite, Oregon Scientific, LaCrosse, TE923, Ultimeter, CC3000, WS1. Nothing
+further to fetch, and WeeWX does not have to be installed.
 
-The list holds what is on this machine: WeeWX's own drivers if WeeWX is
-installed, anything under `user`, and any driver file you have added. A driver
-is one Python file, and adding it is one command:
+A driver that needs a library says so rather than going missing — `needs
+pyusb` beside its name in the list. Install the package it names where the
+driver runs, or take the extra:
 
 ```bash
-weewx-evo-weewx-driver install ./vantage.py
+pip install "weewx-evo-weewx-driver[usb]"      # or [serial], or [all]
+```
+
+### If your driver is not in the list
+
+There are a hundred beside those thirteen — weewx-sdr, and one for almost
+every console somebody has written for. A driver is one Python file, and
+adding it is one command:
+
+```bash
+weewx-evo-weewx-driver install ./some-driver.py
 weewx-evo-weewx-driver install https://example.org/some-driver.py
 ```
 
-A driver that needs a library says so rather than going missing — `needs
-pyusb` beside its name. Install that where the driver runs.
+A file added this way **beats** the shipped copy of the same name, which is
+how a driver you have patched for your own hardware gets to run.
 
 ### If you already have a weewx.conf
 
