@@ -41,8 +41,7 @@ onward. They are not core environment settings.
 | `code` | text | made from label | Up to four characters for compact legends |
 | `order` | int | `0` | Presentation order; equal values retain file order |
 | `senders` | list or `"*"` | `[]` | Canonical sender IDs selected from the shared live database. `[]` selects none; `"*"` explicitly selects every arrival |
-| `members.<sender>.role` | choice | `main` | How this Place uses the sender: ordinary columns (`main`) or a numbered extra channel (`extra`) |
-| `members.<sender>.channel` | int | `0` | `0` for `main`; `1`–`8` for `extra` |
+| `primary` | text | earliest sender heard | The one canonical sender ID this Place's series is taken from. Its readings are placed by the catalog; every other selected sender writes only what `placement.toml` gives it a column for |
 | `members.<sender>.indoor` | bool | `true` | Whether this sender's indoor readings belong in this Place |
 
 Field mappings are stored in `placement.toml` and keyed by Place plus canonical
@@ -53,9 +52,13 @@ Legacy `archive_db` and `station.*` values are read only when no
 `archives.toml` exists. They are copied once into `[archives.default]`; after
 that they have no effect. → [Stations and Archives](Stations-and-Archives)
 
-Legacy station-owned `role`, `channel` and `indoor` values are likewise copied
-once into the matching place memberships. They are not Station settings and
-are removed from a writable `stations.toml` after that commit.
+A legacy station-owned `indoor` value is likewise copied once into the matching
+place membership. It is not a Station setting and is removed from a writable
+`stations.toml` after that commit.
+
+`role` and `channel` are read nowhere. A `members` table still carrying either
+is refused rather than ignored, so a line that no longer means anything cannot
+sit in the file unnoticed.
 
 ## Archive
 

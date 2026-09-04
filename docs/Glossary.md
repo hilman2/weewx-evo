@@ -26,8 +26,7 @@ Replaces WeeWX's `StdArchive`. → [Archiver](Archiver)
 **Catch-up** — Build every interval the live table covers.
 `weewx-evo catchup`.
 
-**Channel** — With Ecowitt: a sensor position, `ch1` through `ch8`. A Place
-also gives each `extra` sender a separate numbered archive channel.
+**Channel** — With Ecowitt: a sensor position, `ch1` through `ch8`.
 → [Push drivers](Driver-Ecowitt)
 
 **Console** — The physical box that sends readings. It may be one sender, or a
@@ -93,7 +92,7 @@ address. Redacted before anything is stored that somebody might pass on.
 height above sea level, its own file of readings. Sunrise and the barometer
 reduction are worked out from them, so each place has its own. One entry in
 `archives.toml`, including the first; that entry also selects its senders and
-defines their Place-specific roles.
+names the one its readings come from.
 This is why the code calls it an archive.
 → [Several places](Places)
 

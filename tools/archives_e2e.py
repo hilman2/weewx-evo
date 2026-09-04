@@ -186,10 +186,9 @@ latitude = {SOUTH['latitude']}
 longitude = {SOUTH['longitude']}
 altitude = {SOUTH['altitude']}
 senders = ["{south_sender}"]
+primary = "{south_sender}"
 
 [archives.default.members."{south_sender}"]
-role = "main"
-channel = 0
 indoor = true
 
 [archives.nordfeld]
@@ -199,16 +198,25 @@ latitude = {NORTH['latitude']}
 longitude = {NORTH['longitude']}
 altitude = {NORTH['altitude']}
 senders = ["{north_sender}", "{shed_sender}"]
+primary = "{north_sender}"
 
 [archives.nordfeld.members."{north_sender}"]
-role = "main"
-channel = 0
 indoor = true
 
 [archives.nordfeld.members."{shed_sender}"]
-role = "extra"
-channel = 1
 indoor = true
+""", encoding="utf-8")
+
+    # The shed is an additional sender on the north field, so nothing of its
+    # is written until somebody names a column for it. That is the placement
+    # a person would make on the Fields page; here it is the file, because
+    # what this measures is that the two archives stay apart afterwards.
+    (work / "placement.toml").write_text(f"""
+[[takes]]
+archive = "nordfeld"
+station = "{shed_sender}"
+[takes.fields]
+"outTemp" = "extraTemp1"
 """, encoding="utf-8")
 
     (work / "stations.toml").write_text("""

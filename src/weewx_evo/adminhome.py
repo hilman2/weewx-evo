@@ -896,35 +896,50 @@ def _judge(admin: Any, state: State) -> None:
             _concern(state, f"Export {one.name!r}: {one.unreachable}",
                      one.href or "./publishing")
 
-    for said in _two_main_stations(admin):
-        _concern(state, said, "./places")
+    for said, where in _senders_placing_nothing(admin):
+        _concern(state, said, where)
 
 
-def _two_main_stations(admin: Any) -> list[str]:
-    """Places that select more than one sender for primary readings.
+def _senders_placing_nothing(admin: Any) -> list[tuple[str, str]]:
+    """Additional senders that are uploading into nothing.
 
-    One archive has one main station. Two of them take turns writing
-    `outTemp` every few seconds, and afterwards the column holds a mixture
-    nothing can separate. The listener drops the second one's readings
-    rather than let that happen -- but a configuration that asks for it is
-    worth saying out loud rather than silently working around.
+    Two primaries in one place used to be the thing worth saying here, and it
+    cannot be configured any more: a place holds one primary sender ID.
+
+    What replaced it is the cost of that: a sender other than the primary
+    writes only the columns somebody has given it, so one nobody has been to
+    the Fields page about is arriving, being stored in the live journal, and
+    reaching no column at all. That is recoverable -- place the fields, run a
+    rebuild, and the whole retention period follows -- but only by somebody
+    who knows it is happening.
+
+    Deliberately narrow, because a note standing beside every row says
+    nothing: only senders that have actually sent, that a place selects, that
+    are not its primary, and that have no placement of any kind.
     """
     try:
         archives = adminarchives.load(admin).all()
+        plans = placement.load(placement.path_for(Path(admin.path).parent))
     except Exception:
         return []
 
     said = []
     for archive in archives:
-        clashing = sorted(
-            one.label for one in adminarchives.sender_choices(admin, archive)
-            if (archive.selects(one.sender)
-                and archive.policy_for(one.sender).role == "main"))
-        if len(clashing) > 1:
-            said.append(
-                f"{archive.name!r} uses {len(clashing)} senders for primary "
-                f"readings: {', '.join(clashing)}. Set the rest to "
-                "additional sensors.")
+        choices = adminarchives.sender_choices(admin, archive)
+        primary = archive.primary_sender(choices)
+        placed = {one.station for one in plans.takes
+                  if one.archive == archive.name and one.station and one.fields}
+        idle = sorted(
+            one.label for one in choices
+            if (archive.selects(one.sender) and one.sender != primary
+                and one.first_seen > 0 and one.sender not in placed))
+        if idle:
+            sender = "sender is" if len(idle) == 1 else "senders are"
+            said.append((
+                (f"In place {archive.name!r}, {len(idle)} additional {sender} "
+                 f"uploading into no column: {', '.join(idle)}. Give their "
+                 "readings columns under Fields, or nothing they send is kept."),
+                f"./places/{archive.name}/fields"))
     return said
 
 

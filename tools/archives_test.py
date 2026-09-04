@@ -195,10 +195,9 @@ def station_selections_survive_the_file() -> None:
             archives.Archive("default", "default.sdb", stations=None),
             archives.Archive("empty", "empty.sdb", stations=()),
             archives.Archive("north", "north.sdb",
-                             stations=(shared, north),
+                             stations=(shared, north), primary=north,
                              members={
-                                 shared: archives.MemberPolicy(
-                                     role="extra", channel=2, indoor=False),
+                                 shared: archives.MemberPolicy(indoor=False),
                              }),
             archives.Archive("mirror", "mirror.sdb", stations=(shared,)),
         ], where)
@@ -214,10 +213,14 @@ def station_selections_survive_the_file() -> None:
                if shared in (one.senders or ())], ["north", "mirror"])
         check("a selected sender keeps its place-specific policy",
               again.get("north").policy_for(shared),
-              archives.MemberPolicy(role="extra", channel=2, indoor=False))
+              archives.MemberPolicy(indoor=False))
         check("an unspecified member has the safe ordinary defaults",
               again.get("north").policy_for(north),
               archives.MemberPolicy())
+        check("the primary is one sender and survives the file",
+              again.get("north").primary, north)
+        check("so the other member is an additional sender",
+              again.get("north").role_of(shared), "extra")
         written = where.read_text(encoding="utf-8")
         check("the broad selection is written distinctly",
               'senders = "*"' in written, True)
@@ -232,9 +235,12 @@ def member_policy_values_are_checked_per_archive() -> None:
     print("\nmember policy validation")
 
     for what, values in (
-        ("unknown role", {"role": "secondary", "channel": 0}),
-        ("extra without channel", {"role": "extra", "channel": 0}),
-        ("main with a channel", {"role": "main", "channel": 2}),
+        # `role` and `channel` are gone rather than deprecated. A file still
+        # carrying them is said out loud: read and ignored, the place would
+        # keep working with a line in it that means nothing, which is how
+        # somebody spends an afternoon on a setting that was never applied.
+        ("a retired role", {"role": "extra"}),
+        ("a retired channel", {"channel": 2}),
         ("quoted indoor flag", {"indoor": "false"}),
     ):
         try:
@@ -247,21 +253,13 @@ def member_policy_values_are_checked_per_archive() -> None:
     one = sender_id("push", "one")
     two = sender_id("push", "two")
     dormant = {
-        one: archives.MemberPolicy(role="extra", channel=1),
-        two: archives.MemberPolicy(role="extra", channel=1),
+        one: archives.MemberPolicy(indoor=False),
+        two: archives.MemberPolicy(indoor=False),
     }
     made = archives.Archive("north", "north.sdb", stations=(one,),
                             members=dormant)
     check("unselected policies are not a second authority",
           sorted(made.members), [one])
-    try:
-        archives.Archive("north", "north.sdb", stations=(one, two),
-                         members=dormant)
-    except ValueError as exc:
-        check("selected extras may not share a channel",
-              "channel 1" in str(exc), True)
-    else:
-        check("selected extras may not share a channel", False, True)
 
     # A file naming the selection with the key it had before senders were
     # ids. Said rather than read as "this place selects nobody".
@@ -532,8 +530,9 @@ def two_sites_through_a_real_serve() -> None:
             f'latitude = {SOUTH["latitude"]}\n'
             f'longitude = {SOUTH["longitude"]}\n'
             f'altitude = {SOUTH["altitude"]}\n'
+            f'primary = "{south_sender}"\n'
             f'\n[archives.default.members."{south_sender}"]\n'
-            'role = "main"\nchannel = 0\nindoor = true\n'
+            'indoor = true\n'
             '\n'
             '[archives.nordfeld]\n'
             'file = "data/nord.sdb"\n'
@@ -541,8 +540,9 @@ def two_sites_through_a_real_serve() -> None:
             f'latitude = {NORTH["latitude"]}\n'
             f'longitude = {NORTH["longitude"]}\n'
             f'altitude = {NORTH["altitude"]}\n'
+            f'primary = "{north_sender}"\n'
             f'\n[archives.nordfeld.members."{north_sender}"]\n'
-            'role = "main"\nchannel = 0\nindoor = true\n', encoding="utf-8")
+            'indoor = true\n', encoding="utf-8")
 
         (work / "stations.toml").write_text(
             '[stations.suedhof]\n'
@@ -827,24 +827,26 @@ def the_page_is_how_the_second_one_appears() -> None:
 
         error = adminarchives.configure(admin, "nordfeld", {
             "_members": "1", f"sender:{shared}": "1",
-            f"member-role:{shared}": "main",
+            f"member-policy:{shared}": "1",
+            "member-primary": shared,
             f"member-indoor:{shared}": "1"})
         check("selecting a live sender succeeds", error, "")
         check("and stores its canonical ID",
               adminarchives.load(admin).get("nordfeld").senders,
               (shared,))
 
-        # Role, channel and indoor are answers this place gives about one
-        # console. The same console may therefore answer differently in the
-        # migrated broad place and in the new, explicitly selected one.
+        # Which sender is primary, and whether its indoor readings count, are
+        # answers this place gives about one console. The same console may
+        # therefore answer differently in the migrated broad place and in the
+        # new, explicitly selected one.
         error = adminarchives.configure(admin, "default", {
             "_members": "1",
             "all-senders": "1",
             f"sender:{shared}": "1",
             f"sender:{other}": "1",
-            f"member-role:{shared}": "extra",
-            f"member-channel:{shared}": "3",
-            f"member-role:{other}": "main",
+            f"member-policy:{shared}": "1",
+            f"member-policy:{other}": "1",
+            "member-primary": other,
             f"member-indoor:{other}": "1",
             # An absent checkbox is the deliberate false value.
         })
@@ -852,7 +854,8 @@ def the_page_is_how_the_second_one_appears() -> None:
         error = adminarchives.configure(admin, "nordfeld", {
             "_members": "1",
             f"sender:{shared}": "1",
-            f"member-role:{shared}": "main",
+            f"member-policy:{shared}": "1",
+            "member-primary": shared,
             f"member-indoor:{shared}": "1",
         })
         check("the second place accepts another policy", error, "")
@@ -867,12 +870,14 @@ def the_page_is_how_the_second_one_appears() -> None:
               "./stations/" in fields_page, False)
 
         policies = adminarchives.load(admin)
-        check("one console can be extra outside in one place",
-              policies.get("default").policy_for(shared),
-              archives.MemberPolicy(role="extra", channel=3, indoor=False))
-        check("and main with indoor readings in another",
-              policies.get("nordfeld").policy_for(shared),
-              archives.MemberPolicy())
+        check("one console can be an additional sender in one place",
+              (policies.get("default").role_of(shared),
+               policies.get("default").policy_for(shared)),
+              ("extra", archives.MemberPolicy(indoor=False)))
+        check("and the primary with indoor readings in another",
+              (policies.get("nordfeld").role_of(shared),
+               policies.get("nordfeld").policy_for(shared)),
+              ("main", archives.MemberPolicy()))
 
         # A compact property update has no member marker. It must not rebuild
         # the relationship with defaults just because no policy controls were
@@ -882,23 +887,26 @@ def the_page_is_how_the_second_one_appears() -> None:
         check("an ordinary place edit succeeds", error, "")
         preserved = adminarchives.load(admin).get("default")
         check("and preserves its member policy",
-              preserved.policy_for(shared),
-              archives.MemberPolicy(role="extra", channel=3, indoor=False))
+              (preserved.primary, preserved.policy_for(shared)),
+              (other, archives.MemberPolicy(indoor=False)))
 
         member_form = adminarchives._member_fields(admin, preserved)
-        check("the place form owns the role control",
-              f'name="member-role:{shared}"' in member_form, True)
+        check("the place form owns the primary control",
+              'name="member-primary" type="radio"' in member_form, True)
         check("and displays the live label, not as its value",
               "<strong>Terrace</strong>" in member_form
               and f'name="sender:{shared}"' in member_form, True)
-        check("and shows the stored extra role",
-              'value="extra" selected' in member_form, True)
-        check("and shows its channel",
-              f'name="member-channel:{shared}"' in member_form
-              and 'value="3"' in member_form, True)
+        # One radio group across the rows, so exactly one is the browser's
+        # own behaviour. Two primaries have no spelling in this form.
+        check("both rows offer it", member_form.count(
+            'name="member-primary" type="radio"'), 2)
+        check("and exactly one is checked",
+              member_form.count("data-place-member-primary checked"), 1)
+        check("and it is the stored one",
+              f'value="{other}"' in member_form.split(
+                  "data-place-member-primary checked")[0][-120:], True)
         check("and names the relationship in user terms",
               ("Primary readings" in member_form
-               and "Additional sensor" in member_form
                and "Indoor readings" in member_form), True)
         indoor_name = f'name="member-indoor:{shared}"'
         indoor_control = (member_form.split(indoor_name, 1)[1].split(">", 1)[0]
@@ -922,16 +930,20 @@ def the_page_is_how_the_second_one_appears() -> None:
               adminarchives.load(admin).get("nordfeld").policy_for(other),
               archives.MemberPolicy())
 
-        selected, defaults = adminarchives._members_from_form({
+        selected, defaults, chosen = adminarchives._members_from_form({
             "_members": "1", f"sender:{shared}": "1",
             f"sender:{other}": "1",
         }, (), {}, new=True)
-        check("a no-script multi-selection has one primary",
+        check("a no-script multi-selection stores both",
               (selected, defaults[shared]),
               ((shared, other), archives.MemberPolicy()))
-        check("and makes the next sender additional",
-              defaults[other],
-              archives.MemberPolicy(role="extra", channel=1))
+        # No radio was submitted, so nobody has said. The place works it out
+        # from the journal rather than guessing here, and one of the two is
+        # the primary either way -- there is no state in which both are.
+        check("and names no primary of its own", chosen, "")
+        check("so the place still has exactly one",
+              [archives.Archive("n", "n.sdb", stations=selected).role_of(one)
+               for one in (shared, other)], ["main", "extra"])
 
         # A name that is taken, and a file that is taken. Both would mix two
         # places into one series without saying so.

@@ -22,7 +22,7 @@ the names and units the console sent. A live packet has a driver, an identity
 and a dialect; it has no archive assignment.
 
 When an interval closes, each archive reads the packets selected by its own
-sender membership, applies its member roles and Place-scoped mappings, and
+sender membership, applies its primary choice and Place-scoped mappings, and
 writes its own record. The same packet can therefore be used by more than one
 archive without being copied or relabelled on arrival.
 
@@ -32,8 +32,8 @@ span while its packets are still in the live database.
 ## `stations.toml`: identities, not routes
 
 `stations.toml` gives a recognised hardware identity a readable name and keeps
-sender clock tolerances. It does not contain archive membership, a role, an
-indoor policy or a field map.
+sender clock tolerances. It does not contain archive membership, an indoor
+policy or a field map.
 
 Renaming a station does not split the raw history: stored packets keep the
 driver and hardware identity, and the name is resolved when they are read.
@@ -47,14 +47,8 @@ label = "Kirchdorf an der Amper"
 latitude = 48.4596
 longitude = 11.6539
 altitude = 440.0
-[archives.default.members."v1/ecowitt/aabbcc"]
-role = "main"
-channel = 0
-indoor = true
-
+primary = "v1/ecowitt/aabbcc"
 [archives.default.members."v1/ecowitt/ddeeff"]
-role = "extra"
-channel = 1
 indoor = false
 
 [archives.nordfeld]
@@ -63,10 +57,7 @@ label = "Nordfeld"
 latitude = 48.4012
 longitude = 11.6301
 altitude = 452.0
-[archives.nordfeld.members."v1/ecowitt/aabbcc"]
-role = "main"
-channel = 0
-indoor = true
+primary = "v1/ecowitt/aabbcc"
 ```
 
 Each table is one place and is the sole source for that place's settings. A
@@ -74,13 +65,20 @@ sender may appear in several tables. An empty `senders = []` deliberately
 selects none. `senders = "*"` explicitly selects all arrivals, which is what a
 Place written from the settings starts with.
 
-`members` says how this Place uses a selected sender. `main` writes the
-ordinary columns. `extra` is a relationship preset: it moves temperature,
-humidity and dew point to its numbered extra channel and drops unplaced fields
-that would collide. An explicit Place/Sender field mapping overrides that preset.
-`indoor` decides whether room readings belong in this series. The same sender
-can therefore be main in one Place and extra in another. All three controls
-live on the Places page, including for the first and only archive.
+`primary` is the one sender this place's series is taken from. It is placed by
+the catalog: `outTemp` is `outTemp`. Every other selected sender writes only
+the columns given to it under Fields, plus its own battery and signal levels
+→ [Placements](Placements).
+
+A place holds one primary, so two of them cannot be configured. Omit it and
+the earliest sender the live database has heard becomes the primary, which is
+what a single-console installation gets without setting anything.
+
+`members` carries what is left of the per-sender relationship: `indoor`
+decides whether room readings belong in this series. The same sender can
+therefore be the primary of one place and an additional sender in another.
+Both controls live on the Places page, including for the first and only
+archive.
 
 The database schema still comes from the file. An existing WeeWX database is
 opened as it is, including custom columns, and remains usable by WeeWX.
@@ -93,10 +91,14 @@ atomically. After that, `archives.toml` is the only authority for place and
 database settings. Changing the old values has no effect.
 
 An old archive field in `stations.toml` is ignored and is not written back.
-Old `role`, `channel` and `indoor` values are copied once into archive member
-policies. After the canonical file is committed they are removed from a
-writable `stations.toml`; on a read-only split mount they may remain as ignored
-legacy input. Sender records and the Senders page expose none of them.
+An old `indoor` value is copied once into the archive member policy. After the
+canonical file is committed it is removed from a writable `stations.toml`; on a
+read-only split mount it may remain as ignored legacy input. Sender records and
+the Senders page expose none of it.
+
+`role` and `channel` are not read anywhere, in either file. A member table
+still carrying them is refused rather than ignored: read and skipped, the place
+would keep working with a line in it that means nothing.
 There is no fallback from an unknown archive name to `default`: selecting the
 wrong place must fail instead of publishing or recording plausible data under
 the wrong name.

@@ -143,11 +143,16 @@ CREATE TABLE IF NOT EXISTS dialect_mapping (
 -- The live database is the process boundary, including the directory of
 -- senders it contains. `label` is listener/UI metadata only: archive
 -- selection and member policy always use the canonical id.
+-- `first_seen` is what settles which sender a place takes its primary
+-- readings from when nobody has said. The earliest one wins, so a console
+-- plugged in this afternoon cannot take over a series that predates it.
+-- 0 means never heard: a sender named in the station file and nowhere else.
 CREATE TABLE IF NOT EXISTS sender_identity (
-    sender   TEXT NOT NULL PRIMARY KEY,
-    driver   TEXT NOT NULL,
-    identity TEXT NOT NULL,
-    label    TEXT
+    sender     TEXT NOT NULL PRIMARY KEY,
+    driver     TEXT NOT NULL,
+    identity   TEXT NOT NULL,
+    label      TEXT,
+    first_seen INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS sender_pair
     ON sender_identity(driver, identity COLLATE NOCASE);
@@ -272,6 +277,10 @@ class SenderIdentity:
     driver: str
     identity: str
     label: str = ""
+    #: When this sender was first heard, or 0 for one that never has been.
+    #: A place with no primary named takes the earliest of its members, and
+    #: a sender at 0 is never that: it has sent nothing to be primary about.
+    first_seen: float = 0.0
 
 
 class _Held:
@@ -321,6 +330,33 @@ class LiveStore:
         self._all: weakref.WeakSet[_Held] = weakref.WeakSet()
         self._lock = threading.Lock()
         self.conn.executescript(SCHEMA)
+        self._date_existing_senders()
+
+    def _date_existing_senders(self) -> None:
+        """Give `first_seen` to a directory written before the column existed.
+
+        `CREATE TABLE IF NOT EXISTS` leaves an existing table exactly as it
+        is, so the column has to be added here or every insert after this
+        version fails on a journal from the last one.
+
+        Left at the default they would all tie at 0, and the fallback primary
+        would be whichever row SQLite happened to return first -- so they are
+        dated from their oldest surviving packet. That is a lower bound after
+        a prune, which is enough: the order between them is what matters, and
+        retention takes each sender's oldest packets at the same moment.
+        """
+        columns = {row[1] for row in
+                   self.conn.execute("PRAGMA table_info(sender_identity)")}
+        if "first_seen" in columns:
+            return
+        with self.conn:
+            self.conn.execute("BEGIN")
+            self.conn.execute("ALTER TABLE sender_identity ADD COLUMN"
+                              " first_seen INTEGER NOT NULL DEFAULT 0")
+            self.conn.execute(
+                "UPDATE sender_identity SET first_seen = COALESCE("
+                "(SELECT MIN(received) FROM packet"
+                " WHERE packet.sender = sender_identity.sender), 0)")
 
 
     def _connect(self) -> _Held:
@@ -393,10 +429,18 @@ class LiveStore:
         sender = sender_id(packet.driver, packet.identity)
         self.conn.execute(
             "INSERT INTO sender_identity"
-            " (sender, driver, identity, label) VALUES (?, ?, ?, NULL)"
+            " (sender, driver, identity, label, first_seen)"
+            " VALUES (?, ?, ?, NULL, ?)"
             " ON CONFLICT(sender) DO UPDATE SET"
-            " driver = excluded.driver, identity = excluded.identity",
-            (sender, packet.driver, packet.identity))
+            " driver = excluded.driver, identity = excluded.identity,"
+            # Never moves forward. A sender announced by the station file
+            # before it ever sent is sitting at 0, and a back-dated catch-up
+            # import is older than the row it lands on; both have to be able
+            # to correct the date downwards, and nothing may push it up.
+            " first_seen = CASE WHEN sender_identity.first_seen = 0"
+            "   OR excluded.first_seen < sender_identity.first_seen"
+            "   THEN excluded.first_seen ELSE sender_identity.first_seen END",
+            (sender, packet.driver, packet.identity, received))
         cur = self.conn.execute(
             "INSERT OR IGNORE INTO packet"
             " (dateTime, received, driver, identity, sender, dialect, mapping, kind,"
@@ -618,9 +662,10 @@ class LiveStore:
         """Every canonical sender observed here, with optional UI label."""
         return [SenderIdentity(
             sender=str(row[0]), driver=str(row[1]), identity=str(row[2]),
-            label=str(row[3] or ""))
+            label=str(row[3] or ""), first_seen=float(row[4] or 0.0))
             for row in self.conn.execute(
-                "SELECT sender, driver, identity, label FROM sender_identity"
+                "SELECT sender, driver, identity, label, first_seen"
+                " FROM sender_identity"
                 " ORDER BY COALESCE(label, ''), driver, identity")]
 
     def sync_sender_labels(self, stations: Iterable[Any]) -> None:

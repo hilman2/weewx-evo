@@ -352,9 +352,10 @@ def a_place_saves_for_a_canonical_sender() -> None:
         archive_path = (work / "data" / "weewx.sdb").as_posix()
         admin = an_installation(work, archives=(
             "[archives.default]\n"
-            f'file = "{archive_path}"\n\n'
+            f'file = "{archive_path}"\n'
+            f'primary = "{canonical}"\n\n'
             f'[archives.default.members."{canonical}"]\n'
-            'role = "main"\nchannel = 0\nindoor = true\n'))
+            'indoor = true\n'))
         # The new handler's authority is archives.toml plus the canonical ID.
         # An announced station is neither required nor consulted.
         (work / "stations.toml").unlink()

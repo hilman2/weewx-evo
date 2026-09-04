@@ -152,13 +152,17 @@ identity = "WH1080 (USB)"
         roof_id = sender_id("roof", "WH1080 (USB)")
         place = Archive(
             name="default", file=str(work / "archive.sdb"),
-            stations=(shed_id, roof_id),
-            members={
-                shed_id: MemberPolicy(indoor=False),
-                roof_id: MemberPolicy(role="extra", channel=3),
-            })
+            stations=(shed_id, roof_id), primary=shed_id,
+            members={shed_id: MemberPolicy(indoor=False)})
+        # The roof is an additional sender here, so it writes only what it
+        # has been placed. Nothing is guessed for it: two WH1080s send the
+        # same field names, and which of the roof's readings are worth a
+        # column of their own is not something the protocol can answer.
+        plans = placement.Placements()
+        plans.decide("default", roof_id, "", "outTemp", "extraTemp3")
+        plans.decide("default", roof_id, "", "outHumidity", "extraHumid3")
         placer = placement.Placer(
-            place, placement.Placements(), directory=book, registry=registry)
+            place, plans, directory=book, registry=registry)
         placed = {p.sender_id: p for p in
                   (placer.place(one) for one in arrived) if p is not None}
         print(f"  placed as: {sorted(placed)}")
@@ -174,13 +178,16 @@ identity = "WH1080 (USB)"
         check("its outdoor reading was kept",
               (shed.data if shed else {}).get("outTemp"), 15.2)
 
-        # This Place uses the roof sender as an additional sensor on channel 3.
-        check("the roof's outTemp moved to extraTemp3",
+        # The roof is an additional sender here, and writes where it was put.
+        check("the roof's outTemp is in the column it was given",
               (roof.data if roof else {}).get("extraTemp3"), 18.4)
         check("and outTemp is not in its record",
               "outTemp" in (roof.data if roof else {}), False)
-        check("its humidity moved too",
+        check("its humidity too",
               (roof.data if roof else {}).get("extraHumid3"), 55.0)
+        check("and nothing it was not given came with them",
+              sorted(one for one in (roof.data if roof else {})
+                     if not one.startswith("extra")), [])
 
         listener.stop()
         thread.join(timeout=2)

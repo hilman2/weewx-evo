@@ -30,9 +30,9 @@ def _row(href: str, title: str, detail: str = "", count: int | None = None,
     )
 
 
-def _instances(schemas: Iterable[Any], kind: str) -> list[Any]:
-    return sorted((schema for schema in schemas if schema.kind == kind),
-                  key=lambda schema: schema.label.casefold())
+def _instances(schemas: Iterable[Any], kind: str, sort: bool = True) -> list[Any]:
+    found = [schema for schema in schemas if schema.kind == kind]
+    return sorted(found, key=lambda schema: schema.label.casefold()) if sort else found
 
 
 def _instance_rows(schemas: list[Any], empty: str) -> str:
@@ -45,7 +45,11 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     schemas = list(admin.schemas)
     collectors = _instances(schemas, "collector")
     drivers = _instances(schemas, "driver")
-    core = _instances(schemas, "core")
+    # Declared order, not alphabetical. Collectors and drivers are named by
+    # the operator and there can be any number, so a sort is the only order
+    # they have; these are two fixed entries, and the one holding the archive
+    # interval belongs at the top of the panel somebody came here to find.
+    core = _instances(schemas, "core", sort=False)
 
     return f'''
 <div class="page-head">
@@ -69,7 +73,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     {_instance_rows(drivers, "No driver settings.")}
   </section>
   <section class="system-panel">
-    <h3>Installation</h3>
+    <h3 class="system-central">Installation-wide settings</h3>
     {_instance_rows(core, "No installation settings.")}
   </section>
 </div>

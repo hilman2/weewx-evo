@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from weewx_evo import adminhome, adminpublish  # noqa: E402
+from weewx_evo import adminarchives, adminhome, adminpublish  # noqa: E402
 from weewx_evo.admin import Admin  # noqa: E402
 from weewx_evo.cli import all_schemas  # noqa: E402
 from weewx_evo.db.archive import ArchiveStore  # noqa: E402
@@ -228,15 +228,19 @@ def a_console_that_was_renamed_is_not_a_stranger() -> None:
               True)
 
 
-def two_stations_claiming_one_archive() -> None:
-    """A configuration that asks for the one failure that cannot be undone.
+def an_additional_sender_writing_nowhere() -> None:
+    """The cost of the arrangement, said rather than left to be found.
 
-    Two stations of one archive both writing `outTemp` take turns at it every
-    few seconds. The place moves the extra one's reading aside rather than
-    let that happen -- but a configuration that leaves both as main is worth
-    saying out loud rather than silently working around.
+    Two senders in one place both writing `outTemp` was the failure that
+    could not be undone, and it is now unsayable: a place holds one primary
+    sender ID. What that costs is the other direction -- a second sender
+    writes only the columns somebody has named, so one nobody has been to the
+    Fields page about arrives, is stored, and reaches no column at all.
+
+    Recoverable, because the readings are in the journal and a rebuild
+    follows a placement. Only by somebody who knows it is happening.
     """
-    print("\ntwo main stations in one archive")
+    print("\nan additional sender nobody has placed")
     both = ('[stations.kirchdorf]\ndriver = "ecowitt"\n'
             'identity = "AAAA"\n\n'
             '[stations.garten]\ndriver = "ecowitt"\n'
@@ -247,6 +251,17 @@ def two_stations_claiming_one_archive() -> None:
         work = Path(raw)
         admin = an_installation(work)
         (work / "stations.toml").write_text(both, encoding="utf-8")
+        now = int(time.time())
+        with LiveStore(work / "data" / "live.sdb",
+                       interval_seconds=INTERVAL) as live:
+            # Heard, and in this order: the second one must not become the
+            # primary of a series the first one has been writing.
+            live.add(Packet(dateTime=now - 900, usUnits=1,
+                            data={"outTemp": 20.0}, driver="ecowitt",
+                            identity="AAAA", received=now - 900))
+            live.add(Packet(dateTime=now - 60, usUnits=1,
+                            data={"outTemp": 21.0}, driver="ecowitt",
+                            identity="BBBB", received=now - 60))
         sync_senders(work)
         (work / "archives.toml").write_text(
             '[archives.default]\n'
@@ -254,54 +269,37 @@ def two_stations_claiming_one_archive() -> None:
             f'senders = ["{kirchdorf}", "{garten}"]\n', encoding="utf-8")
 
         state = adminhome.read(admin)
-        # The words the place settings use are `main` and `extra`, so the
-        # overview says them too rather than inventing a third vocabulary.
-        check("it is reported",
-              any("uses 2 senders for primary readings" in one
-                  for one in state.concerns), True)
-        check("naming both",
-              any("garten, kirchdorf" in one for one in state.concerns), True)
+        said = [one for one in state.concerns if "uploading into no column" in one]
+        check("it is reported", len(said), 1)
+        check("naming the sender", "garten" in (said[0] if said else ""), True)
+        check("and not the one the series comes from",
+              "kirchdorf" in (said[0] if said else ""), False)
 
-        # A role written beside a console in stations.toml decides nothing.
-        (work / "stations.toml").write_text(
-            both + 'role = "extra"\nchannel = 1\n', encoding="utf-8")
+        # A placement is the answer, and it is what clears it.
+        (work / "placement.toml").write_text(
+            '[[takes]]\narchive = "default"\n'
+            f'station = "{garten}"\n'
+            '[takes.fields]\n"outTemp" = "extraTemp1"\n', encoding="utf-8")
         state = adminhome.read(admin)
-        check("a role in the station file is ignored",
-              any("uses 2 senders for primary readings" in one
-                  for one in state.concerns), True)
+        check("placing its readings clears the concern",
+              [one for one in state.concerns
+               if "uploading into no column" in one], [])
 
-        # One of each is the arrangement, but it is the place that says so.
+        # A sender announced in the station file but never heard is not this:
+        # it is an unconfigured console, and that belongs on its own page.
+        (work / "placement.toml").unlink()
+        (work / "stations.toml").write_text(
+            both + '\n[stations.schuppen]\ndriver = "ecowitt"\n'
+            'identity = "CCCC"\n', encoding="utf-8")
+        sync_senders(work)
         (work / "archives.toml").write_text(
             '[archives.default]\n'
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            f'senders = ["{kirchdorf}", "{garten}"]\n\n'
-            f'[archives.default.members."{garten}"]\n'
-            'role = "extra"\nchannel = 1\nindoor = true\n',
-            encoding="utf-8")
+            'senders = "*"\n', encoding="utf-8")
         state = adminhome.read(admin)
-        check("a place-owned extra role removes the concern",
-              [one for one in state.concerns
-               if "senders for primary readings" in one], [])
-
-        # The same station may be extra in the first place and main in a
-        # second. The dashboard must judge each place with its own policy.
-        (work / "archives.toml").write_text(
-            "[archives.default]\n"
-            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
-            f'senders = ["{kirchdorf}", "{garten}"]\n\n'
-            f'[archives.default.members."{garten}"]\n'
-            'role = "extra"\nchannel = 1\nindoor = true\n\n'
-            "[archives.nordfeld]\n"
-            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
-            f'senders = ["{kirchdorf}", "{garten}"]\n',
-            encoding="utf-8")
-        state = adminhome.read(admin)
-        clashes = [one for one in state.concerns
-                   if "senders for primary readings" in one]
-        check("only the place where both are main is reported",
-              len(clashes), 1)
-        check("and it names that place",
-              "'nordfeld'" in (clashes[0] if clashes else ""), True)
+        said = [one for one in state.concerns if "uploading into no column" in one]
+        check("one that has never sent is not reported as uploading",
+              "schuppen" in (said[0] if said else ""), False)
 
 
 def place_membership_drives_the_console_card() -> None:
@@ -331,8 +329,9 @@ def place_membership_drives_the_console_card() -> None:
               details.get("kirchdorf"), "Used by South, North")
         check("an empty selection uses nobody",
               details.get("garten"), "Not assigned")
-        check("the empty place creates no main-station collision",
-              [one for one in state.concerns if "'empty' uses" in one], [])
+        check("a place that selects nobody has no sender to complain about",
+              [one for one in state.concerns
+               if "'empty'" in one and "uploading into no column" in one], [])
 
         # `*` is an explicit broad selection and is deliberately different
         # from `[]`: one takes every arrival, the other takes none.
@@ -346,10 +345,13 @@ def place_membership_drives_the_console_card() -> None:
               details, {"kirchdorf": "Used by All", "garten": "Used by All"})
         # Broad selection is evaluated against the live sender directory,
         # not the two display names in stations.toml. The fixture already
-        # contains one unannounced live sender, so all three are selected.
-        check("and sees their role collision",
-              any("'all' uses 3 senders for primary readings" in one
-                  for one in state.concerns), True)
+        # contains one unannounced live sender, so all three are selected --
+        # and exactly one of the three is the series, whatever the count.
+        place = adminarchives.load(admin).get("all")
+        choices = adminarchives.sender_choices(admin, place)
+        check("and exactly one of them is the primary",
+              [place.role_of(one.sender, choices) for one in choices].count(
+                  "main"), 1)
 
 
 def no_token_is_worth_saying() -> None:
@@ -884,7 +886,7 @@ def main() -> int:
     a_backlog_is_a_fault()
     a_stranger_is_worth_saying()
     a_console_that_was_renamed_is_not_a_stranger()
-    two_stations_claiming_one_archive()
+    an_additional_sender_writing_nowhere()
     place_membership_drives_the_console_card()
     no_token_is_worth_saying()
     what_cannot_be_read_says_so()

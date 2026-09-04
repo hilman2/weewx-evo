@@ -38,8 +38,8 @@ log = logging.getLogger(__name__)
 
 #: Plots already told about, so the refusal to shade a comparison chart is
 #: said once for the life of the process rather than a hundred times every
-#: five minutes. `roles.apply` announces itself the same way and for the same
-#: reason: the operator's answer is one edit on one page.
+#: five minutes. `placement._said` announces itself the same way and for the
+#: same reason: the operator's answer is one edit on one page.
 _SAID_NO_NIGHT: set[str] = set()
 
 #: The same, for a chart that was written to compare and came back drawing
@@ -409,9 +409,9 @@ def build(plot: Plot, reader: Reader, generated: float,
         # image generator and Grafana inherit the refusal rather than each
         # deciding for itself.
         #
-        # Once per plot name for the life of the process, like `roles.apply`:
-        # a hundred charts times a run every five minutes is a log nobody
-        # reads, and the operator's answer is one edit on one page.
+        # Once per plot name for the life of the process: a hundred charts
+        # times a run every five minutes is a log nobody reads, and the
+        # operator's answer is one edit on one page.
         if plot.name not in _SAID_NO_NIGHT:
             _SAID_NO_NIGHT.add(plot.name)
             log.info("%r draws %d places, so it is not shaded: night is one "

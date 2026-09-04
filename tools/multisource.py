@@ -82,15 +82,12 @@ def product_uses_place_policy(tmp: Path) -> int:
     roof = sender_id("test", "roof")
     plans = placement.Placements(takes=[placement.Takes(
         archive="default", station=roof,
-        fields={"windSpeed": "extraTemp2"})])
+        fields={"outTemp": "extraTemp1", "windSpeed": "extraTemp2"})])
     placement.save(work / placement.FILENAME, plans)
     place = Archive(
         name="default", file=str(work / "archive.sdb"),
-        stations=(garden, roof),
-        members={
-            garden: MemberPolicy(),
-            roof: MemberPolicy(role="extra", channel=1),
-        })
+        stations=(garden, roof), primary=garden,
+        members={garden: MemberPolicy()})
     args = argparse.Namespace(config=config, sources=old_sources, quality=None)
     cfg = _resolve(args)
     live = LiveStore(work / "live.sdb", interval_seconds=INTERVAL)
@@ -123,11 +120,14 @@ def product_uses_place_policy(tmp: Path) -> int:
         failures += not check(
             "the main member owns outTemp", built.record.get("outTemp"), 20.0)
         failures += not check(
-            "the extra role moves its temperature",
+            "the additional member writes where it was placed",
             built.record.get("extraTemp1"), 30.0)
         failures += not check(
-            "the Place mapping overrides the extra preset",
+            "including a reading with no column of its own",
             built.record.get("extraTemp2"), 7.0)
+        failures += not check(
+            "and its outTemp did not reach the primary's column",
+            built.record.get("outTemp"), 20.0)
         failures += not check(
             "configured routing adds no source provenance", built.provenance, {})
     finally:

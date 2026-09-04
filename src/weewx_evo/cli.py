@@ -2802,8 +2802,11 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
     # nothing has told them which file they describe.
     option_defs.building_for(config_path)
 
+    # Named for what is inside it, not for the program. Called "weewx-evo" it
+    # read as an About box, and the archive interval -- which everything else
+    # on the Places page is about -- was behind it.
     schemas = [option_defs.Schema(
-        name="core", label="weewx-evo", kind="core",
+        name="core", label="Core settings", kind="core",
         help="The station, the archive, and the port hardware uploads to.",
         groups=tuple(option_defs.core_options()))]
 
@@ -2825,7 +2828,7 @@ def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
     # core one: "where does what I made end up" is the question people
     # arrive with.
     schemas.append(option_defs.Schema(
-        name="website", label="Website", kind="core",
+        name="website", label="Built-in web server", kind="core",
         help="Where what the exports published can be read.",
         groups=tuple(option_defs.website_options())))
 

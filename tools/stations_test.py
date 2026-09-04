@@ -119,7 +119,7 @@ def the_file() -> None:
         path.write_text(text.replace(
             'identity = "4F2A9C"',
             'identity = "4F2A9C"\narchive = "haus"\n'
-            'role = "extra"\nchannel = 3\nindoor = false'),
+            'role = "extra"\nindoor = false'),
             encoding="utf-8")
         stray = stations.load(path)
         check("the file still loads", stray.by_name("garten") is not None,
@@ -254,12 +254,21 @@ def indoor_is_the_places_answer() -> None:
                   [("indoortempf" in one.data) for one in raws], [True, True])
             inside = sender_id("wunderground", "evo-in")
             outside = sender_id("wunderground", "evo-out")
-            archive = archive_defs.Archive(
-                "default", "default.sdb", stations=(inside, outside),
-                members={outside: archive_defs.MemberPolicy(indoor=False)})
-            placer = placement.Placer(archive, placement.Placements(), reg)
+            # A place each, because `indoor` is a fact about the sender's
+            # membership in one place and this is the pair that shows it:
+            # same protocol, same reading, opposite answers.
+            places = {
+                inside: archive_defs.Archive(
+                    "keeps", "keeps.sdb", stations=(inside,), primary=inside),
+                outside: archive_defs.Archive(
+                    "drops", "drops.sdb", stations=(outside,), primary=outside,
+                    members={
+                        outside: archive_defs.MemberPolicy(indoor=False)}),
+            }
             stored = {}
             for one in raws:
+                placer = placement.Placer(
+                    places[one.sender_id], placement.Placements(), reg)
                 placed = placer.place(one)
                 if placed is not None:
                     stored[placed.source] = placed

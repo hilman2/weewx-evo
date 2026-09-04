@@ -107,8 +107,7 @@ def check(what: str, got: object, want: object) -> bool:
 
 def oracle(driver: object, body: bytes, meta: dict, station: object = None,
            extensions: dict | None = None,
-           infer: str = mapping.OFF, role: str | None = None,
-           channel: int | None = None, indoor: bool | None = None) -> Packet | None:
+           infer: str = mapping.OFF, indoor: bool | None = None) -> Packet | None:
     """One upload, named the way it used to be at the front door.
 
     Transcribed from `PushDriver.packets` and `Ingest._as_configured` as they
@@ -145,13 +144,11 @@ def oracle(driver: object, body: bytes, meta: dict, station: object = None,
                        if name not in ("inTemp", "inHumidity", "inDewpoint")}
             if len(dropped) != len(data):
                 data = dropped
-        station_role = (getattr(station, "role", roles.MAIN)
-                        if role is None else role)
-        station_channel = (getattr(station, "channel", 0)
-                           if channel is None else channel)
-        if station_role != roles.MAIN:
-            data = roles.apply(data, station_role, station_channel,
-                               getattr(station, "name", ""))
+        # The extra-station shift that used to sit here is gone rather than
+        # transcribed: an additional sender no longer has its `outTemp` moved
+        # to a guessed channel, it writes what it has been placed. There is
+        # no old behaviour left to compare that against, so it is checked
+        # against the rule instead, further down.
     if not data:
         return None
     return Packet(dateTime=int(stamp), usUnits=int(dialect.units), data=data,
@@ -399,7 +396,6 @@ def what_moved_off_the_front_door() -> None:
               main_placer.selected_senders(), [haus])
         check("and the one it names is its primary reading",
               main_placer.selected_main_senders(), [haus])
-        roles._said.clear()
         placement._said.clear()
         want = oracle(driver, body, meta, station=register.by_name("haus"),
                       indoor=False)
@@ -410,15 +406,18 @@ def what_moved_off_the_front_door() -> None:
         check("and the reading is still in the table",
               "tempinf" in (_stored.data if _stored else {}), True)
 
-        # -- an extra station ------------------------------------------
+        # -- an additional sender --------------------------------------
+        #
+        # No oracle here, and that is the point: the old front door moved its
+        # `outTemp` into a guessed `extraTemp<n>` and dropped everything else.
+        # What it does now is the rule, so the rule is what is checked.
         register = _a_register(
             f'[stations.garten]\ndriver = "ecowitt"\nidentity = "{passkey}"\n', work)
         garten = sender_id("ecowitt", passkey)
+        elsewhere = sender_id("ecowitt", "BBBB")
         archive = archive_defs.Archive(
             "default", "unused.sdb",
-            stations=(garten,),
-            members={garten: archive_defs.MemberPolicy(
-                role="extra", channel=4)})
+            stations=(elsewhere, garten), primary=elsewhere)
         extra_legacy = sender_id("__legacy__", "garten")
         extra_placer = placement.Placer(
             archive, placement.Placements(), [
@@ -426,15 +425,13 @@ def what_moved_off_the_front_door() -> None:
                 SenderIdentity(extra_legacy, "__legacy__", "garten", "garten"),
             ])
         check("a legacy alias of an extra member is not default-main",
-              extra_placer.selected_main_senders(), [])
-        roles._said.clear()
+              extra_placer.selected_main_senders(), [elsewhere])
         placement._said.clear()
-        want = oracle(driver, body, meta, station=register.by_name("garten"),
-                      role="extra", channel=4)
         _stored, got = stored_and_placed(driver, "ecowitt", body, meta, work,
                                          register, archive=archive)
-        check("an extra station places the same fields",
-              sorted(got.data), sorted(want.data))
+        check("an additional sender places nothing it was not given",
+              [one for one in (got.data if got else {})
+               if not roles.keeps(one)], [])
         check("its wind is in the table all the same",
               "windspeedmph" in (_stored.data if _stored else {}), True)
 
@@ -443,7 +440,7 @@ def what_moved_off_the_front_door() -> None:
                      "windspeedmph", "gardenWind")
         _stored, got = stored_and_placed(driver, "ecowitt", body, meta, work,
                                          register, plans, archive)
-        check("an explicit placement outranks the extra preset",
+        check("and writes exactly what it was given",
               got.data.get("gardenWind"), 1.34)
 
         # -- a `-` placement -------------------------------------------
@@ -473,7 +470,7 @@ def what_moved_off_the_front_door() -> None:
                   got.data.get(column), want.data.get(column))
 
         # -- an unannounced source -------------------------------------
-        roles._said.clear()
+        placement._said.clear()
         want = oracle(driver, body, meta)
         _stored, got = stored_and_placed(driver, "ecowitt", body, meta, work,
                                          station_defs.Register())
@@ -938,20 +935,20 @@ def archive_members_reload_through_the_live_database() -> None:
         check("the first configured sender is selected",
               before.record.get("outTemp"), 10.0)
 
+        # Both senders selected and the primary moved to the second. The
+        # series has to follow the file, not the object the placer was built
+        # with: 20.0 is only reachable if the new primary was read back.
         changed = archive_defs.Archive(
-            "default", str(work / "records.sdb"), stations=(second,),
-            members={second: archive_defs.MemberPolicy(
-                role="extra", channel=2)})
+            "default", str(work / "records.sdb"), stations=(first, second),
+            primary=second)
         archive_defs.Register([changed], path).save(path)
         # Register.refresh uses the file timestamp. Force a distinct one on
         # filesystems whose timestamp granularity is coarser than this test.
         stamp = path.stat().st_mtime
         os.utime(path, (stamp + 2, stamp + 2))
         after = archiver.build(start + 300)
-        check("the changed sender is selected without restarting",
-              after.record.get("extraTemp2"), 20.0)
-        check("and its place-owned policy replaced the old one",
-              "outTemp" in after.record, False)
+        check("the changed primary is used without restarting",
+              after.record.get("outTemp"), 20.0)
         live.close()
         store.close()
 

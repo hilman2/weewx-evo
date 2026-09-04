@@ -92,10 +92,13 @@ class Takes:
     #: and so that a person's decision is never quietly replaced.
     learned: bool = False
     #: What happens to a reading with no line of its own: `catalog` or
-    #: `nowhere`. The second is what an extra station needs -- without it a
-    #: sensor added to one next year would be placed by the catalog into the
-    #: main station's column, silently, which is the failure `roles.py` was
-    #: written to prevent.
+    #: `nowhere`.
+    #:
+    #: Every sender but the place's primary one is held to `nowhere` whatever
+    #: this says -- that is what the role means (`roles.py`), and it does not
+    #: need a line in this file to be true. What this adds is the same leash
+    #: on a *primary*, for somebody who wants one console to write only what
+    #: they have named.
     unlisted: str = CATALOG
     #: Raw name -> archive column, or `-` for nowhere.
     fields: dict[str, str] = field(default_factory=dict)
@@ -280,6 +283,7 @@ class Placer:
         self.directory = directory
         self.archives = archives
         self._senders: dict[str, SenderIdentity] = {}
+        self._primary = ""
         self._read_directory()
         self._dropped: dict[str, int] = {}
         # Merged placements per (name, dialect). Rebuilt whole in `replace`,
@@ -310,6 +314,23 @@ class Placer:
                            label=one.name)
                            for one in values])
         self._senders = {str(one.sender): one for one in entries}
+        # Worked out once per directory read, not once per packet: with no
+        # primary named it is a scan of every sender, and a build asks the
+        # question for each of the several hundred packets in a span.
+        self._primary = ("" if self.archive_definition is None else
+                         self.archive_definition.primary_sender(
+                             self._senders.values()))
+
+    def role_of(self, sender: str) -> str:
+        """Whether this place takes its series from `sender`.
+
+        A `Placer` built from a bare archive name has no place policy to ask
+        and reports `main` for everyone. That is the narrow-tool path, and it
+        is the old single-console behaviour: the catalog places everything.
+        """
+        if self.archive_definition is None:
+            return roles.MAIN
+        return self.archive_definition.role_of(sender, primary=self._primary)
 
     def refresh(self) -> None:
         """Freeze current place policy and live sender metadata for a build."""
@@ -386,8 +407,7 @@ class Placer:
         found: list[str] = []
         for canonical in candidates:
             canonical = str(canonical)
-            if (role is not None
-                    and self.archive_definition.policy_for(canonical).role != role):
+            if role is not None and self.role_of(canonical) != role:
                 continue
             if canonical not in found:
                 found.append(canonical)
@@ -436,7 +456,10 @@ class Placer:
         # afternoon.
         data = {obs: value for obs, value in data.items() if value is not None}
 
-        if unlisted == NOWHERE_ELSE:
+        # Everything but the primary sender writes what it has been placed
+        # and nothing else. `unlisted` can ask for the same of the primary --
+        # somebody who wants one console on a short leash as well.
+        if unlisted == NOWHERE_ELSE or self.role_of(member) != roles.MAIN:
             data = self._only_listed(data, decisions, member)
         data = self._as_the_place_says(data, member, decisions)
         if not data:
@@ -477,32 +500,27 @@ class Placer:
                            decisions: dict[str, str]) -> dict[str, Any]:
         """How this place uses one member's readings.
 
-        Role, channel and indoor are properties of the place/station
-        relationship. The same console can therefore be main in one archive
-        and extra in another. Explicit placement targets outrank the preset:
-        a person who names a column has settled the collision themselves.
+        `indoor` is a property of the place/sender relationship: the same
+        console can measure a room worth a column in one series and a room
+        deliberately absent from another.
 
-        A `main` member with `indoor` left on passes through untouched.
+        Explicit placement targets are protected from it. Somebody who has
+        named a column for a reading has settled that question themselves,
+        and a blanket rule reaching back over that decision is the sort of
+        thing nobody finds until the column has been empty for a month.
         """
         if self.archive_definition is None:
             return data
         policy = self.archive_definition.policy_for(name)
+        if policy.indoor:
+            return data
         targets = {target for target in decisions.values() if target != NOWHERE}
-        protected = {obs: value for obs, value in data.items() if obs in targets}
-        ordinary = {obs: value for obs, value in data.items() if obs not in targets}
-        if not policy.indoor:
-            # A console in a living room measures a living room; one in a
-            # shed on the same station measures a shed, and only one of them
-            # is worth a column.
-            dropped = {obs: value for obs, value in ordinary.items()
-                       if obs not in ("inTemp", "inHumidity", "inDewpoint")}
-            ordinary = dropped
-        if policy.role != roles.MAIN:
-            # Out of the main station's way. Both sending `outTemp` would
-            # otherwise take turns writing it every few seconds, and the
-            # column would hold a mixture nothing afterwards can separate.
-            ordinary = roles.apply(ordinary, policy.role, policy.channel, name)
-        return {**ordinary, **protected}
+        # A console in a living room measures a living room; one in a shed on
+        # the same place measures a shed, and only one of them is worth a
+        # column.
+        return {obs: value for obs, value in data.items()
+                if obs in targets
+                or obs not in ("inTemp", "inHumidity", "inDewpoint")}
 
     def _cannot_place(self, driver: str, dialect: str) -> None:
         """Say once that a vocabulary reached here with nothing to translate it.
@@ -530,14 +548,16 @@ class Placer:
 
     def _only_listed(self, data: dict[str, Any], decisions: dict[str, str],
                      station: str) -> dict[str, Any]:
-        """What an extra station may write: what it was told, and its own housekeeping.
+        """What a sender may write: what it was placed, and its own housekeeping.
+
+        Every sender but the primary one comes through here, and so does a
+        primary whose scope says `unlisted = "nowhere"`.
 
         Default-deny, because the alternative is a sensor added next year
-        landing in the main station's column with nobody watching. Battery
+        landing in the primary sender's column with nobody watching. Battery
         levels and signal strengths come through regardless: those names
-        already carry their sensor, so two stations cannot collide on them,
-        and dropping them would leave an extra station whose battery nobody
-        can see.
+        already carry their sensor, so two senders cannot collide on them,
+        and dropping them would leave a sender whose battery nobody can see.
         """
         wanted = {column for column in decisions.values() if column != NOWHERE}
         kept, lost = {}, []
@@ -735,7 +755,8 @@ def _mapped(data: dict[str, Any], raw_spec: object,
 
 #: Which stations have already been told that they write only what they were
 #: given. Once per station for the life of the process rather than six times a
-#: minute, the same as `roles.apply` did before it.
+#: minute: it is the ordinary state of every sender but the primary one, not
+#: a fault, and a line per packet would bury the ones that are.
 _said: set[str] = set()
 
 #: And which (driver, dialect) pairs have been reported as having nothing to

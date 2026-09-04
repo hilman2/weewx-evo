@@ -969,7 +969,7 @@ def moving_a_station_reaches_the_archiver(room: Path) -> None:
             lines.append("senders = []" if not members else "")
             for sender in members:
                 lines += [f'[archives.{name}.members."{sender}"]',
-                          'role = "main"', "channel = 0", "indoor = true", ""]
+                          "indoor = true", ""]
         (where / "archives.toml").write_text("\n".join(lines) + "\n",
                                              encoding="utf-8")
 

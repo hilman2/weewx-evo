@@ -86,9 +86,10 @@ def an_installation(work: Path, placements: str = "") -> Admin:
     (work / "placement.toml").write_text(placements, encoding="utf-8")
     (work / "archives.toml").write_text(
         "[archives.default]\n"
-        f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n\n'
+        f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+        f'primary = "{SENDER}"\n\n'
         f'[archives.default.members."{SENDER}"]\n'
-        'role = "main"\nchannel = 0\nindoor = true\n',
+        'indoor = true\n',
         encoding="utf-8")
     ArchiveStore(work / "data" / "weewx.sdb").close()
     path = work / "evo.toml"

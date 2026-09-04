@@ -24,9 +24,9 @@ latitude = 48.4596
 longitude = 11.6539
 altitude = 440.0
 
+primary = "v1/ecowitt/aabbcc"
+
 [archives.default.members."v1/ecowitt/aabbcc"]
-role = "main"
-channel = 0
 indoor = true
 ```
 
@@ -48,9 +48,9 @@ on the new archive entry. A relative database path is resolved from the
 configuration directory.
 
 Two senders in one garden do not require two places. Select both on the same
-Place, choose their member roles and map any exceptional fields there. A
-second Place is for a second measurement series: another location, or another
-interpretation of the same raw packets.
+Place, mark one as the primary readings and give the other's fields columns
+under Fields. A second Place is for a second measurement series: another
+location, or another interpretation of the same raw packets.
 
 ## Choosing senders
 

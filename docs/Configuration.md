@@ -118,9 +118,9 @@ latitude = 48.4596
 longitude = 11.6539
 altitude = 440.0
 
+primary = "v1/ecowitt/a1b2c3"
+
 [archives.default.members."v1/ecowitt/a1b2c3"]
-role = "main"
-channel = 0
 indoor = true
 ```
 
@@ -129,8 +129,7 @@ both the selection and this Place's policy for that sender. Field mappings are
 scoped by Place and sender in `placement.toml`.
 
 `stations.toml` assigns display names and clock tolerances to sender
-identities. It contains no archive assignment, role, indoor policy or field
-mapping.
+identities. It contains no archive assignment, indoor policy or field mapping.
 `[sources]` and `--sources` are obsolete and ignored by the product runtime.
 
 ## Adding a setting

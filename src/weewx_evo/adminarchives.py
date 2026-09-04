@@ -88,6 +88,10 @@ class SenderChoice:
     label: str
     driver: str
     identity: str
+    #: Named the same as `db.live.SenderIdentity.first_seen`, because
+    #: `Archive.primary_sender` reads it off whichever of the two it is given.
+    #: 0 for a sender the journal has never heard.
+    first_seen: float = 0.0
 
     @property
     def name(self) -> str:
@@ -113,7 +117,8 @@ def sender_choices(admin: Any, archive: archive_defs.Archive | None = None
                 for one in live.senders():
                     label = str(one.label or one.identity or one.driver)
                     found[one.sender] = SenderChoice(
-                        one.sender, label, one.driver, one.identity)
+                        one.sender, label, one.driver, one.identity,
+                        one.first_seen)
         except Exception:
             log.debug("could not list live senders", exc_info=True)
 
@@ -205,16 +210,16 @@ _UNSET = object()
 
 def _members_from_form(
         form: dict[str, Any], current_senders: tuple[str, ...] | None,
-        current: dict[str, Any], *, new: bool = False
+        current: dict[str, Any], *, new: bool = False,
+        current_primary: str = ""
         ) -> tuple[tuple[str, ...] | None,
-                   dict[str, archive_defs.MemberPolicy]]:
-    """One form's sender selection and policies as one atomic answer."""
+                   dict[str, archive_defs.MemberPolicy], str]:
+    """One form's sender selection, policies and primary as one atomic answer."""
     if "_members" not in form:
         if new:
-            return (), {}
-        return current_senders, dict(current)
+            return (), {}, ""
+        return current_senders, dict(current), current_primary
 
-    from . import roles
     from .db.live import sender_parts
 
     prefix = "sender:"
@@ -232,84 +237,33 @@ def _members_from_form(
     # Only selected senders have stored policy in explicit mode. Broad mode
     # may hold overrides for every row the UI knows about; an unseen sender
     # is still selected and gets the ordinary defaults.
-    targets = posted
     made: dict[str, archive_defs.MemberPolicy] = {}
-    used: set[int] = set()
-    reserved = {
-        policy.channel for sender, policy in current.items()
-        if sender in targets and policy.role == roles.EXTRA
-    }
-    current_has_primary = any(
-        sender in targets and policy.role == roles.MAIN
-        for sender, policy in current.items())
-    for sender in targets:
+    for sender in posted:
         marker = f"member-policy:{sender}"
-        role_key = f"member-role:{sender}"
-        channel_key = f"member-channel:{sender}"
         indoor_key = f"member-indoor:{sender}"
-        has_policy = (marker in form or role_key in form
-                      or channel_key in form or indoor_key in form)
-        if not has_policy:
+        if marker not in form and indoor_key not in form:
             # A sender checked while JavaScript is unavailable has disabled
-            # policy controls. Give that new relationship the domain default;
-            # a second save may refine it. Existing policy survives the same
-            # compact post.
-            previous = current.get(sender)
-            if previous is not None:
-                made[sender] = previous
-            elif current_has_primary or any(
-                    one.role == roles.MAIN for one in made.values()):
-                channel = roles.next_channel(used | reserved) or 0
-                if not channel:
-                    raise ValueError(
-                        f"all {roles.CHANNELS} extra channels are taken")
-                made[sender] = archive_defs.MemberPolicy(
-                    role=roles.EXTRA, channel=channel)
-            else:
-                made[sender] = archive_defs.MemberPolicy()
-            policy = made[sender]
-            if policy.role == roles.EXTRA:
-                if policy.channel in used:
-                    raise ValueError(
-                        f"extra channel {policy.channel} is already used in "
-                        "this place")
-                used.add(policy.channel)
+            # policy controls. Keep what was stored for it, or start it on the
+            # ordinary defaults; a second save may refine it.
+            made[sender] = current.get(sender, archive_defs.MemberPolicy())
             continue
-        role = str(form.get(role_key) or roles.MAIN).strip()
-        if role not in roles.ROLES:
-            raise ValueError(f"{role!r} is not a role")
-        indoor = indoor_key in form
-        channel = 0
-        if role == roles.EXTRA:
-            typed = str(form.get(channel_key) or "").strip()
-            if typed:
-                try:
-                    channel = int(typed)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"extra channel for {sender!r} is a whole number") from exc
-            else:
-                previous = current.get(sender)
-                if (previous is not None and previous.role == roles.EXTRA
-                        and previous.channel not in used):
-                    channel = previous.channel
-                else:
-                    channel = roles.next_channel(used) or 0
-                    if not channel:
-                        raise ValueError(
-                            f"all {roles.CHANNELS} extra channels are taken")
-            if channel in used:
-                raise ValueError(
-                    f"extra channel {channel} is already used in this place")
-            used.add(channel)
-        made[sender] = archive_defs.MemberPolicy(
-            role=role, channel=channel, indoor=indoor)
-    return selected, made
+        made[sender] = archive_defs.MemberPolicy(indoor=indoor_key in form)
+
+    primary = str(form.get("member-primary") or "").strip()
+    if primary:
+        sender_parts(primary)
+    # A primary that is no longer selected is not an error and not kept: it
+    # is what unticking the primary row means. Written empty, the place falls
+    # back to its earliest remaining sender, which is the same rule that
+    # answers it for a place nobody has opened yet.
+    if primary and selected is not None and primary not in selected:
+        primary = ""
+    return selected, made, primary
 
 
 def from_form(form: dict, name: str = "", senders: Any = _UNSET,
-              members: dict[str, Any] | None = None
-              ) -> archive_defs.Archive:
+              members: dict[str, Any] | None = None,
+              primary: str = "") -> archive_defs.Archive:
     """An archive from what a form sent.
 
     Every field `Archive` has, because `configure` replaces the whole record:
@@ -318,9 +272,9 @@ def from_form(form: dict, name: str = "", senders: Any = _UNSET,
     rendered by nothing -- and adding the colour, the code and the order
     without adding them here would have lost all three on the first edit.
     """
-    selected, policies = _members_from_form(
+    selected, policies, chosen = _members_from_form(
         form, () if senders is _UNSET else senders, members or {},
-        new=senders is _UNSET)
+        new=senders is _UNSET, current_primary=primary)
     return archive_defs.Archive(
         name=str(name or form.get("name") or "").strip().lower(),
         file=str(form.get("file") or "").strip(),
@@ -335,6 +289,7 @@ def from_form(form: dict, name: str = "", senders: Any = _UNSET,
         order=int(_number(form.get("order")) or 0),
         stations=selected,
         members=policies,
+        primary=chosen,
     )
 
 
@@ -395,7 +350,7 @@ def configure(admin: Any, name: str, form: dict) -> str:
         return f"There is no archive called {name!r}."
     try:
         wanted = from_form(form, name=name, senders=current.senders,
-                           members=current.members)
+                           members=current.members, primary=current.primary)
     except ValueError as exc:
         return str(exc)
     values = wanted.as_dict()
@@ -499,18 +454,39 @@ def _field(prefix: str, name: str, label: str, value: Any = "",
 
 
 def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
-    """Live sender selection and per-place policy in one form."""
-    from . import roles
+    """Live sender selection, the primary among them, and per-place policy.
+
+    The primary is a radio group across the rows rather than a per-row
+    choice. It is the only shape in which "two of them" cannot be typed:
+    exactly one is the browser's own behaviour, with no script, no rejected
+    save and no warning to write. A select per row let anybody set every
+    sender to primary, and the archiver then accumulated all of them into the
+    same columns -- which for rain is a sum.
+    """
+    choices = sender_choices(admin, archive)
+    primary = archive.primary_sender(choices)
+    # A radio with one option is a question with one answer. The single
+    # console every installation starts as is not asked it, the same way a
+    # single-place site is not offered the place switches.
+    alone = len([one for one in choices if archive.selects(one.sender)]) < 2
 
     rows = []
-    for one in sender_choices(admin, archive):
+    for one in choices:
         sender = one.sender
         policy = archive.policy_for(sender)
         safe = html.escape(sender, quote=True)
-        extra = policy.role == "extra"
-        channel = str(policy.channel) if extra else ""
+        is_primary = sender == primary
         checked = archive.selects(sender)
         detail = one.driver + (f" · {one.identity}" if one.identity else "")
+        if alone and is_primary:
+            role_field = ('<p class="place-member-role">Primary readings'
+                          '<span class="hint">The only sender here, so this '
+                          'place takes its series from it.</span></p>')
+        else:
+            role_field = f'''<label class="tick place-member-role">
+          <input name="member-primary" type="radio" value="{safe}"
+                 data-place-member-primary{" checked" if is_primary else ""}>
+          Primary readings</label>'''
         rows.append(f'''
     <article class="place-member{' is-selected' if checked else ''}"
              data-place-member>
@@ -525,25 +501,15 @@ def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
                 {"" if checked else "disabled hidden"}>
         <legend class="sr">Settings for {html.escape(one.label)}</legend>
         <input type="hidden" name="member-policy:{safe}" value="1">
-        <label>Use as
-          <select name="member-role:{safe}" data-place-member-role>
-            <option value="main"{" selected" if not extra else ""}>
-              Primary readings</option>
-            <option value="extra"{" selected" if extra else ""}>
-              Additional sensor</option>
-          </select>
-        </label>
-        <label data-place-member-channel{"" if extra else " hidden"}>Channel
-          <input name="member-channel:{safe}" type="number" min="1"
-                 max="{roles.CHANNELS}" value="{channel}"
-                 placeholder="Automatic"{"" if extra else " disabled"}>
-        </label>
+        {role_field}
         <label class="tick"><input name="member-indoor:{safe}"
                    type="checkbox" value="1"
                    {"checked" if policy.indoor else ""}> Indoor readings</label>
         <p class="place-member-extra-note" data-place-member-extra-note
-           {"" if extra else "hidden"}>Temperature, humidity and dew point use
-           this channel. Map other fields under Fields.</p>
+           {"hidden" if is_primary else ""}>Writes only what it has been given
+           a column under Fields. Nothing is guessed for it: a second sender
+           may be a full weather station, a soil probe or one thermometer, and
+           the protocol does not say which.</p>
       </fieldset>
     </article>''')
     body = (NEWLINE.join(rows) if rows else
@@ -565,44 +531,36 @@ def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
     const section = document.getElementById(
       'place-members-{archive.name}');
     if (!section) return;
-    const syncRole = row => {{
-      const role = row.querySelector('[data-place-member-role]');
-      const channel = row.querySelector('[data-place-member-channel]');
-      const note = row.querySelector('[data-place-member-extra-note]');
-      if (!role || !channel) return;
-      const extra = role.value === 'extra';
-      channel.hidden = !extra;
-      if (note) note.hidden = !extra;
-      const input = channel.querySelector('input');
-      if (input) input.disabled = !extra;
+    // Which row is primary is the radio group's own state, so nothing here
+    // decides it. All this does is keep each row's note in step with it.
+    const syncNotes = () => {{
+      section.querySelectorAll('[data-place-member]').forEach(row => {{
+        const pick = row.querySelector('[data-place-member-primary]');
+        const note = row.querySelector('[data-place-member-extra-note]');
+        if (note) note.hidden = !pick || pick.checked;
+      }});
     }};
     const sync = row => {{
       const selected = row.querySelector('[data-place-member-select]').checked;
       const policy = row.querySelector('[data-place-member-policy]');
       row.classList.toggle('is-selected', selected);
       policy.hidden = !selected;
+      // Disabling the fieldset takes its radio out of the group, so a row
+      // unticked while it was primary leaves the group with nothing chosen.
+      // That is the intended reading of unticking it: the place falls back
+      // to its earliest remaining sender.
       policy.disabled = !selected;
-      syncRole(row);
+      syncNotes();
     }};
     section.querySelectorAll('[data-place-member]').forEach(row => {{
       const pick = row.querySelector('[data-place-member-select]');
       pick.addEventListener('change', () => {{
         const broad = section.querySelector('[name="all-senders"]');
         if (!pick.checked && broad) broad.checked = false;
-        if (pick.checked && !row.classList.contains('is-selected')) {{
-          const anotherPrimary = Array.from(
-            section.querySelectorAll('[data-place-member]')).some(other =>
-              other !== row
-              && other.querySelector('[data-place-member-select]').checked
-              && other.querySelector('[data-place-member-role]').value === 'main');
-          if (anotherPrimary) {{
-            row.querySelector('[data-place-member-role]').value = 'extra';
-          }}
-        }}
         sync(row);
       }});
-      row.querySelector('[data-place-member-role]').addEventListener(
-        'change', () => syncRole(row));
+      const primary = row.querySelector('[data-place-member-primary]');
+      if (primary) primary.addEventListener('change', syncNotes);
       sync(row);
     }});
     const broad = section.querySelector('[name="all-senders"]');
@@ -1008,6 +966,43 @@ def _place_detail(admin: Any, register: archive_defs.Register,
   </article>'''
 
 
+def _interval_note(admin: Any) -> str:
+    """Say what one record covers here, and where that is changed.
+
+    It is an installation-wide setting and lives with the other core options,
+    under a link named after the program. So it is one of the few settings
+    somebody comes to *this* page looking for and does not find: a person
+    thinking about their archive thinks about how long a record is.
+
+    It is not per place, and the reason is one line in `db/live.py`:
+    `mark_pending` works out one interval boundary and enters it for every
+    archive. A boundary per place would mean the listener reading each place's
+    interval to decide where a packet's interval ends -- the same "work out
+    which archive this belongs to at the front door" that the comment there
+    refuses, for the same reason: getting it wrong loses readings with no
+    trace.
+    """
+    from .options import parse_duration
+
+    try:
+        # A duration, not a number: the file says `interval = "5m"` as often
+        # as it says 300.
+        raw = config_file.get(admin.config(), "interval")
+        seconds = int(parse_duration(str(raw))) if raw else 300
+    except Exception:
+        # An unreadable value is the settings page's own problem to show. A
+        # note about it must not take the Places page down with it.
+        return ""
+    shown = (f"{seconds // 60} min" if seconds % 60 == 0
+             else f"{seconds} seconds")
+    # `f-interval`, not `interval`: the form builder prefixes every control's
+    # id. Named without it the link still opens the page and simply does not
+    # jump, which is the sort of thing nobody reports.
+    return ('<p class="note">One archive record covers '
+            f'<strong>{html.escape(shown)}</strong>, for every place. '
+            '<a href="./core#f-interval">Change it</a>.</p>')
+
+
 def overview(admin: Any, message: str = "", error: str = "",
              form: dict | None = None) -> str:
     """A master/detail editor with the same shape for one or many places."""
@@ -1060,6 +1055,7 @@ def overview(admin: Any, message: str = "", error: str = "",
     notices += _colour_clash(register)
     return f'''
 <h2>Places</h2>
+{_interval_note(admin)}
 {notices}
 <div class="place-shell">
   <aside class="place-list" aria-label="Places">

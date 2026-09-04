@@ -46,6 +46,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, ClassVar
@@ -70,32 +71,20 @@ FROM_SETTINGS = ("archive_db", "station.name", "station.latitude",
 
 @dataclass(frozen=True, slots=True)
 class MemberPolicy:
-    """How one archive treats one of the stations it selects.
+    """How one archive treats one of the senders it selects.
 
-    A role is relative to a series.  The same console can be the main source
-    in its own archive and an extra source in a combined archive; likewise,
-    an indoor reading can be useful in one series and deliberately absent in
-    another.  Keeping these three values on the relationship is what makes
-    that many-to-many arrangement expressible.
+    Whether a sender is the primary one is not here: that is `primary` on the
+    archive, because "exactly one" is a property of the place and not of N
+    independent members. See `roles.py`.
+
+    What is left is relative to the series all the same. The same console can
+    have an indoor reading worth a column in one place and deliberately
+    absent from another.
     """
 
-    role: str = "main"
-    channel: int = 0
     indoor: bool = True
 
     def __post_init__(self) -> None:
-        from . import roles
-
-        if self.role not in roles.ROLES:
-            raise ValueError(
-                f"member role is 'main' or 'extra', not {self.role!r}")
-        if isinstance(self.channel, bool) or not isinstance(self.channel, int):
-            raise ValueError("member channel is a whole number")
-        if self.role == roles.MAIN and self.channel != 0:
-            raise ValueError("a main member has channel 0")
-        if self.role == roles.EXTRA and not 1 <= self.channel <= roles.CHANNELS:
-            raise ValueError(
-                f"an extra member has a channel from 1 to {roles.CHANNELS}")
         if not isinstance(self.indoor, bool):
             raise ValueError("member indoor is true or false")
 
@@ -104,21 +93,15 @@ class MemberPolicy:
         """One strictly checked policy from TOML values."""
         if not isinstance(raw, dict):
             raise ValueError("a member policy is a table")
-        unknown = set(raw) - {"role", "channel", "indoor"}
+        unknown = set(raw) - {"indoor"}
         if unknown:
             raise ValueError(
                 "unknown member setting" + ("s" if len(unknown) != 1 else "")
                 + f": {', '.join(sorted(str(one) for one in unknown))}")
-        role = raw.get("role", "main")
-        channel = raw.get("channel", 0)
         indoor = raw.get("indoor", True)
-        if not isinstance(role, str):
-            raise ValueError("member role is a word")
-        if isinstance(channel, bool) or not isinstance(channel, int):
-            raise ValueError("member channel is a whole number")
         if not isinstance(indoor, bool):
             raise ValueError("member indoor is true or false")
-        return cls(role=role.strip(), channel=channel, indoor=indoor)
+        return cls(indoor=indoor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +160,20 @@ class Archive:
     #: optional overrides; unlisted live senders use ``MemberPolicy()``.
     members: dict[str, MemberPolicy] = field(default_factory=dict)
 
+    #: The canonical ID of the sender this series is taken from. Every other
+    #: member writes only what has been placed by hand -> `roles.py`.
+    #:
+    #: One field holding one ID, rather than a role on each member, is what
+    #: makes "two primaries" unsayable instead of merely invalid. It was
+    #: sayable before, nothing rejected it, and the archiver then accumulated
+    #: both into the same columns -- which for `rain` is a sum, so two
+    #: consoles reporting 1 mm stored 2.
+    #:
+    #: Empty means nobody has said. `primary_sender` answers it then; the
+    #: settings page writes it out whenever a place is saved, so an empty one
+    #: is a hand-written file or a place nobody has opened yet.
+    primary: str = ""
+
     def __post_init__(self) -> None:
         made: dict[str, MemberPolicy] = {}
         try:
@@ -200,17 +197,16 @@ class Archive:
         # Keep our own copy so an Archive remains a stable configuration value.
         object.__setattr__(self, "members", made)
 
-        active = set(made) if self.stations is None else set(self.stations)
-        channels: dict[int, str] = {}
-        for name, policy in made.items():
-            if name not in active or policy.role != "extra":
-                continue
-            previous = channels.get(policy.channel)
-            if previous is not None:
-                raise ValueError(
-                    f"archive {self.name!r} gives extra channel "
-                    f"{policy.channel} to both {previous!r} and {name!r}")
-            channels[policy.channel] = name
+        primary = str(self.primary).strip()
+        if primary and self.stations is not None and primary not in self.stations:
+            # A primary that is not a member is a place whose series comes
+            # from a sender it does not read. Silently dropping it would make
+            # the next sender in the list the series without anybody saying
+            # so, which is the whole failure this field exists to prevent.
+            raise ValueError(
+                f"archive {self.name!r} takes its primary readings from "
+                f"{primary!r}, which it does not select")
+        object.__setattr__(self, "primary", primary)
 
     @property
     def title(self) -> str:
@@ -230,6 +226,65 @@ class Archive:
     def policy_for(self, station: str) -> MemberPolicy:
         """How this archive treats one sender; defaults are intentionally plain."""
         return self.members.get(station, MemberPolicy())
+
+    def primary_sender(self, known: Iterable[Any] = ()) -> str:
+        """Which sender this series is taken from, or `""` if it has none.
+
+        `known` is the live sender directory, as `db.live.LiveStore.senders`
+        returns it. It settles the case nobody has settled: the earliest
+        sender this place selects becomes its primary, so a console plugged
+        in this afternoon cannot take over a series that predates it. That
+        rule needs `first_seen`, which is why the directory is asked rather
+        than the file.
+
+        The one answer to derive it from and never write back. Written down,
+        an install that once had a second sender would keep whatever was
+        derived on the day it did -- and a place restored from a backup would
+        need the same value to have survived. Derived, it is a fact about the
+        senders that are here.
+        """
+        chosen = self.primary
+        if chosen and self.selects(chosen):
+            return chosen
+
+        heard: list[tuple[float, str]] = []
+        for one in known:
+            sender = str(getattr(one, "sender", one))
+            when = float(getattr(one, "first_seen", 0.0) or 0.0)
+            # 0 is "announced but never heard": a sender named in the station
+            # file that has sent nothing. It cannot be the series, and sorting
+            # it in would put it first of all.
+            if when > 0 and self.selects(sender):
+                heard.append((when, sender))
+        if heard:
+            return min(heard)[1]
+
+        # Nothing has been heard yet. A hand-written selection still has an
+        # order somebody typed, and its first entry is the best reading of it.
+        return self.senders[0] if self.senders else ""
+
+    def role_of(self, sender: str, known: Iterable[Any] = (),
+                primary: str | None = None) -> str:
+        """`roles.MAIN` for the sender this series comes from, else `roles.EXTRA`.
+
+        `primary` short-circuits the derivation for a caller that has already
+        done it. `Placer` works it out once per directory read and asks this
+        for every packet of a span, and a rebuild is millions of them.
+
+        A place that can name no primary at all reports every sender as its
+        series. That is the single-console case -- nobody has said, nothing
+        has been heard, and there is nothing to collide with. The state worth
+        preventing is *several* primaries; answering "none" with a refusal to
+        place anything would be a place that silently stops recording, which
+        is a worse failure than the one being prevented.
+        """
+        from . import roles
+
+        if primary is None:
+            primary = self.primary_sender(known)
+        if not primary:
+            return roles.MAIN
+        return roles.MAIN if sender == primary else roles.EXTRA
 
     @property
     def senders(self) -> tuple[str, ...] | None:
@@ -285,8 +340,9 @@ FIELDS: tuple[tuple[str, Any], ...] = (
 
 #: Fields the settings page does not offer as a text box, so they are not in
 #: `FIELDS`. `stations` is a list and its own page; putting it in the table
-#: would render it as a line of text somebody could half-edit.
-EXTRA_FIELDS: tuple[str, ...] = ("stations", "members")
+#: would render it as a line of text somebody could half-edit. `primary` is
+#: one of those IDs and is chosen beside them, for the same reason.
+EXTRA_FIELDS: tuple[str, ...] = ("stations", "members", "primary")
 
 
 def _sender_ids(value: Any, *, missing: tuple[str, ...] | None = ()) \
@@ -322,6 +378,33 @@ def _sender_ids(value: Any, *, missing: tuple[str, ...] | None = ()) \
         raise ValueError(
             "senders is '*' or a list of canonical sender IDs") from exc
     return tuple(found)
+
+
+def _primary(value: Any, archive: str) -> str:
+    """The canonical sender ID a place takes its readings from.
+
+    Checked here rather than shrugged at, because the failure of a mistyped
+    one is invisible: the place would fall back to its earliest sender and
+    keep working, and the line saying otherwise would sit in the file being
+    read every restart and doing nothing.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(
+            f"[archives.{archive}] primary is one canonical sender ID")
+    sender = value.strip()
+    if not sender:
+        return ""
+    from .db.live import sender_parts
+
+    try:
+        sender_parts(sender)
+    except ValueError as exc:
+        raise ValueError(
+            f"[archives.{archive}] primary is not a sender ID: "
+            f"{sender!r}") from exc
+    return sender
 
 
 def _members(value: Any, archive: str) -> dict[str, MemberPolicy]:
@@ -755,12 +838,12 @@ class Register:
                 lines.append('senders = "*"')
             elif not one.senders:
                 lines.append("senders = []")
+            if one.primary:
+                lines.append(f'primary = "{_escape(one.primary)}"')
             lines.append("")
             for sender, policy in one.members.items():
                 lines.append(
                     f"[archives.{one.name}.members.{_toml_key(sender)}]")
-                lines.append(f'role = "{policy.role}"')
-                lines.append(f"channel = {policy.channel}")
                 lines.append("indoor = " + ("true" if policy.indoor else "false"))
                 lines.append("")
         return "\n".join(lines)
@@ -855,6 +938,7 @@ def _read(path: Path, data: dict[str, Any] | None = None) -> list[Archive]:
             entry.get("senders") if "senders" in entry else None,
             missing=tuple(members))
         made["members"] = members
+        made["primary"] = _primary(entry.get("primary"), str(name))
         found.append(Archive(**made))
     return found
 

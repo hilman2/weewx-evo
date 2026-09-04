@@ -1,8 +1,8 @@
 # Multiple senders
 
 Several senders can feed one Place. They stay separate in the live journal;
-the Archiver applies that Place's membership, member roles and field mappings
-when it builds an interval.
+the Archiver applies that Place's membership, primary choice and field
+mappings when it builds an interval.
 
 ```
 sender A ─┐
@@ -10,7 +10,7 @@ sender B ─┼─► live.packet (canonical sender ID, raw data)
 sender C ─┘                         │
                                    ▼
                          Place membership
-                         role + field mapping
+                      primary + field mapping
                                    │
                                    ▼
                          one archive record
@@ -22,14 +22,14 @@ differently.
 
 ## The routing authority
 
-- `archives.toml` selects canonical sender IDs for each Place.
-- A member's `main` role keeps ordinary mapped readings in their standard
-  columns.
-- An `extra` role moves temperature, humidity and dew point to its numbered
-  extra channel and keeps non-colliding housekeeping fields.
+- `archives.toml` selects canonical sender IDs for each Place and names one of
+  them as `primary`.
+- The primary sender's readings are placed by the catalog and go to their
+  standard columns.
+- Every other selected sender writes only what `placement.toml` gives it a
+  column for, plus its own battery and signal levels.
 - `placement.toml` can keep, rename or drop individual fields for one
-  Place/Sender/dialect relationship. Explicit mappings override the role
-  preset.
+  Place/Sender/dialect relationship.
 
 This applies from the first Place. `stations.toml` supplies display metadata
 and sender-specific clock tolerances, never an archive destination.

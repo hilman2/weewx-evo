@@ -63,13 +63,15 @@ catalog says"; `-` means somebody decided this reading is written nowhere.
 
 ## `unlisted = "nowhere"`
 
-Only what is listed is written. This is what an extra sender needs: without it
-a sensor added to one next year would be placed by the catalog straight into the
-main sender's column, silently.
+Only what is listed is written.
+
+Every sender but the Place's `primary` is held to this whatever the file says,
+so it is not needed for them. What it adds is the same leash on a primary, for
+one console that should write only the columns you have named.
 
 Battery levels and signal strengths come through regardless. Those names already
-carry their sensor, so two senders cannot collide on them, and an extra sender
-whose battery nobody can see is worse than none.
+carry their sensor, so two senders cannot collide on them, and a sender whose
+battery nobody can see is worse than none.
 
 ## Guesses are written down
 
@@ -102,11 +104,11 @@ Without it a page prints a bare number beside readings it has converted
 
 ## What is not here
 
-`indoor`, `role` and `channel` belong to the sender's membership in one
-place and stay under that archive in `archives.toml` → [Stations and
-Archives](Stations-and-Archives). They are applied on the same side as a
-placement, so changing one and rebuilding works the same way. An explicit
-field placement is more specific and wins over the role preset.
+Which sender a place takes its readings from (`primary`) and whether a sender's
+indoor readings belong in it (`indoor`) stay under that archive in
+`archives.toml` → [Stations and Archives](Stations-and-Archives). They are
+applied on the same side as a placement, so changing one and rebuilding works
+the same way.
 
 <!-- covers
 src/weewx_evo/placement.py

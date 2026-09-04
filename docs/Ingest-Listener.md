@@ -20,8 +20,8 @@ validated JSON. That records how the raw packet can be interpreted without
 choosing what any place wants from it. An archive process can therefore
 rebuild the packet without loading the driver.
 
-So a place's `indoor`, role, extra channel and field placements do not change
-the raw readings here. They used to, and a wrong one then cost the
+So a place's `primary`, `indoor` and field placements do not change the raw
+readings here. They used to, and a wrong one then cost the
 measurements rather than a rebuild.
 
 What it does stamp is which driver read the upload. Together with the identity
