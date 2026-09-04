@@ -471,6 +471,7 @@ def when_options(trigger: str = "record", every: int = 900,
                         "Its own schedule is for a service that asks for less "
                         "often than the archive interval."),
             Option("every", "Its own schedule", kind="duration",
+                   when=("trigger", ("interval",)),
                    # The floor follows the default rather than sitting above
                    # it. Two uploads shipped a default of ten seconds under a
                    # minimum of sixty, and a setting that cannot hold its own

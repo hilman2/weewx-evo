@@ -366,6 +366,7 @@ class FtpExport(BaseExport):
                             "fills. Its own schedule is for a slow destination "
                             "or a site nobody needs a minute fresh."),
                 Option("every", "Its own schedule", kind="duration",
+                       when=("trigger", ("interval",)),
                        default=900, minimum=60, maximum=86400,
                        help="Only used with 'on its own schedule'. Below the "
                             "archive interval it would run with nothing new "

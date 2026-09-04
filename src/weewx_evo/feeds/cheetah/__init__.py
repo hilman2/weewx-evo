@@ -2175,9 +2175,11 @@ def _tags_for(settings: Any, reader: Reader, plots: Any = (),
             "longitude": settings.get("station.longitude"),
             "altitude": settings.get("station.altitude"),
             "station_url": settings.get("station.url") or "",
-            # What the readings come from. WeeWX prints it in a footer, and
-            # here it is whichever driver the listener is running.
-            "hardware": settings.get("driver") or "",
+            # What the readings come from. WeeWX prints one name in a
+            # footer because it runs one driver; here any number deliver at
+            # once, so the honest answer is the station's own name and not a
+            # protocol picked from among several.
+            "hardware": str(settings.get("station.name") or ""),
             "version": _version(),
             # Who is rendering. A skin that prints a version wants to say
             # whose: deck's footer read "WeeWX version 0.0.1", which is the

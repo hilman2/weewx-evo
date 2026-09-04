@@ -648,7 +648,7 @@ def the_archiver_executes_data_not_a_driver() -> None:
         registry = drivers.Registry()
         registry._loaded = True
         registry.register("mine", Describing())
-        ingest = Ingest(live, default_driver="mine", registry=registry)
+        ingest = Ingest(live, registry=registry)
         try:
             stored, reason, _response = ingest.submit(b"reading", "/mine/")
             check("the listener stored it", (stored, reason), (1, "ok"))

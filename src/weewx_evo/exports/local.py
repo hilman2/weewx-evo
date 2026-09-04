@@ -344,6 +344,7 @@ class LocalExport(BaseExport):
                             "has written its files rather than while it is "
                             "still writing them."),
                 Option("every", "Its own schedule", kind="duration",
+                       when=("trigger", ("interval",)),
                        default=900, minimum=60, maximum=86400,
                        help="Only used with 'on its own schedule'."),
             )),

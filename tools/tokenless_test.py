@@ -123,8 +123,7 @@ def _ingest(where: Path, **kw: object) -> tuple[Ingest, LiveStore]:
     live = LiveStore(where / "live.sdb")
     limits = kw.pop("limits", None) or Limits(rate=100, failures=5)
     return Ingest(live, token=TOKEN, registry=_registry(),
-                  access=Access.parse("any"), limits=limits,
-                  default_driver="quiet", **kw), live
+                  access=Access.parse("any"), limits=limits, **kw), live
 
 
 def a_bridge_gets_in_and_a_console_does_not() -> None:
@@ -196,9 +195,13 @@ def only_a_driver_that_says_so() -> None:
         ingest, live = _ingest(Path(raw))
         stored, why, _ = ingest.submit(b"hello there", "/whatever/",
                                        peer="192.168.1.44")
-        # `default_driver` is 'quiet' and would have read this. The door is
-        # not the default's to walk through.
+        # There is no fallback to walk through. `driver_for` answers with
+        # a name only where a path segment or a driver's own `claims()` says
+        # so; a body nobody recognises resolves to nothing, and `submit`
+        # keeps it unread rather than handing it to a guess.
         check("nothing recognises it", (stored, why), (0, "unauthorised"))
+        check("and no driver is guessed for it",
+              ingest.driver_for("/whatever/", b"hello there"), "")
 
         stored, why, _ = ingest.submit(b"QUIET one", "/whatever/",
                                        peer="192.168.1.44")
@@ -206,17 +209,15 @@ def only_a_driver_that_says_so() -> None:
               (stored, why), (0, "unauthorised"))
         live.close()
 
-    # And with the bridge as the fallback, which is what somebody who owns one
-    # would set. Without the claim being required, every unreadable upload on
-    # the network would be recorded as coming from that bridge -- readings
-    # from nowhere, under the name of a real sender.
+    # This used to set a fallback driver and show the door stayed shut for
+    # it: every unreadable upload on the network would otherwise have been
+    # recorded as coming from that sender -- readings from nowhere, under a
+    # real name. The setting is gone, so the check is that it is: a listener
+    # with no way to guess cannot guess wrongly.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
         ingest, live = _ingest(Path(raw))
-        ingest.default_driver = "bridge"
-        stored, why, _ = ingest.submit(b"hello there", "/whatever/",
-                                       peer="192.168.1.44")
-        check("with the bridge as the fallback, still refused",
-              (stored, why), (0, "unauthorised"))
+        check("there is no fallback to set",
+              hasattr(ingest, "default_driver"), False)
         live.close()
 
 

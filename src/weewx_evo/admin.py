@@ -3261,9 +3261,16 @@ _PAGE = """<!doctype html>
         var on = field.getAttribute("data-when");
         var wanted = (field.getAttribute("data-when-is") || "").split(" ");
         var source = document.querySelector('[name="' + on + '"]');
+        // A checkbox always reports the same `value` -- "1", ticked or not.
+        // Read `checked` instead, or a field conditional on a switch never
+        // folds away and the whole mechanism looks like it works while
+        // doing nothing.
+        var value = !source ? "" :
+          (source.type === "checkbox" ? (source.checked ? "1" : "0")
+                                      : source.value);
         // No such field on this form: show it. Guessing would hide a setting
         // for a reason nobody can see.
-        field.hidden = !!source && wanted.indexOf(source.value) < 0;
+        field.hidden = !!source && wanted.indexOf(value) < 0;
       }});
     }};
     document.addEventListener("change", settle);

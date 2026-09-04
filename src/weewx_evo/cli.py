@@ -796,7 +796,6 @@ def cmd_listen(args: argparse.Namespace) -> int:
     archive_register = read_archives(args, cfg)
     live.archives = archive_register.names()
     ingest = Ingest(live, token=cfg.get("token"),
-                    default_driver=cfg.get("driver"),
                     access=access, limits=limits,
                     stations=announced, sightings=sightings)
     # Only for the status page's headline. Everything else the listener
@@ -813,9 +812,9 @@ def cmd_listen(args: argparse.Namespace) -> int:
                     "to the measurement series")
 
     http = HttpListener(ingest, cfg.get("host"), cfg.get("port"))
-    log.info("HTTP on %s:%s, answering %s, driver %s (available: %s)",
-             cfg.get("host"), cfg.get("port"), access, cfg.get("driver"),
-             ", ".join(drivers.names()))
+    log.info("HTTP on %s:%s, answering %s (drivers: %s)",
+             cfg.get("host"), cfg.get("port"), access,
+             ", ".join(drivers.names()) or "none installed")
     udp = None
     if cfg.get("udp_port"):
         udp = UdpListener(ingest, cfg.get("host"), cfg.get("udp_port"))
@@ -1378,7 +1377,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
     limits = Limits(rate=cfg.get("rate"), behind_proxy=cfg.get("behind_proxy"))
     announce(limits, "The listener")
     ingest = Ingest(live, token=cfg.get("token"),
-                    default_driver=cfg.get("driver"),
                     access=access, limits=limits,
                     stations=announced, sightings=sightings)
     # Only for the status page's headline. Everything else the listener
@@ -1396,9 +1394,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     http = HttpListener(ingest, cfg.get("host"), cfg.get("port"))
     http.start()
-    log.info("HTTP on %s:%s, answering %s, driver %s (available: %s)",
-             cfg.get("host"), cfg.get("port"), access, cfg.get("driver"),
-             ", ".join(drivers.names()))
+    log.info("HTTP on %s:%s, answering %s (drivers: %s)",
+             cfg.get("host"), cfg.get("port"), access,
+             ", ".join(drivers.names()) or "none installed")
 
     # Hardware with nowhere to type an address into has to be asked. After the
     # socket is up rather than before, so that a sensor answering in the first
@@ -2424,7 +2422,13 @@ def cmd_url(args: argparse.Namespace) -> int:
 
     port = args.port or cfg.get("port")
     public = args.public or env("PUBLIC_URL")
-    driver = args.driver or cfg.get("driver")
+    # The protocol is the last segment of the address, and there is no
+    # default to fall back on any more: an address ending in a name nothing
+    # answers to is one somebody types into a console and then waits for
+    # readings that never come. Named, or the placeholder plus the list.
+    installed = list(drivers.names())
+    driver = args.driver or (installed[0] if len(installed) == 1
+                             else "<protocol>")
 
     places: list[tuple[str, str]] = []
     if public:

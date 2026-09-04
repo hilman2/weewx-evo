@@ -740,12 +740,6 @@ def core_options() -> list[Group]:
                         "AcuRite bridge posts to an address in its firmware -- "
                         "and that is taken from the local network only, once "
                         "its driver is installed."),
-            Option("driver", "Default driver", kind="choice",
-                   default="ecowitt", choices_from=installed_drivers,
-                   help="Which driver reads an upload whose path does not name "
-                        "one. A console that can only be pointed at a bare "
-                        "path needs this to be right. The list is what is "
-                        "installed -- add more with 'weewx-evo driver install'."),
             Option("udp_port", "UDP port", kind="int", default=0,
                    minimum=0, maximum=65535, restart=True, advanced=True,
                    help="For hardware that broadcasts instead of posting. 0 "

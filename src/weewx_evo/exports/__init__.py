@@ -349,6 +349,12 @@ def live_push_options(local: bool = False) -> list:
                     "web host, or one where PHP is not wanted."),
         Option("live_push_url", "Address the pages are served at",
                placeholder="https://example.org/wetter",
+               # Nothing to say when the script is not being carried: the
+               # address exists to post to `live.php`, and without it there
+               # is no `live.php` up there to post to. "1" is what a ticked
+               # box reads as -- see the script, which reads `checked` and
+               # not `value` for exactly this.
+               when=("live_push", ("1",)),
                help="Where these files end up as a web address -- not the "
                     "directory they are uploaded to. The station posts its "
                     "readings to `live.php` under it, and it cannot work that "

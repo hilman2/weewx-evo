@@ -278,6 +278,18 @@ class Language:
         Empty rather than the English, so `field()` can tell "this language
         does not say" from "this language says the same" and fall back to
         what the schema carries.
+
+        **Two settings sharing a name share this line, and that has bitten
+        once.** The core had `driver` for "which protocol reads an upload
+        whose path names none" while a driver add-on has `driver` for "which
+        piece of hardware this reads" -- so a menu of serial consoles was
+        rendered with the core's label *and* its help, a paragraph about
+        upload paths. The fix was to delete the core's setting, which had
+        stopped being needed: every installed protocol recognises its own
+        uploads. Qualifying the key by the sort of thing it belongs to was
+        the other candidate and is deliberately not here -- it is machinery
+        for a collision that no longer exists, and `host` meaning host in
+        both an FTP export and an MQTT driver is the ordinary case.
         """
         found = (self.values.get("settings") or {}).get(name)
         if not isinstance(found, dict):

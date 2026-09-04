@@ -346,7 +346,8 @@ def schedule_options() -> list:
                               "nightly summary, or expensive charts on a "
                               "machine that should not redraw them every "
                               "five minutes."),
-                  Option("every", "How often", kind="duration", default="1h",
+                  Option("every", "How often", kind="duration",
+                         when=("trigger", ("schedule",)), default="1h",
                          help="Only when it runs on its own clock. Rounded to "
                               "the clock, so an hourly feed produces on the "
                               "hour rather than an hour after the service "

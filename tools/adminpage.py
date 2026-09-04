@@ -447,6 +447,55 @@ def _buttons(tmp: Path, name: str, rendered: str) -> dict:
     return json.loads(finished.stdout)
 
 
+def _conditional(tmp: Path, name: str, rendered: str) -> int:
+    """A field that only sometimes applies folds away, and comes back.
+
+    Run rather than read. The markup carries `data-when` either way; what
+    decides is the script, and its first version read `source.value` -- which
+    for a checkbox is "1" ticked or not. Every field conditional on a switch
+    would have stayed visible forever with the HTML looking correct, which is
+    the same shape as the MutationObserver loop that put jsdom in this image.
+
+    Returns the number of failures, so the caller can add it.
+    """
+    if "data-when" not in rendered or _no_javascript():
+        return 0
+    where = tmp / f"cond-{name.replace(':', '-')}.html"
+    where.write_text(rendered, encoding="utf-8")
+    script = Path(__file__).resolve().parent / "admin_conditional_test.js"
+    finished = subprocess.run(["node", str(script), str(where)],
+                              capture_output=True, text=True, timeout=60,
+                              check=False)
+    if finished.returncode != 0 or not finished.stdout.strip():
+        return not check(f"{name}: the conditional fields settle", "",
+                         finished.stderr.strip()[:200] or "no output")
+
+    found = json.loads(finished.stdout)
+    bad = 0
+    for one in found["before"]:
+        if not one["sourceHere"]:
+            # Nothing to depend on: it must be visible. Hiding a setting for
+            # a reason nobody can see is the worse direction.
+            bad += not check(f"{name}: {one['name']} has no source, so shown",
+                             one["hidden"], False)
+            continue
+        wanted = one["sourceValue"] in one["wanted"]
+        bad += not check(
+            f"{name}: {one['name']} folds with {one['on']}="
+            f"{one['sourceValue']!r}", one["hidden"], not wanted)
+
+    # And it reacts. A form that is right on load and frozen afterwards is
+    # wrong the moment somebody uses it.
+    moved = [(a, b) for a, b in zip(found["before"], found["after"],
+                                    strict=True)
+             if a["on"] in found["flipped"]]
+    if moved:
+        bad += not check(
+            f"{name}: changing the source changes what is shown",
+            any(a["hidden"] != b["hidden"] for a, b in moved), True)
+    return bad
+
+
 def _primary_links(rendered: str) -> list[list[str]]:
     """The destinations in each desktop/mobile copy of the primary nav."""
     sections = re.findall(
@@ -621,10 +670,16 @@ def main() -> int:
         print("\nwhat can be chosen is offered, not typed")
         # The point of a settings page over the command line: you can see the
         # options without reading the documentation first.
-        failures += not check("the driver is a dropdown",
-                              'id="f-driver"' in html and "<select" in html, True)
+        # The example used to be the "default driver" setting, which is gone:
+        # every installed protocol recognises its own uploads, so a setting
+        # naming one to fall back on could only ever guess wrongly. The
+        # language does the same job here -- a choice whose values come from
+        # what is actually installed rather than from a list in the code.
+        failures += not check("a choice is a dropdown",
+                              'id="f-language"' in html and "<select" in html,
+                              True)
         failures += not check("listing what is installed",
-                              ">json<" in html, True)
+                              ">de<" in html or "Deutsch" in html, True)
         failures += not check("who is answered has suggestions",
                               'list="l-allow"' in html, True)
         failures += not check("including the bounded and broad choices",
@@ -881,6 +936,8 @@ def main() -> int:
                     f"{where}: {button['label']!r} posts somewhere of its own",
                     (button["action"] or "").endswith(("/test", "/remove")),
                     True)
+
+            failures += _conditional(tmp, where, rendered)
 
         print("\nthe schema is available as data")
         code, raw = get(f"{base}/{TOKEN}/schema.json")

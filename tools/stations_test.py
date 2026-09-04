@@ -199,7 +199,7 @@ def an_upload_from_each() -> None:
             reg = stations.Register()
             reg.add(stations.Station("kirchdorf", "wunderground", "evo-3f9a2c"))
             seen = Sightings(live)
-            ingest = Ingest(live, token=None, default_driver="wunderground",
+            ingest = Ingest(live, token=None,
                             stations=reg, sightings=seen)
 
             ingest.submit(b"ID=evo-3f9a2c&action=updateraw&tempf=68.4",
@@ -237,7 +237,7 @@ def indoor_is_the_places_answer() -> None:
             reg = stations.Register()
             reg.add(stations.Station("inside", "wunderground", "evo-in"))
             reg.add(stations.Station("outside", "wunderground", "evo-out"))
-            ingest = Ingest(live, token=None, default_driver="wunderground",
+            ingest = Ingest(live, token=None,
                             stations=reg, sightings=Sightings(live))
 
             body = (b"ID=%s&action=updateraw&dateutc=now&tempf=68.4"
@@ -288,7 +288,7 @@ def nothing_announced_changes_nothing() -> None:
     with tempfile.TemporaryDirectory() as raw:
         live = LiveStore(Path(raw) / "live.sdb", interval_seconds=60)
         try:
-            ingest = Ingest(live, token=None, default_driver="wunderground")
+            ingest = Ingest(live, token=None)
             ingest.submit(b"ID=KTEST&action=updateraw&tempf=68.4",
                           "/wunderground/", "192.168.33.20")
             stored = list(live.packets(0, 2_000_000_000))

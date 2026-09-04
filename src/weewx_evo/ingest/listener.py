@@ -74,7 +74,7 @@ class Ingest:
     """
 
     def __init__(self, store: LiveStore, token: str | None = None,
-                 default_driver: str = "ecowitt",
+
                  registry: drivers.Registry | None = None,
                  access: Access = PRIVATE_ONLY,
                  limits: Limits | None = None,
@@ -83,7 +83,7 @@ class Ingest:
                  infer_unknown: str = "series") -> None:
         self.store = store
         self.token = token
-        self.default_driver = default_driver
+
         self.registry = registry or drivers.DEFAULT
         #: Which consoles are announced, and what to call them. None means
         #: nothing is announced, which is every installation that has not been
@@ -271,7 +271,12 @@ class Ingest:
             claimed = self.registry.claimant(body, {"path": path})
             if claimed:
                 return claimed
-        return self.default_driver
+        # Nothing recognised it, and there is no guess to fall back on. There
+        # was: a "default driver" setting, which handed the body to whichever
+        # protocol was named there -- and the comment above says what that
+        # costs. `submit` keeps an upload with no driver (`_unread`), which is
+        # what the add-on page reads to say which add-on would read it.
+        return ""
 
     def submit(self, body: bytes, path: str = "/", peer: str = "?",
                query: str = "") -> tuple[int, str, drivers.Response]:
