@@ -33,4 +33,8 @@ weewx-evo-ecowitt @ https://github.com/weewx-evo/weewx-evo-ecowitt/archive/1e1ad
 # Running a WeeWX driver as a collector. Here because the configuration has
 # collectors of that kind in it: without this the kind is unknown, they are
 # skipped, and their endpoints do not exist.
-weewx-evo-weewx-driver @ https://github.com/weewx-evo/weewx-evo-weewx-driver/archive/8ac28ffd7a5b155bd7333f46c46a8e9ef8bf9219.tar.gz
+#
+# Without its `[usb]` or `[serial]` extras, and that is right: the driver
+# runs where the hardware is, which is not this container. What this image
+# needs from the package is the settings page and the endpoint.
+weewx-evo-weewx-driver @ https://github.com/weewx-evo/weewx-evo-weewx-driver/archive/d5c7d4e3270f332371209d7095f629e057c78749.tar.gz
