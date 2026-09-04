@@ -227,6 +227,8 @@ def tests() -> list[Test]:
              "a word finds its setting, and the link lands on it"),
         Test("adminlang", ["adminlang_test.py"],
              "how much of the settings page asks for its words"),
+        Test("conditional", ["conditional_test.py"],
+             "every form shows what applies, and only while it applies"),
         Test("adminwords", ["adminwords_test.py"],
              "the interface says driver, and never our word for the split"),
         Test("driverflow", ["driverflow_test.py"],

@@ -518,17 +518,20 @@ class InfluxUpload(BaseUpload):
                             "tag, which is what lets a single query draw all "
                             "of them."),
                 Option("org", "Organisation", kind="text", default="",
+                       when=("api", ("v2",)),
                        help="InfluxDB 2 only. What the bucket belongs to."),
                 Option("token", "API token", kind="secret", default="",
+                       when=("api", ("v2",)),
                        help="InfluxDB 2: a token with write permission on "
                             "the bucket. A write-only token is enough, and "
                             "is the one to use."),
                 Option("username", "Username", kind="text", default="",
-                       advanced=True,
+                       advanced=True, when=("api", ("v1",)),
                        help="InfluxDB 1 only, and only where it has "
                             "authentication switched on."),
                 Option("password", "Password", kind="secret", default="",
-                       advanced=True, help="InfluxDB 1 only."),
+                       advanced=True, when=("api", ("v1",)),
+                       help="InfluxDB 1 only."),
             )),
             Group("What gets written", "", (
                 Option("measurement", "Measurement", kind="text",

@@ -596,6 +596,7 @@ def website_options() -> list[Group]:
                               "/api/v1/."),
                   Option("api.token", "Require this token", kind="secret",
                          default="", restart=True, advanced=True,
+                         when=("api.enabled", ("1",)),
                          help="Empty means anybody the pages are served to "
                               "can ask. Set one where the pages are on the "
                               "open internet: the API answers about any span "
@@ -609,6 +610,7 @@ def website_options() -> list[Group]:
                               "what the archive and Grafana are for."),
                   Option("web.port", "Port", kind="int", default=8081,
                          minimum=1, maximum=65535, restart=True,
+                         when=("web.enabled", ("1",)),
                          help="Its own, separate from the upload port and the "
                               "settings page. Those two answer hardware and "
                               "an operator; this answers browsers."),
@@ -866,6 +868,7 @@ def core_options() -> list[Group]:
                         "unless-stopped' in compose or 'Restart=always' in a "
                         "unit file, which the shipped ones have."),
             Option("watchdog_cooldown", "and not again for", kind="duration",
+                   when=("watchdog", ("1",)),
                    default=3600, minimum=300, maximum=86400, advanced=True,
                    help="The floor between two self-restarts. It is written "
                         "to the live database, so it survives the restart it "

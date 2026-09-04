@@ -377,6 +377,7 @@ class MqttUpload(BaseUpload):
                             "above, which is on by default."),
                 Option("discovery_prefix", "Home Assistant topic prefix",
                        default="homeassistant", advanced=True,
+                       when=("home_assistant", ("1",)),
                        help="Only change this if Home Assistant's own MQTT "
                             "discovery prefix was changed."),
                 Option("station", "Call the device", advanced=True,
@@ -426,6 +427,7 @@ class MqttUpload(BaseUpload):
                             "as readable text."),
                 Option("tls_verify", "Check the certificate", kind="bool",
                        default=True, advanced=True,
+                       when=("tls", ("1",)),
                        help="Turn off only for a broker on your own network "
                             "with a self-signed certificate."),
             )),

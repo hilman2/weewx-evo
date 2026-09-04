@@ -34,7 +34,12 @@ function state() {
     const on = field.getAttribute("data-when");
     const wanted = (field.getAttribute("data-when-is") || "").split(" ");
     const source = d.querySelector('[name="' + on + '"]');
-    const input = field.querySelector("input, select, textarea");
+    /* Not `input, select, textarea`: a checkbox is preceded by a hidden
+     * `__present__x` marker, so the first control in the field is that --
+     * and every failure about a switch was reported under a name nobody
+     * would recognise. */
+    const input = field.querySelector(
+      "input:not([type=hidden]), select, textarea");
     return {
       name: input ? input.getAttribute("name") : null,
       on: on,

@@ -173,6 +173,14 @@ SLOTS = "__slots__"
 #: A newline, for joining inside an f-string.
 NEWLINE = chr(10)
 
+#: How many alternatives a choice may list under itself, and how long that
+#: line may get. The point of the line is to answer "what else could go
+#: here" without opening the menu; past a handful it stops answering that
+#: and becomes something to scroll past. Fourteen driver modules wrapped
+#: over four lines and pushed the field's own help off the screen.
+MOST_ALTERNATIVES = 4
+ALT_WIDTH = 70
+
 
 #: The pages that create something, which are not schemas and so have to be
 #: listed. One list, used by both the router and the renderer, because two
@@ -1177,13 +1185,21 @@ def field(option: Option, value: Any, error: str = "",
                    f"{html.escape(lang.say(option.unit))}</span>")
     if option.kind == "choice" and option.options():
         # What else could go here. A dropdown shows one thing at a time, and
-        # knowing the alternatives without opening it is worth a line.
-        # `str` again, and for the same reason as above: a choice is not
-        # always a word. MQTT's quality of service is 0, 1 and 2.
-        others = ", ".join(str(c) for c, _ in option.options()
-                           if c not in ("", None) and str(c) != str(shown))
-        if others:
-            out.append(f'<p class="alt">{html.escape(lang.say("or:"))} {html.escape(others)}</p>')
+        # knowing the alternatives without opening it is worth a line -- one
+        # line, of the words the menu shows.
+        #
+        # It used to print every remaining *value*, however many and however
+        # long. On the hardware form that is fourteen module paths wrapping
+        # over four lines: `weewx.drivers.acurite, weewx.drivers.cc3000, ...`
+        # -- the internal name of each entry, under a menu that already
+        # spells them AcuRite and CC3000. A hint nobody can read is not a
+        # hint, and it pushed the field's own help off the screen.
+        rest = [(str(said) or str(c)) for c, said in option.options()
+                if c not in ("", None) and str(c) != str(shown)]
+        others = ", ".join(lang.say(one) for one in rest[:MOST_ALTERNATIVES])
+        if others and len(rest) <= MOST_ALTERNATIVES and len(others) <= ALT_WIDTH:
+            out.append(f'<p class="alt">{html.escape(lang.say("or:"))} '
+                       f"{html.escape(others)}</p>")
     if error:
         out.append(f'<p class="err">{html.escape(error)}</p>')
     if option.help:
