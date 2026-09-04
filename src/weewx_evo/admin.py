@@ -3836,6 +3836,15 @@ class _Handler(BaseHTTPRequestHandler):
         if errors:
             self._reply(200, page(self.admin, which, errors=errors, form=form))
             return
+        # A step of a sender's setup posts here, because this is where the
+        # parsing and the writing already are. It goes back to the sequence
+        # it came from rather than landing on a settings page nobody asked
+        # for -- and it sends a name rather than a destination, so the only
+        # place this can redirect to is one built here.
+        back = str(form.get("_back") or "").strip()
+        if back:
+            self._redirect(f"./new-sender?learn={quote(back, safe='')}")
+            return
         # Redirect after a save, so a reload does not save again.
         self._redirect(f"./{which}?saved=1")
 

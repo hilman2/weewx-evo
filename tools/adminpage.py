@@ -1298,6 +1298,19 @@ def main() -> int:
         code, body = post(f"{base}/{TOKEN}/senders/kitchen/feed:site",
                           {"enabled": "1"})
         failures += not check("a schema save works from any path", code, 303)
+
+        # A step of a sender's setup posts to the component's own route, so
+        # that the parsing and the writing stay in one place -- and comes back
+        # to the sequence it was part of. Measured on a feed because the
+        # branch is the generic one: the driver that needs it is installed
+        # separately, and this end of it must work either way. The form sends
+        # a name and never a destination, so the address is built here.
+        code, body = post(f"{base}/{TOKEN}/feed:site",
+                          {"enabled": "1", "_back": "kitchen"})
+        where = _location(body) or ""
+        failures += not check("a setup step returns to the sender",
+                              (code, "new-sender?learn=kitchen" in where),
+                              (303, True))
         failures += not check("and does not fall into the sender handler",
                               "Unknown station action" in body, False)
 

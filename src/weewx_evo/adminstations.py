@@ -763,6 +763,7 @@ def _settings_step(admin: Any, station: Any, step: Any) -> str:
     return f'''
   <form method="post" action="./{html.escape(station.driver)}">
     {fields}
+    <input type="hidden" name="_back" value="{html.escape(station.name)}">
     <div class="actions"><button type="submit">
       {html.escape(admin.say("Save"))}</button></div>
   </form>'''
