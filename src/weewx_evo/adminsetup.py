@@ -345,9 +345,9 @@ def _archive_form(admin: Any, now: dict) -> str:
     """
     say = admin.say
     if now["records"]:
-        return (f'<p class="help">{html.escape(say(
-            "The archive already contains readings and will not be "
-            "overwritten."))}</p>')
+        kept = html.escape(say("The archive already contains readings and "
+                               "will not be overwritten."))
+        return f'<p class="help">{kept}</p>'
     weewx = now["weewx"]
     suggested = ""
     if weewx is not None:

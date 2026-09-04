@@ -351,8 +351,8 @@ def nav(admin: Any, active: str) -> list[str]:
     # The link says what the page it opens is called. It said "Quality" and
     # opened a page headed "Quality control", which is the same defect the
     # rest of this sidebar had four times over.
-    return [f'<a href="./quality"{current}>'
-            f'{html.escape(admin.say("Sensor checks"))}{count}</a>']
+    return [(f'<a href="./quality"{current}>'
+             f'{html.escape(admin.say("Sensor checks"))}{count}</a>')]
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
@@ -492,9 +492,9 @@ def _dry_run(dropped: dict, records: int, lang: Any = None) -> str:
     if not records:
         return ""
     if not dropped:
-        return (f'<p class="ok">{html.escape(lang.say(
-            "Over the last year of records, these rules would refuse "
-            "nothing."))}</p>')
+        clean = html.escape(lang.say("Over the last year of records, these "
+                                     "rules would refuse nothing."))
+        return f'<p class="ok">{clean}</p>'
     total = sum(dropped.values())
     worst = max(dropped.values())
     said = ", ".join(f"{html.escape(obs)} ({count})"

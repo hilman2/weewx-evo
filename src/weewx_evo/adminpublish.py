@@ -398,8 +398,8 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
 
 def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if active == "publishing" else ""
-    return [f'<a href="./publishing"{current}>'
-            f'{html.escape(admin.say("Publishing"))}</a>']
+    return [(f'<a href="./publishing"{current}>'
+             f'{html.escape(admin.say("Publishing"))}</a>')]
 
 
 def feeds_dir(admin: Any) -> Path:

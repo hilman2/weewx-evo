@@ -48,9 +48,9 @@ from pathlib import Path
 from typing import Any
 
 from . import adminarchives, placement, series, units
-from . import language as language_defs
 from . import archives as archive_defs
 from . import config as config_file
+from . import language as language_defs
 from . import stations as station_defs
 from .exports import record as export_record
 
@@ -982,8 +982,8 @@ def nav(admin: Any, active: str) -> list[str]:
         said = html.escape(admin.say("something needs looking at"))
         mark = (f' <span class="warn" title="{said}">'
                 f'{len(state.concerns)}</span>')
-    return [f'<a class="home" href="./overview"{current}>'
-            f'{html.escape(admin.say("Overview"))}{mark}</a>']
+    return [(f'<a class="home" href="./overview"{current}>'
+             f'{html.escape(admin.say("Overview"))}{mark}</a>')]
 
 
 def _short(text: str, keep: int = 34) -> str:

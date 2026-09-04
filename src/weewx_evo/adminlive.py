@@ -356,8 +356,8 @@ def _goes_to(placer: Any, row: dict) -> dict[str, str]:
 
 def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if active == "live" else ""
-    return [f'<a href="./live"{current}>'
-            f'{html.escape(admin.say("Live journal"))}</a>']
+    return [(f'<a href="./live"{current}>'
+             f'{html.escape(admin.say("Live journal"))}</a>')]
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
