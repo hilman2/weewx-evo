@@ -735,7 +735,11 @@ def core_options() -> list[Group]:
                         "only thing between the open internet and the "
                         "measurement series: hardware cannot send a header, so "
                         "a path nobody can guess is the practical answer. "
-                        "Anyone who learns it can forge readings."),
+                        "Anyone who learns it can forge readings. The "
+                        "exception is hardware with nowhere to put one -- an "
+                        "AcuRite bridge posts to an address in its firmware -- "
+                        "and that is taken from the local network only, once "
+                        "its driver is installed."),
             Option("driver", "Default driver", kind="choice",
                    default="ecowitt", choices_from=installed_drivers,
                    help="Which driver reads an upload whose path does not name "

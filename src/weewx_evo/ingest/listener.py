@@ -122,6 +122,9 @@ class Ingest:
         self.rejected = 0
         self.last_packet: float | None = None
         self._undescribed: set[tuple[str, str]] = set()
+        #: Which protocols have been let in without a token, so that the
+        #: reason is in the log once rather than every eighteen seconds.
+        self._untokened: set[tuple[str, str]] = set()
         self._lock = threading.Lock()
         self._sync_sender_labels()
 
@@ -140,8 +143,9 @@ class Ingest:
             # still written with the packet.
             log.exception("could not update sender labels in the live database")
 
-    def authorised(self, path: str, query: str = "") -> bool:
-        """Whether a request carries the token.
+    def authorised(self, path: str, query: str = "", body: bytes = b"",
+                   peer: str = "") -> bool:
+        """Whether this upload may be recorded. Three ways, one of them not a token.
 
         The token is a path segment rather than a header because consoles
         cannot send headers. It is the only thing between the open internet and
@@ -160,18 +164,85 @@ class Ingest:
         upload and lands in the same access logs either way. What would weaken
         it is the alternative people reach for otherwise, which is running the
         listener with no token at all because their console cannot send one.
+
+        And that is exactly what the third way is for. `takes_without_token`
+        is the narrow case where no token can exist, because the hardware has
+        no field to hold one.
         """
         if self.token is None:
             return True
         if self.token in path.strip("/").split("/"):
             return True
-        if not query:
-            return False
         from urllib.parse import parse_qsl
         for name, value in parse_qsl(query, keep_blank_values=True):
             if name in ("PASSWORD", "ID") and value == self.token:
                 return True
-        return False
+        return bool(self.takes_without_token(body, path, peer))
+
+    def own_network(self, peer: str) -> bool:
+        """Whether this address could be a console on the same network as us.
+
+        Not `self.access`, which is what the port was opened to and can be
+        `any`. This is the narrower question, and it is what makes the answer
+        worth anything: a DNS entry pointing hardware here only resolves
+        inside the network that serves it, so an upload claiming to be from
+        such a console cannot honestly have come from outside one.
+
+        Behind a proxy nothing in this process can answer it. Every request
+        arrives from loopback, and who really connected is a header anybody
+        can write -- the same reason the rate limiter switches itself off
+        there. So this shuts rather than guesses, and the hardware it is for
+        is reached with a port redirect, which is what its own instructions
+        say to do.
+        """
+        if self.limits.behind_proxy:
+            return False
+        return PRIVATE_ONLY.allows(peer)
+
+    def takes_without_token(self, body: bytes, path: str, peer: str) -> str:
+        """Which driver may take this upload without one. Empty for none.
+
+        Three protocols here can present no secret at all: an Acurite bridge
+        and a LaCrosse gateway post to an address burned into their firmware
+        and are pointed at us with a DNS entry, and a WeatherFlow hub
+        broadcasts. There is no path to put a token in and no password field
+        to put one in either, so requiring one refuses them for the life of
+        the installation -- and worse than refuses, because five refusals a
+        minute is the wrong-token limit and a bridge uploads every eighteen
+        seconds. It locks itself out in under two minutes.
+
+        Which hardware that is, is the driver's to say and not ours:
+        `Setup.secret` already carries it (`path`, `password`, or empty), and
+        this reads it. So the door opens for a protocol only once somebody has
+        installed the driver for it -- and installing the Acurite driver and
+        redirecting Chaney's domain at this machine is the same decision said
+        twice.
+
+        The three conditions are each load-bearing:
+
+            the network   a DNS redirect does not reach out of it
+            a claim       an actual driver recognising it, never the default
+            no secret     or the token on an Ecowitt could be skipped by
+                          leaving it out of the path
+
+        What this is not is authentication. It is the network standing in for
+        one, and what follows is the same as for any unannounced sender: it is
+        recorded, it shows up on the page as something nobody announced, and
+        the operator says what it is.
+        """
+        if not body or not self.own_network(peer):
+            return ""
+        name = self.registry.claimant(body, {"path": path})
+        if not name:
+            return ""
+        setup = drivers.setup_of(self.registry.get(name))
+        if setup is None or setup.secret:
+            return ""
+        if _first(self._untokened, (name, peer)):
+            log.info("taking %s uploads from %s without a token: that hardware "
+                     "has no field for one, and this address is on a local "
+                     "network", name, peer)
+        return name
 
     def driver_for(self, path: str, body: bytes = b"") -> str:
         """Which driver reads this upload.
@@ -214,7 +285,7 @@ class Ingest:
         `query` is only for consoles that cannot put the token in the path;
         see `authorised`.
         """
-        if not self.authorised(path, query):
+        if not self.authorised(path, query, body, peer):
             with self._lock:
                 self.rejected += 1
             # Count the guess before reporting it. An address that keeps
@@ -628,6 +699,29 @@ class _Handler(BaseHTTPRequestHandler):
         self.ingest.limits.failed(peer)
         return False
 
+    def _worth_a_body(self, path: str) -> bool:
+        """Whether to read this upload's body at all.
+
+        A token in the path settles it here, before a byte of body is read.
+        Where there is none the question cannot be settled yet -- hardware
+        that carries no token is recognised by what it sends, and that is the
+        body -- so this defers to `submit`, which asks properly and counts a
+        wrong guess if it was one.
+
+        What it still refuses outright is anything from outside the local
+        network, and that is the whole job: without it, anybody who can reach
+        the port could announce a long body and send it a byte at a time,
+        holding a request thread for as long as they like.
+        """
+        peer = self.client_address[0] if self.client_address else ""
+        if self.ingest.authorised(path):
+            self.ingest.limits.succeeded(peer)
+            return True
+        if self.ingest.own_network(peer):
+            return True
+        self.ingest.limits.failed(peer)
+        return False
+
     def _permitted(self) -> bool:
         """Whether this peer is on a network we answer at all.
 
@@ -672,11 +766,12 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return
         path = urlparse(self.path).path
-        # Authenticate before waiting for a body. Otherwise anybody who can
-        # reach the port can occupy a request thread by announcing a long body
-        # and sending it one byte at a time. `submit` checks again at the data
-        # boundary; this early check exists only to decide whether to read.
-        if not self._has_token(path):
+        # Decide whether to wait for a body before waiting for one. Otherwise
+        # anybody who can reach the port can occupy a request thread by
+        # announcing a long body and sending it one byte at a time. `submit`
+        # is where the upload is really authorised; this only decides whether
+        # there is any point reading it.
+        if not self._worth_a_body(path):
             with self.ingest._lock:
                 self.ingest.rejected += 1
             log.warning("rejected upload from %s: bad or missing token",

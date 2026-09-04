@@ -146,6 +146,8 @@ def tests() -> list[Test]:
              "who gets an answer and who gets a 404"),
         Test("ratelimit", ["ratelimit_test.py"],
              "ten a second, five bad tokens a minute"),
+        Test("tokenless", ["tokenless_test.py"],
+             "hardware with no field for a token, and everything that has one"),
         Test("web", ["web_test.py"],
              "the built-in server"),
         Test("smoke", ["smoke.py"],
