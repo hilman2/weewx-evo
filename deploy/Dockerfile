@@ -51,14 +51,16 @@ ENV PYTHONPATH=/app/src
 # rather than a package on PyPI. What they really need of each other is named
 # in the file.
 #
-# git is needed to fetch them and is then taken out again: it is 40 MB of
-# build tool in a container that has no reason to be able to clone anything.
+# No git anywhere. The entries are tarballs, which pip fetches itself -- and
+# the settings page installs the same way, so an add-on added there works on
+# an image with no build tools in it.
+#
+# It did not, once: git was installed for the build and taken out again, and
+# the first install from the page failed with "Cannot find command 'git'" on
+# an image that was right not to have it.
 COPY deploy/addons.txt /app/deploy/addons.txt
 RUN if [ -s /app/deploy/addons.txt ]; then \
-        apt-get update && apt-get install -y --no-install-recommends git && \
-        pip install --no-cache-dir --no-deps -r /app/deploy/addons.txt && \
-        apt-get purge -y git && apt-get autoremove -y && \
-        rm -rf /var/lib/apt/lists/*; \
+        pip install --no-cache-dir --no-deps -r /app/deploy/addons.txt; \
     fi
 
 # Unprivileged: this process is reachable from the internet through Caddy, and

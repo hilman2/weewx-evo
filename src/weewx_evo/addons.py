@@ -275,7 +275,7 @@ def install(package: str, where: Path | None = None,
     # installed on its own.
     command = [sys.executable, "-m", "pip", "install", "--upgrade",
                "--no-deps", "--target", str(into),
-               f"{one.name} @ git+{one.repository}"]
+               f"{one.name} @ {archive_url(one)}"]
     problem = _run(command, runner, f"could not install {one.name}")
     if problem:
         return problem
@@ -339,6 +339,23 @@ def install_unlisted(spec: str, where: Path | None = None,
     if arrived:
         log.info("installed %s from %r", ", ".join(arrived), spec)
     return ""
+
+
+def archive_url(one: object) -> str:
+    """Where to fetch this add-on from, as something pip can take without git.
+
+    A tarball rather than `git+https://`, and the reason is a station rather
+    than a preference: `git+` makes pip shell out to git, and git is a build
+    tool that has no business in a container that runs a weather station for
+    years. Installing one add-on from the settings page then failed with
+    "Cannot find command 'git'" -- on an image that was right to not have it.
+
+    GitHub serves `/archive/<ref>.tar.gz` for a branch, a tag or a commit, so
+    a catalogue entry can pin one by saying `ref`. Without one it is the
+    default branch, which is what "install the current version" means.
+    """
+    ref = str(getattr(one, "ref", "") or "main")
+    return f"{one.repository.rstrip('/')}/archive/{ref}.tar.gz"
 
 
 def _needs(package: str) -> list[str]:

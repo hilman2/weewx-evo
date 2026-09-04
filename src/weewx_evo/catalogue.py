@@ -74,6 +74,10 @@ class Plugin:
     provides: str = ""
     summary: str = ""
     repository: str = ""
+    #: Which branch, tag or commit to install. Empty means the default
+    #: branch. A catalogue entry that pins one is saying "this is the version
+    #: that was tested", which `tested` claims and cannot enforce.
+    ref: str = ""
     licence: str = ""
     tested: str = ""
     author: str = ""
@@ -145,7 +149,7 @@ def parse(text: str) -> list[Plugin]:
             continue
         known = {name: entry.get(name, "") for name in
                  ("name", "kind", "provides", "summary", "repository",
-                  "licence", "tested", "author")}
+                  "licence", "tested", "author", "ref")}
         detects = entry.get("detects")
         out.append(Plugin(**{k: str(v) for k, v in known.items()},
                           detects=detects if isinstance(detects, dict) else {}))

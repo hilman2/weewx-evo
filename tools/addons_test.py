@@ -104,8 +104,13 @@ def only_what_the_catalogue_lists() -> None:
         # The first call: what follows may be a dependency, see below.
         check("with the URL from the entry, not from the caller",
               ran.calls[0][-1],
-              "weewx-evo-ecowitt @ git+https://github.com/weewx-evo/"
-              "weewx-evo-ecowitt")
+              "weewx-evo-ecowitt @ https://github.com/weewx-evo/"
+              "weewx-evo-ecowitt/archive/main.tar.gz")
+        # A tarball rather than `git+`, which makes pip shell out to git --
+        # a build tool a station image has no reason to carry, and the first
+        # install from the page failed on an image that did not.
+        check("as a tarball, so no git is needed",
+              "git+" in ran.calls[0][-1], False)
         check("and through this interpreter's own pip",
               ran.calls[0][1:4], ["-m", "pip", "install"])
         # Into the data directory rather than site-packages: the reason the

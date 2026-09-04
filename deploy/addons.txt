@@ -17,14 +17,20 @@
 # `--no-deps` in the Dockerfile, so this has to name what it needs: the push
 # protocols share weewx-evo-push-common, and pip would otherwise go looking
 # for it on PyPI, where it is not.
+#
+# Tarballs rather than `git+https://`. `git+` makes pip shell out to git, and
+# git is a build tool with no business in a container that runs a weather
+# station for years -- installing an add-on from the settings page then
+# failed with "Cannot find command 'git'" on an image that was right not to
+# have it. GitHub serves /archive/<commit>.tar.gz, which pins the same thing.
 
 # The machinery the six push protocols share. Provides nothing on its own.
-weewx-evo-push-common @ git+https://github.com/weewx-evo/weewx-evo-push-common@52559665bb349e4cfa34d90745662b776fc0fd99
+weewx-evo-push-common @ https://github.com/weewx-evo/weewx-evo-push-common/archive/52559665bb349e4cfa34d90745662b776fc0fd99.tar.gz
 
 # Ecowitt custom upload: the console this station has.
-weewx-evo-ecowitt @ git+https://github.com/weewx-evo/weewx-evo-ecowitt@1e1ad54fb4ae1945da3c7a0b7b5ac7286dc84e01
+weewx-evo-ecowitt @ https://github.com/weewx-evo/weewx-evo-ecowitt/archive/1e1ad54fb4ae1945da3c7a0b7b5ac7286dc84e01.tar.gz
 
 # Running a WeeWX driver as a collector. Here because the configuration has
 # collectors of that kind in it: without this the kind is unknown, they are
 # skipped, and their endpoints do not exist.
-weewx-evo-weewx-driver @ git+https://github.com/weewx-evo/weewx-evo-weewx-driver@8ac28ffd7a5b155bd7333f46c46a8e9ef8bf9219
+weewx-evo-weewx-driver @ https://github.com/weewx-evo/weewx-evo-weewx-driver/archive/8ac28ffd7a5b155bd7333f46c46a8e9ef8bf9219.tar.gz
