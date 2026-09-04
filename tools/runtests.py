@@ -189,6 +189,8 @@ def tests() -> list[Test]:
              "it restarts for what a restart fixes, and not more often"),
         Test("polling", ["polling_test.py"],
              "hardware that has to be asked arrives like one that pushes"),
+        Test("unread", ["unread_test.py"],
+             "an upload nothing can read is seen rather than only logged"),
         Test("livedb", ["livedb_test.py"],
              "the live table hands a descriptor back when its thread ends"),
         Test("livesource", ["livesource_test.py"],

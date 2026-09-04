@@ -42,6 +42,21 @@ MAX_RAW = 8192
 MAX_DIAGNOSTICS = 256
 INVALID_DIALECT = "<invalid>"
 
+#: The driver name a sighting gets when nothing could read the upload.
+#:
+#: Angle brackets so it cannot collide with a real driver: `driver_for`
+#: returns a path segment, and a segment cannot contain them.
+UNREAD = "<unread>"
+
+#: How much of an unreadable body is kept beside such a sighting.
+#:
+#: Enough for the catalogue's patterns to recognise a protocol -- a `PASSKEY=`
+#: is in the first forty characters of an Ecowitt upload -- and little enough
+#: that a credential further in is not carried along. It cannot be redacted:
+#: redaction is protocol knowledge, and the driver holding it is the one that
+#: is missing.
+UNREAD_BYTES = 160
+
 
 def _first(seen: set, key: object) -> bool:
     """Remember a diagnostic without letting attacker-made names grow forever."""
@@ -212,8 +227,7 @@ class Ingest:
         name = self.driver_for(path, body)
         driver = self.registry.get(name)
         if driver is None:
-            log.warning("no driver named %r; known: %s",
-                        name, ", ".join(self.registry.names()))
+            self._unread(name, path, peer, body)
             return 0, f"no driver {name!r}", drivers.DEFAULT_RESPONSE
 
         response = drivers.response_of(driver)
@@ -243,6 +257,44 @@ class Ingest:
             # arriving.
             return 0, f"could not store: {type(exc).__name__}: {exc}", response
         return stored, "ok", response
+
+    def _unread(self, name: str, path: str, peer: str, body: bytes) -> None:
+        """Something uploaded with the right token and nothing can read it.
+
+        A log line was all this used to be, and that was survivable while the
+        protocols shipped with the core: the driver was missing because
+        somebody had mistyped a path.
+
+        With the drivers installed one at a time it is the ordinary first-run
+        state instead. Console set up, token right, nothing on any page -- and
+        the operator is left comparing a log line against a catalogue.
+
+        So it is kept: what arrived, from where, and enough of the body for
+        the catalogue's own patterns to say which add-on reads it. The core
+        learns no protocol from this; it keeps a string and lets something
+        that knows recognise it.
+        """
+        log.warning("no driver named %r; known: %s",
+                    name, ", ".join(self.registry.names()))
+        if not self.sightings:
+            return
+        try:
+            # `identity` is the path it came in on, because that is the only
+            # thing telling two of these apart: nothing has parsed the body,
+            # so there is no PASSKEY and no serial number to key on.
+            #
+            # Not redacted, and it cannot be: redaction is protocol knowledge
+            # and the driver that has it is the one missing. So it is capped
+            # hard and marked, and the page prints it as evidence rather than
+            # as readings.
+            opening = body[:UNREAD_BYTES].decode("utf-8", "replace")
+            self.sightings.saw(UNREAD, path or "/", peer,
+                               fields=[opening])
+        except Exception:
+            # A sighting is a convenience. Failing to record one must not
+            # change what the console is told, or a full disk would turn into
+            # hardware that stops uploading.
+            log.debug("could not record an unreadable upload", exc_info=True)
 
     # -- what a driver went and asked for ---------------------------------
 
