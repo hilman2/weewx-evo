@@ -231,6 +231,34 @@ identity = "WH1080 (USB)"
         check("and neither does a kind nothing recognises",
               _collector_shape(config), watched)
 
+        # -- what the page tells somebody to type ----------------------
+        #
+        # The whole of what this page is for. Found on the running instance:
+        # "weewx-evo weewx-evo-weewx-driver run --collector vantagetest",
+        # which is not a command on any machine -- the core put `weewx-evo`
+        # in front of a kind that brings its own program name, and that was
+        # right only while every kind was a subcommand of this one.
+        print("\nthe command it says to run")
+        for kind, one in collectors.kinds().items():
+            said = collectors.start_command(kind, "shed")
+            check(f"{kind}: nothing is put in front of its command",
+                  said.startswith(one.command), True)
+            # The program is the first word, so a doubled prefix shows as the
+            # name appearing twice. Measured on the string rather than on a
+            # list of known kinds: the one that broke came from an add-on.
+            program = said.split()[0]
+            check(f"{kind}: {program!r} is one program name",
+                  said.count(program), 1)
+            check(f"{kind}: and it names the collector", said.endswith("shed"),
+                  True)
+
+        # The same string reaches the configuration file as a comment, which
+        # is the copy read by whoever never opens the page.
+        for kind in collectors.kinds():
+            check(f"{kind}: the file says the same",
+                  collectors.start_command(kind, "shed")
+                  in collectors.describe(kind, "shed"), True)
+
     print()
     if failures:
         print(f"{failures} check(s) failed")

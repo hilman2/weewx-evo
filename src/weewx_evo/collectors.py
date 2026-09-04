@@ -35,9 +35,10 @@ a plugin is installed: the collector is somewhere else entirely, possibly on
 another machine, and the listener never imports a line of it.
 
 **The process stays separate.** This is configuration and a name, not an
-embedding. `weewx-evo weewx-driver run --collector shed` reads its settings
+embedding. `weewx-evo-weewx-driver run --collector shed` reads its settings
 from the file instead of from arguments, and still runs where the hardware
-is.
+is. The command belongs to whatever provides the kind -- that one is an
+add-on's, and nothing here puts a program name in front of it.
 """
 
 from __future__ import annotations
@@ -82,6 +83,12 @@ class Kind(NamedTuple):
 
     label: str
     reads: str
+    #: The whole command, program name included: `weewx-evo mqtt run`, or
+    #: `weewx-evo-weewx-driver run` for one an add-on brings. Nothing is put
+    #: in front of it. It held only the subcommand while every kind was one
+    #: of this program's, and an add-on's own command then came out as
+    #: "weewx-evo weewx-evo-weewx-driver run" -- printed on the page that
+    #: exists to say what to type, for a command that is not on any machine.
     command: str
     #: `settings -> list[Group]`, the page below the shared first group.
     #: A kind with nothing of its own leaves it None.
@@ -219,7 +226,7 @@ def describe(kind: str, name: str = "") -> str:
     # of it. The file writer wraps each line of this on its own.
     return (f"{one.label}.\n"
             f"Nothing here starts it. Where the hardware is, run:\n"
-            f"weewx-evo {one.command} --collector {name}")
+            f"{one.command} --collector {name}")
 
 
 def start_command(kind: str, name: str = "<name>") -> str:
@@ -230,7 +237,13 @@ def start_command(kind: str, name: str = "<name>") -> str:
         # No kind installed at all. Saying nothing would leave the page
         # with a blank where the command goes.
         return "no driver add-on is installed"
-    return f"weewx-evo {one.command} --collector {name}"
+    # The kind's command, whole. Nothing is put in front of it: an add-on
+    # brings a command of its own -- `weewx-evo-weewx-driver run` -- and a
+    # core that prefixed `weewx-evo` printed
+    # "weewx-evo weewx-evo-weewx-driver run", which is not a command on any
+    # machine. That was right while every kind was a subcommand of this
+    # program, and it stopped being right the day one arrived from outside.
+    return f"{one.command} --collector {name}"
 
 
 def register_names(registry: Any, settings: Any) -> list[str]:
@@ -378,5 +391,5 @@ KINDS = {
         "them itself or from a home-automation system. The command "
         "weewx-evo mqtt check prints what a broker publishes, which is how "
         "the topic names its page asks for are found.",
-        "mqtt run", _mqtt_options),
+        "weewx-evo mqtt run", _mqtt_options),
 }
