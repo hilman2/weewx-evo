@@ -201,6 +201,8 @@ def tests() -> list[Test]:
              "the live table's own rows, and where each reading goes"),
         Test("adminsearch", ["adminsearch_test.py"],
              "a word finds its setting, and the link lands on it"),
+        Test("adminlang", ["adminlang_test.py"],
+             "how much of the settings page asks for its words"),
         Test("adminhome", ["adminhome_test.py"],
              "the overview says what is wrong, and only when something is"),
         Test("archives", ["archives_test.py"],

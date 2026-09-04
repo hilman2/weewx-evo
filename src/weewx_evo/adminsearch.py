@@ -182,12 +182,16 @@ def _charts(admin: Any, needle: str) -> list[Hit]:
     return found
 
 
-def box(query: str = "") -> str:
+def box(query: str = "", lang: Any = None) -> str:
     """The search field. On every page, because that is the point of it."""
+    from . import language as language_defs
+
+    lang = lang if lang is not None else language_defs.get("en")
+    said = html.escape(lang.say("Find a setting"))
     return f'''
 <form class="find" method="get" action="./search" role="search">
   <input type="search" name="q" value="{html.escape(query)}"
-         placeholder="Find a setting" aria-label="Find a setting">
+         placeholder="{said}" aria-label="{said}">
 </form>'''
 
 

@@ -224,6 +224,67 @@ class Language:
         found = (self.values.get(section) or {}).get(key)
         return found if isinstance(found, str) and found else fallback
 
+    def say(self, english: str) -> str:
+        """One piece of the settings page, in this language.
+
+        Keyed on the English itself. That is the opposite of `weather()`,
+        which is keyed on the WMO number, and the difference is who owns the
+        wording: a forecast source can reword "Light rain showers" under us,
+        while these words are ours. When one is reworded here, the key that
+        no longer matches is *findable* -- `tools/adminlang_test.py` lists
+        every string the page produces and every key no file answers -- and
+        the fallback in the meantime is the English, which is correct rather
+        than merely present.
+
+        The alternative was a symbolic key for each of several hundred
+        strings. That is a second name to invent, to keep unique and to keep
+        in step with the text, for no gain: `admin.places.add.button` tells
+        a translator less than "Add place" does.
+        """
+        return self.text("admin", english, english)
+
+    def fill(self, english: str, **values: Any) -> str:
+        """One piece of the page that has a number or a name in it.
+
+        `say("{n} more, rarely needed").format(n=3)` would be the obvious
+        spelling and is a page that can be taken down by a translation: a
+        file with a stray brace, or one that renamed the placeholder, raises
+        out of the middle of the markup. A translator who breaks a
+        placeholder should cost their own language that one line, not the
+        settings page.
+        """
+        said = self.say(english)
+        try:
+            return said.format(**values)
+        except (KeyError, IndexError, ValueError):
+            log.warning("%s: %r does not fit its placeholders; using English",
+                        self.code, said)
+            try:
+                return english.format(**values)
+            except (KeyError, IndexError, ValueError):
+                # The English is ours and this is a programming error, but a
+                # page that renders the braces is better than one that 500s.
+                return english
+
+    def setting(self, name: str, part: str = "label") -> str:
+        """The label or help text of one setting, or empty.
+
+        Keyed on the setting's own name (`interval`, `web.port`) rather than
+        on its English, because `help` is several sentences and a paragraph
+        makes a poor key. The name is already stable: it is what the option
+        is called in the configuration file, and renaming one is a migration
+        whether or not anything is translated.
+
+        Empty rather than the English, so `field()` can tell "this language
+        does not say" from "this language says the same" and fall back to
+        what the schema carries.
+        """
+        found = (self.values.get("settings") or {}).get(name)
+        if not isinstance(found, dict):
+            return ""
+        said = found.get(part)
+        return said if isinstance(said, str) else ""
+
     def _sequence(self, section: str, key: str,
                   wanted: int) -> tuple[str, ...]:
         found = (self.values.get(section) or {}).get(key)

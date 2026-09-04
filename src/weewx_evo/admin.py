@@ -47,6 +47,7 @@ from . import (
 )
 from . import archives as archive_defs
 from . import config as config_file
+from . import language as language_defs
 from . import notify as notify_registry
 from . import settings as settings_state
 from .netaccess import PRIVATE_ONLY, Access
@@ -261,6 +262,32 @@ class Admin:
 
     def values(self, schema: Schema) -> dict[str, Any]:
         return config_file.values_for(self.config(), schema)
+
+    # -- what this page is written in ------------------------------------
+
+    @property
+    def language(self) -> Any:
+        """The language every page of this settings site is written in.
+
+        Read from the file rather than from `settings.running()`, because
+        `weewx-evo admin` is its own process and there is no running one to
+        ask. Re-read per page: somebody changing the language expects the
+        page that comes back to be in it, and this is one small file read
+        against a page that already reads several.
+        """
+        from . import language as language_defs
+
+        return language_defs.get(config_file.get(self.config(), "language"))
+
+    def say(self, english: str) -> str:
+        """One piece of this page, in the operator's language.
+
+        On `Admin` rather than imported per module, so nothing on the
+        settings page reads the configuration for itself -- the same rule
+        `Settings` follows. It is short because it ends up around several
+        hundred strings, and a long name there would cost more than it says.
+        """
+        return self.language.say(english)
 
     # -- adding and removing ---------------------------------------------
 
@@ -995,7 +1022,7 @@ def slots(option: Option, shown: Any) -> str:
 
 
 def field(option: Option, value: Any, error: str = "",
-          moved: str = "") -> str:
+          moved: str = "", lang: Any = None) -> str:
     """One setting as a form field.
 
     `moved` names the file that has taken this setting over, if one has.
@@ -1003,10 +1030,17 @@ def field(option: Option, value: Any, error: str = "",
     station name, the coordinates and the altitude onto the archive, and a
     field that keeps accepting a value nothing reads is the same failure as
     an environment variable quietly winning.
+
+    `lang` is passed in rather than read here, and rather than kept in a
+    module global. The listener answers on a thread per request; a global
+    "the language being rendered" is two people on one station seeing each
+    other's. English when nothing is given, which is what a narrow caller
+    and every test wants.
     """
+    lang = lang if lang is not None else language_defs.get("en")
     name = html.escape(option.name)
     shown = option.render(value)
-    label = html.escape(option.label)
+    label = html.escape(lang.setting(option.name, "label") or option.label)
     # What this field depends on, for a script to fold it away. Stated on the
     # field rather than acted on here: the form is rendered once and the value
     # it depends on changes while somebody types, so the renderer cannot know.
@@ -1020,7 +1054,8 @@ def field(option: Option, value: Any, error: str = "",
     out = [f'<div class="field{" bad" if error else ""}"{depends}>']
     out.append(f'<label for="f-{name}">{label}')
     if option.required:
-        out.append('<span class="req" title="required">*</span>')
+        said = html.escape(lang.say("required"))
+        out.append(f'<span class="req" title="{said}">*</span>')
     out.append("</label>")
 
     if option.kind == "bool":
@@ -1028,7 +1063,7 @@ def field(option: Option, value: Any, error: str = "",
         out.append(f'<input type="hidden" name="__present__{name}" value="1">')
         out.append(f'<label class="switch"><input type="checkbox" id="f-{name}" '
                    f'name="{name}" value="1"{checked}><span></span>'
-                   f'<em>{"on" if value else "off"}</em></label>')
+                   f'<em>{lang.say("on") if value else lang.say("off")}</em></label>')
     elif option.kind == "duration":
         # A number and a unit, not a string somebody has to know the syntax
         # for. "300" in a box labelled "interval" is a question about units
@@ -1059,9 +1094,10 @@ def field(option: Option, value: Any, error: str = "",
     elif option.kind == "choice":
         available = option.options()
         if not available:
+            none = html.escape(lang.say("nothing installed to choose from"))
             out.append(f'<input type="text" id="f-{name}" name="{name}" '
                        f'value="{html.escape(str(shown))}" '
-                       'placeholder="nothing installed to choose from">')
+                       f'placeholder="{none}">')
         else:
             out.append(f'<select id="f-{name}" name="{name}">')
             # Everything through `str`. A choice is usually a word, but MQTT
@@ -1073,8 +1109,10 @@ def field(option: Option, value: Any, error: str = "",
             if shown and str(shown) not in known:
                 # A value naming something no longer installed. Kept and
                 # marked, rather than silently swapped for the first entry.
-                out.append(f'<option value="{html.escape(str(shown))}" selected>'
-                           f"{html.escape(str(shown))} (not installed)</option>")
+                gone = html.escape(lang.say("(not installed)"))
+                out.append(f'<option value="{html.escape(str(shown))}" '
+                           f'selected>{html.escape(str(shown))} '
+                           f"{gone}</option>")
             for choice, text in available:
                 selected = " selected" if str(shown) == choice else ""
                 out.append(f'<option value="{html.escape(choice)}"{selected}>'
@@ -1095,7 +1133,7 @@ def field(option: Option, value: Any, error: str = "",
         if option.maximum is not None and option.kind in ("int", "float"):
             limits += f' max="{option.maximum}"'
         placeholder = option.placeholder or (
-            "unset" if option.default is None else "")
+            lang.say("unset") if option.default is None else "")
         # Suggestions rather than a dropdown, where the usual answers are
         # worth one click but an unusual one must still be typeable. `allow`
         # is the case: "private", "any", or a list nobody can enumerate. So
@@ -1123,25 +1161,32 @@ def field(option: Option, value: Any, error: str = "",
         others = ", ".join(str(c) for c, _ in option.options()
                            if c not in ("", None) and str(c) != str(shown))
         if others:
-            out.append(f'<p class="alt">or: {html.escape(others)}</p>')
+            out.append(f'<p class="alt">{html.escape(lang.say("or:"))} {html.escape(others)}</p>')
     if error:
         out.append(f'<p class="err">{html.escape(error)}</p>')
     if option.help:
-        out.append(f'<p class="help">{html.escape(option.help)}</p>')
+        out.append(f'<p class="help">'
+                   f'{html.escape(lang.setting(option.name, "help") or option.help)}'
+                   "</p>")
     beaten = overridden(option)
     if beaten:
         out.append(
-            f'<p class="err">Saving this changes nothing while '
-            f'<code>{html.escape(beaten)}</code> is set in the environment: '
-            f'that outranks the configuration file. Unset it, or change it '
-            f'where it is set.</p>')
+            '<p class="err">' + lang.fill(
+                "Saving this changes nothing while {var} is set in the "
+                "environment: that outranks the configuration file. Unset "
+                "it, or change it where it is set.",
+                var=f"<code>{html.escape(beaten)}</code>") + "</p>")
     if moved:
         out.append(
-            '<p class="err">This is set per place since the second one was '
-            'added, on the <a href="./places">Places</a> page. Nothing '
-            'reads it here.</p>')
+            '<p class="err">' + lang.fill(
+                "This is set per place since the second one was added, on "
+                "the {link} page. Nothing reads it here.",
+                link=f'<a href="./places">{html.escape(lang.say("Places"))}</a>')
+            + "</p>")
     if option.restart:
-        out.append('<p class="note">Restarts the service when saved.</p>')
+        out.append('<p class="note">'
+                   + html.escape(lang.say("Restarts the service when saved."))
+                   + "</p>")
     out.append("</div>")
     return "\n".join(out)
 
@@ -1153,27 +1198,34 @@ def anchor(label: str) -> str:
 
 def group_html(group: Group, values: dict[str, Any],
                errors: dict[str, str], moved: str = "",
-               moved_names: frozenset[str] = frozenset()) -> str:
+               moved_names: frozenset[str] = frozenset(),
+               lang: Any = None) -> str:
+    lang = lang if lang is not None else language_defs.get("en")
     plain = [o for o in group.options if not o.advanced]
     advanced = [o for o in group.options if o.advanced]
+    # The anchor keeps the English. It is a link -- `#g-archive` is in the
+    # address bar, in a bookmark and in whatever anybody pasted into a
+    # message -- and a fragment that moves when somebody switches language
+    # is one that stops working for everybody who saved it.
     out = [f'<section class="group" id="{html.escape(anchor(group.label))}">']
-    out.append(f"<h3>{html.escape(group.label)}</h3>")
+    out.append(f"<h3>{html.escape(lang.say(group.label))}</h3>")
     if group.help:
-        out.append(f'<p class="lede">{html.escape(group.help)}</p>')
+        out.append(f'<p class="lede">{html.escape(lang.say(group.help))}</p>')
     for option in plain:
         out.append(field(option, values.get(option.name),
                          errors.get(option.name),
-                         moved if option.name in moved_names else ""))
+                         moved if option.name in moved_names else "", lang))
     if advanced:
         # Hidden, not omitted: a setting nobody can find is one that gets
         # found by reading the source, which is worse than a longer page.
         shown = any(errors.get(o.name) for o in advanced)
         out.append(f'<details{" open" if shown else ""}>')
-        out.append(f"<summary>{len(advanced)} more, rarely needed</summary>")
+        out.append("<summary>" + html.escape(lang.fill(
+            "{n} more, rarely needed", n=len(advanced))) + "</summary>")
         for option in advanced:
             out.append(field(option, values.get(option.name),
                              errors.get(option.name),
-                             moved if option.name in moved_names else ""))
+                             moved if option.name in moved_names else "", lang))
         out.append("</details>")
     out.append("</section>")
     return "\n".join(out)
@@ -1814,20 +1866,24 @@ def _primary_section(active: str, schema: Schema | None) -> str:
     return "system"
 
 
-def _primary_nav(active: str, schema: Schema | None) -> str:
+def _primary_nav(active: str, schema: Schema | None, lang: Any = None) -> str:
     """Five stable destinations, independent of configured instance count."""
+    lang = lang if lang is not None else language_defs.get("en")
     current = _primary_section(active, schema)
     links = []
     for key, label, href in _PRIMARY_NAV:
         here = ' aria-current="page"' if key == current else ""
         links.append(f'<a class="primary-nav-link" href="{href}"{here}>'
-                     f'{html.escape(label)}</a>')
+                     f'{html.escape(lang.say(label))}</a>')
     return "".join(links)
 
 
 def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
+    # Once per page, not once per field: `Admin.language` reads the file, and
+    # a form with a hundred fields would read it a hundred times.
+    lang = admin.language
     schema = next((s for s in admin.schemas if s.name == active), None)
     adding = schema is None and active in ADD_PAGES and active not in (
         "new-plot", "import-plots")
@@ -1871,7 +1927,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # The primary navigation is a product map, not an inventory. Configured
     # feeds, collectors and drivers live on their section pages, so adding one
     # can never make the navigation longer or move another destination.
-    nav = _primary_nav(active, schema)
+    nav = _primary_nav(active, schema, lang)
 
     if charting:
         if active == "new-plot":
@@ -1937,7 +1993,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                       exc_info=True)
         jump = "".join(
             f'<a href="#{html.escape(anchor(g.label))}">'
-            f"{html.escape(g.label)}</a>" for g in schema.groups)
+            f"{html.escape(lang.say(g.label))}</a>" for g in schema.groups)
         # Where this thing sits in the chain, first. A page of FTP settings
         # with no hint of which feed it sends is one nobody can check
         # without opening a second tab.
@@ -1945,7 +2001,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         if schema.kind == "collector":
             body.append(_collector_note(schema))
         body.append(f'<nav class="jump" aria-label="Sections">{jump}</nav>')
-        body += [group_html(g, values, errors, moved, moved_names)
+        body += [group_html(g, values, errors, moved, moved_names, lang)
                  for g in schema.groups]
 
     # An export gets two more buttons: try the destination, and delete it.
@@ -2043,7 +2099,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
 
     banner = ""
     if errors and charting and "" not in errors:
-        banner = ('<div class="banner warn">Saved. '
+        banner = ('<div class="banner warn">'
+                  + html.escape(lang.say("Saved.")) + " "
                   + html.escape("; ".join(errors.values())) + "</div>")
     elif errors:
         general = errors.get("")
@@ -2053,12 +2110,14 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
             # Named, not counted. The message is also printed beside each
             # field, but a settings page is long and "3 setting(s) need
             # looking at" leaves somebody scrolling for the red one.
-            labels = {option.name: option.label
+            labels = {option.name:
+                      lang.setting(option.name, "label") or option.label
                       for _group, option in (schema or ())}
             named = ", ".join(html.escape(labels.get(where, where))
                               for where in errors if where)
-            banner = ('<div class="banner bad">Nothing was saved. Look at '
-                      f'{named}.</div>')
+            banner = ('<div class="banner bad">'
+                      + lang.fill("Nothing was saved. Look at {fields}.",
+                                  fields=named) + "</div>")
     elif message:
         banner = f'<div class="banner ok">{html.escape(message)}</div>'
 
@@ -2069,8 +2128,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         # picked up while running, these are not. Saying "restarting" when
         # nothing restarts sends somebody looking for a service that is
         # already up, and the setting they changed still is not in effect.
-        restart = ('<div class="banner warn">Saved, and waiting for a '
-                   f"restart to take effect: {items}.</div>")
+        restart = ('<div class="banner warn">' + lang.fill(
+            "Saved, and waiting for a restart to take effect: {settings}.",
+            settings=items) + "</div>")
 
     # `standing` too: the stations page is a list of rows with a form on
     # each -- adopt, ignore, remove. Wrapped in the save form those are nested
@@ -2080,9 +2140,11 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # and feeds had, which is what `tools/admin_page_test.js` was written for.
     own_form = adding or charting or standing
     if charting:
-        heading = ("Add a chart" if active == "new-plot"
-                   else "Import charts" if active == "import-plots"
-                   else f"Chart: {active.split(':', 1)[1]}")
+        heading = (lang.say("Add a chart") if active == "new-plot"
+                   else lang.say("Import charts") if active == "import-plots"
+                   # The chart's own name, which is the operator's word.
+                   else lang.fill("Chart: {name}",
+                                  name=active.split(":", 1)[1]))
     else:
         # Named per page rather than "everything else is an export". Two more
         # add-pages arrived after this was written and both said "Add an
@@ -2105,8 +2167,12 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         if active in ("archives", "places"):
             heading = adminarchives.title_for(admin)
         else:
-            heading = schema.label if schema else headings.get(active,
-                                                               "Settings")
+            # A schema's label is the operator's own name for an instance
+            # ("Feed: site") as often as it is one of ours, so it goes
+            # through `say` too and simply comes back unchanged when nobody
+            # has translated a name they invented.
+            heading = lang.say(schema.label if schema
+                               else headings.get(active, "Settings"))
 
     # The pages that render themselves write their own <h2>, and it carries
     # more than a name: "Publishing" with a line under it saying what a feed
@@ -2114,9 +2180,14 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # the first of them a bare repetition of the second.
     return _PAGE.format(
         wide=wide,
+        # The product name beside it is not translated: it is what the thing
+        # is called, in every language, and on the tin.
+        brand=html.escape(lang.say("Administration")),
+        menu=html.escape(lang.say("Menu")),
+        nav_label=html.escape(lang.say("Primary")),
         title=html.escape(heading),
         heading="" if standing else f"<h2>{html.escape(heading)}</h2>",
-        find=adminsearch.box(),
+        find=adminsearch.box(lang=lang),
         body_form_open="" if own_form else f'<form method="post" action="./{html.escape(active)}">',
         body_form_close="" if own_form else "</form>",
         # After the save form closes, never inside it. `extra` is Try it and
@@ -2134,12 +2205,14 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         banner=banner + restart,
         body="\n".join(body),
         action=html.escape(schema.name if schema else active),
-        readonly=("<p class='banner warn'>Read-only.</p>"
+        readonly=('<p class="banner warn">'
+                  + html.escape(lang.say("Read-only.")) + "</p>"
                   if admin.read_only else ""),
         save="" if admin.read_only or own_form else
              '<div class="savebar" data-savebar>'
-             '<button type="submit">Save changes</button>'
-             '<span class="save-state" aria-live="polite">No changes</span>'
+             f'<button type="submit">{html.escape(lang.say("Save changes"))}'
+             '</button><span class="save-state" aria-live="polite">'
+             f'{html.escape(lang.say("No changes"))}</span>'
              '</div>',
         file=html.escape(str(admin.path)),
     ).encode("utf-8")
@@ -2913,6 +2986,11 @@ _PAGE = """<!doctype html>
   .system-panel {{ min-width: 0; padding: 1rem 1.1rem; margin-bottom: 1rem; }}
   .system-panel h3 {{ margin: 0 0 .7rem; }}
   .system-panel-head h3 {{ margin: 0; }}
+  /* The one panel people arrive at this page looking for and walk past:
+     the archive interval is behind it. `--bad` rather than a literal red,
+     so it stays readable on the dark ground -- an SVG-style hard colour
+     here is the theme trap this project has been caught by before. */
+  .system-central {{ color: var(--bad); font-weight: 700; }}
   .small-action {{ color: var(--accent); text-decoration: none;
       font-size: .8125rem; font-weight: 600; }}
   .system-row {{ display: flex; align-items: center; justify-content: space-between;
@@ -3063,16 +3141,16 @@ _PAGE = """<!doctype html>
 <body>
 <div class="shell">
   <header class="topbar">
-    <a class="brand" href="./overview">weewx-evo<span>Administration</span></a>
+    <a class="brand" href="./overview">weewx-evo<span>{brand}</span></a>
     <span class="current-page">{title}</span>
     <div class="top-search">{find}</div>
   </header>
   <aside class="sidebar">
-    <nav class="primary-nav" aria-label="Primary">{nav}</nav>
+    <nav class="primary-nav" aria-label="{nav_label}">{nav}</nav>
   </aside>
   <details class="mobile-navigation">
-    <summary>Menu <span>{title}</span></summary>
-    <nav class="primary-nav" aria-label="Primary">{nav}</nav>
+    <summary>{menu} <span>{title}</span></summary>
+    <nav class="primary-nav" aria-label="{nav_label}">{nav}</nav>
   </details>
   <main class="{wide}">
     {heading}

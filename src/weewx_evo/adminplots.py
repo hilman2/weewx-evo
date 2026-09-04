@@ -647,7 +647,8 @@ def known_series(admin: Any = None,
 
 
 def _series_field(name: str, chosen: str, admin: Any = None,
-                  choices: list[tuple[str, str, str]] | None = None) -> str:
+                  choices: list[tuple[str, str, str]] | None = None,
+                  say: Any = None) -> str:
     """Where this line reads from. Nothing at all with one archive.
 
     A picker on every line of every chart on every single-series station is
@@ -669,8 +670,10 @@ def _series_field(name: str, chosen: str, admin: Any = None,
         choices = series_choices(admin)
     if not choices:
         return ""
+    say = say or (admin.say if admin is not None else str)
     colours = {one: colour for one, _title, colour in choices}
-    options = ['<option value="">This chart\'s own</option>']
+    own = html.escape(say("This chart's own"))
+    options = [f'<option value="">{own}</option>']
     options += [
         f'<option value="{html.escape(one)}"'
         f'{" selected" if chosen == one else ""}>'
@@ -678,14 +681,18 @@ def _series_field(name: str, chosen: str, admin: Any = None,
         for one, title, _colour in choices]
     swatch = ""
     if chosen and chosen in colours:
+        title = say("the colour {place} is drawn in")
         swatch = (f'<span class="swatch" style="--c: '
-                  f'{html.escape(colours[chosen])}" title="the colour '
-                  f'{html.escape(chosen)} is drawn in"></span>')
-    return (f'<label>Place\n  {swatch}<select name="{html.escape(name)}">'
+                  f'{html.escape(colours[chosen])}" title="'
+                  f'{html.escape(title.replace("{place}", chosen))}"></span>')
+    return (f'<label>{html.escape(say("Place"))}\n'
+            f'  {swatch}<select name="{html.escape(name)}">'
             f'{"".join(options)}</select>\n</label>')
 
 
-def _select(name: str, options: tuple, value: Any, extra: str = "") -> str:
+def _select(name: str, options: tuple, value: Any, extra: str = "",
+            say: Any = None) -> str:
+    say = say or str
     rows = []
     seen = False
     for key, label in options:
@@ -693,18 +700,19 @@ def _select(name: str, options: tuple, value: Any, extra: str = "") -> str:
         seen = seen or chosen
         rows.append(f'<option value="{html.escape(str(key))}"'
                     f'{" selected" if chosen else ""}>'
-                    f"{html.escape(str(label))}</option>")
+                    f"{html.escape(say(str(label)))}</option>")
     if not seen and value not in (None, ""):
         # Whatever is in the file, even if this page would not have offered
         # it. Losing somebody's hand-written setting by rendering a form is
         # the worst thing a settings page can do.
         rows.insert(0, f'<option value="{html.escape(str(value))}" selected>'
-                       f"{html.escape(str(value))} (from the file)</option>")
+                       f'{html.escape(str(value))} '
+                       f'{html.escape(say("(from the file)"))}</option>')
     return (f'<select name="{html.escape(name)}" {extra}>'
             + "".join(rows) + "</select>")
 
 
-def _places_band(plot: Any, titles: dict[str, str]) -> str:
+def _places_band(plot: Any, titles: dict[str, str], say: Any = None) -> str:
     """Said once, above the rows, and only when it is true.
 
     A chart becomes a site chart the moment one line names a place, and a
@@ -720,24 +728,33 @@ def _places_band(plot: Any, titles: dict[str, str]) -> str:
     """
     if not plot.names_a_place():
         return ""
+    say = say or str
     named = [titles.get(one, one) for one in plot.places()]
     if any(not line.series for line in plot.lines):
-        named.append("this chart's own place")
-    return ('<p class="note">Draws from ' + html.escape(", ".join(named))
-            + ". A chart that names a place at all is written once, for the "
-              "site, rather than once under each place: the numbers in it "
-              "do not change from one place's pages to another's.</p>")
+        named.append(say("this chart's own place"))
+    return ('<p class="note">'
+            + html.escape(say("Draws from")) + " "
+            + html.escape(", ".join(named)) + ". "
+            + html.escape(say(
+                "A chart that names a place at all is written once, for the "
+                "site, rather than once under each place: the numbers in it "
+                "do not change from one place's pages to another's."))
+            + "</p>")
 
 
 def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
          form: dict[str, Any] | None = None) -> str:
     """One chart's page."""
+    say = admin.say
     charts = load(admin)
     plot = charts.get(name)
     if plot is None:
-        return ('<section class="group"><h3>Not here</h3>'
-                f'<p class="lede">There is no chart called '
-                f'{html.escape(name)}.</p></section>')
+        return ('<section class="group">'
+                f'<h3>{html.escape(say("Not here"))}</h3>'
+                '<p class="lede">'
+                + html.escape(admin.language.fill(
+                    "There is no chart called {name}.", name=name))
+                + "</p></section>")
 
     def err(key: str) -> str:
         return (f'<p class="err">{html.escape(errors[key])}</p>'
@@ -778,33 +795,35 @@ def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
     <fieldset class="line">
       <legend>{legend}</legend>
       <div class="row">
-        <label>Reading
+        <label>{html.escape(say("Reading"))}
           <input name="{prefix}_obs" list="{html.escape(offers)}"
                  value="{html.escape(line.obs)}" required>
         </label>
-        <label>Called
+        <label>{html.escape(say("Called"))}
           <input name="{prefix}_label" value="{html.escape(line.label)}"
                  placeholder="{html.escape(charts.labels.get(line.obs, line.obs))}">
         </label>
-        <label>Drawn as
-          {_select(f"{prefix}_kind", KINDS, line.kind)}
+        <label>{html.escape(say("Drawn as"))}
+          {_select(f"{prefix}_kind", KINDS, line.kind, say=say)}
         </label>
-        <fieldset class="colourfield"><legend>Colour</legend>
+        <fieldset class="colourfield">
+          <legend>{html.escape(say("Colour"))}</legend>
           {_colour_field(f"{prefix}_color", line, index)}
         </fieldset>
       </div>
       <div class="row">
-        <label>Reduced by
-          {_select(f"{prefix}_aggregate", USEFUL, line.aggregate)}
+        <label>{html.escape(say("Reduced by"))}
+          {_select(f"{prefix}_aggregate", USEFUL, line.aggregate, say=say)}
         </label>
-        <label>Per
+        <label>{html.escape(say("Per"))}
           {_select(f"{prefix}_interval", INTERVALS,
-                   "" if line.interval is None else line.interval)}
+                   "" if line.interval is None else line.interval, say=say)}
         </label>
-        {_series_field(f"{prefix}_series", line.series, choices=choices)}
+        {_series_field(f"{prefix}_series", line.series, choices=choices,
+                       say=say)}
         <label class="tick">
           <input type="checkbox" name="{prefix}_delete" value="1">
-          Remove this reading
+          {html.escape(say("Remove this reading"))}
         </label>
       </div>
       {err(f"{prefix}_obs")}{err(f"{prefix}_aggregate")}{err(f"{prefix}_series")}
@@ -814,85 +833,98 @@ def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
     return f'''
 <section class="group">
   <h3>{html.escape(plot.name)}</h3>
-  <p class="lede">Output: <code>{html.escape(plot.name)}.json</code>.</p>
+  <p class="lede">{html.escape(say("Output:"))}
+     <code>{html.escape(plot.name)}.json</code>.</p>
   <form method="post" action="./plot:{html.escape(plot.name)}">
   {datalist}
   <div class="row">
-    <label>Group
-      {_select("span", spans, plot.span)}
-      <span class="hint">Only for grouping and for the manifest. The length
-        below is what decides how far back it reaches.</span>
+    <label>{html.escape(say("Group"))}
+      {_select("span", spans, plot.span, say=say)}
+      <span class="hint">{html.escape(say(
+        "Only for grouping and for the manifest. The length below is what "
+        "decides how far back it reaches."))}</span>
     </label>
-    <label>Reaches back
+    <label>{html.escape(say("Reaches back"))}
       <input name="time_length" list="lengths"
              value="{html.escape(format_duration(plot.time_length))}">
       <datalist id="lengths">
-        {"".join(f'<option value="{v}">{html.escape(said)}</option>'
+        {"".join(f'<option value="{v}">{html.escape(say(said))}</option>'
                  for v, said in LENGTHS)}
       </datalist>
-      <span class="hint">27h on a day chart, so last night is still on it.</span>
+      <span class="hint">{html.escape(say(
+        "27h on a day chart, so last night is still on it."))}</span>
       {err("time_length")}
     </label>
-    <label>Title
+    <label>{html.escape(say("Title"))}
       <input name="title" value="{html.escape(plot.title)}"
-             placeholder="built from the readings">
+             placeholder="{html.escape(say("built from the readings"))}">
     </label>
   </div>
   <div class="row">
-    <label>Leave out when empty
-      {_select("skip_if_empty", EMPTY, plot.skip_if_empty)}
-      <span class="hint">A sensor with nothing in a year is one this station
-        does not have; one with nothing today is having a bad day. The first
-        should vanish, the second should stay.</span>
+    <label>{html.escape(say("Leave out when empty"))}
+      {_select("skip_if_empty", EMPTY, plot.skip_if_empty, say=say)}
+      <span class="hint">{html.escape(say(
+        "A sensor with nothing in a year is one this station does not have; "
+        "one with nothing today is having a bad day. The first should "
+        "vanish, the second should stay."))}</span>
     </label>
     <label class="tick">
       <input type="checkbox" name="show_daynight" value="1"{checked}>
-      Shade the hours of darkness
-      <span class="hint">Worth it on a day or a week. On a year it is a grey
-        smear.</span>
+      {html.escape(say("Shade the hours of darkness"))}
+      <span class="hint">{html.escape(say(
+        "Worth it on a day or a week. On a year it is a grey smear."))}</span>
     </label>
   </div>
   <div class="row narrow">
-    <label>Axis from
-      <input name="ymin" value="{_num(plot.yscale[0])}" placeholder="auto">
+    <label>{html.escape(say("Axis from"))}
+      <input name="ymin" value="{_num(plot.yscale[0])}"
+             placeholder="{html.escape(say("auto"))}">
       {err("ymin")}
     </label>
-    <label>to
-      <input name="ymax" value="{_num(plot.yscale[1])}" placeholder="auto">
+    <label>{html.escape(say("to"))}
+      <input name="ymax" value="{_num(plot.yscale[1])}"
+             placeholder="{html.escape(say("auto"))}">
       {err("ymax")}
     </label>
-    <label>smallest step
-      <input name="ystep" value="{_num(plot.yscale[2])}" placeholder="auto">
-      <span class="hint">Fixing an axis is how two charts stay comparable.</span>
+    <label>{html.escape(say("smallest step"))}
+      <input name="ystep" value="{_num(plot.yscale[2])}"
+             placeholder="{html.escape(say("auto"))}">
+      <span class="hint">{html.escape(say(
+        "Fixing an axis is how two charts stay comparable."))}</span>
       {err("ystep")}
     </label>
   </div>
 
-  <h4>Readings</h4>
-  {_places_band(plot, titles)}
+  <h4>{html.escape(say("Readings"))}</h4>
+  {_places_band(plot, titles, say=say)}
   {"".join(rows)}
 
   <fieldset class="line add">
-    <legend>Add one</legend>
+    <legend>{html.escape(say("Add one"))}</legend>
     <div class="row">
-      <label>Reading
+      <label>{html.escape(say("Reading"))}
         <input name="new_obs" list="readings" placeholder="outTemp">
-        <span class="hint">{len(known)} to choose from, taken from the
-          archive itself.</span>
+        <span class="hint">{html.escape(admin.language.fill(
+          "{n} to choose from, taken from the archive itself.",
+          n=len(known)))}</span>
       </label>
     </div>
   </fieldset>
 
-  <div class="actions"><button type="submit">Save</button></div>
+  <div class="actions">
+    <button type="submit">{html.escape(say("Save"))}</button></div>
   </form>
 </section>
 
 <section class="group danger">
-  <h3>Remove</h3>
-  <p class="lede">Removes the definition. Existing files remain.</p>
+  <h3>{html.escape(say("Remove"))}</h3>
+  <p class="lede">{html.escape(say(
+    "Removes the definition. Existing files remain."))}</p>
   <form method="post" action="./plot:{html.escape(plot.name)}/remove"
-        onsubmit="return confirm('Remove the chart {html.escape(plot.name)}?')">
-    <div class="actions"><button class="warn" type="submit">Remove</button></div>
+        onsubmit="return confirm('{html.escape(admin.language.fill(
+            "Remove the chart {name}?", name=plot.name))}')">
+    <div class="actions"><button class="warn" type="submit">
+      {html.escape(say("Remove"))}</button></div>
   </form>
 </section>'''
 

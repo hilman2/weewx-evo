@@ -226,3 +226,365 @@ not_configured = "ist nicht eingerichtet"
 no_column = "zeichnet das nicht auf"
 other_unit = "misst in {unit}, dieses Diagramm ist in {chart}"
 no_unit = "gibt dafür keine Einheit an, dieses Diagramm ist in {chart}"
+
+# Die Einstellungsseite. Auf den englischen Wortlaut geschlüsselt, anders als
+# die Wettercodes darüber: die Zahl dort kommt von einer fremden Quelle, die
+# ihren Wortlaut jederzeit ändern kann, diese Sätze sind unsere eigenen. Ein
+# Schlüssel, der nach einer Umformulierung nicht mehr passt, ist auffindbar --
+# `tools/adminlang_test.py` nennt ihn -- und bis dahin steht Englisch da, was
+# richtig ist und nicht bloß vorhanden.
+#
+# Was hier NICHT hineingehört: die Namen, die der Betreiber selbst vergeben
+# hat. "Feed: site (cheetah)" geht durch dieselbe Funktion und kommt
+# unübersetzt zurück, und das ist die richtige Antwort.
+[admin]
+"Administration" = "Verwaltung"
+"Menu" = "Menü"
+"Primary" = "Hauptbereiche"
+"Find a setting" = "Einstellung suchen"
+"Overview" = "Übersicht"
+"Senders" = "Sender"
+"Places" = "Orte"
+"Publishing" = "Veröffentlichen"
+"System" = "System"
+"Settings" = "Einstellungen"
+"Save" = "Speichern"
+"Save changes" = "Änderungen speichern"
+"No changes" = "Nichts geändert"
+"Remove" = "Entfernen"
+"Read-only." = "Nur lesend."
+"Saved." = "Gespeichert."
+"Nothing was saved. Look at {fields}." = "Nichts gespeichert. Sieh dir {fields} an."
+"Saved, and waiting for a restart to take effect: {settings}." = "Gespeichert, wirkt nach einem Neustart: {settings}."
+"Restarts the service when saved." = "Startet den Dienst beim Speichern neu."
+"required" = "Pflichtfeld"
+"on" = "an"
+"off" = "aus"
+"unset" = "nicht gesetzt"
+"auto" = "automatisch"
+"or:" = "oder:"
+"(not installed)" = "(nicht installiert)"
+"(from the file)" = "(aus der Datei)"
+"nothing installed to choose from" = "nichts installiert, woraus zu wählen wäre"
+"{n} more, rarely needed" = "{n} weitere, selten gebraucht"
+"Saving this changes nothing while {var} is set in the environment: that outranks the configuration file. Unset it, or change it where it is set." = "Speichern ändert nichts, solange {var} in der Umgebung gesetzt ist: die schlägt die Konfigurationsdatei. Nimm sie heraus, oder ändere sie dort, wo sie gesetzt wird."
+"This is set per place since the second one was added, on the {link} page. Nothing reads it here." = "Das steht seit dem zweiten Ort je Ort, auf der Seite {link}. Hier liest es niemand."
+
+# Die Seitentitel.
+"Add a chart" = "Diagramm hinzufügen"
+"Add a collector" = "Sammler hinzufügen"
+"Add a feed" = "Feed hinzufügen"
+"Add a forecast" = "Vorhersage hinzufügen"
+"Add a notification channel" = "Benachrichtigungskanal hinzufügen"
+"Add a place" = "Ort hinzufügen"
+"Add a sender" = "Sender hinzufügen"
+"Add an export" = "Export hinzufügen"
+"Add an upload" = "Upload hinzufügen"
+"Import charts" = "Diagramme importieren"
+"Charts" = "Diagramme"
+"Live database" = "Live-Datenbank"
+"Sensor checks" = "Sensorprüfungen"
+"Core settings" = "Grundeinstellungen"
+"Built-in web server" = "Integrierter Webserver"
+
+# Die Gruppen der Einstellungen, und was über ihnen steht.
+"Language" = "Sprache"
+"Archive" = "Archiv"
+"How readings become the record that is kept." = "Wie aus Messwerten der Datensatz wird, der bleibt."
+"Databases" = "Datenbanken"
+"Two files: the record, and the packets behind it." = "Zwei Dateien: der Datensatz und die Pakete dahinter."
+"Listener" = "Empfänger"
+"The port the hardware uploads to." = "Der Port, auf den die Hardware hochlädt."
+"Reading an upload" = "Einen Upload lesen"
+"What every pushing console has in common." = "Was alle sendenden Konsolen gemeinsam haben."
+"Who is answered" = "Wer geantwortet bekommt"
+"Bound to every interface; this decides who gets a reply." = "An alle Schnittstellen gebunden; hier steht, wer eine Antwort bekommt."
+"Settings page" = "Einstellungsseite"
+"Its own port and its own token: it can do far more than an upload can." = "Eigener Port und eigenes Token: sie kann weit mehr als ein Upload."
+"Running" = "Betrieb"
+"Where things are put and how often they happen." = "Wo Dinge liegen und wie oft sie geschehen."
+"The built-in web server" = "Der integrierte Webserver"
+"Hands what the exports published to a browser. Enough to look at a station's own pages on the local network without installing anything else." = "Liefert einem Browser, was die Exporte veröffentlicht haben. Genug, um die Seiten einer Station im Heimnetz anzusehen, ohne sonst etwas zu installieren."
+"Who gets an answer" = "Wer eine Antwort bekommt"
+"Layout" = "Aufbau"
+"How a page is put together." = "Wie eine Seite aufgebaut ist."
+"Units" = "Einheiten"
+"What the readings are shown in." = "Worin die Messwerte angezeigt werden."
+"What the pages show, if not what the skin says." = "Was die Seiten zeigen, wenn nicht das, was die Skin sagt."
+"Tiles" = "Kacheln"
+"Which readings get one, and what it says." = "Welche Messwerte eine bekommen, und was darauf steht."
+"Temperature colour" = "Temperaturfarbe"
+"Tinting the temperature tile by how warm it is." = "Die Temperaturkachel danach einfärben, wie warm es ist."
+"Night" = "Nacht"
+"What a chart needs to shade darkness." = "Was ein Diagramm braucht, um Dunkelheit zu schattieren."
+"Wind" = "Wind"
+"Sensor status" = "Sensorzustand"
+"Computer monitor" = "Rechnerüberwachung"
+"For a station that also records what the machine is doing." = "Für eine Anlage, die auch aufzeichnet, was die Maschine tut."
+"The page about the hardware rather than the weather." = "Die Seite über die Technik statt über das Wetter."
+"Records and climatology" = "Rekorde und Klimatologie"
+"The pages that count days rather than readings." = "Die Seiten, die Tage zählen statt Messwerte."
+"Live updates" = "Live-Werte"
+"The skin" = "Die Skin"
+"Which one, and where it comes from." = "Welche, und woher sie kommt."
+"Writing" = "Schreiben"
+"Where the files go and what is in them." = "Wohin die Dateien gehen und was darin steht."
+"What it is about, and when it runs" = "Worum es geht, und wann es läuft"
+"A feed builds files -- pages, charts, a JSON document -- out of the readings kept for one place. This says which place, and what sets it going." = "Ein Feed baut Dateien -- Seiten, Diagramme, ein JSON-Dokument -- aus den Messwerten eines Ortes. Hier steht, welcher Ort, und was ihn anstößt."
+"A skin that can show live readings subscribes to an MQTT broker from the visitor's browser. Which broker, the topic and whether it is encrypted all come from the upload chosen here -- so the broker is set up once, on its own page, and not a second time in the skin." = "Eine Skin, die Live-Werte zeigen kann, abonniert einen MQTT-Broker aus dem Browser des Besuchers. Welcher Broker, welches Topic und ob verschlüsselt, kommt alles aus dem hier gewählten Upload -- der Broker wird also einmal eingerichtet, auf seiner eigenen Seite, und nicht ein zweites Mal in der Skin."
+
+# Die Diagrammseiten.
+"Not here" = "Nicht vorhanden"
+"There is no chart called {name}." = "Es gibt kein Diagramm namens {name}."
+"Output:" = "Ausgabe:"
+"Group" = "Gruppe"
+"Only for grouping and for the manifest. The length below is what decides how far back it reaches." = "Nur zur Gruppierung und für das Manifest. Wie weit es zurückreicht, entscheidet die Länge darunter."
+"Reaches back" = "Reicht zurück"
+"27h on a day chart, so last night is still on it." = "27 h bei einem Tagesdiagramm, damit die letzte Nacht noch darauf ist."
+"Title" = "Titel"
+"built from the readings" = "aus den Messwerten gebaut"
+"Leave out when empty" = "Weglassen, wenn leer"
+"A sensor with nothing in a year is one this station does not have; one with nothing today is having a bad day. The first should vanish, the second should stay." = "Ein Sensor ohne Werte in einem Jahr ist einer, den diese Station nicht hat; einer ohne Werte heute hat einen schlechten Tag. Der erste soll verschwinden, der zweite bleiben."
+"not if there is nothing in a year -- this station has no such sensor" = "nicht, wenn in einem Jahr nichts da ist -- diese Station hat den Sensor nicht"
+"A chart that names a place at all is written once, for the site, rather than once under each place: the numbers in it do not change from one place's pages to another's." = "Ein Diagramm, das überhaupt einen Ort nennt, wird einmal für die Site geschrieben statt einmal unter jedem Ort: seine Zahlen ändern sich von den Seiten eines Ortes zu denen eines anderen nicht."
+"this chart's own place" = "der eigene Ort dieses Diagramms"
+"This chart's own" = "Der eigene dieses Diagramms"
+"Chart: {name}" = "Diagramm: {name}"
+"Shade the hours of darkness" = "Die dunklen Stunden schattieren"
+"Worth it on a day or a week. On a year it is a grey smear." = "Lohnt sich bei einem Tag oder einer Woche. Bei einem Jahr ist es ein grauer Schmierstreifen."
+"Axis from" = "Achse von"
+"to" = "bis"
+"smallest step" = "kleinster Schritt"
+"Fixing an axis is how two charts stay comparable." = "Eine feste Achse ist der Weg, zwei Diagramme vergleichbar zu halten."
+"Readings" = "Messwerte"
+"Reading" = "Messwert"
+"Called" = "Beschriftet"
+"Drawn as" = "Gezeichnet als"
+"Colour" = "Farbe"
+"Reduced by" = "Zusammengefasst mit"
+"Per" = "Je"
+"Place" = "Ort"
+"the colour {place} is drawn in" = "die Farbe, in der {place} gezeichnet wird"
+"Remove this reading" = "Diesen Messwert entfernen"
+"Add one" = "Einen hinzufügen"
+"{n} to choose from, taken from the archive itself." = "{n} zur Auswahl, aus dem Archiv selbst."
+"Removes the definition. Existing files remain." = "Entfernt die Definition. Vorhandene Dateien bleiben."
+"Remove the chart {name}?" = "Das Diagramm {name} entfernen?"
+"Draws from" = "Zeichnet aus"
+
+# Die Zeitspannen und Zusammenfassungen in den Diagrammen.
+"day" = "Tag"
+"week" = "Woche"
+"month" = "Monat"
+"year" = "Jahr"
+"a day and the night before it" = "ein Tag und die Nacht davor"
+"two days" = "zwei Tage"
+"a week" = "eine Woche"
+"a month" = "ein Monat"
+"three months" = "drei Monate"
+"a year" = "ein Jahr"
+"five years" = "fünf Jahre"
+"average" = "Mittel"
+"highest" = "Maximum"
+"lowest" = "Minimum"
+"total" = "Summe"
+"first" = "erster"
+"last" = "letzter"
+"how many readings" = "wie viele Messwerte"
+"when the highest was" = "wann das Maximum war"
+"when the lowest was" = "wann das Minimum war"
+"change across the bucket" = "Änderung über den Eimer"
+"rate of change" = "Änderungsrate"
+"root mean square" = "quadratisches Mittel"
+"vector average (wind)" = "Vektormittel (Wind)"
+"vector direction (wind)" = "Vektorrichtung (Wind)"
+"direction of the strongest gust" = "Richtung der stärksten Bö"
+"line -- a value at each moment" = "Linie -- ein Wert je Zeitpunkt"
+"bar -- a total per bucket" = "Balken -- eine Summe je Eimer"
+"vector -- an arrow per reading, for wind" = "Vektor -- ein Pfeil je Messwert, für Wind"
+"none -- the archive records themselves" = "keine -- die Archivsätze selbst"
+"one bucket per record" = "ein Eimer je Satz"
+"every 15 minutes" = "alle 15 Minuten"
+"every half hour" = "jede halbe Stunde"
+"every 3 hours" = "alle 3 Stunden"
+"every 6 hours" = "alle 6 Stunden"
+"hourly" = "stündlich"
+"daily" = "täglich"
+"weekly" = "wöchentlich"
+"monthly" = "monatlich"
+"yearly" = "jährlich"
+"always produce it" = "immer erzeugen"
+"not if there is nothing in a day" = "nicht, wenn an einem Tag nichts da ist"
+"not if there is nothing in a week" = "nicht, wenn in einer Woche nichts da ist"
+"not if there is nothing in a month" = "nicht, wenn in einem Monat nichts da ist"
+"How" = "Wie"
+
+# Die Einstellungen selbst, auf ihren eigenen Namen geschlüsselt und nicht auf
+# ihren englischen Wortlaut: `help` ist mehrere Sätze lang und ein Absatz ist
+# ein schlechter Schlüssel. Der Name steht ohnehin fest -- so heißt die Option
+# in der Konfigurationsdatei, und ihn umzubenennen ist eine Migration, ob hier
+# etwas übersetzt ist oder nicht.
+#
+# Fehlt ein `help`, druckt die Seite den englischen: leer heißt "diese Sprache
+# sagt dazu nichts", nicht "hier steht nichts".
+[settings.language]
+label = "Sprache"
+help = "Worin alles geschrieben ist: die Beschriftung der Diagramme, die Namen der Mondphasen, die Himmelsrichtungen und jede übersetzte Skin. Eine Einstellung, weil eine Station von den Leuten in ihrer Nähe gelesen wird und die eine Sprache lesen. Ein Feed lässt sich auf seiner eigenen Seite trotzdem auf eine andere stellen, für eine zweimal veröffentlichte Site."
+
+[settings.interval]
+label = "Archivintervall"
+help = "Wie viel Zeit ein Archivsatz abdeckt. Fünf Minuten sind die übliche Wahl. Eine Änderung stört nichts, was schon aufgezeichnet ist -- jeder Satz trägt die Spanne, für die er steht, also mitteln alte und neue korrekt zusammen."
+
+[settings.grace]
+label = "Nachlaufzeit"
+help = "Wie lange nach dem Ende eines Intervalls gewartet wird, bevor es gerechnet wird, damit ein bloß langsames Paket den Satz nicht ein zweites Mal erzwingt."
+
+[settings.loop_hilo]
+label = "Extremwerte aus den Paketen schärfen"
+help = "Einzelne Pakete dürfen die Tagesextreme setzen, nicht nur die Archivsätze. Standardmäßig an, wie bei WeeWX. Ausgeschaltet sind die Tageshöchst- und -tiefstwerte allein aus dem Archiv exakt reproduzierbar."
+
+[settings.feeds_dir]
+label = "Ausgabe der Feeds"
+help = "Wohin die Feeds schreiben. Jeder bekommt ein Verzeichnis darunter. Das ist ihr Arbeitsverzeichnis, kein veröffentlichtes: erst ein Export bringt die Dateien dorthin, wo sie jemand lesen kann."
+
+[settings.plots_file]
+label = "Diagrammdefinitionen"
+help = "Welche Diagramme es gibt, und was in jedem steht. Eine eigene Datei statt eines Abschnitts hier: es ist eine Liste vieler gleichartiger Sätze, und einen aus einer alten Skin importierten will man diffen können."
+
+[settings.live_db]
+label = "Live-Datenbank"
+help = "Wo Pakete liegen, bis sie zu Sätzen verarbeitet sind. Eine eigene Datei, damit ihre Größe und ihre Aufbewahrung nichts mit dem Archiv zu tun haben."
+
+[settings.retention]
+label = "Pakete aufbewahren für"
+help = "Wie lange rohe Pakete bleiben. Sie sind es, was einen Satz reproduzierbar macht: solange sie hier sind, lässt sich eine falsche Kalibrierung oder ein spätes Paket korrigieren. Sieben Tage sind bei einem Paket alle acht Sekunden rund 80 MB."
+
+[settings.raw_retention]
+label = "Rohe Uploads aufbewahren für"
+help = "Wie lange der Upload so, wie er vom Draht kam, neben den Messwerten bleibt. Wofür er da ist, ist das, was der Treiber gar nicht lesen konnte: die Messwerte zeigen, was er verstanden hat, also fehlt genau das darin. Wohin ein Messwert geht, hängt hiervon nicht ab -- die Namen, die die Konsole benutzt hat, bleiben die volle Aufbewahrungszeit. 0 behält sie nicht."
+
+[settings.spool]
+label = "Pakete vor dem Verwerfen herausschreiben"
+help = "Ein Verzeichnis. Jeder Tag Pakete, der die Live-Tabelle verlässt, wird dort zuerst als gzip-NDJSON abgelegt. Leer heißt, sie werden einfach verworfen."
+
+[settings.host]
+label = "Lauschen auf"
+help = "0.0.0.0 sind alle Schnittstellen. Enger setzen, wenn die Maschine in mehr als einem Netz hängt."
+
+[settings.port]
+label = "Port"
+help = "Ports unter 1024 brauchen root, was dieser Prozess nicht haben sollte."
+
+[settings.reachable_at]
+label = "Adresse, unter der Konsolen ihn erreichen"
+help = "Wohin die Hardware ihre Uploads schickt, wenn das nicht schlicht diese Maschine auf diesem Port ist. Hinter einem Reverse Proxy oder in einem Container mit veröffentlichtem Port ist es das nicht: der Empfänger bindet eine Adresse und der Konsole muss eine andere gesagt werden, und nichts in diesem Prozess kann ausrechnen welche. Leer heißt raten, was im Heimnetz richtig ist. Schema und Port optional -- https://wetter.example.org:8443 ist eine ganze Antwort, wetter.example.org auch."
+
+[settings.token]
+label = "Upload-Token"
+help = "Ein Pfadsegment, das jeder Upload tragen muss. Es ist das Einzige zwischen dem offenen Internet und der Messreihe: Hardware kann keinen Header senden, also ist ein nicht erratbarer Pfad die praktikable Antwort. Wer es erfährt, kann Messwerte fälschen."
+
+[settings.driver]
+label = "Standardtreiber"
+help = "Welcher Treiber einen Upload liest, dessen Pfad keinen nennt. Eine Konsole, die sich nur auf einen nackten Pfad richten lässt, braucht das hier richtig. Die Liste ist, was installiert ist -- mehr mit 'weewx-evo driver install'."
+
+[settings.udp_port]
+label = "UDP-Port"
+help = "Für Hardware, die sendet statt zu posten. 0 schaltet es ab. Ein Datagramm trägt keinen Pfad, also ist der Port selbst die Zugangskontrolle."
+
+[settings.infer_unknown]
+label = "Felder, die der Katalog nicht kennt"
+help = "Hardware liefert Sensoren schneller aus, als ein Katalog nachkommt. 'series' ist der vernünftige Default: ein Kanal, den die Hardware dazubekommt, braucht keine neue Version, und was bloß an seinem Namen erkennbar ist, wird aufgelistet statt geraten. Das ist eine Politik und keine Eigenschaft eines Protokolls, also wird es einmal gefragt und jeder Treiber bekommt es. Verloren geht so oder so nichts: der Messwert wird unter dem Namen gespeichert, den die Konsole benutzt hat, und was hier entschieden wird, ist nur, ob eine Vermutung für dich aufgeschrieben oder dir überlassen wird."
+
+[settings.max_behind]
+label = "Zeitstempel annehmen bis zu diesem Alter"
+help = "Eine Konsole im Internet hält ihre Uhr per NTP, also heißt ein paar Minuten alter Stempel eher verzögerter Upload als falsche Uhr. Darüber hinaus wird die Ankunftszeit benutzt. Eine Konsole mit wirklich schlechter Uhr bekommt ihren eigenen Wert auf der Senderseite."
+
+[settings.max_ahead]
+label = "Und so weit in die Zukunft"
+help = "Es gibt keinen Messwert aus der Zukunft, also deckt das nur die Abweichung zwischen zwei Uhren ab, die beide ungefähr richtig gehen."
+
+[settings.allow]
+label = "Antworten"
+help = "'private' ist das lokale Netz -- der Schuppen, die Konsole, der Laptop in der Küche -- und deckt einen Reverse Proxy ab, der immer von einer privaten Adresse kommt. 'any' schließt das offene Internet ein. Oder Netze auflisten: 10.0.0.0/8, 192.168.1.50. Loopback wird immer beantwortet."
+
+[settings.rate]
+label = "Anfragen je Sekunde und Adresse"
+help = "Eine Konsole sendet im schnellsten Fall eine halbe Anfrage je Sekunde, das hier fängt also nur etwas ab, das schiefgegangen ist. Was das Erraten des Tokens stoppt, ist die getrennte Grenze für falsche. 0 schaltet es ab."
+
+[settings.behind_proxy]
+label = "Hinter einem Reverse Proxy"
+help = "Dann kommt jede Anfrage von der Adresse des Proxys, und je Adresse zu begrenzen bremste alle außer dem, der es tut. Das Rate-Limit bleibt dem Proxy überlassen, der als Einziges dazu in der Lage ist."
+
+[settings."admin.token"]
+label = "Admin-Token"
+help = "Nie dasselbe wie das Upload-Token. Sonst könnte alles, was einen Messwert senden kann, auch ändern, was die Station aufzeichnet. Leer schaltet die Seite ab."
+
+[settings."admin.port"]
+label = "Port"
+
+[settings."admin.host"]
+label = "Lauschen auf"
+
+[settings."admin.allow"]
+label = "Antworten"
+help = "Wie oben, und es lohnt sich, es enger zu halten. Diese Seite richtet das Archiv auf Dateien. Um sie von woanders zu erreichen, ohne sie zu öffnen: ssh -L 8080:localhost:8080 die-station"
+
+[settings."admin.rate"]
+label = "Anfragen je Sekunde und Adresse"
+help = "Speichern sind zwei Anfragen, und wer durch die Reiter klickt, macht mehrere je Sekunde. Eine Grenze, die im Weg steht, ist eine, die abgeschaltet wird."
+
+[settings.table]
+label = "Archivtabelle"
+help = "Die Tabelle in der Datenbank. Nur für eine Installation zu ändern, die sie umbenannt hat."
+
+[settings.poll]
+label = "Auf geschlossene Intervalle prüfen alle"
+help = "Wie oft der Archiver nachsieht. Die Arbeit ist idempotent und die Intervallgrenzen kommen aus den Paketen, also ändert ein später oder ausgelassener Takt nichts."
+
+[settings.driver_dir]
+label = "Fremdtreiber"
+help = "Wo Treiber liegen, die mit 'weewx-evo driver install' installiert wurden. Leer heißt neben dem Archiv."
+
+[settings.weewx_conf]
+label = "Auf diese weewx.conf zurückfallen"
+help = "Einstellungen, die beide Systeme teilen -- Breite, Höhe, das Archivintervall -- dürfen dort weiterleben. Gelesen, nie geschrieben. Was hier gesetzt ist, gewinnt."
+
+[settings.watchdog]
+label = "Neu starten, wenn dieser Prozess krank wird"
+help = "Wacht über ein Deskriptorleck, einen gestorbenen Runner-Thread und eine stehengebliebene Archiver-Schleife -- die Dinge, die ein frischer Prozess behebt. Er beendet sich, der Supervisor startet ihn wieder. Braucht 'restart: unless-stopped' in Compose oder 'Restart=always' in einer Unit-Datei, was die mitgelieferten haben."
+
+[settings.watchdog_cooldown]
+label = "und danach nicht wieder für"
+help = "Der Mindestabstand zwischen zwei Selbstneustarts. Er steht in der Live-Datenbank und überlebt damit den Neustart, den er begrenzt. Darunter wird das Symptom bei jedem Durchgang protokolliert und sonst nichts getan."
+
+[settings."web.enabled"]
+label = "Die Seiten ausliefern"
+help = "Aus wird nichts ausgeliefert und die Exporte veröffentlichen trotzdem. An ist alles, was ein lokaler Export geschrieben hat, unter den Adressen darunter erreichbar."
+
+[settings."api.enabled"]
+label = "Fragen zu den Daten beantworten"
+help = "Eine Adresse, unter der ein Skript, Home Assistant oder ein Dashboard nach einem Messwert über eine Zeitspanne fragen kann statt nach einer Datei, die vorher jemand gemacht hat. Nur lesend, auf demselben Port wie die Seiten, unter /api/v1/."
+
+[settings."api.token"]
+label = "Dieses Token verlangen"
+help = "Leer heißt, jeder, dem die Seiten ausgeliefert werden, darf fragen. Setze eines, wenn die Seiten im offenen Internet stehen: die API antwortet über jede Zeitspanne und nicht nur über das, was ein Feed veröffentlicht hat."
+
+[settings."metrics.enabled"]
+label = "Veröffentlichen, was der Prozess tut"
+help = "Ein /metrics-Endpunkt für Prometheus: Deskriptoren, Threads, wie lange jede Station her ist, ob die Exporte laufen. Das Wetter steht nicht darin -- dafür sind das Archiv und Grafana da."
+
+[settings."web.port"]
+label = "Port"
+help = "Ein eigener, getrennt vom Upload-Port und von der Einstellungsseite. Die beiden antworten Hardware und einem Betreiber; dieser antwortet Browsern."
+
+[settings."web.default"]
+label = "Das unter / zeigen"
+help = "Was unter der Adresse selbst erscheint. Mit einer Wahl ist / diese, und der Rest bleibt unter /<name>/. Ohne listet / sie auf."
+
+[settings."web.allow"]
+label = "Antworten"
+help = "Eine Wetterseite ist kein Geheimnis, aber es ist trotzdem diese Maschine, die Fremden antwortet. Hinter einem Reverse Proxy so lassen: der Proxy verbindet von Loopback, und das ist privat."
+
+[settings."web.host"]
+label = "Lauschen auf"
+help = "An alles gebunden und antwortet nur privaten Netzen. Was es privat hält, ist die Zeile darüber, nicht diese."
