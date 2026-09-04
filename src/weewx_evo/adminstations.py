@@ -715,8 +715,63 @@ def new(admin: Any, error: str = "", form: dict | None = None,
 </section>'''
 
 
+def _driver_options(driver: str, wanted: tuple[str, ...]) -> list[Any]:
+    """This driver's own options, in the order its step asked for them."""
+    from .ingest import drivers as driver_defs
+
+    one = driver_defs.DEFAULT.get(driver)
+    if one is None:
+        return []
+    describe = getattr(type(one), "options", None)
+    if describe is None:
+        return []
+    try:
+        groups = describe() or ()
+    except Exception:
+        log.exception("driver %r could not describe its options", driver)
+        return []
+    by_name = {getattr(o, "name", ""): o
+               for group in groups for o in getattr(group, "options", ()) or ()}
+    return [by_name[name] for name in wanted if name in by_name]
+
+
+def _settings_step(admin: Any, station: Any, step: Any) -> str:
+    """The half of a setup that is entered here rather than into the hardware.
+
+    Hardware that is asked rather than heard has nothing to type into: a
+    PurpleAir sensor answers whoever reaches it, so the whole of setting one
+    up is telling us its address. That was a form on the settings page,
+    reached from another menu, with nothing on this page to say it existed.
+
+    It posts to the driver's own settings route, which is where the parsing,
+    the validation and the writing already are. A second path to the same
+    file is a second set of rules for what a valid value is, and the two
+    would be found to disagree by somebody whose sensor stopped polling.
+    """
+    from . import admin as admin_defs
+
+    options = _driver_options(station.driver, step.settings)
+    if not options:
+        return ""
+    values = admin.config()
+    prefix = f"drivers.{station.driver}."
+    fields = "".join(
+        admin_defs.field(one, values.get(prefix + one.name,
+                                         values.get(one.name)),
+                         "", "", admin.language)
+        for one in options)
+    return f'''
+  <form method="post" action="./{html.escape(station.driver)}">
+    {fields}
+    <div class="actions"><button type="submit">
+      {html.escape(admin.say("Save"))}</button></div>
+  </form>'''
+
+
 def _what_to_enter(admin: Any, station: Any) -> str:
-    """The point of the whole wizard: what to type into the console."""
+    """The point of the whole wizard: what to do, in the order it is done."""
+    from .ingest import drivers as driver_defs
+
     say = admin.say
     lang = admin.language
     token = admin.config().get("token") or ""
@@ -736,32 +791,14 @@ def _what_to_enter(admin: Any, station: Any) -> str:
             "Listener, and this will say that instead.")) + "</p>")
 
     said = setups().get(station.driver)
-    rows = [(label, fill(value, host, port, token,
-                         station.driver, station.identity))
-            for label, value in (said.fields if said else ())]
-    notes = [fill(say(one), host, port, token, station.driver,
-                  station.identity)
-             for one in (said.notes if said else ())]
-    if said is None:
-        # A driver that says nothing still gets a station and a page. The
-        # address is all we can state, and stating it is better than the
-        # blank the generic branch used to be.
-        rows = [("Address", f"{_base(host, port)}/{token}/{station.driver}/"
-                            if token else
-                            f"{_base(host, port)}/{station.driver}/")]
-        notes = [say("This driver does not provide connection instructions.")]
-
-    table = "".join(
-        f"<tr><th>{html.escape(say(label))}</th>"
-        f'<td><code>{html.escape(str(value))}</code></td></tr>'
-        for label, value in rows)
-    told = "".join(_step(one) for one in notes)
+    driver = driver_defs.DEFAULT.get(station.driver)
+    steps = driver_defs.steps_of(driver) if driver is not None else ()
 
     if waiting:
-        # The other half of the wizard. The operator is standing at the
-        # console, so this is the moment to read its identity off the wire --
-        # rather than at some point in service, to whichever console happens
-        # to speak first.
+        # The step that checks rather than instructs. The operator is standing
+        # at the console, so this is the moment to read its identity off the
+        # wire -- rather than at some point in service, to whichever console
+        # happens to speak first.
         how = html.escape(lang.fill(
             "This sender names itself with a {field} of its own and cannot "
             "be told what to call itself, so press that once it is sending. "
@@ -770,26 +807,70 @@ def _what_to_enter(admin: Any, station: Any) -> str:
             field=said.identity if said else say("name"),
             kind=say(said.label) if said else station.driver,
             name=station.name))
-        after = f'''
+        listening = f'''
   <form method="post" action="./senders/{html.escape(station.name)}/learn">
     <div class="actions"><button type="submit">
       {html.escape(say("It is uploading now"))}</button></div>
   </form>
   <p class="help">{how}</p>'''
     else:
-        after = f'''
+        listening = f'''
   <p class="help">{html.escape(say("Waiting for the first upload. Return to"))}
      <a href="./senders">{html.escape(say("Senders"))}</a>
      {html.escape(say("to check its status."))}</p>'''
+
+    def _stage(step: Any, last: bool) -> str:
+        """One numbered stage. Whatever it has, in the order it has it."""
+        rows = "".join(
+            f"<tr><th>{html.escape(say(label))}</th><td><code>"
+            f"{html.escape(fill(value, host, port, token, station.driver, station.identity))}"
+            "</code></td></tr>"
+            for label, value in step.enter)
+        told = "".join(_step(fill(say(one), host, port, token,
+                                  station.driver, station.identity))
+                       for one in step.notes)
+        parts = [f"<h4>{html.escape(say(step.title))}</h4>"]
+        if step.explain:
+            parts.append(f'<p class="help">{html.escape(say(step.explain))}</p>')
+        if rows:
+            parts.append(f'<table class="stations enter">{rows}</table>')
+        if told:
+            parts.append(f'<ol class="steps">{told}</ol>')
+        if step.settings:
+            parts.append(_settings_step(admin, station, step))
+        # The caveat about a guessed address belongs against the step that
+        # prints one, not at the foot of the page: by the time somebody has
+        # scrolled past three steps they have already typed it in.
+        if rows and caveat:
+            parts.append(caveat)
+        if step.listens and last:
+            parts.append(listening)
+        return f'<li class="stage">{"".join(parts)}</li>'
+
+    if steps:
+        stages = "".join(_stage(one, n == len(steps) - 1)
+                         for n, one in enumerate(steps))
+        body = f'<ol class="wizard">{stages}</ol>'
+    else:
+        # A driver that is not installed here. The address is all that can be
+        # stated, and stating it is better than the blank this used to be.
+        where = (f"{_base(host, port)}/{token}/{station.driver}/" if token
+                 else f"{_base(host, port)}/{station.driver}/")
+        missing = _step(say("This driver is not installed here, so there are "
+                            "no instructions for it."))
+        body = (f'<table class="stations enter"><tr>'
+                f'<th>{html.escape(say("Address"))}</th>'
+                f"<td><code>{html.escape(where)}</code></td></tr></table>"
+                f'<ol class="steps">{missing}</ol>' + caveat)
+
+    if not steps:
+        body += listening
 
     return f'''
 <section class="group">
   <h3>{html.escape(lang.fill("Connect {name}", name=station.name))}</h3>
   <p class="ok">{html.escape(say("Sender created"))}</p>
-  <table class="stations enter">{table}</table>
-  <ol class="steps">{told}</ol>
-  {caveat}
-  {after}
+  {body}
 </section>'''
 
 

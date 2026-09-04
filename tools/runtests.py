@@ -148,6 +148,8 @@ def tests() -> list[Test]:
              "ten a second, five bad tokens a minute"),
         Test("tokenless", ["tokenless_test.py"],
              "hardware with no field for a token, and everything that has one"),
+        Test("wizard", ["wizard_test.py"],
+             "one guided setup per driver, derived from what it already says"),
         Test("web", ["web_test.py"],
              "the built-in server"),
         Test("smoke", ["smoke.py"],

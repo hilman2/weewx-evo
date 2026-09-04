@@ -499,6 +499,110 @@ def setup_of(driver: object) -> Setup | None:
     return found if isinstance(found, Setup) else None
 
 
+@dataclass(frozen=True, slots=True)
+class Step:
+    """One stage of getting a piece of hardware recording here.
+
+    A `Setup` says what somebody types into a console. This says the order
+    they do things in, and it covers the two halves that were never in the
+    same place: what to enter into the hardware, and what to enter here.
+
+    That split is what made the ingest pages hard. A PurpleAir sensor is
+    pointed at nothing and answers whoever asks, so setting one up is
+    entirely a matter of telling *us* its address -- and that was a form on
+    another page, reached from a different menu, with nothing on the sender
+    page to suggest it existed. An Ecowitt is the mirror image. Both are one
+    piece of hardware somebody is standing in front of.
+    """
+
+    #: A few words naming what this step accomplishes.
+    title: str
+    #: A sentence, where the title is not enough on its own.
+    explain: str = ""
+    #: `(label, value)` per line to type into the hardware, with the same
+    #: placeholders `Setup.fields` uses.
+    enter: tuple[tuple[str, str], ...] = ()
+    #: Instructions, in the order somebody does them.
+    notes: tuple[str, ...] = ()
+    #: This driver's own option names, asked here instead of on a settings
+    #: page somewhere else. Names rather than the options themselves: what
+    #: they are is `options()`, and repeating it would be the same fact in
+    #: two places, one of which goes stale.
+    settings: tuple[str, ...] = ()
+    #: Whether this step ends by watching for the first reading to arrive.
+    #: The one step that checks rather than instructs.
+    listens: bool = False
+
+
+def option_names(driver: object) -> tuple[str, ...]:
+    """Every setting this driver declares, in the order it declares them."""
+    describe = getattr(type(driver), "options", None) or getattr(
+        driver, "options", None)
+    if describe is None:
+        return ()
+    try:
+        groups = describe() or ()
+    except Exception:
+        log.exception("driver options failed")
+        return ()
+    found = []
+    for group in groups:
+        for one in getattr(group, "options", ()) or ():
+            name = getattr(one, "name", "")
+            if name:
+                found.append(str(name))
+    return tuple(found)
+
+
+def steps_of(driver: object) -> tuple[Step, ...]:
+    """How this driver is set up, guided. Its own answer, or one derived.
+
+    Derived rather than required, for the reason `plots.implied` is: a
+    sequence written into every driver is a sequence that cannot be improved
+    afterwards. Six protocols already say everything the ordinary one needs
+    -- what to type in, what cannot be told anything, what to configure --
+    and a driver written before this existed gets a wizard without being
+    touched.
+
+    A driver whose setup is genuinely different says `steps()` and that is
+    used unchanged. Nothing here is merged into it: half a derived sequence
+    and half a written one would be an order nobody chose.
+    """
+    fn = getattr(driver, "steps", None)
+    if fn is not None:
+        try:
+            found = fn()
+        except Exception:
+            log.exception("driver steps failed")
+            found = None
+        if found:
+            return tuple(one for one in found if isinstance(one, Step))
+
+    said = setup_of(driver)
+    settings = option_names(driver)
+    steps: list[Step] = []
+
+    if settings:
+        # First, because the rest may depend on it: a driver that has to be
+        # told an address cannot be told to wait for a reading first.
+        steps.append(Step(
+            title="Settings", settings=settings,
+            explain="What this driver needs to know."))
+
+    if said is not None and (said.fields or said.notes):
+        steps.append(Step(
+            title=("Enter this into the hardware" if said.tellable
+                   else "Point the hardware here"),
+            enter=said.fields, notes=said.notes,
+            explain=("" if said.tellable else
+                     "This hardware cannot be told where to upload.")))
+
+    steps.append(Step(
+        title="Wait for the first reading", listens=True,
+        explain="Nothing is set up until something has arrived."))
+    return tuple(steps)
+
+
 def response_of(driver: object) -> Response:
     """What to answer an upload to this driver with."""
     return getattr(driver, "response", None) or DEFAULT_RESPONSE

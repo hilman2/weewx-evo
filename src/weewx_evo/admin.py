@@ -2497,6 +2497,14 @@ _PAGE = """<!doctype html>
       font-size: .8125rem; color: var(--dim); }}
   ol.steps li {{ margin-bottom: .35rem; line-height: 1.5; }}
   ol.steps strong {{ color: var(--ink); font-weight: 500; }}
+  /* The stages of setting up one piece of hardware. Numbered on the outside
+     so a stage that holds a form is still numbered: a marker inside a list
+     item sits beside the first line of it, and the first line here is a
+     heading with a table under it. */
+  ol.wizard {{ margin: .8rem 0 0; padding-left: 1.6rem; }}
+  ol.wizard > li.stage {{ margin-bottom: 1.4rem; padding-left: .3rem; }}
+  ol.wizard > li.stage::marker {{ color: var(--dim); font-weight: 500; }}
+  ol.wizard > li.stage > h4 {{ margin-top: 0; }}
   a.button {{ display: inline-block; text-decoration: none; }}
   .hint {{ display: block; color: var(--dim); font-size: .75rem;
       margin-top: .25rem; line-height: 1.4; }}
