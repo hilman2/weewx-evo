@@ -71,7 +71,7 @@ def _number(value: Any) -> float | None:
 
     Booleans are read as numbers on purpose: a battery flag published as
     `true` means the same as one published as `1`, and refusing it would drop
-    the reading a `stations.toml` role was configured for.
+    the reading a place's member policy was configured for.
     """
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
@@ -242,7 +242,7 @@ class Subscription:
         self._stamp = None
 
         packet = Packet(dateTime=stamp, usUnits=self.system, data=data,
-                        source=self.source, kind="loop")
+                        identity=self.source, kind="loop")
         self.packets += 1
         if self.dry_run:
             self.sent.append(packet)

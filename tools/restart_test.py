@@ -56,6 +56,55 @@ def check(what: str, got: object, want: object) -> bool:
     return ok
 
 
+def _lines_until(proc: subprocess.Popen, marker: str,
+                 seconds: float = 30.0, settle: float = 2.0) -> list[str]:
+    """A running process's output, up to `marker` and a moment after it.
+
+    `communicate(timeout=30)` was here and waited the whole thirty seconds
+    every time: a `serve` does not exit, so the timeout was not a limit on
+    anything, it was the runtime.
+
+    **One marker, not two.** Waiting for the archiver's first line as well
+    looks tighter and is the same bug in a smaller font -- the check below
+    says outright that the line may never come, so waiting for it is waiting
+    for the timeout. What is being measured is which of the two came first,
+    and for that the second only has to have had its chance: `settle` is how
+    long that chance is.
+
+    On its own thread, because reading here would block on a process that is
+    busy and not talking -- which is exactly what a catch-up does. And
+    `readline` rather than iterating the pipe: iteration reads ahead into a
+    buffer in *this* process, so a line the child wrote is held here until
+    enough of them arrive.
+    """
+    import threading
+
+    lines: list[str] = []
+    said = threading.Event()
+
+    def reader() -> None:
+        while True:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            lines.append(line.rstrip())
+            if marker in lines[-1]:
+                said.set()
+        said.set()
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    if said.wait(seconds):
+        time.sleep(settle)
+    proc.terminate()
+    thread.join(5)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    return lines
+
+
 def _a_free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -72,7 +121,7 @@ def _filled(home: Path, hours: int = HOURS) -> tuple[LiveStore, ArchiveStore,
     now = 1787900000 // INTERVAL * INTERVAL
     at = now - hours * 3600
     while at < now:
-        live.add(Packet(dateTime=at, usUnits=1, source="probe", kind="loop",
+        live.add(Packet(dateTime=at, usUnits=1, identity="probe", kind="loop",
                         data={"outTemp": 60.0 + (at % 7),
                               "outHumidity": 50.0}))
         at += EVERY
@@ -187,22 +236,22 @@ def the_site_answers_before_the_catch_up() -> None:
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
             [str(ROOT / "src"), env.get("PYTHONPATH", "")])
+        # Or nothing arrives until the child fills a buffer. Its
+        # stdout is a pipe, so Python block-buffers it, and a reader
+        # watching for a log line waits for eight kilobytes of them --
+        # which a startup does not produce, so it waited the whole
+        # timeout instead.
+        env["PYTHONUNBUFFERED"] = "1"
         proc = subprocess.Popen(
             [sys.executable, "-m", "weewx_evo.cli", "serve",
              "--config", str(work / "evo.toml")],
             env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True)
 
-        # Let it get through the catch-up, then take what it said. Reading
-        # line by line would block on a process that is busy and not talking,
-        # which is precisely what it does here.
-        try:
-            out, _ = proc.communicate(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.terminate()
-            out, _ = proc.communicate(timeout=30)
-
-        lines = out.splitlines()
+        # Read until the web server has said it is up, then a moment more
+        # so that anything the archiver was going to say has had its
+        # chance. Which of the two came first is the whole claim.
+        lines = _lines_until(proc, "feed(s) on", seconds=30)
         serving = next((n for n, one in enumerate(lines)
                         if "feed(s) on" in one), None)
         catching = next((n for n, one in enumerate(lines)

@@ -13,6 +13,7 @@ afterwards and not notice anyone else was in it. That means:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 import time
@@ -72,7 +73,7 @@ class ArchiveStore:
     def _create(self) -> None:
         """Lay out a fresh database, identical to what WeeWX would create."""
         cols = ", ".join(f'"{name}" {sql_type}' for name, sql_type in ARCHIVE_TABLE)
-        with self.conn:
+        with self._transaction():
             self.conn.execute(f"CREATE TABLE {self.table_name} ({cols})")
             for obs_type, kind in DAY_SUMMARIES:
                 self._create_day_table(obs_type, kind)
@@ -136,6 +137,41 @@ class ArchiveStore:
 
     # -- writing ---------------------------------------------------------
 
+    @contextlib.contextmanager
+    def _transaction(self) -> Iterator[None]:
+        """One transaction around a record and everything it implies.
+
+        **`with self.conn:` was here and did nothing.** The connection is
+        opened with `isolation_level=None`, which is autocommit -- so there
+        was no transaction for its context manager to commit, and every
+        statement was its own. One record is 226 of them: the standard schema
+        has 113 daily tables and each is read and written, so a write that
+        looks like one commit was 226, each with its own journal.
+
+        Measured on `tools/quality_test.py`, which writes 250 records:
+        63,377 statements and 120 of its 124 seconds inside `execute`. On a
+        station writing one record every five minutes that is invisible; on a
+        `rebuild` over a year it is the difference between minutes and hours.
+
+        And it is not only speed. A record whose daily rows did not all land
+        is exactly the damage `verify` looks for -- so they have to commit
+        together, which is what this was always meant to say.
+
+        Nested calls join the transaction already open rather than starting a
+        second one, because SQLite has no nested BEGIN and `add_records`
+        wraps a loop of these.
+        """
+        if self.conn.in_transaction:
+            yield
+            return
+        self.conn.execute("BEGIN")
+        try:
+            yield
+        except BaseException:
+            self.conn.execute("ROLLBACK")
+            raise
+        self.conn.execute("COMMIT")
+
     def add_record(self, record: dict, replace: bool = False,
                    update_daily: bool = True) -> bool:
         """Write one archive record and fold it into the daily summaries.
@@ -154,7 +190,7 @@ class ArchiveStore:
         verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
         columns = ", ".join(f'"{c}"' for c in known)
         holders = ", ".join("?" for _ in known)
-        with self.conn:
+        with self._transaction():
             if replace and update_daily:
                 # Take the old record back out of the summaries before its
                 # replacement goes in, or the two would both be counted.
@@ -248,7 +284,7 @@ class ArchiveStore:
             raise ValueError(f"{name!r} is not a usable column name")
         if sql_type.upper() not in ("REAL", "INTEGER", "TEXT"):
             raise ValueError(f"{sql_type!r} is not a column type WeeWX uses")
-        with self.conn:
+        with self._transaction():
             self.conn.execute(
                 f'ALTER TABLE {self.table_name} ADD COLUMN "{name}" {sql_type.upper()}')
             if name not in self.schema.day_types:
@@ -278,7 +314,7 @@ class ArchiveStore:
             sod = start_of_archive_day(record["dateTime"])
             if sod != day_sod:
                 if accum is not None:
-                    with self.conn:
+                    with self._transaction():
                         self._store_day(day_sod, accum)  # type: ignore[arg-type]
                 day_sod, accum = sod, None
 
@@ -295,7 +331,7 @@ class ArchiveStore:
             accum.add_record(record, weight=weight)
 
         if accum is not None:
-            with self.conn:
+            with self._transaction():
                 self._store_day(day_sod, accum)  # type: ignore[arg-type]
         return written
 
@@ -401,7 +437,7 @@ class ArchiveStore:
                 continue
             n += 1
 
-        with self.conn:
+        with self._transaction():
             for obs_type in self.schema.day_types:
                 self.conn.execute(
                     f"DELETE FROM {self.table_name}_day_{obs_type} WHERE dateTime = ?", (sod,)

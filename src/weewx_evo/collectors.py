@@ -19,8 +19,8 @@ driver was called `json`:
 Which works, and is wrong in the way that costs an afternoon: a second
 collector would be `json` too, `stations.by_identity()` would match on the
 identity alone, and two consoles would be one station. Everything downstream
--- the role that moves a second station's readings into `extraTemp3`, the
-archive it writes to, whether its indoor readings are kept -- hangs off that
+-- which place selects it, the member policy that moves its readings into
+`extraTemp3`, whether that place keeps its indoor readings -- starts with that
 pair.
 
 So a configured collector claims its own name at the listener:
@@ -348,11 +348,22 @@ def _driver_directory() -> Any:
     """
     from pathlib import Path
 
+    from . import archives as archive_defs
+    from . import config as config_file
     from . import options as option_defs
     from .ingest import weewxdrivers
 
-    beside = ((option_defs._current_config() or {}).get("archive_db")
-              or "weewx.sdb")
+    current = option_defs._current_config() or {}
+    for_file = option_defs._config_path()
+    base = Path(str(for_file)).parent if for_file else Path(".")
+
+    class Saved:
+        def get(self, name: str, default: Any = None) -> Any:
+            value = config_file.get(current, name)
+            return default if value in (None, "") else value
+
+    register = archive_defs.Register.load(base / archive_defs.FILENAME, Saved())
+    beside = register.get(None).file
     # A relative path counts against the file it is written in, not against
     # whatever directory this process was started in. `Settings._anchor` is
     # the same rule and says why: `archive_db = "weewx.sdb"` otherwise names
@@ -361,9 +372,8 @@ def _driver_directory() -> Any:
     # list that is empty on an installation whose drivers are right there.
     found = Path(str(beside))
     if not found.is_absolute():
-        for_file = option_defs._config_path()
         if for_file:
-            found = Path(str(for_file)).parent / found
+            found = base / found
     return weewxdrivers.directory(beside=found)
 
 

@@ -16,7 +16,7 @@ Five places, one fixed order, strongest first:
 | 1 | Command-line argument | Somebody just typed it, for this run |
 | 2 | Environment variable | How a container is configured |
 | 3 | Configuration file (TOML) | What the admin page writes, what a person edits |
-| 4 | `weewx.conf` | What both systems share — location, altitude, archive interval |
+| 4 | `weewx.conf` | Process settings both systems share, such as the archive interval |
 | 5 | Default from the schema | |
 
 Implemented in `settings.Settings.get()` — `settings.py:108`. Every resolution
@@ -29,11 +29,13 @@ weewx-evo serve --config evo.toml --explain
 ```
 
 ```
-  station.name    'Kirchdorf an der Amper'   the configuration file
-  interval        60                         $WEEWX_EVO_INTERVAL
-  station.altitude 440.0                     weewx.conf
-  grace           15                         default
+  interval        60             $WEEWX_EVO_INTERVAL
+  grace           15             default
+  live_db         data/live.sdb  default
 ```
+
+This precedence applies to process settings. Place settings and archive files
+come only from `archives.toml`.
 
 ## Environment variables
 
@@ -43,7 +45,7 @@ The name comes from the setting's name: dots to underscores, upper case, prefix
 | Setting | Variable |
 |---|---|
 | `token` | `WEEWX_EVO_TOKEN` |
-| `station.altitude` | `WEEWX_EVO_STATION_ALTITUDE` |
+| `live_db` | `WEEWX_EVO_LIVE_DB` |
 | `admin.port` | `WEEWX_EVO_ADMIN_PORT` |
 | `feeds.json.units` | `WEEWX_EVO_FEEDS_JSON_UNITS` |
 
@@ -56,7 +58,7 @@ setting's (`settings.ENV_ALIASES`):
 | Alias | Setting | Factor |
 |---|---|---|
 | `WEEWX_EVO_LIVE` | `live_db` | 1 |
-| `WEEWX_EVO_ARCHIVE` | `archive_db` | 1 |
+| `WEEWX_EVO_ARCHIVE` | legacy `archive_db`, used only to create the first `archives.toml` | 1 |
 | `WEEWX_EVO_RETENTION_DAYS` | `retention` | 86400 |
 | `WEEWX_EVO_RAW_MINUTES` | `raw_retention` | 60 |
 
@@ -67,8 +69,10 @@ used.
 ## The configuration file
 
 TOML, because Python can read it with no dependency and a person can edit it
-without learning anything. **One** file, and the admin page writes the same file
-a person would write.
+without learning anything. `evo.toml` is the one process-settings file, and the
+admin page writes the same file a person would write. Repeated records live in
+their own TOML files: places in `archives.toml`, console identities in
+`stations.toml`, and plots in `plots.toml`.
 
 Two things `config.py` watches for — both learned from configuration files that
 went wrong in the field:
@@ -90,30 +94,46 @@ and reported as "unknown" (`config._unknown`).
 
 interval = "5m"
 token = "…"
-
-[station]
-name = "Kirchdorf an der Amper"
-latitude = 48.4596
-longitude = 11.6539
-altitude = 440.0
+infer_unknown = "series"
 
 [admin]
 token = "…"
 port = 8080
-
-[drivers.ecowitt]
-infer_unknown = "series"
-
-[sources]
-outTemp = "garden, roof"
-"soil*" = "garden"
-"*" = "roof, garden"
 
 [exports.webhost]
 kind = "ftp"
 host = "ftp.example.org"
 trigger = "feed"
 ```
+
+The place is a repeated record and therefore has its own file rather than an
+`Option` block:
+
+```toml
+# archives.toml
+member_policy_version = 2
+
+[archives.default]
+file = "data/weewx.sdb"
+label = "Kirchdorf an der Amper"
+latitude = 48.4596
+longitude = 11.6539
+altitude = 440.0
+
+[archives.default.members."v1/ecowitt/a1b2c3"]
+role = "main"
+channel = 0
+indoor = true
+```
+
+The member-table key is a canonical sender ID from the live database. It is
+both the selection and this Place's policy for that sender. Field mappings are
+scoped by Place and sender in `placement.toml`.
+
+`stations.toml` assigns display names and clock tolerances to sender
+identities. It contains no archive assignment, role, indoor policy or field
+mapping.
+`[sources]` and `--sources` are obsolete and ignored by the product runtime.
 
 ## Adding a setting
 
@@ -135,7 +155,9 @@ Out of it come, **on their own**:
 - the line in `--explain`
 - the entry in `schema.json`
 
-There is no second place a setting has to be entered.
+There is no second place an ordinary `Option` has to be entered. Repeated
+records such as Places, senders and plots have their own declarations and
+files.
 
 ## The declaration model
 
@@ -185,7 +207,7 @@ error message anywhere. The comment for it is in `cli.add_common()`, and
 nothing else:
 
 ```python
-settings.view("drivers.ecowitt", schema)
+settings.view("drivers.example", schema)
 ```
 
 A driver has no business with the upload token, and the way to make sure of that
@@ -208,14 +230,17 @@ object holds sees the new values; what demands a `restart` still demands one.
 comments.
 
 The database is shared — the same file, the same meaning. The configuration is
-not, and should not be. What both systems share (location, altitude, archive
-interval) may nevertheless stay where it is:
+not, and should not be. Process settings such as the archive interval may
+nevertheless be read from `weewx.conf`:
 
 ```bash
 weewx-evo serve --weewx-conf /etc/weewx/weewx.conf
 ```
 
 Or permanently, as `weewx_conf` in our own file. Anything set here beats it.
+Location, altitude and the archive path are different: if `archives.toml` is
+absent, those old values are copied once into `[archives.default]`. Once the
+file exists, they are never a runtime fallback.
 → [WeeWX-Compatibility](WeeWX-Compatibility)
 
 ## Commands

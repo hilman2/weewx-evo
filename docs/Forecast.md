@@ -33,8 +33,8 @@ has to carry on being able to read — a column with forecast temperatures in it
 would be a lie that averages badly over years, and `archive_day_*` would happily
 summarise the lie.
 
-So: `forecast.sdb`, next to the archive, and everything about it is designed on
-the basis that it is expendable.
+So: `forecast.sdb`, next to `evo.toml` and `archives.toml`, and everything
+about it is designed on the basis that it is expendable.
 
 - **Replaced, not accumulated.** A new run of a source deletes its previous one.
   Nobody wants yesterday's forecast for today, and keeping it turns a small file
@@ -65,10 +65,9 @@ archive = "nordfeld"
 The coordinates come from that series. A station identifier or a warning region
 is still typed per entry, because those are not derivable from a latitude.
 
-**Still one file.** A file per place would separate nothing on the layout the
-settings page offers: it proposes `data/<name>.sdb` for every archive, and every
-one of those resolves to the same directory. The path is a property of the
-installation. What separates the places is the rows.
+**Still one file.** A file per place would separate nothing. The path is a
+property of the installation, beside its configuration, so adding or moving a
+place cannot move the cache. What separates the places is the rows.
 
 **The series is the first part of every key**, and that is the part that matters.
 A run replaces what its source had by deleting on the key. Keyed on the source
@@ -239,7 +238,7 @@ region = "Kreis Freising"
 minimum = "Moderate"
 ```
 
-With more than one archive, each entry also takes `archive`. See
+Each entry names its `archive`, including on a one-place installation. See
 [A forecast is for a place](#a-forecast-is-for-a-place).
 
 ## Commands

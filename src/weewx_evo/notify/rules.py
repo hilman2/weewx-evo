@@ -66,8 +66,37 @@ BATTERY_FIELDS = ("txBatteryStatus", "outTempBatteryStatus",
 FAILURES = 3
 
 
-def measured_rhythm(conn: Any, source: str, now: float) -> float | None:
-    """The median gap between one station's packets, or None where there
+def _announced(stations: Any) -> list:
+    """The configured consoles, however the caller holds them.
+
+    `stations.Register` is iterable and has no `all()`. This used to ask for
+    `all` and fall back to `list`, so with a real register it produced an
+    empty list -- which meant the two checks below have never once fired.
+    Nothing said so: no station has ever been silent enough to report, and no
+    battery flat enough, because neither loop ever ran.
+    """
+    if stations is None:
+        return []
+    found = getattr(stations, "all", None)
+    entries = list(found() if callable(found) else stations)
+    # A SenderIdentity comes from the live database. Every unknown sender is
+    # recorded there, but only one with a listener-supplied label is an
+    # announced console worth waking somebody about. A Station has no
+    # ``sender`` attribute and remains included as before.
+    return [one for one in entries
+            if not hasattr(one, "sender") or bool(getattr(one, "label", ""))]
+
+
+def _station_name(station: Any) -> str:
+    """The UI label copied into live.sdb, or the configured Station name."""
+    return str(getattr(station, "label", "")
+               or getattr(station, "name", "")
+               or getattr(station, "sender", ""))
+
+
+def measured_rhythm(conn: Any, driver: str, identity: str,
+                    now: float) -> float | None:
+    """The median gap between one console's packets, or None where there
     are too few to say.
 
     Split out from `rhythm` below so the live document can publish the same
@@ -83,11 +112,12 @@ def measured_rhythm(conn: Any, source: str, now: float) -> float | None:
     """
     try:
         rows = conn.execute(
-            "SELECT dateTime FROM packet WHERE source = ? "
+            "SELECT dateTime FROM packet WHERE driver = ? AND identity = ? "
             "AND dateTime > ? ORDER BY dateTime DESC LIMIT 30",
-            (source, now - 6 * 3600)).fetchall()
+            (driver, identity, now - 6 * 3600)).fetchall()
     except Exception:
-        log.debug("could not measure the rhythm of %r", source, exc_info=True)
+        log.debug("could not measure the rhythm of %r/%r", driver, identity,
+                  exc_info=True)
         return None
 
     stamps = [float(row[0]) for row in rows]
@@ -97,7 +127,7 @@ def measured_rhythm(conn: Any, source: str, now: float) -> float | None:
     return max(1.0, gaps[len(gaps) // 2])
 
 
-def rhythm(live: Any, source: str, now: float) -> float:
+def rhythm(live: Any, driver: str, identity: str, now: float) -> float:
     """How often this station usually sends, in seconds.
 
     Measured rather than configured. A console reporting every sixteen
@@ -108,7 +138,7 @@ def rhythm(live: Any, source: str, now: float) -> float:
     this morning would otherwise look like one that reports hourly, and would
     then be given an hour of silence before anybody heard about it.
     """
-    found = measured_rhythm(live.conn, source, now)
+    found = measured_rhythm(live.conn, driver, identity, now)
     return DEFAULT_RHYTHM if found is None else found
 
 
@@ -123,28 +153,33 @@ def stations_silent(live: Any, stations: Any, floor: float = 900.0,
     """
     now = time.time() if now is None else now
     found: dict[str, Event] = {}
-    names = [one.name for one in getattr(stations, "all", list)()]
-    if not names:
+    mine = _announced(stations)
+    if not mine:
         return found
 
     try:
-        marks = ",".join("?" * len(names))
+        marks = ",".join(["(?,?)"] * len(mine))
+        args: list[Any] = []
+        for one in mine:
+            args.extend((one.driver, one.identity))
         rows = live.conn.execute(
-            f"SELECT source, MAX(dateTime) FROM packet "
-            f"WHERE source IN ({marks}) GROUP BY source", names).fetchall()
+            f"SELECT driver, identity, MAX(dateTime) FROM packet "
+            f"WHERE (driver, identity) IN (VALUES {marks}) "
+            f"GROUP BY driver, identity", args).fetchall()
     except Exception:
         log.debug("could not read when stations were last heard", exc_info=True)
         return found
 
-    heard = {row[0]: float(row[1] or 0) for row in rows}
-    for name in names:
-        last = heard.get(name, 0.0)
+    heard = {(row[0], row[1]): float(row[2] or 0) for row in rows}
+    for one in mine:
+        name = _station_name(one)
+        last = heard.get((one.driver, one.identity), 0.0)
         if not last:
             # Never heard from at all. That is a station somebody has just
             # added, or one whose token is wrong, and both belong on the
             # settings page rather than in somebody's night.
             continue
-        allowed = max(floor, rhythm(live, name, now) * MISSED)
+        allowed = max(floor, rhythm(live, one.driver, one.identity, now) * MISSED)
         quiet = now - last
         if quiet <= allowed:
             continue
@@ -156,26 +191,37 @@ def stations_silent(live: Any, stations: Any, floor: float = 900.0,
     return found
 
 
-def batteries_flat(live: Any, stations: Any,
-                   now: float | None = None) -> dict[str, Event]:
+def batteries_flat(live: Any, stations: Any, now: float | None = None,
+                   placer: Any = None) -> dict[str, Event]:
     """Transmitters reporting a flat battery, from the newest packet each.
 
     The newest packet rather than the archive, because a console reports this
     in every packet and the archive record is an average -- and an average of
     a status flag is not a status.
+
+    Placed first, because `BATTERY_FIELDS` are archive column names and the
+    table holds what the console called them. Without the placer this reads a
+    packet full of `wh65batt` and finds no field it knows, which is a check
+    that runs, passes and means nothing.
     """
     now = time.time() if now is None else now
     found: dict[str, Event] = {}
-    names = [one.name for one in getattr(stations, "all", list)()]
-    if not names:
+    mine = _announced(stations)
+    if not mine:
         return found
 
-    for name in names:
+    for one in mine:
+        name = _station_name(one)
         try:
-            packets = list(live.packets(now - 3600, now, sources=[name]))
+            selected = ({"senders": [one.sender]} if hasattr(one, "sender")
+                        else {"stations": [(one.driver, one.identity)]})
+            packets = list(live.packets(now - 3600, now, **selected))
         except Exception:
             log.debug("could not read packets for %r", name, exc_info=True)
             continue
+        if placer is not None:
+            packets = [placed for placed in (placer.place(p) for p in packets)
+                       if placed is not None]
         if not packets:
             continue
         newest = packets[-1].record()
@@ -259,7 +305,7 @@ def process_unwell(dog: Any, now: float | None = None) -> dict[str, Event]:
 
 def everything(live: Any, stations: Any = None, dog: Any = None,
                senders: Any = None, floor: float = 900.0,
-               now: float | None = None) -> dict[str, Event]:
+               now: float | None = None, placer: Any = None) -> dict[str, Event]:
     """Every symptom, right now. Anything that raises is skipped, not fatal.
 
     A check that throws must not take the others with it: the one that still
@@ -270,7 +316,7 @@ def everything(live: Any, stations: Any = None, dog: Any = None,
     found: dict[str, Event] = {}
     for what in (
         lambda: stations_silent(live, stations, floor, now) if stations else {},
-        lambda: batteries_flat(live, stations, now) if stations else {},
+        lambda: batteries_flat(live, stations, now, placer) if stations else {},
         lambda: sending_failing(live, senders, now),
         lambda: process_unwell(dog, now),
     ):

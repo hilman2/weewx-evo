@@ -658,7 +658,7 @@ def test_the_live_path(tmp: Path) -> None:
     db = tmp / "live.sdb"
     store = LiveStore(db)
     store.add(Packet(dateTime=1756308600, usUnits=17,
-                     data={"outTemp": 21.0}, source="test"))
+                     data={"outTemp": 21.0}, identity="test"))
     store.close()
 
     broker = Broker()
@@ -685,7 +685,7 @@ def test_the_live_path(tmp: Path) -> None:
         # A new packet, and it goes.
         store = LiveStore(db)
         store.add(Packet(dateTime=1756308660, usUnits=17,
-                         data={"outTemp": 21.4}, source="test"))
+                         data={"outTemp": 21.4}, identity="test"))
         store.close()
         entry.run()
         ok("the next packet went too",

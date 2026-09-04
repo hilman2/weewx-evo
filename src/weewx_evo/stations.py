@@ -2,19 +2,17 @@
 
 A **station** is a thing that uploads. It has a name somebody chose, the
 driver that reads it, and an identity that tells its packets apart from
-everybody else's. A **archive** is where those readings end up: a measurement
-series for one place, with its own file and its own altitude.
+everybody else's. It also holds settings intrinsic to that console, such as
+its model and clock tolerance. How a series treats its readings belongs to
+that archive's member policy.
 
     [stations.kirchdorf]
     driver = "wunderground"
     identity = "evo-3f9a2c"
-    archive = "default"
 
-Two stations, one archive, is the ordinary case: a console and a soil probe
-measuring the same garden. Two stations, two archives, is a weewx-evo on a VPS
-collecting from two fields. The second one is why `archive` is here from the
-first version rather than added later: a field that exists from the start is a
-row to fill in, and one added afterwards is a migration.
+Which measurement series takes those readings is not a property of the
+console. Archives name their consoles, so one console may feed no series, one
+series, or several without a second and conflicting answer in this file.
 
 **Announced, not adopted.** Today the first console heard becomes the station
 and everything else is refused. That works for one driver and was written
@@ -32,8 +30,8 @@ at the moment somebody is standing at the console expecting it to be learnt.
 **What is not in this file.** When a station was last heard from, how many
 packets it has sent, which consoles have turned up uninvited. That is
 observed, not decided, and it changes every few seconds. It lives in the live
-database, and `last_seen` is not stored anywhere at all: the live table
-already knows when a packet with that source arrived, so keeping a second
+database, and `last_seen` is not stored anywhere at all: the live table already
+knows when a packet with that driver and identity arrived, so keeping a second
 answer would only create a wrong one.
 """
 
@@ -49,34 +47,32 @@ log = logging.getLogger(__name__)
 
 FILENAME = "stations.toml"
 
-#: The archive a station writes into when nobody said otherwise. One archive
-#: is the ordinary case and it should need no configuring; the name exists so
-#: that the second one is a row rather than a rewrite.
-DEFAULT_ARCHIVE = "default"
-
 #: What an identity we hand out looks like. Short because some firmware limits
 #: the field, lower case because some consoles upper-case what is typed into
 #: them, and prefixed so it is recognisable as ours in somebody's log.
 IDENTITY_PREFIX = "evo-"
 IDENTITY_DIGITS = 6
 
-#: A station name, as it appears in `sources.toml` and in a URL.
+#: A station display name, as it appears in the admin URL.
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+#: Settings that lived on a Station before one console could feed several
+#: archives.  They remain readable for the staged migration in `archives.py`;
+#: new runtime authority is `Archive.members`.
+LEGACY_MEMBER_FIELDS = ("role", "channel", "indoor")
 
 
 @dataclass(frozen=True, slots=True)
 class Station:
     """One console, announced."""
 
-    #: What people call it. Also the `source` its packets are recorded under,
-    #: which is what `sources.py` matches its rules against.
+    #: What people call it. Published as display metadata in the live sender
+    #: directory; archive routing uses the canonical driver/identity key.
     name: str
     #: Which driver reads its uploads.
     driver: str
     #: What tells its packets apart. A PASSKEY, a serial, or one we handed out.
     identity: str
-    #: Which measurement series it writes into.
-    archive: str = DEFAULT_ARCHIVE
     #: Whatever the operator wants to remember about it.
     note: str = ""
     #: True when the identity came from the hardware rather than from us. Only
@@ -84,37 +80,13 @@ class Station:
     #: read off it.
     learnt: bool = False
 
-    # -- what is true of this console, not of its protocol --------------
-    #
-    # These lived on the drivers, which is where they do not belong. A
-    # protocol has no opinion about whether the room a console stands in is
-    # worth recording; this console does, and the next one may not. The
-    # symptom was plain once two drivers stood side by side: the Weather
-    # Underground one could be told to leave indoor readings out and the
-    # Ecowitt one could not, for no reason anybody could give.
-
-    #: Record the temperature and humidity of the room the console is in.
-    #: A console in a living room measures a living room; one in a shed on the
-    #: same station measures a shed, and only one of them is worth a column.
-    indoor: bool = True
     #: What the hardware is, for the page and the log. Cosmetic, and a
     #: property of this box rather than of the protocol it speaks.
     model: str = ""
-    #: This console's own field names, where they differ. Two consoles both
-    #: number their channels from one, so `tf_ch1` is a different thermometer
-    #: on each -- which is why the map hangs on the console and not on the
-    #: driver. Applied by the driver, because only it knows what the names
-    #: mean before they are parsed.
+    #: A station-owned field map from older configurations. Runtime placement
+    #: never reads it; it is retained only so ``placement import`` can move the
+    #: decisions to the Place-scoped placement file without losing them.
     field_map: dict[str, str] = field(default_factory=dict)
-    #: `main` or `extra`. One archive has one main station, whose readings go
-    #: where they belong; an extra one's are moved into `extraTemp<n>` and
-    #: `extraHumid<n>` so that two sensors cannot take turns in one column.
-    #: See roles.py -- and note that a second *archive* is the other answer,
-    #: and usually the better one when the two are different places.
-    role: str = "main"
-    #: Which channel an extra station takes. Assigned when the role is set,
-    #: because the lowest free one is not a decision anybody wants to make.
-    channel: int = 0
     #: How far out this console's clock may be before the arrival time is
     #: used instead. None means the figure from the settings, which is what
     #: nearly every console wants.
@@ -127,6 +99,12 @@ class Station:
     #: old one needs would have been extended to the new one as well.
     max_behind: float | None = None
     max_ahead: float | None = None
+    #: Old station-owned role settings, retained only so a station-file save
+    #: cannot erase them before `archives.toml` has copied them. No runtime
+    #: caller reads this; the archive migration clears it after committing
+    #: the canonical member policies.
+    _legacy_member: dict[str, Any] = field(
+        default_factory=dict, repr=False, compare=False)
 
     def matches(self, driver: str, identity: str) -> bool:
         """Whether an upload belongs to this station.
@@ -224,20 +202,6 @@ class Register:
                 return one
         return None
 
-    def for_archive(self, archive: str) -> list[Station]:
-        """The stations writing into one measurement series."""
-        return [one for one in self.stations if one.archive == archive]
-
-    def archives(self) -> list[str]:
-        """Every archive named by a station, plus the default.
-
-        The default is always in the list even when nothing points at it, so a
-        fresh installation has somewhere to put its first station.
-        """
-        found = {one.archive for one in self.stations}
-        found.add(DEFAULT_ARCHIVE)
-        return sorted(found)
-
     def drivers(self) -> set[str]:
         return {one.driver for one in self.stations}
 
@@ -250,10 +214,9 @@ class Register:
     def add(self, station: Station) -> Station:
         """Announce a station. Raises if the name or the identity is taken.
 
-        Refused rather than merged: a second station under a name that is
-        already in `sources.toml` would silently take over the first one's
-        rules, and two stations sharing an identity is the failure this whole
-        module exists to make impossible.
+        Refused rather than merged: display names must identify one sender,
+        and two stations sharing an identity is the failure this whole module
+        exists to make impossible.
         """
         problem = self.why_not(station)
         if problem:
@@ -291,9 +254,9 @@ class Register:
     def rename(self, name: str, to: str) -> Station | None:
         """Rename a station, keeping everything else.
 
-        The name is the `source` on its packets, so renaming does not reach
-        backwards: readings already stored keep the old name. That is right --
-        they were recorded under it -- and it is why the page has to say so.
+        Packets are stored under driver and identity, so renaming changes only
+        the name looked up for them. The journal itself does not have to be
+        rewritten.
         """
         one = self.by_name(name)
         if one is None:
@@ -347,6 +310,56 @@ def load(path: str | Path) -> Register:
     return made
 
 
+def legacy_member_settings(path: str | Path) -> dict[str, dict[str, Any]]:
+    """Old role/channel/indoor values, without making them runtime authority.
+
+    Only complete station announcements count, exactly as in `from_dict`.
+    Values are deliberately returned uncoerced: `archives.MemberPolicy`
+    validates them before committing the one-time migration, so a quoted
+    ``"false"`` cannot quietly become true and an extra source without a
+    usable channel cannot start writing main columns.
+    """
+    import tomllib
+
+    path = Path(path)
+    if not path.exists():
+        return {}
+    with open(path, "rb") as fp:
+        raw = tomllib.load(fp)
+    found: dict[str, dict[str, Any]] = {}
+    for name, entry in (raw.get("stations") or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        if not str(entry.get("driver") or "").strip():
+            continue
+        if not str(entry.get("identity") or "").strip():
+            continue
+        policy = {field_name: entry[field_name]
+                  for field_name in LEGACY_MEMBER_FIELDS
+                  if field_name in entry}
+        if policy:
+            found[str(name)] = policy
+    return found
+
+
+def clear_legacy_member_settings(path: str | Path) -> bool:
+    """Remove copied role settings from a writable station file.
+
+    Called only after ``archives.toml`` has committed the versioned member
+    policies. A read-only split deployment may leave the obsolete keys on
+    disk; they remain harmless because no Station exposes them and a marked
+    archive registry never consults them again.
+    """
+    path = Path(path)
+    register = load(path)
+    if not any(one._legacy_member for one in register):
+        return False
+    register.stations = [replace(one, _legacy_member={})
+                         for one in register.stations]
+    save(path, register, "member policies moved to archives.toml")
+    return True
+
+
 def _seconds(value: Any) -> float | None:
     """A clock tolerance, or None for "whatever the settings say".
 
@@ -389,17 +402,19 @@ def from_dict(raw: dict[str, Any], path: Path | None = None) -> Register:
             name=str(name),
             driver=driver,
             identity=identity,
-            archive=str(entry.get("archive") or DEFAULT_ARCHIVE),
-            role=str(entry.get("role") or "main"),
-            channel=int(entry.get("channel") or 0),
+            # `archive` may be present in a file written by an older version.
+            # It is deliberately ignored: archives own that relationship now,
+            # and keeping a second answer here would let the two disagree.
             note=str(entry.get("note") or ""),
             learnt=bool(entry.get("learnt", False)),
-            indoor=bool(entry.get("indoor", True)),
             model=str(entry.get("model") or ""),
             field_map={str(k): str(v) for k, v
                        in (entry.get("field_map") or {}).items()},
             max_behind=_seconds(entry.get("max_behind")),
             max_ahead=_seconds(entry.get("max_ahead")),
+            _legacy_member={field_name: entry[field_name]
+                            for field_name in LEGACY_MEMBER_FIELDS
+                            if field_name in entry},
         ))
     return Register(stations=made, path=path)
 
@@ -408,8 +423,8 @@ def save(path: str | Path, register: Register, note: str = "") -> Path:
     """Write stations.toml, keeping the previous one.
 
     Written beside and moved into place, like the configuration and
-    `plots.toml`: this file decides whose readings are taken, and an
-    interrupted write must not leave half of it.
+    `plots.toml`: this file decides which identity has which name and console
+    settings, and an interrupted write must not leave half of it.
     """
     import shutil
     import tomllib
@@ -433,9 +448,9 @@ def render(register: Register, note: str = "") -> str:
     out = [
         "# The consoles this installation takes readings from.",
         "#",
-        "# Each station has a driver that reads its uploads, an identity that",
-        "# tells its packets apart, and the archive it writes into. The name is",
-        "# also what `sources.toml` matches its rules against.",
+        "# Each station has a driver that reads its uploads and an identity",
+        "# that tells its packets apart. The name is display metadata only;",
+        "# archives select canonical sender IDs from the live database.",
         "#",
         "# Written by weewx-evo, and editable by hand. An identity beginning",
         "# with `evo-` was handed out by the settings page and belongs in the",
@@ -449,15 +464,15 @@ def render(register: Register, note: str = "") -> str:
         out.append(f"[stations.{one.name}]")
         out.append(f'driver = "{_escape(one.driver)}"')
         out.append(f'identity = "{_escape(one.identity)}"')
-        out.append(f'archive = "{_escape(one.archive)}"')
-        if one.role != "main":
-            out.append(f'role = "{_escape(one.role)}"')
-            if one.channel:
-                out.append(f"channel = {one.channel}")
         if one.learnt:
             out.append("learnt = true")
-        if not one.indoor:
-            out.append("indoor = false")
+        # Only until the place registry has committed the migration. Keeping
+        # the raw values here makes a listener-only station edit lossless;
+        # they are not attributes of Station and never affect routing.
+        for field_name in LEGACY_MEMBER_FIELDS:
+            if field_name in one._legacy_member:
+                out.append(f"{field_name} = "
+                           f"{_toml_scalar(one._legacy_member[field_name])}")
         if one.model:
             out.append(f'model = "{_escape(one.model)}"')
         # Only when this console differs from the configured figure. Writing
@@ -476,6 +491,15 @@ def render(register: Register, note: str = "") -> str:
                 out.append(f'"{_escape(their)}" = "{_escape(ours)}"')
         out.append("")
     return "\n".join(out).rstrip() + "\n"
+
+
+def _toml_scalar(value: Any) -> str:
+    """A legacy scalar, preserved until its archive migration commits."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    return f'"{_escape(str(value))}"'
 
 
 def _escape(text: str) -> str:

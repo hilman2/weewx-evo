@@ -72,7 +72,6 @@ services:
 environment:
   - TZ=Europe/Berlin
   - WEEWX_EVO_LIVE=/data/live.sdb
-  - WEEWX_EVO_ARCHIVE=/data/weewx.sdb
   - WEEWX_EVO_INTERVAL=60
   - WEEWX_EVO_DRIVER=ecowitt
   - WEEWX_EVO_DRIVER_DIR=/data/drivers
@@ -88,6 +87,24 @@ environment:
 
 The `:?` form makes Compose **abort** when a token is missing, rather than start
 without one.
+
+The archive is configured in the mounted `/data/archives.toml`, also when
+there is only one:
+
+```toml
+member_policy_version = 2
+
+[archives.default]
+file = "/data/weewx.sdb"
+label = "Kirchdorf an der Amper"
+latitude = 48.4596
+longitude = 11.6539
+altitude = 440.0
+senders = "*"
+```
+
+`WEEWX_EVO_ARCHIVE` is accepted only as input to the one-time migration when
+that file does not exist. It is not a runtime archive setting.
 
 **The tokens live in `deploy/.env`, which is not in the repo.**
 
@@ -121,8 +138,8 @@ sqlite3` is enough. What stops it is **not having the file**.
 
 | Service | What it has |
 |---|---|
-| `weewx-evo` (listener) | The drivers. Mounts the live database read-write and the archive **not at all**. A driver in it can try whatever it likes |
-| `weewx-evo-archiver` | No drivers, listens to nothing, mounts both. Reads packets, writes records |
+| `weewx-evo` (listener) | The drivers. Mounts live storage and the configuration, but the archive files **not at all**. It reads `archives.toml` only for the series names |
+| `weewx-evo-archiver` | No drivers, listens to nothing, mounts the same configuration plus live and archive storage. Reads packets, writes records |
 
 They **never** talk to each other. The live database is the entire interface —
 which is what makes splitting them a change to this file and to no line of code.
@@ -130,9 +147,12 @@ which is what makes splitting them a change to this file and to no line of code.
 ```yaml
 weewx-evo:
   command: ["listen"]
+  volumes:
+    - /opt/weewx-evo/data/live:/data
+    - /opt/weewx-evo/data/config:/config
   environment:
     - WEEWX_EVO_LIVE=/data/live.sdb
-    # No WEEWX_EVO_ARCHIVE.
+    - WEEWX_EVO_CONFIG=/config/evo.toml
     - WEEWX_EVO_STATE_DIR=/data
   read_only: true
   tmpfs: [/tmp]
@@ -140,9 +160,17 @@ weewx-evo:
   cap_drop: [ALL]
 ```
 
-Without `WEEWX_EVO_ARCHIVE`, a driver that wants to remember something gets a
-**file** in `/data` instead of the archive's metadata table.
+`WEEWX_EVO_STATE_DIR` gives a driver that wants to remember something a
+**file** in `/data`. The listener reads the names in
+`/config/archives.toml`, because every inserted interval is marked pending for
+each series. It never opens the archive paths named there.
 → [Drivers](Drivers#driver-state)
+
+The archiver mounts `/opt/weewx-evo/data/config` at the same `/config` path,
+mounts live storage at `/live`, and archive storage at `/data`. Consequently
+the paths in `archives.toml` are absolute container paths such as
+`/data/weewx.sdb`. The configuration mount may be read-only on the archiver;
+the listener's settings page is the writer.
 
 The archiver has **no ports**. Nothing reaches it from outside, and it reaches
 nothing.

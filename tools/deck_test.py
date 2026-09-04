@@ -177,14 +177,14 @@ def with_forecast(database: Path, into: Path, language: str = "de") -> tuple:
     try:
         feed = cheetah.from_settings(Settings({
             "language": language,
-            "archive_db": str(archive),
             "station.latitude": 48.4596,
             "station.longitude": 11.6539,
             "station.altitude": 440.0,
             "station.name": "Kirchdorf an der Amper",
             "feeds.deck.skin": "deck",
             "feeds.deck.extras": {"base_path": "/"},
-        }), Reader(conn), (), prefix="feeds.deck")
+        }), Reader(conn), (), prefix="feeds.deck",
+            forecast_path=beside / "forecast.sdb")
         feed.produce(pages)
     finally:
         conn.close()

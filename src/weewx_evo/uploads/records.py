@@ -25,16 +25,54 @@ transcription error, not an improvement.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
+import math
 import sqlite3
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
 
+from .. import units
 from ..aggregate import start_of_archive_day
+from ..db.live import LEGACY_DRIVER, LiveStore, Packet, sender_id, sender_parts
 
 log = logging.getLogger(__name__)
+
+
+def _identifier(name: object) -> str:
+    """Quote one SQLite identifier supplied by local configuration."""
+    if not isinstance(name, str):
+        raise ValueError("archive table name is empty or invalid")
+    text = str(name)
+    if not text or "\x00" in text or len(text) > 255:
+        raise ValueError("archive table name is empty or invalid")
+    return '"' + text.replace('"', '""') + '"'
+
+
+@dataclass(frozen=True, slots=True)
+class _PacketSQL:
+    """Fixed SQL fragments for one known live-table generation.
+
+    Every fragment below is chosen from hard-coded column names after looking
+    at SQLite's schema. Values still go through placeholders; none of the
+    packet, sender or place text is interpolated into SQL.
+    """
+
+    sender: str
+    driver: str
+    identity: str
+    dialect: str
+    mapping: str
+    described: str
+    relation: str
+    grouping: str
+    sequence: str
+    has_sender: bool
+    has_pair: bool
+    legacy: bool
 
 
 class Archive:
@@ -43,6 +81,7 @@ class Archive:
     def __init__(self, path: str | Path, table_name: str = "archive") -> None:
         self.path = Path(path)
         self.table_name = table_name
+        self._table_sql = _identifier(table_name)
         self._local = threading.local()
 
     def _conn(self) -> sqlite3.Connection:
@@ -73,10 +112,10 @@ class Archive:
         conn = self._conn()
         if not ts:
             cursor = conn.execute(
-                f"SELECT * FROM {self.table_name} ORDER BY dateTime DESC LIMIT 1")
+                f"SELECT * FROM {self._table_sql} ORDER BY dateTime DESC LIMIT 1")
         else:
             cursor = conn.execute(
-                f"SELECT * FROM {self.table_name} WHERE dateTime > ? "
+                f"SELECT * FROM {self._table_sql} WHERE dateTime > ? "
                 f"ORDER BY dateTime ASC LIMIT ?", (ts, limit))
         cols = [d[0] for d in cursor.description]
         found = [{c: v for c, v in zip(cols, row, strict=True) if v is not None}
@@ -118,7 +157,7 @@ class Archive:
         drizzle, published as fact.
         """
         row = self._conn().execute(
-            f"SELECT SUM(rain), MIN(usUnits), MAX(usUnits) FROM {self.table_name} "
+            f"SELECT SUM(rain), MIN(usUnits), MAX(usUnits) FROM {self._table_sql} "
             f"WHERE dateTime > ? AND dateTime <= ?", (start, stop)).fetchone()
         if row is None or row[0] is None:
             return None
@@ -132,7 +171,7 @@ class Archive:
     def _columns(self) -> set[str]:
         columns = getattr(self._local, "columns", None)
         if columns is None:
-            cursor = self._conn().execute(f"SELECT * FROM {self.table_name} LIMIT 0")
+            cursor = self._conn().execute(f"SELECT * FROM {self._table_sql} LIMIT 0")
             columns = {d[0] for d in cursor.description}
             self._local.columns = columns
         return columns
@@ -214,8 +253,17 @@ class Live:
                  sources: list[str] | None = None,
                  pick: str = DEFAULT_PICK,
                  main: list[str] | None = None,
-                 policy: Any = None) -> None:
+                 policy: Any = None,
+                 placer: Any = None) -> None:
         self.path = Path(path)
+        #: Turns a stored reading into archive column names, and a station
+        #: name into the (driver, identity) pair the table is keyed on.
+        #:
+        #: Without one this reader publishes whatever names the console used
+        #: and cannot filter by station at all -- honest for a test holding
+        #: WeeWX-named packets, wrong for a site, so the service always
+        #: passes one.
+        self.placer = placer
         #: The quality rules, or None where none are configured -- which is
         #: every installation until somebody writes some, and costs it a
         #: single `is None`.
@@ -238,8 +286,10 @@ class Live:
         #: same filter on the other reader of the same table.
         #:
         #: None means every console, which is what one archive wants and
-        #: what every installation had before there were two.
-        self.sources = list(sources) if sources else None
+        #: what every installation had before there were two. An explicit
+        #: empty list means none: a newly added place must not borrow another
+        #: place's readings while no console has been assigned to it yet.
+        self.sources = None if sources is None else list(sources)
         #: Which of them a reading is taken from. See `PICKS`.
         self.pick = str(pick or self.DEFAULT_PICK)
         #: The consoles that call themselves the main one -- normally one.
@@ -252,7 +302,102 @@ class Live:
                     pick: str = "", main: list[str] | None = None) -> Live:
         """The same table, seen through one site's consoles."""
         return Live(self.path, sources, pick or self.pick,
-                    main if main is not None else self.main, self.policy)
+                    main if main is not None else self.main, self.policy,
+                    self.placer)
+
+    # -- addressing consoles ---------------------------------------------
+
+    def _pairs(self, names: list[str] | None) -> list[Any] | None:
+        """Station names as the stable addresses the table is keyed on.
+
+        None means no filter. An empty list means an explicit selection that
+        resolves to no console, and must stay different: treating both as an
+        empty SQL clause publishes every console under an empty place.
+
+        During the sender-id migration a placer can return either the former
+        ``(driver, identity)`` pair or its canonical string. The SQL adapter
+        below accepts both, so listener and uploader need not be restarted in
+        lockstep.
+        """
+        if names is None:
+            return None
+        if self.placer is None:
+            return []
+        resolver = getattr(self.placer, "identities", None)
+        found = list(resolver(names) if resolver is not None else names)
+        # Before migration `source` was the configured display name. Keep it
+        # reachable while an independently restarted uploader is still
+        # looking at that table shape. On a pair/sender table these reserved
+        # addresses simply match no new row.
+        legacy_names = list(names)
+        label_for = getattr(self.placer, "named", None)
+        if label_for is not None:
+            for address in found:
+                if isinstance(address, (tuple, list)) and len(address) == 2:
+                    legacy_names.append(label_for(str(address[0]), str(address[1])))
+        for name in legacy_names:
+            legacy = (LEGACY_DRIVER, str(name))
+            if legacy not in found:
+                found.append(legacy)
+        return found
+
+    @staticmethod
+    def _where(addresses: list[Any] | None,
+               schema: _PacketSQL) -> tuple[str, list[Any]]:
+        """A sender filter for this table generation and its parameters.
+
+        Canonical sender ids and old pairs are values, never identifiers, and
+        are therefore always bound. A malformed address matches nothing.
+        """
+        if addresses is None:
+            return "", []
+        if not addresses:
+            return " AND 0", []
+
+        if schema.legacy:
+            # The source-only table stored a configured station name, not a
+            # hardware identity. Placer represents those retained rows with
+            # the reserved legacy driver, which is the only honest reversible
+            # match. Prefer it even if an interrupted additive migration has
+            # already introduced an unfilled sender column.
+            names = [str(address[1]) for address in addresses
+                     if (isinstance(address, (tuple, list)) and len(address) == 2
+                         and str(address[0]) == LEGACY_DRIVER)]
+            if not names:
+                return " AND 0", []
+            marks = ",".join("?" for _ in names)
+            return f" AND {schema.identity} IN ({marks})", names
+
+        senders: list[str] = []
+        pairs: list[tuple[str, str]] = []
+        for address in addresses:
+            if isinstance(address, str):
+                try:
+                    pair = sender_parts(address)
+                except ValueError:
+                    continue
+                senders.append(address)
+                pairs.append(pair)
+            elif (isinstance(address, (tuple, list)) and len(address) == 2):
+                pair = str(address[0]), str(address[1])
+                pairs.append(pair)
+                senders.append(sender_id(*pair))
+
+        clauses: list[str] = []
+        params: list[Any] = []
+        if schema.has_sender and senders:
+            marks = ",".join("?" for _ in senders)
+            clauses.append(f"{schema.sender} IN ({marks})")
+            params.extend(senders)
+        if schema.has_pair and pairs:
+            marks = ",".join(["(?,?)"] * len(pairs))
+            clauses.append(
+                f"({schema.driver}, {schema.identity}) IN (VALUES {marks})")
+            params.extend(part for pair in pairs for part in pair)
+        if clauses:
+            return f" AND ({' OR '.join(clauses)})", params
+
+        return " AND 0", []
 
     def rhythm(self, now: float | None = None) -> float | None:
         """How often this place's consoles report, in seconds, or None.
@@ -279,8 +424,6 @@ class Live:
         """
         import time
 
-        from ..notify.rules import measured_rhythm
-
         when = float(now) if now else time.time()
         try:
             conn = self._conn()
@@ -289,24 +432,46 @@ class Live:
                       exc_info=True)
             return None
 
-        mine = self.sources
-        if not mine:
+        addresses = self._pairs(self.sources)
+        if addresses == []:
+            return None
+        schema = self._packet_sql(conn)
+        if addresses is None:
             # Nobody named this place's consoles, so every console in the
             # table is its own -- which is exactly true of an installation
             # with one series, and is already what this reader does for
             # readings.
             try:
-                mine = [row[0] for row in conn.execute(
-                    "SELECT DISTINCT source FROM packet WHERE dateTime > ?",
-                    (when - 6 * 3600,)).fetchall() if row[0]]
+                rows = conn.execute(
+                    f"SELECT DISTINCT {schema.sender}, {schema.driver},"
+                    f" {schema.identity}{schema.relation}"
+                    "WHERE packet.dateTime > ?", (when - 6 * 3600,)).fetchall()
+                addresses = [address for row in rows
+                             if (address := self._address(row, schema)) is not None]
             except Exception:
                 log.debug("could not list the consoles", exc_info=True)
                 return None
 
         found = [one for one in
-                 (measured_rhythm(conn, name, when) for name in mine)
+                 (self._measured_rhythm(conn, address, when, schema)
+                  for address in addresses)
                  if one]
         return sum(found) / len(found) if found else None
+
+    def _measured_rhythm(self, conn: sqlite3.Connection, address: Any,
+                         now: float, schema: _PacketSQL) -> float | None:
+        """The alarm service's median-gap measurement over any live schema."""
+        clause, params = self._where([address], schema)
+        rows = conn.execute(
+            f"SELECT packet.dateTime{schema.relation}"
+            f"WHERE packet.dateTime > ?{clause} "
+            "ORDER BY packet.dateTime DESC LIMIT 30",
+            [now - 6 * 3600, *params]).fetchall()
+        stamps = [float(row[0]) for row in rows]
+        if len(stamps) < 4:
+            return None
+        gaps = sorted(a - b for a, b in itertools.pairwise(stamps))
+        return max(1.0, gaps[len(gaps) // 2])
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -320,6 +485,100 @@ class Live:
             self._local.conn = conn
         return conn
 
+    def _packet_sql(self, conn: sqlite3.Connection) -> _PacketSQL:
+        """The read expressions for source-only, pair and sender schemas.
+
+        A separately running upload service can be upgraded before the
+        listener has opened and migrated the shared file. Old rows therefore
+        remain readable; a dialect without a description will fail closed in
+        the placer rather than taking the whole live upload down.
+        """
+        version = int(conn.execute("PRAGMA schema_version").fetchone()[0])
+        cached = getattr(self._local, "packet_sql", None)
+        if cached is not None and cached[0] == version:
+            return cached[1]
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(packet)")}
+        tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'")}
+
+        has_pair = {"driver", "identity"}.issubset(columns)
+        has_sender = "sender" in columns
+        legacy = not has_pair and "source" in columns
+        if not (has_pair or has_sender or legacy):
+            raise sqlite3.DatabaseError(
+                "packet table has no source, sender, or driver/identity key")
+
+        relation = " FROM packet "
+        mapping = "packet.mapping" if "mapping" in columns else "NULL"
+        described = "NULL"
+        if "mapping" in columns and "dialect_mapping" in tables:
+            described = "dialect_mapping.spec"
+            relation = (" FROM packet LEFT JOIN dialect_mapping"
+                        " ON dialect_mapping.digest = packet.mapping ")
+
+        schema = _PacketSQL(
+            sender="packet.sender" if has_sender else "NULL",
+            driver="packet.driver" if has_pair else "NULL",
+            identity=("packet.identity" if has_pair else
+                      "packet.source" if legacy else "NULL"),
+            dialect="packet.dialect" if "dialect" in columns else "NULL",
+            mapping=mapping,
+            described=described,
+            relation=relation,
+            grouping=("packet.source" if legacy else
+                      ("CASE WHEN packet.sender IS NOT NULL AND packet.sender <> ''"
+                       " THEN packet.sender ELSE packet.driver || char(0) ||"
+                       " packet.identity END")
+                      if has_sender and has_pair else
+                      "packet.sender" if has_sender else
+                      "packet.driver, packet.identity"),
+            sequence="packet.seq" if "seq" in columns else "packet.rowid",
+            has_sender=has_sender, has_pair=has_pair, legacy=legacy)
+        self._local.packet_sql = (version, schema)
+        return schema
+
+    @staticmethod
+    def _address(row: tuple[Any, Any, Any],
+                 schema: _PacketSQL) -> str | tuple[str, str] | None:
+        """A selected identity row in the form `_where` accepts."""
+        sender, driver, identity = row
+        if schema.legacy and identity is not None:
+            return LEGACY_DRIVER, str(identity)
+        if schema.has_sender and sender:
+            try:
+                sender_parts(str(sender))
+            except ValueError:
+                return None
+            return str(sender)
+        if schema.has_pair and driver is not None and identity is not None:
+            return str(driver), str(identity)
+        return None
+
+    @staticmethod
+    def _packet(row: tuple[Any, ...], schema: _PacketSQL) -> Packet | None:
+        """Decode one normalized select row without trusting stored JSON."""
+        (when, sender, driver, identity, dialect, mapping, described, system,
+         interval, data) = row
+        if not schema.has_pair:
+            if schema.legacy:
+                driver = LEGACY_DRIVER
+            elif sender:
+                try:
+                    driver, identity = sender_parts(str(sender))
+                except ValueError:
+                    return None
+        try:
+            readings = json.loads(data)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(readings, dict):
+            return None
+        return Packet(
+            dateTime=int(when), usUnits=system, data=readings,
+            driver=str(driver or "unknown"), identity=str(identity or ""),
+            sender=str(sender or ""), dialect=dialect,
+            mapping=LiveStore._mapping(mapping, described), interval=interval)
+
     def after(self, ts: int, limit: int = 1) -> list[dict]:
         """The newest packets after `ts`, oldest first.
 
@@ -327,48 +586,64 @@ class Live:
         Publishing a backlog to a broker leaves the last of it showing as
         now, which is worse than having published nothing.
         """
+        addresses = self._pairs(self._chosen())
+        if addresses == []:
+            return []
         conn = self._conn()
-        # The consoles this upload speaks for, as a WHERE clause. Built from
-        # a list this process holds rather than interpolated from anything
-        # that arrived over the network -- the names come from
-        # `stations.toml`, and they are placeholders either way.
-        wanted = self._chosen()
-        mine, names = "", []
-        if wanted:
-            mine = f" AND source IN ({','.join('?' * len(wanted))})"
-            names = list(wanted)
+        schema = self._packet_sql(conn)
+        mine, params = self._where(addresses, schema)
 
         # The average of several consoles is not a row in the table, so it is
         # worked out rather than selected. Only for the current reading:
         # averaging a backlog would invent records that never existed.
         if self.pick == "average" and not ts:
-            averaged = self._averaged(conn, wanted)
-            if averaged is not None:
-                return [averaged]
+            averaged = self._averaged(conn, addresses, schema)
+            return [averaged] if averaged is not None else []
 
+        columns = (
+            f"SELECT packet.dateTime, {schema.sender}, {schema.driver},"
+            f" {schema.identity}, {schema.dialect}, {schema.mapping},"
+            f" {schema.described}, packet.usUnits, packet.interval, packet.data"
+            f"{schema.relation}")
         if not ts:
             rows = conn.execute(
-                "SELECT dateTime, usUnits, interval, data FROM packet "
-                f"WHERE 1=1{mine} "
-                "ORDER BY dateTime DESC, seq DESC LIMIT 1", names).fetchall()
+                columns + f"WHERE 1=1{mine} "
+                f"ORDER BY packet.dateTime DESC, {schema.sequence} DESC LIMIT 1",
+                params).fetchall()
         else:
             rows = conn.execute(
-                "SELECT dateTime, usUnits, interval, data FROM packet "
-                f"WHERE dateTime > ?{mine} "
-                "ORDER BY dateTime ASC, seq ASC LIMIT ?",
-                [ts, *names, limit]).fetchall()
+                columns + f"WHERE packet.dateTime > ?{mine} "
+                f"ORDER BY packet.dateTime ASC, {schema.sequence} ASC LIMIT ?",
+                [ts, *params, limit]).fetchall()
         found = []
-        for when, units, interval, data in rows:
-            try:
-                record = dict(json.loads(data))
-            except (TypeError, ValueError):
+        for row in rows:
+            packet = self._packet(row, schema)
+            if packet is None:
                 continue
-            record["dateTime"] = int(when)
-            record["usUnits"] = units
-            if interval is not None:
-                record["interval"] = interval
+            record = self._placed(packet)
+            if record is None:
+                continue
             found.append({k: v for k, v in record.items() if v is not None})
         return [self._screened(one) for one in found]
+
+    def _placed(self, packet: Packet) -> dict | None:
+        """One stored packet as an observation record, or None for nothing.
+
+        The record carries the canonical sender ID as `source`, which is what
+        makes sender-specific calibration work here. A display label is not
+        an identity and the same hardware identity can exist under two
+        drivers, so neither is safe as a calibration key.
+        """
+        if self.placer is not None:
+            placed = self.placer.place(packet)
+            if placed is None:
+                return None
+            packet = placed
+        record = packet.record()
+        from ..quality import sender_for
+
+        record["source"] = sender_for(packet)
+        return record
 
     def _screened(self, record: dict) -> dict:
         """One packet with the rules applied. Unchanged where there are none.
@@ -388,7 +663,8 @@ class Live:
             return record
         try:
             stamp = float(record.get("dateTime") or 0)
-            system = record.get("usUnits")
+            system = units.system_from(record.get("usUnits"),
+                                       default=units.METRICWX)
             source = str(record.get("source") or "")
             fixed = checker.calibrate(record, source, system)
             # The verdicts are the archiver's to log: it has the interval
@@ -418,23 +694,24 @@ class Live:
 
     # -- which console ---------------------------------------------------
 
-    def _chosen(self) -> list[str]:
+    def _chosen(self) -> list[str] | None:
         """The consoles to read from, after applying `pick`.
 
-        Empty means every console, which is the answer for an installation
-        that has announced none: there is nothing to pick between, and the
-        newest packet is the reading.
+        None means every console, which is the answer for an installation
+        that has announced none. Empty means an explicitly empty place and
+        must remain empty through every pick.
         """
         mine = self.sources
-        main = [one for one in self.main if not mine or one in mine]
+        main = [one for one in self.main
+                if mine is None or one in mine]
         if not main:
             # Nobody said which is the main one. Every pick collapses to
             # "the newest of what there is" -- not a fallback being clever,
             # but what this did before there was a choice.
-            return list(mine or [])
+            return None if mine is None else list(mine)
 
         if self.pick in ("newest", "average"):
-            return list(mine or [])
+            return None if mine is None else list(mine)
         if self.pick == "extra":
             # The extras only. Falling back to the main one rather than to
             # nothing: a site whose extras have all been removed should show
@@ -447,7 +724,7 @@ class Live:
             # console is stale", and a container whose clock is adrift must
             # not decide it either.
             if self._quiet_for() > self.STALE:
-                return list(mine or [])
+                return None if mine is None else list(mine)
             return main
         return main
 
@@ -460,27 +737,26 @@ class Live:
         site is quiet would be noise.
         """
         conn = self._conn()
-        main = [one for one in self.main
-                if not self.sources or one in self.sources]
+        main = self._pairs([one for one in self.main
+                            if self.sources is None or one in self.sources])
         if not main:
             return 0.0
+        schema = self._packet_sql(conn)
+        clause, params = self._where(main, schema)
         theirs = conn.execute(
-            "SELECT MAX(dateTime) FROM packet WHERE source IN "
-            f"({','.join('?' * len(main))})", main).fetchone()[0]
+            f"SELECT MAX(packet.dateTime){schema.relation}WHERE 1=1{clause}",
+            params).fetchone()[0]
         if theirs is None:
             return float("inf")      # it has never reported
-        if self.sources:
-            newest = conn.execute(
-                "SELECT MAX(dateTime) FROM packet WHERE source IN "
-                f"({','.join('?' * len(self.sources))})",
-                list(self.sources)).fetchone()[0]
-        else:
-            newest = conn.execute(
-                "SELECT MAX(dateTime) FROM packet").fetchone()[0]
+        clause, params = self._where(self._pairs(self.sources), schema)
+        newest = conn.execute(
+            f"SELECT MAX(packet.dateTime){schema.relation}WHERE 1=1{clause}",
+            params).fetchone()[0]
         return float((newest or theirs) - theirs)
 
     def _averaged(self, conn: sqlite3.Connection,
-                  wanted: list[str]) -> dict | None:
+                  wanted: list[Any] | None,
+                  schema: _PacketSQL) -> dict | None:
         """One reading per console, averaged field by field.
 
         Each console's *newest* packet, not every packet in a window: two
@@ -488,36 +764,51 @@ class Live:
         one of them reports comes through as that one's value, which is
         right -- the average of one number is that number.
 
-        Directions are taken from the newest console rather than averaged.
-        350 and 10 average to 180, which is the opposite direction.
+        Every packet is placed, calibrated and checked in its own unit system.
+        The survivors are converted to the newest packet's system before any
+        arithmetic. Directions use a circular mean, so 350 and 10 make 0,
+        rather than either the arithmetic mean (180) or an arbitrary winner.
         """
-        mine, names = "", []
-        if wanted:
-            mine = f" WHERE source IN ({','.join('?' * len(wanted))})"
-            names = list(wanted)
+        if wanted == []:
+            return None
+        mine, params = self._where(wanted, schema)
         rows = conn.execute(
-            "SELECT source, MAX(dateTime), usUnits, interval, data "
-            f"FROM packet{mine} GROUP BY source", names).fetchall()
+            f"SELECT MAX(packet.dateTime), {schema.sender}, {schema.driver},"
+            f" {schema.identity}, {schema.dialect}, {schema.mapping},"
+            f" {schema.described}, packet.usUnits, packet.interval, packet.data"
+            f"{schema.relation}"
+            f" WHERE 1=1{mine} GROUP BY {schema.grouping}", params).fetchall()
         if not rows:
             return None
 
+        prepared: list[dict[str, Any]] = []
+        for row in sorted(rows, key=lambda item: item[0]):
+            packet = self._packet(row, schema)
+            if packet is None:
+                continue
+            placed = self._placed(packet)
+            if placed is not None:
+                prepared.append(self._screened(placed))
+        if not prepared:
+            return None
+
+        newest = max(prepared, key=lambda record: int(record.get("dateTime") or 0))
+        target_system = units.system_from(newest.get("usUnits"),
+                                          default=units.METRICWX)
+        prepared = [self._converted(record, target_system) for record in prepared]
+
         latest: dict[str, Any] = {}
         sums: dict[str, list[float]] = {}
-        when, units, interval = 0, None, None
-        for _source, stamp, unit, gap, data in sorted(rows,
-                                                      key=lambda r: r[1]):
-            try:
-                record = dict(json.loads(data))
-            except (TypeError, ValueError):
-                continue
-            if stamp >= when:
-                when, units, interval = int(stamp), unit, gap
+        directions: dict[str, list[float]] = {}
+        for record in prepared:
             for field, value in record.items():
-                if value is None:
+                if value is None or field in ("dateTime", "usUnits", "interval", "source"):
                     continue
-                if (isinstance(value, bool)
-                        or not isinstance(value, (int, float))
-                        or field.endswith("Dir")):
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    latest[field] = value
+                    continue
+                if units.group_of(field) == "group_direction":
+                    directions.setdefault(field, []).append(float(value))
                     latest[field] = value
                     continue
                 sums.setdefault(field, []).append(float(value))
@@ -525,11 +816,49 @@ class Live:
         out: dict[str, Any] = dict(latest)
         for field, values in sums.items():
             out[field] = sum(values) / len(values)
-        out["dateTime"] = when
-        out["usUnits"] = units
-        if interval is not None:
-            out["interval"] = interval
+        for field, values in directions.items():
+            sine = sum(math.sin(math.radians(value)) for value in values)
+            cosine = sum(math.cos(math.radians(value)) for value in values)
+            if math.hypot(sine, cosine) <= 1e-12:
+                # Opposite bearings have no mean. The newest is at least a
+                # real reading, rather than a fabricated direction.
+                out[field] = latest[field]
+                continue
+            bearing = math.degrees(math.atan2(sine, cosine)) % 360.0
+            out[field] = (0.0 if math.isclose(bearing, 360.0, abs_tol=1e-12)
+                          else bearing)
+        out["dateTime"] = int(newest.get("dateTime") or 0)
+        out["usUnits"] = target_system
+        if newest.get("interval") is not None:
+            out["interval"] = newest["interval"]
         return {k: v for k, v in out.items() if v is not None}
+
+    @staticmethod
+    def _converted(record: dict[str, Any], target_system: int) -> dict[str, Any]:
+        """One checked packet in the common system used for averaging.
+
+        Unknown numeric fields cannot safely cross a unit-system boundary:
+        they may be unitless, or they may be a driver-specific temperature.
+        Keeping the newest system's value and omitting an unconvertible foreign
+        one is the only answer that does not publish a made-up unit.
+        """
+        source_system = units.system_from(record.get("usUnits"),
+                                          default=target_system)
+        target = units.Target(target_system)
+        out: dict[str, Any] = {}
+        for field, value in record.items():
+            if (field in ("dateTime", "usUnits", "interval", "source")
+                    or value is None or isinstance(value, bool)
+                    or not isinstance(value, (int, float))):
+                out[field] = value
+                continue
+            converted, _unit, group = target.convert(
+                [value], field, source_system)
+            if group is None and source_system != target_system:
+                continue
+            out[field] = converted[0]
+        out["usUnits"] = target_system
+        return out
 
     def close(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -540,6 +869,6 @@ class Live:
     __call__ = after
 
 
-def live_source(path: str | Path, policy: Any = None) -> Live:
+def live_source(path: str | Path, policy: Any = None, placer: Any = None) -> Live:
     """A `records(after, limit)` callable over the live table."""
-    return Live(path, policy=policy)
+    return Live(path, policy=policy, placer=placer)

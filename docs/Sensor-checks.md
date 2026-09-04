@@ -60,6 +60,16 @@ set too tight is repairable for as long as retention holds: change the rule,
 `weewx-evo rebuild`, done. Applied on the way in, the original would be gone
 and the mistake permanent.
 
+Where a reading is *written* now follows the same rule and for the same reason
+→ [Placements](Placements).
+
+One thing that comes with it, worth knowing before it surprises you: a guess
+about a reading no catalog knows is re-read on every rebuild. A later version
+with a better inferrer can therefore place such a reading differently from the
+first run. That is the point — a wrong guess is repairable for as long as the
+retention holds, exactly like a limit — but it means a rebuild is not always a
+byte-for-byte replay of what was built before.
+
 → [Quality control](Quality)
 
 ## Calibration
@@ -67,6 +77,8 @@ and the mistake permanent.
 The same page carries offsets: a thermometer reading 0.4 K high, a barometer
 that was never adjusted for its height. Calibration happens **before** the
 limits, or a thermometer with an offset fails at its own ceiling.
+
+Sender-specific offsets use the canonical Sender ID, not its display name.
 
 <!-- watches
 src/weewx_evo/quality.py

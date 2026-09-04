@@ -1,4 +1,4 @@
-"""The overview: the chain, and where it is stuck.
+"""The overview: what needs action, then the three data stages.
 
 The settings page used to open on a form. That was right when there were a
 dozen settings and one of everything; it stopped being right somewhere around
@@ -6,13 +6,13 @@ the second archive. Somebody arriving at this page almost never wants to
 change a value. They want to know whether it is working -- and if it is not,
 which link in the chain stopped.
 
-So the page is the chain, in the order things move through it:
+So the page puts problems first, then the stable process the operator owns:
 
-    stations -> live table -> archives -> feeds -> exports and uploads
+    intake -> places -> publishing
 
-Each one says the number that matters and how old it is, and links to where
-it is configured. A gap shows up as a link that is stale while the one before
-it is fresh, which is exactly how you find the stuck component.
+Each stage says what exists, how old its newest result is, and links to the
+page that changes or diagnoses it. The archiver appears only through the data
+it writes and any lag it leaves; it is never an object to configure here.
 
 ## Nothing is asked of a running process
 
@@ -47,7 +47,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import adminarchives, series, units
+from . import adminarchives, placement, series, units
 from . import archives as archive_defs
 from . import config as config_file
 from . import stations as station_defs
@@ -177,6 +177,10 @@ class State:
     forecasts: list[Link] = field(default_factory=list)
     #: What is wrong, in the order somebody should deal with it.
     concerns: list[str] = field(default_factory=list)
+    #: The settings or diagnostic page that can resolve each concern.
+    #: Kept beside ``concerns`` so callers that inspect the messages remain
+    #: independent of their presentation.
+    concern_hrefs: list[str] = field(default_factory=list)
     #: Numbers the concern rules need, kept rather than recomputed.
     newest_packet: float | None = None
     newest_record: float | None = None
@@ -184,6 +188,12 @@ class State:
     interval: int = 300
     strangers: int = 0
     newest_stranger: float | None = None
+
+
+def _concern(state: State, said: str, href: str) -> None:
+    """Add one actionable problem without hiding its plain-text form."""
+    state.concerns.append(said)
+    state.concern_hrefs.append(href)
 
 
 # -- reading the state -------------------------------------------------
@@ -209,6 +219,24 @@ def _under(admin: Any, where: str | None, fallback: str) -> Path:
     """A path that is not a setting: a feed's destination, an archive's file."""
     path = Path(str(where or fallback))
     return path if path.is_absolute() else _base(admin) / path
+
+
+def _default_archive_path(admin: Any) -> Path:
+    """The archive declared as default in archives.toml."""
+    archive = adminarchives.load(admin).get(None)
+    return _under(admin, archive.file, "data/weewx.sdb")
+
+
+def _selected_by(archive: Any, station: Any) -> bool:
+    """Whether this place selects this announced station's live ID.
+
+    ``None`` means all and an empty tuple means none. Keeping that test in
+    one place prevents an empty selection from turning truthily into the old
+    implicit default.
+    """
+    from .db.live import sender_id
+
+    return archive.selects(sender_id(station.driver, station.identity))
 
 
 class _ReadOnlyMeta:
@@ -253,13 +281,13 @@ def _live_store(admin: Any) -> Any:
 def _live_state(admin: Any, state: State) -> None:
     path = _setting(admin, "live_db", "data/live.sdb")
     if not path.exists():
-        state.live = Link("Live table", unreachable=f"no database at {path}",
-                          href="./core")
+        state.live = Link("Live data", unreachable=f"no database at {path}",
+                          href="./live")
         return
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except sqlite3.Error as exc:
-        state.live = Link("Live table", unreachable=str(exc), href="./core")
+        state.live = Link("Live data", unreachable=str(exc), href="./live")
         return
     try:
         count, newest = conn.execute(
@@ -272,13 +300,13 @@ def _live_state(admin: Any, state: State) -> None:
         # stopped uploading sixteen hours earlier, and would have gone on
         # reporting it for a fortnight. A stranger is something arriving
         # now.
-        sources = [(row[0], row[1]) for row in conn.execute(
-            "SELECT source, max(dateTime) FROM packet"
-            " WHERE dateTime > ? GROUP BY source ORDER BY source",
-            (time.time() - STRANGER_WINDOW,))]
+        heard = conn.execute(
+            "SELECT driver, identity, max(dateTime) FROM packet"
+            " WHERE dateTime > ? GROUP BY driver, identity ORDER BY driver, identity",
+            (time.time() - STRANGER_WINDOW,)).fetchall()
         history = _hourly(conn, "packet")
     except sqlite3.Error as exc:
-        state.live = Link("Live table", unreachable=str(exc), href="./core")
+        state.live = Link("Live data", unreachable=str(exc), href="./live")
         return
     finally:
         conn.close()
@@ -287,14 +315,30 @@ def _live_state(admin: Any, state: State) -> None:
     size = path.stat().st_size / 1e6
     # Middle dots and short words: three columns in a card this wide have
     # room for a phrase, not a sentence.
-    state.live = Link("Live table",
+    state.live = Link("Live data",
                       f"{count:,} packets · {size:.1f} MB "
                       f"· {state.pending} waiting",
-                      when=newest, href="./stations", history=history)
+                      when=newest, href="./live", history=history)
 
     announced = station_defs.load(_base(admin) / station_defs.FILENAME)
-    known = {one.name for one in announced}
-    strangers = [(name, when) for name, when in sources if name not in known]
+    # Resolved through the register rather than read out of the table: the
+    # name is not stored, so an adopted console is recognised here from the
+    # first packet it ever sent rather than from the next one.
+    sources = [(placement.name_for(announced, driver, identity), when)
+               for driver, identity, when in heard]
+    from .db.live import sender_id
+    places_for_selection: list[Any] = []
+    try:
+        from . import adminarchives
+
+        places_for_selection = adminarchives.load(admin).all()
+    except Exception:
+        log.debug("could not read sender selections", exc_info=True)
+    strangers = [
+        (name, when) for (driver, identity, when), (name, _same_when)
+        in zip(heard, sources, strict=True)
+        if not any(place.selects(sender_id(driver, identity))
+                   for place in places_for_selection)]
     state.strangers = len(strangers)
     state.newest_stranger = max((w for _n, w in strangers), default=None)
     # Through the console page's own reader and the places register: a
@@ -303,37 +347,33 @@ def _live_state(admin: Any, state: State) -> None:
     # own pages and raw here.
     from . import adminstations
 
-    titles: dict[str, str] = {}
-    try:
-        from . import adminarchives
-
-        titles = {one.name: one.title
-                  for one in adminarchives.load(admin).all()}
-    except Exception:
-        log.debug("could not name the places for the console card",
-                  exc_info=True)
+    places = places_for_selection
     for one in announced:
-        last = _last_from(path, one.name)
+        last = _last_from(path, one.driver, one.identity)
+        selected = [place.title for place in places
+                    if _selected_by(place, one)]
+        detail = (f"Used by {', '.join(selected)}" if selected
+                  else "Not assigned")
         state.stations.append(Link(
             adminstations._readable(one.name),
-            f"into {titles.get(one.archive, one.archive)}",
-            when=last, href="./stations"))
+            detail,
+            when=last, href="./senders"))
     if not announced and sources:
         state.stations.append(Link(
-            f"{len(sources)} source(s), none announced",
-            "they are writing under whatever identity their driver read",
-            href="./stations"))
+            f"{len(sources)} unregistered sender(s)",
+            "Not assigned",
+            href="./senders"))
 
 
-def _last_from(path: Path, source: str) -> float | None:
+def _last_from(path: Path, driver: str, identity: str) -> float | None:
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except sqlite3.Error:
         return None
     try:
         row = conn.execute(
-            "SELECT max(dateTime) FROM packet WHERE source = ?",
-            (source,)).fetchone()
+            "SELECT max(dateTime) FROM packet WHERE driver = ? AND identity = ?",
+            (driver, identity)).fetchone()
         return row[0] if row else None
     except sqlite3.Error:
         return None
@@ -436,21 +476,21 @@ def _archive_state(admin: Any, state: State) -> None:
         if not row.exists:
             state.archives.append(Link(
                 one.title, unreachable=f"no file at {row.path} yet",
-                href="./archives"))
+                href="./places"))
             continue
         if row.unreachable:
             state.archives.append(Link(one.title, unreachable=row.unreachable,
-                                       href="./archives"))
+                                       href="./places"))
             continue
+        records = "record" if row.count == 1 else "records"
         state.archives.append(Link(
-            one.title, f"{row.count:,} records · {row.size:.1f} MB",
-            when=row.newest, href="./archives", history=row.history))
+            one.title, f"{row.count:,} {records} · {row.size:.1f} MB",
+            when=row.newest, href="./places", history=row.history))
         if row.newest and (state.newest_record is None
                            or row.newest > state.newest_record):
             state.newest_record = row.newest
-    state.concerns.extend(
-        f"Archive {name!r}: {said}"
-        for name, said in register.concerns().items())
+    for name, said in register.concerns().items():
+        _concern(state, f"Place {name!r}: {said}", "./places")
 
 
 def _newest_file(where: Path) -> tuple[int, float | None]:
@@ -475,6 +515,14 @@ def _feed_state(admin: Any, state: State) -> None:
     current = admin.config()
     root = _setting(admin, "feeds_dir", "data/feeds")
     configured = current.get("feeds") or {}
+    try:
+        register = adminarchives.load(admin)
+        implicit = register.default_name()
+    except LookupError:
+        implicit = ""
+    except Exception:
+        log.debug("could not read the places for the feed cards", exc_info=True)
+        implicit = ""
     for name, settings in sorted(configured.items()):
         if not isinstance(settings, dict):
             continue
@@ -489,9 +537,11 @@ def _feed_state(admin: Any, state: State) -> None:
                 name, unreachable=f"nothing written to {directory} yet",
                 href=f"./feed:{name}"))
             continue
-        reads = str(settings.get("archive") or archive_defs.DEFAULT)
+        reads = str(settings.get("archive") or implicit).strip()
         detail = f"{count} file(s)"
-        if reads != archive_defs.DEFAULT:
+        if not reads:
+            detail += ", no place selected"
+        elif reads != archive_defs.DEFAULT:
             detail += f", from {reads}"
         state.feeds.append(Link(name, detail, when=newest,
                                 href=f"./feed:{name}"))
@@ -565,8 +615,11 @@ def _sent_state(admin: Any, state: State) -> None:
                                       "" if when is not None
                                       else "waiting for its first run")))
 
-    progress = _setting(admin, "archive_db",
-                        "data/weewx.sdb").parent / "uploads.json"
+    try:
+        progress = _default_archive_path(admin).parent / "uploads.json"
+    except Exception:
+        log.debug("could not locate upload progress", exc_info=True)
+        progress = _base(admin) / "uploads.json"
     through: dict[str, Any] = {}
     if progress.exists():
         try:
@@ -660,9 +713,26 @@ def _implied_live(admin: Any) -> dict:
     were two readings of it.
     """
     try:
-        from .cli import live_readings_locally
+        from .cli import DEFAULT_FEEDS, live_readings_locally
 
-        return live_readings_locally(_AsSettings(admin), {})
+        cfg = _AsSettings(admin)
+        configured = cfg.config.get("feeds") or DEFAULT_FEEDS
+        registry = adminarchives.load(admin)
+        try:
+            implicit = registry.default_name()
+        except LookupError:
+            implicit = ""
+        # `live_readings_locally` deliberately has no process-global fallback:
+        # the admin process has no CLI namespace to resolve. Hand it the same
+        # place choice the feed scheduler would make from these files.
+        schedule = {
+            name: {
+                "archive": str(settings.get("archive") or implicit).strip()
+            }
+            for name, settings in configured.items()
+            if isinstance(settings, dict) and settings.get("kind")
+        }
+        return live_readings_locally(cfg, {}, schedule=schedule)
     except Exception:
         log.debug("could not work out the implied live upload", exc_info=True)
         return {}
@@ -690,16 +760,38 @@ def _forecast_state(admin: Any, state: State) -> None:
     configured = current.get("forecast") or {}
     if not configured:
         return
-    # Beside the archive rather than a setting of its own. Derived by the
-    # one function that owns the rule rather than by a fourth spelling of
-    # it: two of the earlier three stopped agreeing the day `archive_db`
-    # briefly became a per-place setting.
-    from .forecast import store_path
+    # One installation-wide store beside the configuration. Its rows carry
+    # the place name; choosing an archive file here would make the cache move
+    # when a place is added, removed or reordered.
+    from .forecast import shared_store_path
 
-    path = store_path(_setting(admin, "archive_db", "data/weewx.sdb"))
+    try:
+        path = shared_store_path(admin.path)
+    except Exception:
+        log.debug("could not locate the forecast store", exc_info=True)
+        return
+    # Which series there are, so a card can say which place a forecast is
+    # for. A sole custom-named place is also the implicit place; literal
+    # "default" is not a substitute for resolving the registry.
+    try:
+        register = adminarchives.load(admin)
+        places = {one.name: one.title for one in register.all()}
+        try:
+            implicit = register.default_name()
+        except LookupError:
+            implicit = ""
+    except Exception:
+        log.debug("could not read the places for the forecast cards",
+                  exc_info=True)
+        places, implicit = {}, ""
+
     if not path.exists():
         for name in sorted(configured):
-            state.forecasts.append(Link(name, unreachable="not fetched yet",
+            settings = configured.get(name) or {}
+            archive = str((settings.get("archive") if isinstance(settings, dict)
+                           else "") or implicit).strip()
+            why = "not fetched yet" if archive else "no place selected"
+            state.forecasts.append(Link(name, unreachable=why,
                                         href=f"./forecast:{name}"))
         return
     try:
@@ -707,18 +799,6 @@ def _forecast_state(admin: Any, state: State) -> None:
     except sqlite3.Error:
         return
     try:
-        # Which series there are, so a card can say which place a forecast
-        # is for -- and only where there is more than one, because naming it
-        # on a station that keeps one is a word that answers nothing.
-        try:
-            from . import adminarchives
-
-            places = {one.name: one.title
-                      for one in adminarchives.load(admin).all()}
-        except Exception:
-            log.debug("could not read the archives for the forecast card",
-                      exc_info=True)
-            places = {}
 
         for name in sorted(configured):
             # Keyed on the entry's own name now, and on the series it is
@@ -728,7 +808,12 @@ def _forecast_state(admin: Any, state: State) -> None:
             # is gone.
             settings = configured.get(name) or {}
             archive = str((settings.get("archive") if isinstance(settings, dict)
-                           else "") or "default")
+                           else "") or implicit).strip()
+            if not archive:
+                state.forecasts.append(Link(
+                    name, unreachable="no place selected",
+                    href=f"./forecast:{name}"))
+                continue
             row = conn.execute(
                 "SELECT fetched, hours, days FROM run "
                 "WHERE archive = ? AND source = ?",
@@ -778,39 +863,45 @@ def _judge(admin: Any, state: State) -> None:
         state.interval = 300
 
     if not config_file.get(current, "token"):
-        state.concerns.append(
-            "No upload token is set, so anything that can reach the listener "
-            "can write to the measurement series.")
+        _concern(state,
+            "No upload token is set. Listener writes are unauthenticated.",
+            "./core")
 
     if state.newest_packet and state.newest_record is not None:
         behind = state.newest_packet - state.newest_record
         if behind > state.interval * BEHIND_INTERVALS:
-            state.concerns.append(
-                f"Readings are arriving but the archive is {ago(state.newest_record)}"
-                f", {int(behind // 60)} min behind the newest packet. The "
-                "archiver is not keeping up, or it is not running.")
+            _concern(state,
+                f"Readings are arriving, but stored data is "
+                f"{int(behind // 60)} min behind the newest packet.", "./live")
 
     if state.pending > PENDING_LIMIT:
-        state.concerns.append(
-            f"{state.pending} interval(s) are waiting to be archived. One or "
-            "two is an interval that has not closed; this many is a backlog.")
+        _concern(state,
+            f"{state.pending} intervals are waiting to be archived.",
+            "./live")
 
     if state.strangers:
-        state.concerns.append(
-            f"{state.strangers} source(s) uploaded "
-            f"{ago(state.newest_stranger)} that no station answers for. "
-            "Their readings are in the live table and are not reaching any "
-            "archive.")
+        sender = "sender" if state.strangers == 1 else "senders"
+        _concern(state,
+            f"{state.strangers} {sender} uploaded "
+            f"{ago(state.newest_stranger)} and are selected by no place.",
+            "./senders")
 
     for one in state.archives:
         if one.unreachable:
-            state.concerns.append(f"Archive {one.name!r}: {one.unreachable}")
+            _concern(state, f"Place {one.name!r}: {one.unreachable}",
+                     "./places")
 
-    state.concerns.extend(_two_main_stations(admin))
+    for one in state.exports:
+        if one.wrong:
+            _concern(state, f"Export {one.name!r}: {one.unreachable}",
+                     one.href or "./publishing")
+
+    for said in _two_main_stations(admin):
+        _concern(state, said, "./places")
 
 
 def _two_main_stations(admin: Any) -> list[str]:
-    """Archives where more than one station claims the standard columns.
+    """Places that select more than one sender for primary readings.
 
     One archive has one main station. Two of them take turns writing
     `outTemp` every few seconds, and afterwards the column holds a mixture
@@ -818,27 +909,22 @@ def _two_main_stations(admin: Any) -> list[str]:
     rather than let that happen -- but a configuration that asks for it is
     worth saying out loud rather than silently working around.
     """
-    from . import roles
-
     try:
-        found = station_defs.load(_base(admin) / station_defs.FILENAME)
+        archives = adminarchives.load(admin).all()
     except Exception:
         return []
-    by_archive: dict[str, list] = {}
-    for one in found:
-        by_archive.setdefault(
-            getattr(one, "archive", archive_defs.DEFAULT), []).append(one)
 
     said = []
-    for name, group in sorted(by_archive.items()):
-        clashing = roles.too_many_main(group)
-        if clashing:
+    for archive in archives:
+        clashing = sorted(
+            one.label for one in adminarchives.sender_choices(admin, archive)
+            if (archive.selects(one.sender)
+                and archive.policy_for(one.sender).role == "main"))
+        if len(clashing) > 1:
             said.append(
-                f"{len(clashing)} stations write into {name!r} as "
-                f"main: {', '.join(clashing)}. One console is the station; "
-                "the others are extra sensors, or they write into each "
-                "other's columns. Set the rest to extra on the Stations "
-                "page.")
+                f"{archive.name!r} uses {len(clashing)} senders for primary "
+                f"readings: {', '.join(clashing)}. Set the rest to "
+                "additional sensors.")
     return said
 
 
@@ -863,22 +949,6 @@ def read(admin: Any) -> State:
 # -- the page ----------------------------------------------------------
 
 
-def _places_called(admin: Any) -> str:
-    """What the places page is called, so the link says where it goes.
-
-    It said "Archives", which is a word the settings no longer use anywhere
-    -- and on a single-place installation the page it opens is not called
-    that either.
-    """
-    try:
-        from . import adminarchives
-
-        return adminarchives.title_for(admin)
-    except Exception:
-        log.debug("could not name the places page", exc_info=True)
-        return "Places"
-
-
 def nav(admin: Any, active: str) -> list[str]:
     current = " aria-current='page'" if active == "overview" else ""
     state = read(admin)
@@ -894,47 +964,73 @@ def _short(text: str, keep: int = 34) -> str:
     return text if len(text) <= keep else "…" + text[-(keep - 1):]
 
 
-def _row(one: Link) -> str:
-    if one.unreachable:
-        # "nothing written to <a hundred characters of path>" is a sentence
-        # for a title attribute, not for a card three columns wide. Left
-        # whole it widened the table past its grid track and put a
-        # horizontal scrollbar under the entire page.
-        when = (f'<span class="note" title="{html.escape(one.unreachable)}">'
-                f"{html.escape(_short(one.unreachable))}</span>")
-    else:
-        when = html.escape(ago(one.when))
-    detail = f'<span class="note">{html.escape(one.detail)}</span>' \
-        if one.detail else ""
-    # The column clips with an ellipsis, so the whole name goes in a title:
-    # "Kirchdorf an ..." is not a name somebody can act on.
-    shown, whole = html.escape(one.name), html.escape(one.name)
-    name = f'<span title="{whole}">{shown}</span>'
+def _flow_row(one: Link, kind: str = "") -> str:
+    """One compact status row in a stage."""
+    label = f'<span class="chip">{html.escape(kind)}</span>' if kind else ""
+    whole = html.escape(one.name)
+    name = f'<span class="title" title="{whole}">{whole}</span>'
     if one.href:
-        name = (f'<a href="{html.escape(one.href)}" title="{whole}">'
-                f"{shown}</a>")
-    shape = sparkline(one.history, f"{one.name}, hourly, last {HOURS} hours")
-    if shape:
-        # Across the row rather than in a column. It is the shape of the
-        # whole thing, and squeezed into a third of the width it would be a
-        # smudge.
-        shape = f'''
-    <tr class="sparkrow"><td colspan="3">{shape}</td></tr>'''
-    return f'''
-    <tr><td>{name}</td><td>{detail}</td><td class="when">{when}</td></tr>{shape}'''
+        name = (f'<a class="title" href="{html.escape(one.href)}" '
+                f'title="{whole}">{whole}</a>')
+    detail = (f'<span class="note">{html.escape(one.detail)}</span>'
+              if one.detail else "")
+    status = ""
+    if one.unreachable:
+        tone = "warn when" if one.wrong else "note when"
+        status = (f'<span class="{tone}" title="{html.escape(one.unreachable)}">'
+                  f'{html.escape(_short(one.unreachable))}</span>')
+    elif one.when is not None:
+        status = f'<span class="when">{html.escape(ago(one.when))}</span>'
+    return f"<li>{label}{name}{detail}{status}</li>"
 
 
-def _card(title: str, links: list[Link], empty: str, more: str = "") -> str:
-    if not links:
-        body = f'<p class="navempty">{html.escape(empty)}</p>'
-    else:
-        body = (f'<table class="chain">{NEWLINE.join(_row(o) for o in links)}'
-                "</table>")
-    tail = f'<p class="cardlink">{more}</p>' if more else ""
+def _stage(title: str, summary: str, href: str, rows: list[tuple[str, Link]],
+           empty: str) -> str:
+    items = (NEWLINE.join(_flow_row(one, kind) for kind, one in rows)
+             if rows else f'<li class="none">{html.escape(empty)}</li>')
     return f'''
-<section class="card">
-  <h3>{html.escape(title)}</h3>
-  {body}{tail}
+<section class="overview-stage flow" aria-labelledby="stage-{title.lower()}">
+  <div class="made">
+    <h3 class="title" id="stage-{title.lower()}">{html.escape(title)}</h3>
+    <span class="note">{html.escape(summary)}</span>
+    <a class="aside" href="{html.escape(href)}"
+       aria-label="Open {html.escape(title)}">Open</a>
+  </div>
+  <ul class="sends plain">{items}</ul>
+</section>'''
+
+
+def _count(amount: int, singular: str) -> str:
+    return f"{amount} {singular if amount == 1 else singular + 's'}"
+
+
+def _collection(name: str, links: list[Link], href: str) -> Link:
+    """Summarise an inventory without copying it onto the overview."""
+    failed = [one for one in links if one.wrong]
+    newest = max((one.when for one in links if one.when is not None),
+                 default=None)
+    detail = _count(len(links), "configured item") if links else "Not configured"
+    return Link(name, detail, when=newest,
+                unreachable=(f"{_count(len(failed), 'failure')}" if failed else ""),
+                href=href, wrong=bool(failed))
+
+
+def _attention(state: State) -> str:
+    if not state.concerns:
+        return ""
+    rows = []
+    for index, concern in enumerate(state.concerns):
+        href = (state.concern_hrefs[index]
+                if index < len(state.concern_hrefs) else "./overview")
+        rows.append(
+            f'<li><span>{html.escape(concern)}</span>'
+            f'<a href="{html.escape(href)}" '
+            f'aria-label="Review: {html.escape(concern)}">Review</a></li>')
+    return f'''
+<section class="overview-attention banner warn" aria-labelledby="attention-title">
+  <h3 id="attention-title">Needs attention
+      <span class="count">{len(rows)}</span></h3>
+  <ul class="attention-list">{NEWLINE.join(rows)}</ul>
 </section>'''
 
 
@@ -946,39 +1042,46 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     # having happened.
     said = ""
 
-    trouble = ""
-    if state.concerns:
-        items = NEWLINE.join(f"<li>{html.escape(one)}</li>"
-                             for one in state.concerns)
-        trouble = f'''
-<section class="banner warn">
-  <h3>{len(state.concerns)} thing(s) to look at</h3>
-  <ul>{items}</ul>
-</section>'''
+    attention = _attention(state)
 
-    live = [state.live] if state.live else []
+    intake_rows = [("Sender", one) for one in state.stations]
+    if state.live:
+        intake_rows.append(("Live", state.live))
+    intake_summary = _count(len(state.stations), "sender")
+    if state.newest_packet is not None:
+        intake_summary += f" · last reading {ago(state.newest_packet)}"
+
+    place_summary = _count(len(state.archives), "place")
+    if state.newest_record is not None:
+        place_summary += f" · last record {ago(state.newest_record)}"
+
+    configured_notify = admin.config().get("notify") or {}
+    notify_count = sum(1 for one in configured_notify.values()
+                       if isinstance(one, dict))
+    publishing_rows = [
+        ("", _collection("Feeds", state.feeds, "./publishing")),
+        ("", _collection("Exports", state.exports, "./publishing")),
+        ("", _collection("Uploads", state.uploads, "./publishing")),
+        ("", Link("Notifications", _count(notify_count, "configured item")
+                  if notify_count else "Not configured",
+                  href="./publishing")),
+        ("", _collection("Forecasts", state.forecasts, "./publishing")),
+    ]
+    publishing_count = (len(state.feeds) + len(state.exports)
+                        + len(state.uploads) + notify_count
+                        + len(state.forecasts))
     return f'''
-<h2>Overview</h2>
-{problem}{said}{trouble}
-<p class="lede">Readings move down this page in the order they travel: in
-   from a console, held for a day, kept for good, built into pages, sent
-   out. A card that is old while the one above it is fresh is the step that
-   stopped.</p>
-<div class="cards">
-{_card("Consoles sending", state.stations,
-       "No console announced yet.",
-       '<a href="./new-station">Add a console</a>')}
-{_card("Held for today", live, "No live table here.")}
-{_card("Kept for good", state.archives, "Nothing kept yet.",
-       f'<a href="./archives">{html.escape(_places_called(admin))}</a>')}
-{_card("Pages built", state.feeds,
-       "No feed is configured, so nothing is being written.",
-       '<a href="./new-feed">Add a feed</a>')}
-{_card("Sent out", state.exports, "No export is configured.",
-       '<a href="./new-export">Add an export</a>')}
-{_card("Posted to a service", state.uploads, "No upload is configured.",
-       '<a href="./new-upload">Add an upload</a>')}
-{_card("Forecast", state.forecasts, "No forecast is configured.",
-       '<a href="./new-forecast">Add a forecast</a>')}
+<div class="page-head">
+  <h2>Overview</h2>
+  <a class="small-action" href="./setup">Setup</a>
+</div>
+{problem}{said}{attention}
+<div class="overview-stages">
+{_stage("Intake", intake_summary, "./senders", intake_rows,
+        "No senders.")}
+{_stage("Places", place_summary, "./places",
+        [("Place", one) for one in state.archives], "No places.")}
+{_stage("Publishing", _count(publishing_count, "configured item"),
+        "./publishing", publishing_rows, "Not configured.")}
 </div>
 '''

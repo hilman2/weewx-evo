@@ -111,7 +111,11 @@ class Api:
                  token: str = "", stations: Any = None,
                  station_name: str = "") -> None:
         self.archives = dict(archives)
-        self.default = default or next(iter(self.archives), "")
+        # Empty is an answer: the registry found no unambiguous implicit
+        # archive. Choosing the first dictionary entry there would make an
+        # omitted query parameter read a place merely because it happened to
+        # be written first.
+        self.default = str(default or "")
         self.token = str(token or "")
         self.stations = stations
         self.station_name = station_name
@@ -206,9 +210,6 @@ class Api:
             found.append({
                 "name": one.name,
                 "driver": getattr(one, "driver", ""),
-                "archive": getattr(one, "archive", ""),
-                "role": getattr(one, "role", "main"),
-                "indoor": bool(getattr(one, "indoor", True)),
             })
         return Answer.of({"stations": found})
 
@@ -339,7 +340,11 @@ class Api:
         return _Open(self.archives[name])
 
     def _archive_named(self, fields: dict) -> str:
-        name = (fields.get("archive") or "").strip() or self.default
+        name = (fields.get("archive") or "").strip()
+        if not name:
+            name = self.default
+        if not name:
+            raise Wrong("archive is needed; /archives lists them.")
         if name not in self.archives:
             raise Wrong(f"no archive called {name!r}. /archives lists them.")
         return name

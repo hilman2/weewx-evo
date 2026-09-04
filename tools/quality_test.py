@@ -34,6 +34,7 @@ import argparse
 import sys
 import tempfile
 import time
+import tomllib
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -53,7 +54,7 @@ from weewx_evo.cli import (
     read_quality,
 )
 from weewx_evo.db.archive import ArchiveStore
-from weewx_evo.db.live import LiveStore, Packet
+from weewx_evo.db.live import LiveStore, Packet, sender_id
 
 FAILURES: list[str] = []
 CHECKS = 0
@@ -74,6 +75,7 @@ def close_to(what: str, got: float | None, want: float, tol: float = 1e-6) -> No
 
 
 START = 1755648000
+SHED = sender_id("unknown", "schuppen")
 
 RULES = {
     "unit_system": "metricwx",
@@ -84,7 +86,7 @@ RULES = {
     },
     "calibrate": {
         "everywhere": {"outHumidity": {"offset": 2.0}},
-        "schuppen": {"outTemp": {"offset": -0.4}},
+        SHED: {"outTemp": {"offset": -0.4}},
     },
 }
 
@@ -216,19 +218,21 @@ def test_calibration_converts_as_a_difference() -> None:
           metric["outHumidity"], 62.0)
 
     checker = quality.Check(policy())
-    american = checker.calibrate({"outTemp": 68.0}, "schuppen", units.US)
+    american = checker.calibrate({"outTemp": 68.0}, SHED, units.US)
     close_to("a Fahrenheit packet takes it converted as a span",
              american["outTemp"], 68.0 - 0.72, tol=1e-9)
 
 
-def test_a_station_wins_over_everybody() -> None:
+def test_a_sender_wins_over_everybody() -> None:
     one = policy()
-    check("the station's own", one.adjust_for("schuppen", "outTemp").offset, -0.4)
-    check("nothing for another station",
-          one.adjust_for("haus", "outTemp"), None)
+    check("the sender's own", one.adjust_for(SHED, "outTemp").offset, -0.4)
+    check("nothing for another sender",
+          one.adjust_for(sender_id("unknown", "haus"), "outTemp"), None)
+    check("the same hardware identity under another driver is distinct",
+          one.adjust_for(sender_id("push", "schuppen"), "outTemp"), None)
     check("and the one for everybody applies to both",
           [one.adjust_for(who, "outHumidity").offset
-           for who in ("schuppen", "haus")], [2.0, 2.0])
+           for who in (SHED, sender_id("unknown", "haus"))], [2.0, 2.0])
 
 
 def test_calibration_comes_before_the_check() -> None:
@@ -261,9 +265,51 @@ def test_the_file_round_trips() -> None:
     check("the limits", sorted(one.limits), ["outTemp", "rain"])
     check("the ceiling", one.limits["outTemp"].maximum, 60.0)
     check("the resolution", one.limits["outTemp"].resolution, 0.1)
-    check("a station's calibration",
-          one.calibration["schuppen"]["outTemp"].offset, -0.4)
+    check("a sender's calibration",
+          one.calibration[SHED]["outTemp"].offset, -0.4)
     check("and the system the figures are in", one.system, units.METRICWX)
+    rewritten = tomllib.loads(adminquality.as_toml(one))
+    check("the Admin writer quotes the canonical sender ID",
+          rewritten["calibrate"][SHED]["outTemp"]["offset"], -0.4)
+
+
+def test_a_legacy_display_name_is_preserved_but_inactive() -> None:
+    old = quality.from_dict({
+        "calibrate": {
+            "schuppen": {"outTemp": {"offset": -0.4}},
+            "everywhere": {"outHumidity": {"offset": 2.0}},
+        }
+    })
+    check("the display name is not an active calibration",
+          "schuppen" in old.calibration, False)
+    check("it is retained for a lossless Admin save",
+          old.obsolete_calibration["schuppen"]["outTemp"].offset, -0.4)
+    check("it cannot match the sender that currently carries that label",
+          old.adjust_for(SHED, "outTemp"), None)
+    check("the installation-wide correction remains active",
+          old.adjust_for(SHED, "outHumidity").offset, 2.0)
+
+    written = adminquality.as_toml(old)
+    parsed = tomllib.loads(written)
+    check("an Admin save retains the old table",
+          parsed["calibrate"]["schuppen"]["outTemp"]["offset"], -0.4)
+    check("and marks it as ignored", "Ignored legacy label" in written, True)
+
+
+def test_packet_calibration_identity_is_always_canonical() -> None:
+    ordinary = Packet(dateTime=START, usUnits=units.METRICWX, data={},
+                      driver="unknown", identity="schuppen",
+                      source="Friendly shed")
+    check("a friendly packet label is never a calibration key",
+          quality.sender_for(ordinary), SHED)
+
+    # Placement associates a retained pre-journal row with one explicit,
+    # modern Place member. Keep that canonical association rather than
+    # reverting to the reserved legacy sender ID.
+    legacy = Packet(dateTime=START, usUnits=units.METRICWX, data={},
+                    driver="__legacy__", identity="schuppen", source=SHED)
+    check("a placed legacy row keeps its canonical modern member",
+          quality.sender_for(legacy), SHED)
 
 
 def test_an_empty_rule_is_not_a_rule() -> None:
@@ -284,7 +330,7 @@ def an_archive(where: Path, readings: list[float], every: int = 30,
         for index, value in enumerate(readings):
             live.add(Packet(dateTime=START + index * every, usUnits=units.METRICWX,
                             data={"outTemp": value, "outHumidity": 60.0},
-                            source=station))
+                            identity=station))
     return live_path
 
 
@@ -407,7 +453,7 @@ def test_calibration_reaches_the_record() -> None:
     where = Path(tempfile.mkdtemp())
     live_path = an_archive(where, [20.0] * 10, station="schuppen")
     built, _ = built_with(where, live_path, policy(), "shed")
-    close_to("the station's offset is applied",
+    close_to("the canonical sender's offset is applied",
              built.record["outTemp"], 19.6)
     close_to("and the one for everybody too",
              built.record["outHumidity"], 62.0)
@@ -612,7 +658,7 @@ def test_the_suggest_command_writes_readable_toml() -> None:
           ["outHumidity", "outTemp"])
 
 
-FILE = """unit_system = "metricwx"
+FILE = f"""unit_system = "metricwx"
 
 [limits.outTemp]
 minimum = -50
@@ -625,7 +671,7 @@ resolution = 0.1
 minimum = 0
 maximum = 50
 
-[calibrate.schuppen.outTemp]
+[calibrate."{SHED}".outTemp]
 offset = -0.4
 """
 
@@ -688,10 +734,10 @@ def test_the_rules_reach_the_live_readings() -> None:
         # An ordinary reading, then one no thermometer produces.
         store.add(Packet(dateTime=base - 20, usUnits=units.METRICWX,
                          data={"outTemp": 21.0, "outHumidity": 60.0},
-                         source="ecowitt"))
+                         identity="ecowitt"))
         store.add(Packet(dateTime=base - 10, usUnits=units.METRICWX,
                          data={"outTemp": -40.0, "outHumidity": 61.0},
-                         source="ecowitt"))
+                         identity="ecowitt"))
     finally:
         store.close()
 
@@ -727,11 +773,12 @@ def test_the_live_readings_are_calibrated_too() -> None:
     base = int(time.time())
     try:
         store.add(Packet(dateTime=base - 5, usUnits=units.METRICWX,
-                         data={"outTemp": 20.0}, source="ecowitt"))
+                         data={"outTemp": 20.0}, identity="ecowitt"))
     finally:
         store.close()
 
-    policy = Policy(calibration={"": {"outTemp": Adjust(offset=-0.4)}},
+    policy = Policy(calibration={sender_id("unknown", "ecowitt"):
+                                 {"outTemp": Adjust(offset=-0.4)}},
                     system=units.METRICWX)
     live = upload_records.live_source(where, policy)
     got = live.after(0, 1)
@@ -805,11 +852,14 @@ def an_installation(work: Path, *, second: bool = False,
         f'token = "{"a" * 16}"\n'
         f'archive_db = "{archive_db or (work / "data" / "one.sdb").as_posix()}"\n',
         encoding="utf-8")
-    entries = ["[archives.default]",
-               f'file = "{(work / "data" / "one.sdb").as_posix()}"']
+    sender = sender_id("unknown", "s")
+    entries = ["member_policy_version = 2", "", "[archives.default]",
+               f'file = "{(work / "data" / "one.sdb").as_posix()}"',
+               f'senders = ["{sender}"]']
     if second:
         entries += ["", "[archives.nordfeld]",
-                    f'file = "{(work / "data" / "two.sdb").as_posix()}"']
+                    f'file = "{(work / "data" / "two.sdb").as_posix()}"',
+                    f'senders = ["{sender}"]']
     (work / "archives.toml").write_text("\n".join(entries) + "\n",
                                         encoding="utf-8")
     path = work / "evo.toml"

@@ -48,6 +48,22 @@ def short_source(source: str) -> str:
     return source[:SOURCE_CHARS] + ".."
 
 
+def _headline_from(store: Any, last: int, placer: Any) -> dict:
+    """The newest packet in archive column names, for the six figures on top.
+
+    Empty where nothing places, which is a listener with no placement
+    configured -- and then the page shows the table alone rather than six
+    boxes that would all read "--" without saying why.
+    """
+    if placer is None:
+        return {}
+    for packet in reversed(list(store.packets(last - 1, last))):
+        placed = placer.place(packet)
+        if placed is not None:
+            return placed.data
+    return {}
+
+
 def recent(store: Any, ingest: Any, limit: int = 12) -> dict:
     """What the page needs: the last few packets, and how things are going."""
     now = time.time()
@@ -58,11 +74,18 @@ def recent(store: Any, ingest: Any, limit: int = 12) -> dict:
         # A window rather than a row count: `packets()` is indexed on time, and
         # the newest few are all anyone is looking at.
         window = max(600, limit * 60)
+        placer = getattr(ingest, "placer", None)
         for packet in store.packets(last - window, last, with_raw=True):
+            # The names the console used, not the archive columns they will
+            # become. This page is for the question "what is arriving", and
+            # the field that is *not* being placed is exactly the one a
+            # placed view cannot show.
             packets.append({
                 "dateTime": packet.dateTime,
                 "age": round(now - packet.dateTime, 1),
-                "source": short_source(packet.source),
+                "source": short_source(
+                    placer.named(packet.driver, packet.identity) if placer
+                    else (packet.identity or packet.driver)),
                 "kind": packet.kind,
                 "fields": len(packet.data),
                 "data": packet.data,
@@ -83,7 +106,11 @@ def recent(store: Any, ingest: Any, limit: int = 12) -> dict:
         rate = round(count / (span / 60), 1)
 
     status = ingest.status()
-    latest = packets[0]["data"] if packets else {}
+    # The headline is the exception, and it has to be: `outTemp` is an
+    # archive column, and the row above holds `tempf`. Placed here so the
+    # six named readings say the same thing as every page on the site, while
+    # the table underneath goes on showing what actually arrived.
+    latest = _headline_from(store, last, placer) if last is not None else {}
     return {
         "now": now,
         "packets": packets,

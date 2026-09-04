@@ -157,7 +157,7 @@ All tests run without a network and without state outside a temp directory.
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
-  cd /mnt/d/Git/weewx-evo && python -m pytest tests/ecowitt -q'
+  cd /mnt/d/Git/weewx-evo && python -m pytest tests/push -q'
 ```
 
 The default WSL distro is `docker-desktop` and has no Python — hence always an

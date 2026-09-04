@@ -16,6 +16,9 @@ which is what a station with one soil probe sends and nothing else.
 
 from __future__ import annotations
 
+import dataclasses
+import io
+import logging
 import sys
 import tempfile
 import time
@@ -25,7 +28,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from weewx_evo.db.live import LiveStore  # noqa: E402
+from weewx_evo import placement  # noqa: E402
+from weewx_evo.db.live import LiveStore, sender_id  # noqa: E402
 from weewx_evo.ingest import drivers  # noqa: E402
 from weewx_evo.ingest.listener import HttpListener, Ingest  # noqa: E402
 from weewx_evo.ingest.plugins.push import protocols  # noqa: E402
@@ -134,24 +138,43 @@ def what_a_station_sends() -> None:
             b"&windspeedmph=3.1&winddir=180&windgustmph=7.2"
             b"&rainin=0.04&dailyrainin=0.28&solarradiation=412.5&UV=3"
             b"&indoortempf=70.1&indoorhumidity=48")
-    made = driver.packets(body, {"received": 1787800000})
+    # The arrival time, not a fixed one in the past. A console's own stamp is
+    # only believed when it is close to ours, and "ours" is the moment the
+    # upload landed -- so a stale `received` makes every stamp look an hour
+    # ahead and the test measures the fallback instead of the parse.
+    arrived = int(time.time())
+    made = driver.packets(body, {"received": arrived})
     check("one packet", len(made), 1)
     packet = made[0]
     check("US units, because the protocol has no other", packet.usUnits, US)
-    check("the station names itself", packet.source, "KTEST5")
-    check("outTemp", packet.data.get("outTemp"), 68.4)
-    check("barometer", packet.data.get("barometer"), 29.92)
-    check("hourRain", packet.data.get("hourRain"), 0.04)
-    check("dayRain, which derive.py turns into rain",
-          packet.data.get("dayRain"), 0.28)
-    check("indoor readings", packet.data.get("inTemp"), 70.1)
+    check("the station names itself", packet.identity, "KTEST5")
     check("its own timestamp, read as UTC",
           packet.dateTime, int(time.mktime(when) - time.timezone))
-    check("housekeeping is not a reading",
+
+    # The journal holds what the console sent, under the console's own names.
+    check("the raw names are what is stored",
+          [n for n in ("tempf", "baromin", "rainin") if n in packet.data],
+          ["tempf", "baromin", "rainin"])
+    check("and what names the station is not",
+          [n for n in ("ID", "PASSWORD") if n in packet.data], [])
+    # `action`, `realtime` and `softwaretype` stay: they say what firmware
+    # this is and are worth having on the settings page. They are metadata to
+    # the catalog, so `numbers()` keeps them out of a record on the way out --
+    # which is checked below rather than assumed.
+
+    placed = drivers.place_with(driver, packet.data, packet.dialect, {})
+    record = placed.record
+    check("outTemp", record.get("outTemp"), 68.4)
+    check("barometer", record.get("barometer"), 29.92)
+    check("hourRain", record.get("hourRain"), 0.04)
+    check("dayRain, which derive.py turns into rain",
+          record.get("dayRain"), 0.28)
+    check("indoor readings", record.get("inTemp"), 70.1)
+    check("housekeeping never becomes a reading",
           [n for n in ("ID", "PASSWORD", "action", "realtime", "softwaretype")
-           if n in packet.data], [])
+           if n in record], [])
     check("nothing unknown in a standard upload",
-          sorted(driver.unplaced), [])
+          sorted(placed.proposals), [])
 
 
 def the_sensor_that_did_not_report() -> None:
@@ -159,13 +182,21 @@ def the_sensor_that_did_not_report() -> None:
     driver = WundergroundDriver()
     body = (b"ID=K&action=updateraw&dateutc=now&tempf=-9999&humidity=55"
             b"&dewptf=&baromin=N/A&windspeedmph=0.0")
-    packet = driver.packets(body, {"received": 1787800000})[0]
+    packet = driver.packets(body, {"received": int(time.time())})[0]
+    # Through the placer, not the driver alone: a reading the console said
+    # it did not take comes back as None, and dropping a None rather than
+    # writing it is the core's decision -- a null is a measurement, and a
+    # rain gauge reading 0.0 because its value was refused is a dry
+    # afternoon that never happened.
+    record = placement.Placer("default", placement.Placements(), None,
+                              drivers.DEFAULT).place(
+        dataclasses.replace(packet, driver="wunderground")).data
     check("-9999 is dropped, not stored as -9999 F",
-          "outTemp" in packet.data, False)
-    check("an empty value is dropped", "dewpoint" in packet.data, False)
-    check("'N/A' is dropped", "barometer" in packet.data, False)
-    check("a real zero is kept", packet.data.get("windSpeed"), 0.0)
-    check("and the good reading survives", packet.data.get("outHumidity"), 55.0)
+          "outTemp" in record, False)
+    check("an empty value is dropped", "dewpoint" in record, False)
+    check("'N/A' is dropped", "barometer" in record, False)
+    check("a real zero is kept", record.get("windSpeed"), 0.0)
+    check("and the good reading survives", record.get("outHumidity"), 55.0)
 
 
 def who_claims_it() -> None:
@@ -191,9 +222,15 @@ def who_claims_it() -> None:
 def the_whole_way() -> None:
     """Over a real listener, with the token where such a console can put it."""
     print("\nover the wire, with the token in PASSWORD")
-    with tempfile.TemporaryDirectory() as raw:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
         live = LiveStore(Path(raw) / "live.sdb", interval_seconds=300)
         listener = HttpListener(Ingest(live, token=TOKEN), "127.0.0.1", 0)
+        heard = io.StringIO()
+        handler = logging.StreamHandler(heard)
+        logger = logging.getLogger("weewx_evo.ingest.listener")
+        before = logger.level
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
         listener.start()
         base = f"http://127.0.0.1:{listener.port}"
         # The path a console with no path field sends. No token in it, and no
@@ -210,9 +247,27 @@ def the_whole_way() -> None:
             check("accepted", post(good), 200)
             stored = list(live.packets(0, 2_000_000_000))
             check("stored", len(stored), 1)
+            # Stored under the console's own names and its own values.
+            # A string, because that is what came off the wire: the
+            # split into numbers and text happens when a record is
+            # built, and doing it here is what used to throw away
+            # everything that would not parse as a float.
             check("read by the WU driver, not the default one",
-                  stored[0].data.get("barometer"), 29.92)
-            check("under the station's own name", stored[0].source, "KTEST5")
+                  stored[0].data.get("baromin"), "29.92")
+            check("and it is a number by the time it is a reading",
+                  drivers.place_with(
+                      drivers.get("wunderground"), stored[0].data,
+                      stored[0].dialect, {}).record.get("barometer"),
+                  29.92)
+            check("and it says which vocabulary that is",
+                  stored[0].dialect, "wunderground")
+            # Friendly names are listener-owned metadata. Without an
+            # announcement, every downstream decision uses the immutable
+            # sender id rather than promoting a wire value to configuration.
+            check("under its canonical unannounced sender id",
+                  placement.Placer("default", placement.Placements(),
+                                   None).name_of(stored[0]),
+                  sender_id("wunderground", "KTEST5"))
 
             # A wrong password is a wrong token, and gets what one gets.
             try:
@@ -231,6 +286,12 @@ def the_whole_way() -> None:
         finally:
             listener.stop()
             live.close()
+            logger.removeHandler(handler)
+            logger.setLevel(before)
+        check("the request log does not contain the token", TOKEN in heard.getvalue(),
+              False)
+        check("or a query carrying console credentials",
+              "PASSWORD=" in heard.getvalue(), False)
 
 
 def main() -> int:

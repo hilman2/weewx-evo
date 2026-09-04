@@ -2,11 +2,14 @@
 
 Getting the readings out of the box on the pole and into the record.
 
-Two ways in, and which one you get is decided by the hardware, not by you:
+Three ways in, and which one you get is decided by the hardware, not by you:
 
 * **It uploads to you.** Anything with a *Custom Server* field — Ecowitt
   gateways, Froggit, Sainlogic, Ambient, La Crosse. You type an address into
   the console and it starts posting.
+* **It uploads somewhere fixed.** An AcuRite bridge, a LaCrosse LW30x, a
+  WeatherFlow hub. There is no field to type an address into, so it is
+  brought here by other means and adopted once it arrives.
 * **You fetch from it.** A Davis Vantage on a serial cable, a Fine Offset over
   USB, an SDR receiver. Those run as a collector: a process of its own that
   reads the hardware and posts to the same place a console would.
@@ -22,10 +25,10 @@ http://192.168.1.20:8000/<token>/ecowitt/
 
 Set that on the console, and the first upload turns up on the **Consoles**
 page under *Seen, not announced* — with its readings already being recorded.
-Adopting it there gives it a name and, if you keep more than one place, says
-which one it belongs to.
-
-![The consoles page with three consoles and three places](images/wiki-4-consoles.png)
+They are in the shared live database, not assigned to an archive.
+Adopting it there gives its hardware identity a readable, unique name. To keep
+its readings in an archive, select that name on the **Places** page — including
+when there is only one place.
 
 The last part of the path is the protocol. `ecowitt` and `wunderground` cover
 almost everything sold; there are six.
@@ -35,6 +38,22 @@ almost everything sold; there are six.
 falls to `driver` in the settings, and one whose token is wrong gets a 404 —
 the same answer as a path that does not exist, so that trying tokens tells the
 prober nothing. → [Security](Security)
+
+## A console that cannot be told an address
+
+An AcuRite bridge posts to Chaney's servers and a LaCrosse gateway to
+`box.weatherdirect.com`; neither has a setting for it. A WeatherFlow hub does
+not post at all — it broadcasts on the local network.
+
+Open **Add a console** anyway. Each of them is listed at the bottom of that
+page with its own steps: the name that has to resolve to this machine, a
+`dnsmasq` line with your address already in it, and the port redirect, because
+they all post to port 80. A hub instead needs the UDP port switched on under
+*Listener*.
+
+Then it turns up under *Seen, not announced* like any other console, and you
+adopt it there. It names itself — an AcuRite bridge with its `id`, a hub with
+its serial — so there is nothing to type in.
 
 ## Hardware you have to fetch from
 
@@ -90,17 +109,18 @@ weewx-evo weewx-driver run --conf /etc/weewx/weewx.conf
 
 ## Two consoles in one garden
 
-Both write into the same place, and their readings are merged field by field
-while the interval is being built. Where both send the same field, the
-**Consoles** page decides which one counts.
-→ [Multiple sources](Multiple-Sources)
+Select both on the same place. Their raw packets already share `live.sdb`; the
+archive merges them field by field while the interval is built. Where both send
+the same field, the **Places** page decides which one is main.
+→ [Multiple senders](Multiple-Sources)
 
 If the second console is a *second sensor* rather than a second opinion — a
-thermometer in the greenhouse, say — give it a role instead, and its
-temperature is kept as `extraTemp3` with a history of its own.
+thermometer in the greenhouse, say — make it extra for that place, and its
+temperature is kept in the selected extra channel with a history of its own.
 
-If it is at a **different spot**, it wants a place of its own: its own sunrise,
-its own barometer. → [Several places](Places)
+If it is at a **different spot**, create another place and select it there. The
+place owns the coordinates, height and archive file. A console may also be
+selected by more than one place. → [Several places](Places)
 
 ## Nothing is arriving
 
@@ -114,13 +134,15 @@ that stopped. A console that has never been heard from at all is not listed as
 silent — that is a console nobody set up, and it says so.
 
 A reading whose field the archive has no column for is **reported, never
-dropped in silence**. The Consoles page lists it and offers a column.
+dropped in silence**. Open the Place's **Fields** tab to map it or add a
+column.
 
-→ [Listener](Ingest-Listener), [Ecowitt](Driver-Ecowitt)
+→ [Listener](Ingest-Listener), [Push drivers](Driver-Ecowitt)
 
 <!-- watches
 src/weewx_evo/ingest/
 src/weewx_evo/stations.py
 src/weewx_evo/adminstations.py
 src/weewx_evo/collectors.py
+tools/console_setup_test.py
 -->

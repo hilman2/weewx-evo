@@ -2,19 +2,28 @@
 
 `admin.py`, `adminplots.py`.
 
-A form, built out of whatever declares settings: the core, every driver, every
-feed, every export.
+A task-oriented shell around the generated settings forms. Its five primary
+destinations are fixed: **Overview**, **Senders**, **Places**, **Publishing**
+and **System**. Adding a feed, export, driver or sender never grows the primary
+navigation.
 
 **Nothing here knows what an Ecowitt is or what an archive interval means.** It
 renders `Option` objects and writes back what comes out. That is the whole
 design: a driver that gains a setting gains a field, and this file does not
 change. → [Configuration](Configuration)
 
-![The overview: a card per step, in the order a reading travels](images/wiki-9-admin-overview.png)
+The overview follows the runtime path in three stages: intake, Places and
+publishing. Problems are listed first and link to the task that owns the fix.
+Setup can be reopened from Overview.
 
-The chain along the top of that page — consoles, places, feeds, exports — is on
-every page belonging to it, with the one being looked at marked.
-→ [Several places](Places)
+The Places page is always the same master/detail editor, with one Place or
+many. It writes `archives.toml` from the first archive onward. Sender
+membership, member role and field mappings are edited only there. The Senders
+page shows identity, live data and Place use. Its edits are limited to the
+sender's label, ignored state and clock tolerances. → [Several places](Places)
+
+The Archiver has no control page. It is a service; its result and status are
+shown on each Place.
 
 ## Starting it
 
@@ -36,14 +45,23 @@ Started](Getting-Started#the-settings-page)
 
 | | |
 |---|---|
-| `GET /<token>/` | The first page |
-| `GET /<token>/<schema>` | A section: `core`, `drivers.ecowitt`, `feeds.json`, `export:<name>` |
+| `GET /<token>/` | Overview |
+| `GET /<token>/senders` | Sender inventory and live diagnosis |
+| `GET /<token>/new-sender` | Register a sender |
+| `GET /<token>/places` | Place master/detail editor |
+| `GET /<token>/new-place` | Create a Place |
+| `GET /<token>/publishing` | Feeds, exports, uploads, notifications and forecasts |
+| `GET /<token>/system` | Process settings and diagnostics |
+| `GET /<token>/live` | Read-only live database |
+| `GET /<token>/<schema>` | A section: `core`, `feeds.json`, `export:<name>` |
 | `GET /<token>/plot:<name>` | One plot |
 | `GET /<token>/new-plot` | Create a plot |
 | `GET /<token>/import-plots` | Import from a WeeWX skin |
 | `GET /<token>/new-export` | Create an export |
 | `GET /<token>/schema.json` | The whole declaration as JSON |
 | `POST /<token>/<schema>` | Save |
+| `POST /<token>/places/<place>/set` | Save Place settings and membership |
+| `POST /<token>/places/<place>/fields` | Save a Place/Sender field mapping |
 | `POST /<token>/<name>/test` | Try an export destination |
 | `POST /<token>/<name>/remove` | Delete |
 
@@ -120,7 +138,7 @@ def page(admin, active, errors=None, message="", form=None) -> bytes
 | `bool` | Checkbox |
 | `choice` | `<select>`, filled from `choices` + `choices_from()` |
 | `duration` | A number plus a unit (`split_duration`) |
-| `list` | Comma-separated |
+| `list` | Ordered checkbox list, with free rows for open lists |
 
 `suggestions` becomes a `<datalist>`: the three usual answers are one click
 away, an unusual one can be typed.
@@ -195,4 +213,7 @@ src/weewx_evo/adminpublish.py
 src/weewx_evo/adminsearch.py
 src/weewx_evo/adminsetup.py
 src/weewx_evo/adminfields.py
+src/weewx_evo/adminlive.py
+src/weewx_evo/adminsystem.py
+tools/adminlive_test.py
 -->

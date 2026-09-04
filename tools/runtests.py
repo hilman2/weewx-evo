@@ -32,10 +32,12 @@ three is ever missing.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -47,6 +49,12 @@ TOOLS = ROOT / "tools"
 #: is keyed on local midnight, and read in the wrong zone the comparison pairs
 #: one day with another. That produced 27 failures once, none of them real.
 ZONE = "Europe/Berlin"
+
+# Windows' C runtime does not understand IANA names in ``TZ``.  It accepts
+# them as a fixed standard-time abbreviation, which shifts every summer day
+# boundary by one hour.  The POSIX spelling carries the same Berlin DST rules
+# and is understood there; Unix gets the clearer IANA name.
+ZONE_ENV = "CET-1CEST,M3.5.0,M10.5.0/3" if os.name == "nt" else ZONE
 
 
 @dataclass
@@ -62,6 +70,17 @@ class Test:
     needs_reference: bool = False
     #: Minutes, roughly. Only used to warn before a long one.
     slow: bool = False
+
+
+def _jobs() -> int:
+    """How many to run at once by default.
+
+    Capped rather than one per core. Half of these start a real process, bind
+    a port and wait on a clock, so they are not CPU-bound and the machine is
+    not the limit -- but a container given two cores and told to run sixteen
+    `serve` processes measures the scheduler rather than the code.
+    """
+    return max(1, min(8, (os.cpu_count() or 2)))
 
 
 def database() -> Path:
@@ -117,6 +136,8 @@ def tests() -> list[Test]:
              "the five places a setting comes from, in order"),
         Test("setup", ["setup_test.py"],
              "an empty directory to a configured station, by forms alone"),
+        Test("consolesetup", ["console_setup_test.py"],
+             "the page asks each driver how its hardware is pointed here"),
         Test("admin", ["adminpage.py"],
              "the settings page: every form, and what a partial POST does"),
         Test("resilience", ["resilience_test.py"],
@@ -130,7 +151,7 @@ def tests() -> list[Test]:
         Test("smoke", ["smoke.py"],
              "listener, archiver and database together"),
         Test("multisource", ["multisource.py"],
-             "two stations into one series"),
+             "isolated source policy and Place-owned runtime routing"),
         Test("driverinstall", ["driverinstall.py"],
              "installing a driver from outside the repository"),
         Test("export", ["export_test.py"],
@@ -172,8 +193,12 @@ def tests() -> list[Test]:
              "which console a live reading comes from"),
         Test("roles", ["roles_test.py"],
              "a second station is moved aside, and one notices nothing"),
+        Test("placement", ["placement_test.py"],
+             "the read side gives what the write side gave, on real payloads"),
         Test("adminfields", ["adminfields_test.py"],
              "a reading can be placed, and what is already there is said"),
+        Test("adminlive", ["adminlive_test.py"],
+             "the live table's own rows, and where each reading goes"),
         Test("adminsearch", ["adminsearch_test.py"],
              "a word finds its setting, and the link lands on it"),
         Test("adminhome", ["adminhome_test.py"],
@@ -301,16 +326,29 @@ def run(test: Test) -> Result:
     environment = dict(os.environ)
     # Every one of these keys its day boundaries on local midnight. Left to
     # the machine, the same test passes here and fails on a server in UTC.
-    environment.setdefault("TZ", ZONE)
+    environment["TZ"] = ZONE_ENV
     environment["PYTHONPATH"] = os.pathsep.join(
         p for p in (str(ROOT / "src"), environment.get("PYTHONPATH", "")) if p)
+
+    # pytest's default is one shared ``pytest-of-<user>`` directory. Two test
+    # runners (or two agents) can then inspect or clean the same numbered
+    # children at once; on Windows the loser sees PermissionError before a
+    # test has even started. Give this invocation a private, exact root.
+    pytest_root = None
+    if test.name == "push":
+        pytest_root = tempfile.mkdtemp(prefix="weewx-evo-pytest-")
+        command.append(f"--basetemp={pytest_root}")
 
     started = time.monotonic()
     # check=False on purpose: a non-zero exit is the finding, not an accident,
     # and raising here would end the run at the first failing test.
-    finished = subprocess.run(command, cwd=ROOT, env=environment,
-                              capture_output=True, text=True,
-                              errors="replace", check=False)
+    try:
+        finished = subprocess.run(command, cwd=ROOT, env=environment,
+                                  capture_output=True, text=True,
+                                  errors="replace", check=False)
+    finally:
+        if pytest_root is not None:
+            shutil.rmtree(pytest_root, ignore_errors=True)
     seconds = time.monotonic() - started
     output = (finished.stdout + finished.stderr).splitlines()
     return Result(test, "pass" if finished.returncode == 0 else "fail",
@@ -363,6 +401,9 @@ def main() -> int:
                         help="say what would run, and skip nothing quietly")
     parser.add_argument("--skip-slow", action="store_true",
                         help="leave out the ones that take minutes")
+    parser.add_argument("--jobs", "-j", type=int, default=_jobs(),
+                        help="how many to run at once (1 runs them in order, "
+                             "which is what to do when reading a failure)")
     args = parser.parse_args()
 
     wanted = tests()
@@ -397,20 +438,50 @@ def main() -> int:
               "not at all")
     print()
 
-    results: list[Result] = []
+    results: dict[str, Result] = {}
+    running = []
     for test in wanted:
         reason = missing(test, have, reference)
         if reason:
             print(f"--   {test.name:<14} skipped: {reason.splitlines()[0]}")
-            results.append(Result(test, "skip", 0.0, reason))
-            continue
-        print(f"     {test.name:<14} ...", end="", flush=True)
-        result = run(test)
-        print(f"\r  {'ok  ' if result.status == 'pass' else 'FAIL'} "
-              f"{test.name:<14} {result.seconds:6.1f}s")
-        results.append(result)
+            results[test.name] = Result(test, "skip", 0.0, reason)
+        else:
+            running.append(test)
 
-    return report(results)
+    # Longest first. With workers of unequal length the tail is whatever
+    # started last, so a ninety-second test picked up at the end costs ninety
+    # seconds nobody is using -- measured at 13 minutes for a suite whose
+    # longest test is 97 seconds.
+    running.sort(key=lambda t: (not t.slow, t.name))
+
+    if args.jobs == 1:
+        for test in running:
+            print(f"     {test.name:<14} ...", end="", flush=True)
+            result = run(test)
+            print(f"\r  {'ok  ' if result.status == 'pass' else 'FAIL'} "
+                  f"{test.name:<14} {result.seconds:6.1f}s")
+            results[test.name] = result
+    else:
+        # Each test already keeps its state in a temporary directory of its
+        # own -- that is the rule this suite is written to -- so they do not
+        # need to be told about each other. What they do share is the clock:
+        # several starting a real `serve` at once take longer each, which is
+        # why the report prints wall-clock per test and the total separately.
+        print(f"  running {args.jobs} at a time\n")
+        started = time.monotonic()
+        with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            pending = {pool.submit(run, one): one for one in running}
+            for done in cf.as_completed(pending):
+                result = done.result()
+                results[result.test.name] = result
+                print(f"  {'ok  ' if result.status == 'pass' else 'FAIL'} "
+                      f"{result.test.name:<14} {result.seconds:6.1f}s")
+        print(f"\n  {time.monotonic() - started:.0f}s of wall clock")
+
+    # Reported in the order the list declares, whatever order they finished
+    # in: that order is "where a failure is most usefully found", and it is
+    # the only thing making two runs comparable.
+    return report([results[t.name] for t in wanted if t.name in results])
 
 
 if __name__ == "__main__":

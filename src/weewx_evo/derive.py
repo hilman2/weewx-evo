@@ -1112,24 +1112,15 @@ def from_settings(settings: Any, place: Any = None) -> Deriver:
     take the altitude and the coordinates, so a second site computed with the
     first site's numbers is wrong in a way nothing downstream can see.
     """
-    def _placed(field_name: str, setting: str) -> Any:
-        """The archive's own number, or the settings' where it said nothing.
-
-        The same fallback `archives.Placed.get` does, and it has to be the
-        same one: a place added for its file alone leaves the three numbers
-        blank, and every *feed* for it then uses the settings' coordinates
-        while the archiver got `None`. Pressure reduction and clear-sky
-        radiation are computed one way into the archive and reported another
-        way off the page, and nothing anywhere reports the disagreement.
-        """
-        value = getattr(place, field_name, None)
-        return settings.get(setting) if value in (None, "") else value
-
     if place is not None:
+        # Missing stays missing. Falling through to a legacy central value
+        # would give a second place the first one's coordinates: derived
+        # readings would look plausible and be wrong. `archives.Placed`
+        # follows the same rule for feeds and uploads.
         station = Station(
-            latitude=_placed("latitude", "station.latitude"),
-            longitude=_placed("longitude", "station.longitude"),
-            altitude_m=_placed("altitude", "station.altitude"),
+            latitude=getattr(place, "latitude", None),
+            longitude=getattr(place, "longitude", None),
+            altitude_m=getattr(place, "altitude", None),
         )
     else:
         station = Station(

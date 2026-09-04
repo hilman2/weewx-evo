@@ -41,22 +41,111 @@ def check(what: str, got: object, want: object) -> bool:
 
 
 def table(work: Path, rows: list[tuple]) -> Path:
-    """A live table holding those packets."""
+    """A live table holding those packets.
+
+    Written column by column rather than positionally. A row here is a
+    console's own reading under its own name, keyed by the (driver,
+    identity) pair the real table records -- the station name each one
+    answers to is a lookup, and `Live` makes it through the register.
+    """
     db = work / "live.sdb"
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE packet (dateTime INTEGER, seq INTEGER, "
-                 "source TEXT, usUnits INTEGER, interval INTEGER, data TEXT)")
-    conn.executemany("INSERT INTO packet VALUES (?,?,?,?,?,?)", rows)
+                 "driver TEXT, identity TEXT, dialect TEXT, "
+                 "usUnits INTEGER, interval INTEGER, data TEXT)")
+    conn.executemany(
+        "INSERT INTO packet (dateTime, seq, driver, identity, dialect,"
+        " usUnits, interval, data) VALUES (?,?,?,?,NULL,?,?,?)",
+        [(when, seq, "json", source, units, gap, data)
+         for when, seq, source, units, gap, data in rows])
     conn.commit()
     conn.close()
     return db
 
 
+def old_table(work: Path, rows: list[tuple]) -> Path:
+    """The exact source-keyed table from before the sensor journal."""
+    db = work / "old-live.sdb"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE packet ("
+        "seq INTEGER PRIMARY KEY AUTOINCREMENT, dateTime INTEGER NOT NULL, "
+        "received INTEGER NOT NULL, source TEXT NOT NULL, kind TEXT NOT NULL, "
+        "usUnits INTEGER NOT NULL, interval REAL, digest TEXT NOT NULL, "
+        "data TEXT NOT NULL, raw TEXT)")
+    conn.executemany(
+        "INSERT INTO packet (dateTime, received, source, kind, usUnits, interval,"
+        " digest, data, raw) VALUES (?,?,?,?,?,?,?,?,NULL)",
+        [(when, when, source, "loop", units, gap, str(seq), data)
+         for when, seq, source, units, gap, data in rows])
+    conn.commit()
+    conn.close()
+    return db
+
+
+def sender_table(work: Path, rows: list[tuple]) -> Path:
+    """A sender-keyed table without the redundant pair columns."""
+    from weewx_evo.db.live import sender_id
+
+    db = work / "sender-live.sdb"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE packet (dateTime INTEGER, seq INTEGER, "
+                 "sender TEXT, dialect TEXT, usUnits INTEGER, interval INTEGER, "
+                 "data TEXT)")
+    conn.executemany(
+        "INSERT INTO packet (dateTime, seq, sender, dialect, usUnits, interval,"
+        " data) VALUES (?,?,?,NULL,?,?,?)",
+        [(when, seq, sender_id("json", source), units, gap, data)
+         for when, seq, source, units, gap, data in rows])
+    conn.commit()
+    conn.close()
+    return db
+
+
+def current_table(work: Path, rows: list[tuple]) -> Path:
+    """The current table, carrying sender plus its reversible pair."""
+    from weewx_evo.db.live import sender_id
+
+    db = work / "current-live.sdb"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE packet (dateTime INTEGER, seq INTEGER, "
+                 "driver TEXT, identity TEXT, sender TEXT, dialect TEXT, "
+                 "usUnits INTEGER, interval INTEGER, data TEXT)")
+    conn.executemany(
+        "INSERT INTO packet (dateTime, seq, driver, identity, sender, dialect,"
+        " usUnits, interval, data) VALUES (?,?,'json',?,?,NULL,?,?,?)",
+        [(when, seq, source, sender_id("json", source), units, gap, data)
+         for when, seq, source, units, gap, data in rows])
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _placer(sources, placements=None):
+    """The live DB's sender directory with a display label for each console.
+
+    The names in `sources` are what a site's configuration lists. The table
+    is keyed on (driver, identity), so something has to turn one into the
+    other, and that something is the same live-side directory the archiver
+    uses -- no station configuration or driver is involved.
+    """
+    from weewx_evo import placement
+    from weewx_evo.db.live import SenderIdentity, sender_id
+
+    directory = [SenderIdentity(sender=sender_id("json", name), driver="json",
+                                identity=name, label=name)
+                 for name in sources]
+    return placement.Placer("default", placements or placement.Placements(),
+                            directory)
+
+
 def reading(db: Path, pick: str, sources=("garten", "schuppen"),
-            main=("garten",)) -> dict:
+            main=("garten",), policy=None, placer=None) -> dict:
     from weewx_evo.uploads.records import Live
 
-    live = Live(db, sources=list(sources), pick=pick, main=list(main))
+    selected = None if sources is None else list(sources)
+    live = Live(db, sources=selected, pick=pick, main=list(main), policy=policy,
+                placer=placer or _placer(sources or ()))
     try:
         got = live.after(0, 1)
         return got[0] if got else {}
@@ -94,14 +183,132 @@ def both_reporting() -> None:
         averaged = reading(db, "average")
         check("average is the mean", averaged.get("outTemp"), 15.0)
         check("of every field", averaged.get("outHumidity"), 65.0)
-        # A direction is not a number to average: 350 and 10 average to 180,
-        # which is the opposite direction. Taken from the newest instead.
-        check("but not of a direction", averaged.get("windDir"), 10.0)
+        # A direction is circular: 350 and 10 meet at north, not at the
+        # arithmetic mean of 180 degrees.
+        check("directions use their circular mean", averaged.get("windDir"), 0.0)
         # A field only one console reports is that console's value. The mean
         # of one number is that number, and leaving it out would lose a
         # reading nothing else has.
         check("a reading only one of them has still comes through",
               averaged.get("barometer"), 1013.0)
+
+
+def source_only_schema_stays_readable() -> None:
+    """A rolling upgrade may start the uploader before the listener migrates."""
+    print("\nthe source-only live schema")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        now = int(time.time())
+        db = old_table(Path(raw), [
+            (now - 20, 1, "garten", 16, None,
+             json.dumps({"outTemp": 20.0})),
+            (now - 10, 2, "schuppen", 16, None,
+             json.dumps({"outTemp": 10.0})),
+        ])
+        check("an explicitly selected old source is read",
+              reading(db, "main").get("outTemp"), 20.0)
+        check("old sources can still be averaged",
+              reading(db, "average").get("outTemp"), 15.0)
+
+
+def sender_only_schema_stays_readable() -> None:
+    """The reader also accepts the canonical single-column sender key."""
+    print("\nthe sender-only live schema")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        now = int(time.time())
+        db = sender_table(Path(raw), [
+            (now - 20, 1, "garten", 16, None,
+             json.dumps({"outTemp": 20.0})),
+            (now - 10, 2, "schuppen", 16, None,
+             json.dumps({"outTemp": 10.0})),
+        ])
+        check("a canonical sender is selected without pair columns",
+              reading(db, "main").get("outTemp"), 20.0)
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        from weewx_evo.db.live import sender_id
+
+        now = int(time.time())
+        db = current_table(Path(raw), [
+            (now - 20, 1, "garten", 16, None,
+             json.dumps({"outTemp": 20.0})),
+            (now - 10, 2, "schuppen", 16, None,
+             json.dumps({"outTemp": 10.0})),
+        ])
+        senders = (sender_id("json", "garten"),
+                   sender_id("json", "schuppen"))
+        check("the current redundant sender shape is read",
+              reading(db, "average", sources=senders, main=(senders[0],),
+                      placer=_placer(("garten", "schuppen"))).get("outTemp"),
+              15.0)
+
+
+def averaging_normalises_each_packet() -> None:
+    """Placement, quality and units all happen before arithmetic."""
+    print("\nnormalising packets before averaging")
+    from weewx_evo import placement, quality, units
+    from weewx_evo.db.live import sender_id
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        now = int(time.time())
+        db = table(Path(raw), [
+            # 68 F and 20 C are the same temperature. The unknown field is
+            # deliberately different: with no unit group it must not be mixed
+            # across systems and merely relabelled as metric.
+            (now - 20, 1, "garten", units.US, None,
+             json.dumps({"outTemp": 68.0, "mystery": 100.0})),
+            (now - 10, 2, "schuppen", units.METRIC, None,
+             json.dumps({"outTemp": 20.0, "mystery": 10.0})),
+        ])
+        averaged = reading(db, "average")
+        check("equal temperatures in different systems stay equal",
+              averaged.get("outTemp"), 20.0)
+        check("the result names the common system", averaged.get("usUnits"),
+              units.METRIC)
+        check("an unknown mixed-unit field is not falsely averaged",
+              averaged.get("mystery"), 10.0)
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        now = int(time.time())
+        db = table(Path(raw), [
+            (now - 20, 1, "garten", units.METRIC, None,
+             json.dumps({"rawTemp": 10.0})),
+            (now - 10, 2, "schuppen", units.METRIC, None,
+             json.dumps({"rawTemp": 20.0})),
+        ])
+        placements = placement.Placements(takes=[
+            placement.Takes(archive="default",
+                            station=sender_id("json", "garten"),
+                            fields={"rawTemp": "outTemp"}),
+            placement.Takes(archive="default",
+                            station=sender_id("json", "schuppen"),
+                            fields={"rawTemp": "outTemp"}),
+        ])
+        placer = _placer(("garten", "schuppen"), placements)
+        policy = quality.Policy(calibration={
+            sender_id("json", "garten"): {
+                "outTemp": quality.Adjust(offset=2.0)},
+            sender_id("json", "schuppen"): {
+                "outTemp": quality.Adjust(offset=4.0)},
+        })
+        averaged = reading(db, "average", policy=policy, placer=placer)
+        check("placement precedes station calibration and averaging",
+              averaged.get("outTemp"), 18.0)
+        check("the raw name does not leak through", "rawTemp" in averaged, False)
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        now = int(time.time())
+        db = table(Path(raw), [
+            (now - 20, 1, "garten", units.METRIC, None,
+             json.dumps({"outTemp": 20.0})),
+            (now - 10, 2, "schuppen", units.METRIC, None,
+             json.dumps({"outTemp": 100.0})),
+        ])
+        policy = quality.Policy(
+            limits={"outTemp": quality.Rule(maximum=50.0)},
+            system=units.METRIC)
+        averaged = reading(db, "average", policy=policy)
+        check("a rejected packet cannot contaminate the average",
+              averaged.get("outTemp"), 20.0)
 
 
 def the_main_one_goes_quiet() -> None:
@@ -155,7 +362,7 @@ def nobody_announced_anything() -> None:
         ])
         for pick in ("main", "main-or-extra", "extra", "newest"):
             check(f"{pick} is the newest packet",
-                  reading(db, pick, sources=(), main=()).get("outTemp"), 10.0)
+                  reading(db, pick, sources=None, main=()).get("outTemp"), 10.0)
 
 
 def one_console() -> None:
@@ -172,13 +379,63 @@ def one_console() -> None:
                           main=("garten",)).get("outTemp"), 20.0)
 
 
+def an_explicitly_empty_place_reads_nothing() -> None:
+    """An empty assignment is not the legacy unfiltered view."""
+    print("\nan explicitly empty place")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        now = int(time.time())
+        db = table(Path(raw), [
+            (now - 40, 1, "garten", 16, None,
+             json.dumps({"outTemp": 20.0})),
+            (now - 30, 2, "garten", 16, None,
+             json.dumps({"outTemp": 21.0})),
+            (now - 20, 3, "garten", 16, None,
+             json.dumps({"outTemp": 22.0})),
+            (now - 10, 4, "garten", 16, None,
+             json.dumps({"outTemp": 23.0})),
+        ])
+
+        from weewx_evo.uploads.records import Live
+
+        unbound = Live(db, main=["garten"], placer=_placer(["garten"]))
+        try:
+            check("None keeps the legacy unfiltered view",
+                  unbound.after(0, 1)[0].get("outTemp"), 23.0)
+            for pick in Live.PICKS:
+                empty = unbound.for_sources([], pick)
+                try:
+                    check(f"{pick} returns no current reading",
+                          empty.after(0, 1), [])
+                    check(f"{pick} returns no later reading",
+                          empty.after(now - 60, 10), [])
+                    check(f"{pick} measures no rhythm",
+                          empty.rhythm(now), None)
+                finally:
+                    empty.close()
+
+            unknown = unbound.for_sources(["unbekannt"], "average")
+            try:
+                check("an unknown explicit source returns no reading",
+                      unknown.after(0, 1), [])
+                check("an unknown explicit source measures no rhythm",
+                      unknown.rhythm(now), None)
+            finally:
+                unknown.close()
+        finally:
+            unbound.close()
+
+
 def main() -> int:
     print("which console a live reading comes from")
     both_reporting()
+    source_only_schema_stays_readable()
+    sender_only_schema_stays_readable()
+    averaging_normalises_each_packet()
     the_main_one_goes_quiet()
     the_whole_site_is_quiet()
     nobody_announced_anything()
     one_console()
+    an_explicitly_empty_place_reads_nothing()
 
     print()
     if failures:

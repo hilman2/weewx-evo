@@ -30,9 +30,11 @@ from __future__ import annotations
 import sys
 import urllib.parse
 from pathlib import Path
+from typing import ClassVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from weewx_evo import archives, cli
 from weewx_evo.uploads import ambient, cwop, weathercloud, windy
 from weewx_evo.uploads.progress import Progress
 
@@ -50,6 +52,37 @@ def check(what: str, got: object, want: object) -> None:
 def params(query: str) -> dict[str, str]:
     """A query string as a dictionary, so a comparison names the field."""
     return dict(urllib.parse.parse_qsl(query.split("?", 1)[-1], keep_blank_values=True))
+
+
+def test_place_enrichment_is_shared() -> None:
+    """Every builder uses the selected Place, including its first database."""
+    class Settings:
+        _path = Path("evo.toml")
+        config: ClassVar[dict] = {}
+
+        @staticmethod
+        def get(_name: str, default: object = None) -> object:
+            return default
+
+    registry = archives.Register([
+        archives.Archive("south", "south.sdb", label="South",
+                         latitude=48.1, longitude=11.1),
+        archives.Archive("north", "north.sdb", label="North",
+                         latitude=49.2, longitude=12.3),
+    ])
+    made = cli.build_upload_for_place(
+        "map", {"kind": "cwop", "station": "DW1234", "archive": "north"},
+        Settings(), registry)
+    check("an upload gets latitude from its Place", made.latitude, 49.2)
+    check("and longitude from the same Place", made.longitude, 12.3)
+
+    mqtt = cli.build_upload_for_place(
+        "broker", {"kind": "mqtt", "host": "localhost", "archive": "north"},
+        Settings(), registry)
+    try:
+        check("MQTT gets the Place name", mqtt.station, "North")
+    finally:
+        mqtt.close()
 
 
 # A record in metric: the archive holds Celsius and every one of these
@@ -356,6 +389,7 @@ def main() -> int:
     test_weathercloud_scaling()
     test_indoor_is_off()
     test_wow_renames_both_credentials()
+    test_place_enrichment_is_shared()
     test_a_fast_upload_is_summarised()
     with tempfile.TemporaryDirectory() as tmp:
         test_progress_never_goes_backwards(Path(tmp))

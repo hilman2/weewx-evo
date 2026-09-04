@@ -27,8 +27,8 @@ Their `driver.py` is 1610 lines, and most of it is work this program has
 done elsewhere for a while:
 
     the socket, threads, shutdown      ingest/listener.py
-    which console may write            stations.toml
-    what a station is allowed to fill  sources.py, and the archive it names
+    which sender may write             listener access policy
+    what reaches each archive column   Place membership, role, placement.toml
     unit registration                  units.contribute
     telling somebody what is wrong     the settings page
 
@@ -39,9 +39,11 @@ per-dialect mapper, which is this file.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ....db.live import Packet
+from ... import drivers
 from ...drivers import Response
 from . import mapping, transport
 from . import protocols as protocol_defs
@@ -53,6 +55,16 @@ log = logging.getLogger(__name__)
 US = 1
 METRIC = 16
 METRICWX = 17
+
+#: Values that name the station rather than describe the weather. Taken out
+#: before the readings are stored -- see `_without_secrets`.
+SECRETS = frozenset(transport.SECRETS)
+
+#: How many read-side mappers to keep before starting again. Each one walks
+#: its whole catalog to build an inferrer, so they are worth keeping; but the
+#: key includes the placements, and an entry per combination ever seen is a
+#: leak in a process that runs for months.
+MAX_READERS = 32
 
 
 class _Request:
@@ -105,8 +117,10 @@ class PushDriver:
         protocol = protocol or type(self).protocol_class
         self.protocol = protocol
         self.name = protocol.name
-        #: One mapper per dialect seen, built on first use.
-        self._mappers: dict[str, mapping.Mapper] = {}
+        #: One mapper per (dialect, mode, placements), built on first use.
+        #: Used only by the listener's proposal collector. Archive processes
+        #: execute the declarative description returned by `dialect_spec`.
+        self._readers: dict[tuple, mapping.Mapper] = {}
         self.field_map = dict(field_map_extensions or {})
         self.infer_unknown = infer_unknown
         # Read here rather than relying on a schema to have done it. These
@@ -164,6 +178,17 @@ class PushDriver:
             return 0.0
 
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
+        """The upload as readings, under the names the console used.
+
+        Nothing is named, placed or dropped here beyond the secrets. The
+        catalog is persisted separately as JSON by `dialect_spec`; which
+        fields an archive wants is still decided later, so a decision made
+        next week reaches the readings that arrived today.
+
+        The clock is the exception and stays here: a stamp is too old because
+        a *clock* is wrong, and a clock belongs to a box at the moment it
+        uploaded. There is no answering that a week later.
+        """
         request = _Request(path=str(meta.get("path") or "/"), body=body)
         raw = self._raw(request)
         if not raw:
@@ -173,32 +198,126 @@ class PushDriver:
         if not readings:
             return []
         dialect = self.protocol.dialect(raw)
-        mapper = self._mapper_for(dialect, self._station_of(raw))
-
-        packet, guesses = mapper.to_packet(readings)
-        if guesses:
-            for guess in guesses:
-                self.unplaced[guess.raw] = guess
-        stamp = packet.pop("dateTime", None) or meta.get("received")
-        data = {name: value for name, value in packet.items()
-                if value is not None}
-        if not data:
-            return []
+        identity = self._station_of(raw)
+        mine = self.stations.get(identity.casefold()) or {}
+        stamp = transport.device_time(
+            readings, now=meta.get("received"),
+            max_behind=_clock(mine, "max_behind", self.max_behind),
+            max_ahead=_clock(mine, "max_ahead", self.max_ahead))
+        if stamp is None:
+            stamp = meta.get("received") or time.time()
+        data = _without_secrets(readings)
+        spec = self._dialect_spec(dialect, data)
         return [Packet(dateTime=int(stamp), usUnits=int(dialect.units),
-                       data=data, source=self._station_of(raw) or self.name,
-                       kind="loop", received=meta.get("received"))]
+                       data=data,
+                       identity=identity,
+                       # The dialect's own name, not prefixed with the
+                       # protocol: `driver` already says which protocol, and
+                       # Weather Underground's metric dialect is itself
+                       # called `wunderground/metric` -- prefixed, that is a
+                       # name with two slashes in it that no placement file
+                       # would ever be written against.
+                       dialect=dialect.name,
+                       mapping=spec.as_dict(),
+                       kind="loop", received=meta.get("received"),
+                       volatile=frozenset(dialect.metadata or transport.METADATA))]
+
+    def dialect_spec(self, readings: dict, dialect: str) -> drivers.DialectSpec:
+        """The catalog as inert data for the core archiver.
+
+        The listener calls this immediately after `packets`. The raw readings
+        remain raw; only the rules for interpreting them are serialized. A
+        split archiver therefore needs neither this module nor any installed
+        third-party driver.
+        """
+        found = self.protocol.dialect(readings)
+        if dialect and found.name != dialect:
+            raise ValueError(f"stored dialect {dialect!r} became {found.name!r}")
+        return self._dialect_spec(found, readings)
+
+    def _dialect_spec(self, found: Any, readings: dict) -> drivers.DialectSpec:
+        """Serialize one already-selected dialect."""
+
+        fields = dict(found.fields)
+        fields.update(self.field_map)
+        contested = set(found.contested)
+        contested.difference_update(self.field_map)
+
+        # Some firmware identifies the meaning of an otherwise contested
+        # field in the upload itself. Persist that answer; the metadata it was
+        # inferred from is still in `readings`, but the archive must not need
+        # protocol code to ask the question again.
+        for raw, target in (self.protocol.settled_contested(readings) or {}).items():
+            if raw in self.field_map:
+                continue
+            fields[raw] = target
+            contested.discard(raw)
+
+        return drivers.DialectSpec(
+            fields=fields,
+            contested=frozenset(contested),
+            scale=dict(found.scale),
+            metadata=frozenset(found.metadata),
+            absent=transport.ABSENT + tuple(found.absent),
+            groups=dict(found.groups),
+            usUnits=int(found.units),
+        )
+
+    def place(self, readings: dict, dialect: str, decisions: dict[str, str],
+              infer: str = mapping.OFF) -> drivers.Placed | None:
+        """Stored readings as an observation record, for one console.
+
+        The dialect is worked out from the readings again rather than looked
+        up by the stored name. The name does not fix the units: Weather
+        Underground's metric dialect answers to one name and carries either
+        `METRIC` or `METRICWX`, with different scale factors, depending on a
+        class attribute. Asking the protocol is the same question the upload
+        was answered with, so the two cannot drift.
+        """
+        found = self.protocol.dialect(readings)
+        if dialect and found.name != dialect:
+            # The catalog moved under the data. Said rather than corrected:
+            # which of the two is right is not answerable from here, and a
+            # record built from the wrong one is plausible and wrong.
+            log.warning(
+                "these readings were stored as %r and read back as %r. A rebuild of "
+                "that span will use %r; if that is not what the console speaks, the "
+                "record it produces is not the record it produced the first time.",
+                dialect, found.name, found.name)
+        # Without `dateutc` the mapper does not ask about the clock, and it
+        # has no business asking: the question was answered when the upload
+        # arrived and the answer is on the packet. Asked again it compares the
+        # console's stamp against the `now` this passes, which is not a time
+        # -- so a perfectly good console produced a warning about being fifty
+        # years out, on every packet, for ever. Measured on the instance.
+        #
+        # It cannot change a placement. `dateutc` is in `dialect.metadata`, so
+        # `numbers()` routes it to the text half either way and no field of
+        # the record can come from it.
+        if "dateutc" in readings:
+            readings = {name: value for name, value in readings.items()
+                        if name != "dateutc"}
+        record, guesses = self._reader(found, decisions, infer).to_packet(readings, now=0)
+        record.pop("dateTime", None)
+        # The guesses go back only to whoever asked for them. `Archiver`
+        # never reads them, and that is the one thing keeping this a pure
+        # function: the list is shorter the second time, because the mapper
+        # remembers having already said so.
+        return drivers.Placed(record=record, usUnits=int(found.units),
+                              proposals=tuple(guesses))
 
     def unit_groups(self) -> dict[str, str]:
         """What this protocol's fields measure, for anything that formats one.
 
-        The catalog's own groups plus whatever inference has settled on. Both,
-        because a field the catalog does not name still needs a unit before a
-        page can print it.
+        The catalog's, and only the catalog's. What a *guessed* column
+        measures used to be collected from the mappers here -- and it never
+        reached anybody, because `install_driver_groups` asks this once at
+        startup, before a packet has arrived. Those groups are written down
+        beside the placement that produced them now (`placement.toml`,
+        `[groups]`), which is the only shape in which a second process can
+        see them.
         """
-        found = dict(self.protocol.groups)
-        for mapper in self._mappers.values():
-            found.update(mapper.wanted_groups())
-        return found
+        return dict(self.protocol.groups)
 
     def redact(self, raw: str) -> str:
         """The upload with whatever names the station replaced.
@@ -220,7 +339,7 @@ class PushDriver:
         return {
             "protocol": self.name,
             "hardware": self.protocol.hardware,
-            "dialects": sorted(self._mappers),
+            "dialects": sorted({key[0] for key in self._readers}),
             "unplaced": sorted(self.unplaced),
         }
 
@@ -236,28 +355,51 @@ class PushDriver:
         except Exception:
             return ""
 
-    def _mapper_for(self, dialect: Any, station: str) -> mapping.Mapper:
-        key = f"{dialect.name}\x00{station}"
-        mapper = self._mappers.get(key)
+    def _reader(self, dialect: Any, decisions: dict[str, str],
+                infer: str = mapping.OFF) -> mapping.Mapper:
+        """A mapper that looks things up, cached by everything it was built from.
+
+        **With `infer_unknown='off'` this is a pure function**, which is the
+        property `Archiver.rebuild` needs. Checked against `mapping.py` rather
+        than assumed: in that mode `_unmapped` never takes a guess, so `seen`
+        and `groups` are never written; `ignored` and `warned` only stop the
+        same answer being worked out and said twice. The one thing that does
+        change with use is the guesses it hands back, which is why the
+        archiver never reads them.
+
+        The driver-wide `field_map_extensions` still comes first and the
+        operator's placements win: the running installation has two decisions
+        under that key from before the settings page existed.
+        """
+        key = (dialect.name, infer, tuple(sorted(decisions.items())))
+        mapper = self._readers.get(key)
         if mapper is None:
-            mine = self.stations.get((station or "").casefold()) or {}
-            # The station's own map wins over the driver-wide one: two
-            # consoles both number their channels from one, and the whole
-            # point of a per-station map is that channel 1 is not the same
-            # sensor on both.
+            if len(self._readers) >= MAX_READERS:
+                # Cleared whole rather than evicted one at a time. Which
+                # entry is oldest says nothing about which is next, and a
+                # half-cleared cache is one more state to reason about.
+                self._readers.clear()
             extensions = dict(self.field_map)
-            extensions.update(mine.get("field_map_extensions") or {})
-            # And its own clock, where it has been given one. A stamp is too
-            # old because a *clock* is wrong, and a clock belongs to a box:
-            # an old display that drifts and a GW2000 keeping NTP are one
-            # protocol and two different answers.
-            mapper = mapping.Mapper(
-                dialect, extensions=extensions,
-                infer_unknown=self.infer_unknown,
-                max_behind=_clock(mine, "max_behind", self.max_behind),
-                max_ahead=_clock(mine, "max_ahead", self.max_ahead))
-            self._mappers[key] = mapper
+            extensions.update(decisions)
+            mapper = mapping.Mapper(dialect, extensions=extensions,
+                                    infer_unknown=infer)
+            self._readers[key] = mapper
         return mapper
+
+
+def _without_secrets(readings: dict) -> dict:
+    """The readings with the values that name the station taken out.
+
+    This did not have to exist before. `data` held mapped weather fields and
+    never a PASSKEY, and the one copy of the body beside it was redacted and
+    thrown away after an hour. A journal keeps what the console sent for the
+    whole retention period, so without this a PASSKEY, a MAC, a serial or --
+    on Weather Underground -- the upload password would sit in it for a week.
+
+    The identity is in its own column, which is the only place anything needs
+    it, and it is what `stations.toml` matches against.
+    """
+    return {name: value for name, value in readings.items() if name not in SECRETS}
 
 
 def _duration(value: Any, fallback: float) -> float:
@@ -279,10 +421,10 @@ def _duration(value: Any, fallback: float) -> float:
 def _by_identity(stations: dict[str, dict] | None) -> dict[str, dict]:
     """The stations keyed by what a console actually sends.
 
-    They arrive keyed by the name somebody typed, because that is what the
-    settings page and `sources.toml` use. What reaches the lookup is a
-    PASSKEY or a station ID, read off the upload -- so the key has to be the
-    identity, and folded, since consoles upper-case what is typed into them.
+    They arrive keyed by the display name somebody typed. What reaches the
+    lookup is a PASSKEY or station ID read off the upload, so the key has to
+    be the identity, folded because consoles upper-case what is typed into
+    them.
     """
     found: dict[str, dict] = {}
     for name, entry in (stations or {}).items():
@@ -333,6 +475,116 @@ def _options(protocol: Any) -> list:
     return []
 
 
+#: Notes that describe how the *upstream WeeWX extension* is configured, not
+#: how the hardware is. Matched on a fragment of the sentence rather than the
+#: whole of it, and what is not matched is passed through: a note that stops
+#: matching because upstream reworded it is a note the page then prints, and
+#: `no_note_sends_anybody_to_a_weewx_conf` in tools/console_setup_test.py
+#: fails on the words that give it away. Dropping silently would leave the
+#: page telling somebody to edit a file this installation does not have.
+SAID_HERE_INSTEAD = {
+    # Two fragments, one answer. Upstream splits the instruction across a
+    # sentence and the config block under it, so catching only the block
+    # left "In weewx.conf, then restart:" standing on its own above our
+    # replacement -- pointing at a file, then somewhere else. Both map to
+    # the same text and the duplicate is dropped below.
+    "weewx.conf": (
+        "This one arrives over UDP rather than HTTP, so the listener has to "
+        "be told to open a second socket: set UDP port to %(udp)s under "
+        "Listener and restart. A datagram carries no path, so that port is "
+        "the whole of the access control -- the upload token cannot reach it."
+    ),
+    "[UltimatePush]": (
+        "This one arrives over UDP rather than HTTP, so the listener has to "
+        "be told to open a second socket: set UDP port to %(udp)s under "
+        "Listener and restart. A datagram carries no path, so that port is "
+        "the whole of the access control -- the upload token cannot reach it."
+    ),
+    "in the driver section": (
+        "PASSWORD is the upload token. These consoles have no field for a "
+        "path, so that is where it goes, and an upload carrying the wrong "
+        "one is refused."
+    ),
+    # Not about configuration, but it names the wrong program: the advice is
+    # right and the reader is not running WeeWX.
+    "running WeeWX as root": (
+        "It posts to port 80, so redirect that rather than running this as "
+        "root:"
+    ),
+}
+
+
+def _notes(protocol: Any) -> tuple[str, ...]:
+    """The protocol's notes, with the ones about weewx.conf said our way.
+
+    `%(udp)s` is filled in here rather than left to the page: which port a
+    hub broadcasts on is a property of the hardware and the protocol knows
+    it, so the page is left with the three placeholders it can actually
+    answer -- where this driver is reachable.
+    """
+    out = []
+    for note in protocol.notes:
+        for fragment, ours in SAID_HERE_INSTEAD.items():
+            if fragment in note:
+                # Replaced rather than `%`-formatted: our own text carries
+                # `%(address)s` too, and formatting it here would raise on
+                # the placeholder that is the page's to fill.
+                note = ours.replace(
+                    "%(udp)s", str(protocol.default_port or "the hub's port"))
+                break
+        if note not in out:
+            out.append(note)
+    return tuple(out)
+
+
+def _setup(protocol: Any) -> drivers.Setup:
+    """How somebody points this protocol's hardware at us.
+
+    Every part of the answer is already on the protocol class, written by the
+    people who own the hardware -- which is why this reads rather than
+    repeats. The stations page carried a hand-written list of three instead,
+    and it had drifted: it turned an Ambient console away with "has no server
+    field" while `protocols/ambient.py` lists five, Server IP and Port among
+    them.
+
+    The one judgement here is `identity`, and it is structural rather than a
+    list of names. A protocol names the field its console identifies itself
+    with; if that same field is also one of the ones somebody types in, the
+    identity is ours to hand out and the console will carry what it is given.
+    Weather Underground is the only one of the six where it is -- `ID` is in
+    both -- and an identity handed out cannot be handed out twice, which is
+    the better arrangement wherever the hardware allows it.
+    """
+    typed = {label.strip().lower() for label, _value in protocol.settings}
+    carries = [one for one in protocol.identity if one.strip().lower() not in typed]
+
+    # Which row holds the identity and which holds the token is answered
+    # here, where the field names are, rather than by the page matching
+    # labels against a list. Upstream's own value for both is "anything you
+    # like", which is true of a WeeWX installation that checks neither and
+    # wrong here: the token is what stands between the open internet and the
+    # measurement series.
+    named = {one.strip().lower() for one in protocol.identity}
+    secret = (protocol.secret or "").strip().lower()
+    fields = []
+    for label, value in protocol.settings:
+        low = label.strip().lower()
+        if low in named:
+            value = "%(identity)s"
+        elif secret and low == secret:
+            value = "%(token)s"
+        fields.append((label, value))
+
+    return drivers.Setup(
+        label=protocol.label,
+        hardware=protocol.hardware,
+        fields=tuple(fields),
+        notes=_notes(protocol),
+        identity=carries[0] if carries else "",
+        secret=protocol.secret_kind or "",
+    )
+
+
 def driver_class(protocol: Any) -> type:
     """A class per protocol, so each can be asked what it configures.
 
@@ -348,6 +600,9 @@ def driver_class(protocol: Any) -> type:
     def options() -> list:
         return _options(protocol)
 
+    def setup() -> drivers.Setup:
+        return _setup(protocol)
+
     # No `__init__` of its own, and that is not tidiness. The core decides
     # what to hand a driver by reading its constructor -- `_accepts` in
     # cli.py, the same way `state` is offered only to a driver that asks for
@@ -362,6 +617,7 @@ def driver_class(protocol: Any) -> type:
             "__doc__": f"{protocol.label}: {protocol.hardware}",
             "protocol_class": protocol,
             "options": staticmethod(options),
+            "setup": staticmethod(setup),
         },
     )
 

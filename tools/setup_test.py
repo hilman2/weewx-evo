@@ -39,6 +39,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from weewx_evo import archives as archive_defs  # noqa: E402
 from weewx_evo import config as config_file  # noqa: E402
 from weewx_evo.admin import Admin, AdminServer  # noqa: E402
 from weewx_evo.cli import all_schemas  # noqa: E402
@@ -123,6 +124,11 @@ def upload(url: str, fields: dict, files: dict) -> tuple[int, str, str]:
 def problem(html: str) -> str:
     found = re.search(r'<p class="err">([^<]*)', html)
     return found.group(1).strip() if found else ""
+
+
+def places(path: Path) -> archive_defs.Register:
+    """The place register beside the central process settings."""
+    return archive_defs.Register.load(path.parent / archive_defs.FILENAME)
 
 
 #: A weewx.conf, written here rather than found. Enough of one to be read:
@@ -223,13 +229,13 @@ def a_fresh_station(base: str, path: Path) -> None:
     code, html = get(f"{base}/setup")
     check("the wizard opens", code, 200)
     check("and offers both ways in",
-          "Moving over from WeeWX" in html and "A new station" in html, True)
+          "Moving over from WeeWX" in html and "New installation" in html, True)
     # The promise this whole page rests on has to be on it, not in a
     # docstring somebody will not read.
-    check("it says nothing of WeeWX's is written to",
-          "Nothing of WeeWX's is written to" in html, True)
+    check("it says WeeWX stays untouched",
+          "WeeWX stays untouched" in html, True)
     check("and that only one of them should run",
-          "Run one of them, not both" in html, True)
+          "Do not run both" in html, True)
 
     print("\n  the place")
     code, html, said = post(f"{base}/setup/place", {
@@ -239,16 +245,23 @@ def a_fresh_station(base: str, path: Path) -> None:
     check("and says so", bool(said), True)
 
     written = config_file.read(path)
-    check("the name is in the file",
-          config_file.get(written, "station.name"), "Kirchdorf an der Amper")
-    check("and the coordinates",
-          config_file.get(written, "station.latitude"), 48.3858)
+    place = places(path).get(None)
+    check("the first place has its own file",
+          (path.parent / archive_defs.FILENAME).is_file(), True)
+    check("the name belongs to that place", place.label,
+          "Kirchdorf an der Amper")
+    check("and so do the coordinates", place.latitude, 48.3858)
+    check("the central file does not duplicate the place",
+          (config_file.get(written, "station.name"),
+           config_file.get(written, "station.latitude"),
+           config_file.get(written, "archive_db")),
+          (None, None, None))
     check("a forecast was set up too",
           config_file.get(written, "forecast.ahead.kind"), "open-meteo")
 
     print("\n  what it refuses")
     code, html, _ = post(f"{base}/setup/place", {"name": "", "latitude": "1"})
-    check("a station with no name", "needs a name" in problem(html), True)
+    check("a place with no name", "needs a name" in problem(html), True)
     code, html, _ = post(f"{base}/setup/place",
                          {"name": "x", "latitude": "north"})
     check("and coordinates that are not numbers",
@@ -286,10 +299,15 @@ def moving_over(base: str, path: Path, work: Path) -> None:
     check("and it says what it took", "setting(s) taken" in said, True)
 
     written = config_file.read(path)
-    check("the station's name",
-          config_file.get(written, "station.name"), "Kirchdorf an der Amper")
-    check("its altitude, in metres",
-          config_file.get(written, "station.altitude"), 440.0)
+    place = places(path).get(None)
+    check("the station's name belongs to its place", place.label,
+          "Kirchdorf an der Amper")
+    check("its altitude belongs there too", place.altitude, 440.0)
+    check("the import did not restore central place settings",
+          (config_file.get(written, "station.name"),
+           config_file.get(written, "station.altitude"),
+           config_file.get(written, "archive_db")),
+          (None, None, None))
     check("its archive interval",
           config_file.get(written, "interval"), "5m")
 
@@ -323,8 +341,9 @@ def moving_over(base: str, path: Path, work: Path) -> None:
     check("with a word about the original",
           "untouched" in said or "copy" in said, True)
 
-    where = config_file.resolved_path(config_file.read(path), "archive_db",
-                                      path.parent, "data/weewx.sdb")
+    where = Path(places(path).get(None).file)
+    if not where.is_absolute():
+        where = path.parent / where
     check("the file is here", where.is_file(), True)
     check("byte for byte", where.read_bytes()[:100] == data[:100], True)
     check("and theirs is where it was", source.is_file(), True)
@@ -361,11 +380,9 @@ def the_wizard_reopens(base: str) -> None:
           "Kirchdorf an der Amper" in html, True)
     code, html = get(f"{base}/setup/done")
     check("the last page says what is set up", code, 200)
-    # "Add a console" since the page and the button stopped disagreeing:
-    # the sidebar said Consoles, the heading said Stations, and the button
-    # said a third thing.
-    check("and names the one thing left",
-          "One thing left" in html or "Add a console" in html, True)
+    # Sender is the one product term on the overview, heading and button.
+    check("and uses the Sender term",
+          "Sender" in html and "Console" not in html, True)
 
 
 def what_ships() -> None:

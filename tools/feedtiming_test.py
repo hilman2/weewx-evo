@@ -15,9 +15,11 @@ Declaring one and having it ignored is what this is here to stop.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -167,6 +169,155 @@ def a_feed_deleted_while_running_stops() -> None:
     check("while the survivor keeps its own", runner._next.get("json"), 1.0)
 
 
+def archive_names_are_resolved_once_and_exactly() -> None:
+    """A configured name never means whichever database happens to exist."""
+    print("\nfeed schedules use the registry's actual implicit name")
+    from weewx_evo import settings as settings_state
+    from weewx_evo.cli import feed_schedule, forecast_db, settings_for, status_placer
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        config = work / "evo.toml"
+        config.write_text(
+            '[feeds.page]\nkind = "json"\n\n'
+            '[feeds.bad]\nkind = "json"\narchive = "gone"\n',
+            encoding="utf-8")
+        (work / "archives.toml").write_text(
+            'member_policy_version = 2\n\n'
+            '[archives.north]\nfile = "elsewhere/north.sdb"\n'
+            'senders = "*"\n', encoding="utf-8")
+        args = argparse.Namespace(config=config, weewx_conf=None)
+        settings_state.forget_running()
+        cfg = settings_for(args)
+        scheduled = feed_schedule(args, cfg)
+        check("a sole custom place is the implicit series",
+              scheduled["page"]["archive"], "north")
+        check("an unknown explicit name is preserved for refusal",
+              scheduled["bad"]["archive"], "gone")
+        check("the shared forecast is anchored on the installation",
+              forecast_db(args, cfg), work / "forecast.sdb")
+
+        (work / "archives.toml").write_text(
+            'member_policy_version = 2\n\n'
+            '[archives.north]\nfile = "north.sdb"\nsenders = "*"\n\n'
+            '[archives.south]\nfile = "south.sdb"\nsenders = []\n',
+            encoding="utf-8")
+        config.write_text(
+            '[feeds.implicit]\nkind = "json"\n\n'
+            '[feeds.explicit]\nkind = "json"\narchive = "south"\n',
+            encoding="utf-8")
+        settings_state.forget_running()
+        cfg = settings_for(args)
+        scheduled = feed_schedule(args, cfg)
+        check("two custom places do not invent a default",
+              scheduled["implicit"]["archive"], "")
+        check("an explicit place remains exact",
+              scheduled["explicit"]["archive"], "south")
+        class Ambiguous:
+            @staticmethod
+            def default_name():
+                raise LookupError("ambiguous")
+
+            @staticmethod
+            def get(_name):
+                raise AssertionError("an ambiguous registry has no default")
+
+        check("the diagnostic status has no arbitrary placer",
+              status_placer(Ambiguous(), None, None), None)
+
+        strict = feedrunner.Runner(
+            [], archive_path=work / "north.sdb",
+            schedule={"bad": {"archive": "gone"}},
+            archives={"north": work / "north.sdb"},
+            default_archive="north")
+        check("the runner does not redirect an unknown name",
+              strict.path_for("bad"), None)
+
+
+def cheetah_fallback_uses_the_placed_archive() -> None:
+    """A direct renderer never revives the central archive_db setting."""
+    print("\na direct Cheetah renderer uses its placed archive as fallback")
+    from weewx_evo.feeds.cheetah import _forecast_archive, _placed_forecast_path
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+
+        class Placed:
+            archive = SimpleNamespace(name="north", file="data/north.sdb")
+            _path = work / "evo.toml"
+
+            @staticmethod
+            def get(name: str, default=None):
+                return "wrong/central.sdb" if name == "archive_db" else default
+
+        check("the compatibility cache follows the placed archive",
+              _placed_forecast_path(Placed()),
+              work / "data" / "forecast.sdb")
+        check("and its rows use that archive's name",
+              _forecast_archive(Placed()), "north")
+
+
+def form_defaults_follow_the_registry() -> None:
+    """A new entry must not save a literal place that does not exist."""
+    print("\nfeed, forecast and upload forms use the real implicit place")
+    from weewx_evo import options as option_defs
+    from weewx_evo import uploads
+    from weewx_evo.forecast import place_options
+
+    def archive_option(groups):
+        return next(option for group in groups for option in group.options
+                    if option.name == "archive")
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        config = work / "evo.toml"
+        config.write_text("", encoding="utf-8")
+        archives = work / "archives.toml"
+        archives.write_text(
+            'member_policy_version = 2\n\n'
+            '[archives.north]\nfile = "north.sdb"\nsenders = "*"\n',
+            encoding="utf-8")
+        option_defs.building_for(config)
+        try:
+            defaults = (
+                archive_option(feed_registry.schedule_options()).default,
+                archive_option(place_options()).default,
+                archive_option(uploads.when_options()).default,
+            )
+            check("a sole custom-named place is selected", defaults,
+                  ("north", "north", "north"))
+
+            archives.write_text(
+                'member_policy_version = 2\n\n'
+                '[archives.north]\nfile = "north.sdb"\nsenders = "*"\n\n'
+                '[archives.south]\nfile = "south.sdb"\nsenders = []\n',
+                encoding="utf-8")
+            choices = tuple(
+                archive_option(groups) for groups in (
+                    feed_registry.schedule_options(), place_options(),
+                    uploads.when_options()))
+            check("several custom places invent no default",
+                  tuple(one.default for one in choices), ("", "", ""))
+            check("the forms require a visible choice",
+                  tuple(one.options()[0][0] for one in choices), ("", "", ""))
+
+            # A broken authority is no authority. Offering the conventional
+            # name here would let saving an unrelated form persist a place
+            # that the existing file never defined.
+            archives.write_text("[archives.north\n", encoding="utf-8")
+            check("an unreadable registry offers no invented place",
+                  feed_registry.archive_names(), [])
+            check("an unreadable registry invents no default",
+                  feed_registry.default_archive_name(), "")
+            broken = archive_option(feed_registry.schedule_options())
+            check("the feed form leaves the broken choice unset",
+                  broken.default, "")
+            check("and asks for a real place instead",
+                  broken.options()[0][0], "")
+        finally:
+            option_defs.building_for(None)
+
+
 def main() -> int:
     every_trigger_does_something()
     the_clock_is_the_clock()
@@ -174,6 +325,9 @@ def main() -> int:
     what_the_feeds_declare()
     the_runner_wakes_for_packets_only_when_asked()
     a_feed_deleted_while_running_stops()
+    archive_names_are_resolved_once_and_exactly()
+    cheetah_fallback_uses_the_placed_archive()
+    form_defaults_follow_the_registry()
 
     print()
     if failures:

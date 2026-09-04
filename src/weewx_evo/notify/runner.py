@@ -59,6 +59,9 @@ class Runner:
         self.channels = channels
         self.live = live
         self.stations = stations
+        #: Turns a stored reading into an archive column, so the battery
+        #: check can look for the fields it knows by name.
+        self.placer: Any = None
         self.dog = dog
         self.senders = list(senders or [])
         self.station_name = station_name
@@ -122,7 +125,8 @@ class Runner:
         """One pass: look, decide, send. Returns what was sent."""
         now = time.time() if now is None else now
         seen = rules_module.everything(
-            self.live, self.stations, self.dog, self.senders, self.floor, now)
+            self.live, self.stations, self.dog, self.senders, self.floor, now,
+            self.placer)
         self.standing = dict(seen)
 
         if now - self._started < self.settle:

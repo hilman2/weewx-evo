@@ -311,8 +311,13 @@ def a_real_serve_stops_when_asked() -> None:
         work = Path(raw)
         (work / "sitecustomize.py").write_text(
             "import weewx_evo.watchdog as w\n"
-            # Under any real count, so the first pass finds it.
-            "w.DESCRIPTOR_SHARE = 0.00001\n"
+            # A process' descriptor count and limit can only be measured on
+            # the deployment platform (/proc + RLIMIT).  Supply both here so
+            # this wiring test provokes the same symptom on Windows too,
+            # where lowering the threshold alone still leaves both unknown.
+            "w.descriptors_open = lambda: 9\n"
+            "w.descriptor_limit = lambda: 10\n"
+            "w.DESCRIPTOR_SHARE = 0.85\n"
             "w.EVERY = 0.5\n", encoding="utf-8")
         (work / "evo.toml").write_text(
             'token = "abcdefghij123456"\n'

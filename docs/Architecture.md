@@ -3,7 +3,7 @@
 ## The flow of data
 
 ```
-   Hardware / other stations
+   Hardware / other senders
         │  HTTP POST · HTTP GET (Wunderground) · UDP
         ▼
 ┌───────────────────────────────────────────────────────┐
@@ -19,23 +19,23 @@
           ▼
    ┌──────────────┐   db/live.py
    │ live.sdb     │   append-only, idempotent, retention N days
-   │  packet      │   including origin (source) and raw body
+   │  packet      │   driver + identity + dialect, raw field names
    └──────┬───────┘
           │  packets(start, stop)
           ▼
 ┌───────────────────────────────────────────────────────┐
-│ Archiver            archiver.py                       │
-│  1. fetch the packets of the interval                 │
-│  2. sources.py: which source wins per field           │
-│  3. aggregate.py: feed the accumulator                │
-│  4. derive.py: dewpoint, wind chill, rain delta       │
+│ Archiver            archiver.py, one per place        │
+│  1. select canonical senders from archives.toml       │
+│  2. placement.py: raw names to archive columns        │
+│  3. apply this Place's member roles                    │
+│  4. aggregate.py and derive.py                        │
 │  5. write the record, then sharpen the day's extremes │
 └─────────┬─────────────────────────────────────────────┘
           │ dict (one archive record)
           ▼
    ┌──────────────┐   db/archive.py
-   │ weewx.sdb    │   archive        ← WeeWX-compatible, PK dateTime
-   │              │   archive_day_*  ← cache, derivable from archive
+   │ place.sdb    │   archive        ← WeeWX-compatible, PK dateTime
+   │ per place    │   archive_day_*  ← cache, derivable from archive
    └──────┬───────┘
           │  series.Reader
           ▼
@@ -73,15 +73,21 @@ What that buys:
 Every stage is reproducible from the one before it. There is no transient state
 that a number derives from.
 
+Senders never route packets to an archive. The Listener stores each packet
+under the canonical ID derived from driver and hardware identity. Every entry
+in `archives.toml`, including the first, owns its database, location and sender
+selection. The same sender may therefore feed several Places from the same
+packets. `stations.toml` supplies display metadata and clock tolerances only.
+
 ## Core and driver
 
 **The core owns the socket.** Threads, shutdown, body limits, token checks,
 network boundary, rate limit, writing to the live table. That is the same for
 every protocol, and it is where push drivers go wrong.
 
-**The driver owns everything else.** Parsing, field names, units, which device
-it answers, and **what the device has to hear back**. It hands over a finished
-packet. The core does not look inside.
+**The driver owns everything protocol-specific.** Parsing, field catalogs,
+units, which device it answers, and **what the device has to hear back**. It
+hands the listener raw readings and an inert, versioned `DialectSpec`.
 
 ```python
 class MyDriver:
@@ -89,10 +95,16 @@ class MyDriver:
 
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
         ...
+
+    def dialect_spec(self, readings: dict, dialect: str) -> DialectSpec:
+        ...
 ```
 
-The core knows no weather protocol. If you want to write something about
-Ecowitt into `listener.py` or `archiver.py`: it belongs in the driver.
+The listener validates and stores that description. The archiver interprets
+it with core code and therefore loads no driver at all. The core knows no
+weather protocol: if you want to write something about Ecowitt into
+`listener.py`, `placement.py` or `archiver.py`, it belongs in the driver's
+serialized catalog.
 → [Drivers](Drivers)
 
 ## Feeds and exports
@@ -189,7 +201,7 @@ src/weewx_evo/
   obstypes.py          Which observation aggregates how
   archiver.py          Replaces StdArchive
   derive.py            Replaces StdWXCalculate
-  sources.py           Several stations, one record
+  sources.py           Optional low-level field arbitration API
   series.py            Replaces xtypes.get_series
   units.py             Transcription of weewx.units
   sun.py               Solar position, rise and set

@@ -1,6 +1,7 @@
 # Working notes for whoever is editing this, and whatever their tooling
 # leaves behind. Neither is part of the software.
 CLAUDE.md
+AGENTS.md
 .claude/
 .cursor/
 .aider*
@@ -39,8 +40,15 @@ deploy/weewx-evo.caddy
 *.sdb-wal
 evo.toml
 plots.toml
+/archives.toml
+/stations.toml
+/placement.toml
+/quality.toml
 *.bak
 *.part
+
+# Local agent/test sandboxes used on Windows to inherit the workspace ACL.
+/.codex-test-*
 
 # A pattern without a slash matches at every level, and one of those levels
 # is the source tree: `plots.toml` above was written for the running

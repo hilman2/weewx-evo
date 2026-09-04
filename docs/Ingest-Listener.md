@@ -7,6 +7,28 @@ packets that come back into the live table. Drivers open no sockets, check no
 tokens and never touch the database — that is the whole point: those three are
 where push drivers go wrong, and doing them once means doing them once.
 
+## What it does not do
+
+It does not decide what a reading is called, which of them this installation
+wants, or where they go. A packet is stored under the names the console used,
+with nothing left out, and all of that is answered when a record is built
+→ [Placements](Placements).
+
+For a driver-specific dialect it does persist the driver's `DialectSpec`:
+field catalog, units, scale factors, contested names and metadata as strictly
+validated JSON. That records how the raw packet can be interpreted without
+choosing what any place wants from it. An archive process can therefore
+rebuild the packet without loading the driver.
+
+So a place's `indoor`, role, extra channel and field placements do not change
+the raw readings here. They used to, and a wrong one then cost the
+measurements rather than a rebuild.
+
+What it does stamp is which driver read the upload. Together with the identity
+the hardware gave, that pair is how the packet is recognised afterwards — the
+name the console answers to is a lookup, and looking it up later is what lets
+you rename one without splitting its series in two.
+
 ## `Ingest`
 
 What the listener does with an upload once it has one. Separate from the

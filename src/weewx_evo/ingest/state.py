@@ -1,24 +1,20 @@
-"""Where a driver keeps what it has to remember.
+"""Narrow persistent state for a driver.
 
-A driver sometimes needs to remember something across restarts. weewx-ecowitt
-remembers which console it adopted, because the alternative is that the next
-console to upload becomes the station and two sensors end up in one column.
+A third-party driver can need private protocol state across restarts. It gets
+only get, set and delete on strings, never a database handle. This state does
+not select a Sender, map a field or route a packet to an archive.
 
-The obvious thing is to hand the driver the archive store. That is too much.
-A driver would then be able to write records, alter the schema, or rebuild the
-daily summaries -- none of which it has any business doing, and all of which
-would be its bug to cause and ours to explain. The core owns the databases;
-a driver produces packets.
+The production Listener uses a JSON file beside the live database and never
+opens an archive. The built-in push drivers do not use this interface for
+identity: every packet carries a canonical Sender ID, and each Place selects
+the IDs it needs after the Listener has written them.
 
-So it gets this instead: get, set, delete, on strings. Four methods and no way
-to reach anything else. What it is backed by is the core's decision -- the
-archive's metadata table when there is one, a file when there is not -- and a
-driver cannot tell the difference.
+`ArchiveState` remains available to isolated library callers that deliberately
+pass an archive to `for_driver`. That compatibility adapter is not used as a
+channel between the Listener and Archiver.
 
-Keys are not namespaced automatically, and that is deliberate. weewx-ecowitt
-writes `ecowitt_consoles`, the same key WeeWX writes, so a database moved
-between the two keeps knowing which console it belongs to. Prefixing would
-silently break that. Name your keys after your driver instead.
+Keys are not namespaced automatically. Name them after the driver so two
+plugins cannot overwrite one another's state.
 
 ## What this does not do
 
@@ -84,14 +80,10 @@ class NoState:
 
 
 class ArchiveState:
-    """Backed by the archive's metadata table.
-
-    The right place for it: the table sits with the readings the state protects,
-    it is in every backup of them, and it moves with them. If the database is
-    gone, so is the series that needed protecting.
+    """Compatibility adapter backed by an explicitly supplied archive.
 
     The store is held privately. A driver receives this object, not the store,
-    and there is no way through.
+    and there is no way through. The production Listener does not use it.
     """
 
     def __init__(self, archive: object, driver: str = "?") -> None:
@@ -116,12 +108,7 @@ class ArchiveState:
 
 
 class FileState:
-    """Backed by a JSON file, for when there is no database to ask.
-
-    Used by the listener running on its own, and by tests. Worse than the
-    database -- a rebuilt machine or a directory nobody backed up loses it --
-    but better than forgetting on every restart.
-    """
+    """Backed by a JSON file; used by the production Listener and tests."""
 
     def __init__(self, path: str | Path, driver: str = "?") -> None:
         self.path = Path(path)
@@ -162,7 +149,7 @@ class FileState:
 
 def for_driver(name: str, archive: object | None = None,
                path: str | Path | None = None) -> State:
-    """The state a driver should be given, best backing first."""
+    """Build state from the archive or path explicitly supplied by the caller."""
     if archive is not None:
         return ArchiveState(archive, name)
     if path is not None:

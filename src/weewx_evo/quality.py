@@ -35,10 +35,10 @@ archive and its daily summaries follow."
 ## Calibrate first, then check
 
 The other order tests an uncorrected reading against corrected limits, so a
-thermometer with a 0.4 K offset fails at its own ceiling. Calibration is
-per station because that is what it is about: two thermometers in one garden
-disagree by a few tenths, and which of them is *the* series is a decision
-somebody made.
+thermometer with a 0.4 K offset fails at its own ceiling. Calibration is per
+sender because that is what it is about: two thermometers in one garden
+disagree by a few tenths. The key is the canonical sender ID, never its
+editable display name.
 
 ## The rules, and what each one costs when it is wrong
 
@@ -76,8 +76,13 @@ from pathlib import Path
 from typing import Any
 
 from . import units
+from .db.live import sender_parts
 
 log = logging.getLogger(__name__)
+
+# One warning per obsolete key and process. The Admin page reads the file more
+# than once per render; repeating the same migration notice is log noise.
+_obsolete_said: set[str] = set()
 
 #: Where the rules live, beside the configuration like `plots.toml` and
 #: `archives.toml`. A constant because three places need the same answer --
@@ -163,27 +168,80 @@ class Policy:
 
     #: Limits by reading, for every station.
     limits: dict[str, Rule] = field(default_factory=dict)
-    #: Corrections by station name, then reading. The empty name is every
-    #: station, which is where a single-console installation puts them.
+    #: Corrections by canonical sender ID, then reading. The empty name is
+    #: every sender, which is where a single-console installation puts them.
     calibration: dict[str, dict[str, Adjust]] = field(default_factory=dict)
     #: What system the figures above are written in.
     system: int = units.METRICWX
+    #: Pre-canonical files keyed corrections by a mutable station label. Keep
+    #: those tables so an Admin save is lossless, but never execute them: a
+    #: renamed or reused label must not apply a physical correction to the
+    #: wrong sender.
+    obsolete_calibration: dict[str, dict[str, Adjust]] = field(
+        default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Keep only canonical sender keys active; retain old labels inert."""
+        active: dict[str, dict[str, Adjust]] = {}
+        obsolete = {str(who): dict(fields)
+                    for who, fields in self.obsolete_calibration.items()}
+        for who, fields in self.calibration.items():
+            sender = str(who)
+            if not sender or _is_sender_id(sender):
+                active.setdefault(sender, {}).update(fields)
+                continue
+            obsolete.setdefault(sender, {}).update(fields)
+            if sender not in _obsolete_said:
+                _obsolete_said.add(sender)
+                log.warning(
+                    "quality: calibration for legacy station name %r is ignored; "
+                    "replace it with the canonical sender ID from the Senders page",
+                    sender)
+        self.calibration = active
+        self.obsolete_calibration = obsolete
 
     def __bool__(self) -> bool:
         return bool(self.limits or self.calibration)
 
-    def adjust_for(self, station: str, obs: str) -> Adjust | None:
-        """The correction for one reading of one station, if any.
+    def adjust_for(self, sender: str, obs: str) -> Adjust | None:
+        """The correction for one reading from one canonical sender, if any.
 
-        A station's own entry wins over the one for everybody, and neither
+        A sender's own entry wins over the one for everybody, and neither
         falls back to the other field by field: an operator who has written a
-        correction for this station has said what they mean.
+        correction for this sender has said what they mean.
         """
-        for who in (station, ""):
+        specific = sender if _is_sender_id(sender) else None
+        for who in (specific, ""):
+            if who is None:
+                continue
             found = self.calibration.get(who, {}).get(obs)
             if found is not None:
                 return found
         return None
+
+
+def _is_sender_id(value: str) -> bool:
+    """Whether a value is the canonical, reversible live-journal key."""
+    try:
+        sender_parts(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def sender_for(packet: Any) -> str:
+    """The canonical calibration key carried by a packet.
+
+    A placer may bind a retained pre-journal row to its modern canonical
+    member in ``source``. Otherwise the key is derived from the immutable
+    driver/identity pair. Friendly labels and bare identities are never
+    returned.
+    """
+    placed = str(getattr(packet, "source", "") or "")
+    if _is_sender_id(placed):
+        return placed
+    canonical = str(getattr(packet, "sender_id", "") or "")
+    return canonical if _is_sender_id(canonical) else ""
 
 
 def load(path: str | Path) -> Policy:
@@ -220,12 +278,12 @@ def from_dict(raw: dict[str, Any]) -> Policy:
             limits[str(obs)] = rule
 
     calibration: dict[str, dict[str, Adjust]] = {}
-    for station, fields in (raw.get("calibrate") or {}).items():
+    for sender, fields in (raw.get("calibrate") or {}).items():
         if not isinstance(fields, dict):
             continue
-        # `[calibrate.everywhere]` is the name for "every station", spelled
+        # `[calibrate.everywhere]` is the name for "every sender", spelled
         # out rather than left as an empty key nobody can type into TOML.
-        who = "" if str(station) in ("everywhere", "all", "default") else str(station)
+        who = "" if str(sender) in ("everywhere", "all", "default") else str(sender)
         for obs, entry in fields.items():
             if not isinstance(entry, dict):
                 continue
@@ -432,9 +490,9 @@ class Check:
             when = float(record.get("dateTime") or 0)
             system = units.system_from(record.get("usUnits"),
                                        default=units.METRICWX)
-            station = getattr(packet, "source", "")
-            corrected = self.calibrate(record, station, system)
-            self.check(corrected, when, station, system)
+            sender = sender_for(packet)
+            corrected = self.calibrate(record, sender, system)
+            self.check(corrected, when, sender, system)
         self.dropped, self.adjusted = dropped, adjusted
 
     def summary(self) -> str:

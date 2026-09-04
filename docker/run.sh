@@ -16,6 +16,15 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/.." && pwd)
 image=weewx-evo-tests
 
+# Docker Desktop wants a Windows path. Git Bash's `pwd` gives `/d/Git/...`,
+# which it accepts and then mounts as an empty directory -- so the container
+# started, found no `tools/runtests.py`, and said so in a way that reads like
+# a broken image rather than a broken mount. `pwd -W` is Git Bash's own
+# translation and does not exist anywhere else, hence the test.
+if (cd "$repo" && pwd -W) >/dev/null 2>&1; then
+    repo=$(cd "$repo" && pwd -W)
+fi
+
 docker build -q -t "$image" -f "$here/Dockerfile" "$here" >/dev/null
 
 # --read-only would be closer to right, but several of these write into the

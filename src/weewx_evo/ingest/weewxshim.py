@@ -256,7 +256,7 @@ def to_packet(record: dict[str, Any], source: str, kind: str = "loop",
     if units is None:
         raise ValueError("the driver produced a record with no usUnits")
     return Packet(dateTime=int(when), usUnits=int(units), data=data,
-                  source=source, kind=kind, interval=interval)
+                  identity=source, kind=kind, interval=interval)
 
 
 class Shim:

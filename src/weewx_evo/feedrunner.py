@@ -50,15 +50,20 @@ class Runner:
                  archive_path: Path,
                  on_produced: Callable[[str, list], None] | None = None,
                  schedule: dict[str, dict] | None = None,
-                 archives: dict[str, Path] | None = None) -> None:
+                 archives: dict[str, Path] | None = None,
+                 default_archive: str = DEFAULT_ARCHIVE) -> None:
         #: (name, build(reader) -> feed, where to write). Built late, with a
         #: connection made on this thread.
         self.feeds = list(feeds)
         self.archive_path = Path(archive_path)
-        #: Every series a feed may name, by name. The default is always in
-        #: here and is what a feed naming nothing reads -- which is every
-        #: feed on an installation with one archive.
-        self.archives: dict[str, Path] = {DEFAULT_ARCHIVE: self.archive_path}
+        #: The unambiguous implicit series. Empty is a real state: several
+        #: named archives may exist without one called ``default``.
+        self.default_archive = str(default_archive or "")
+        #: Every series a feed may name, by name. A legacy caller handing no
+        #: map still gets its one archive; runtime callers pass the registry.
+        self.archives: dict[str, Path] = (
+            {self.default_archive: self.archive_path}
+            if self.default_archive else {})
         self.archives.update({k: Path(v) for k, v in (archives or {}).items()})
         #: Per feed: {"trigger": ..., "every": seconds, "archive": name}.
         #: Anything not named here runs on the archive record, which is what
@@ -111,7 +116,7 @@ class Runner:
         the interval alone: whoever came second decided for everybody.
         """
         with self._lock:
-            self._wrote.add(archive or DEFAULT_ARCHIVE)
+            self._wrote.add(archive or self.default_archive)
         self.due.set()
 
     def packet_stored(self) -> None:
@@ -147,10 +152,12 @@ class Runner:
             # The third of the three, and the one that was missed. `schedule`
             # says which series a feed reads and this says where that series
             # is; swapping one without the other leaves a feed correctly
-            # pointed at a name that resolves to the old file -- and
-            # `path_for` falls back to the default rather than failing, so
-            # the pages come out full of the wrong place's readings.
-            self.archives = {DEFAULT_ARCHIVE: self.archive_path}
+            # pointed at a name that resolves to the old file. `path_for`
+            # refuses an absent name, but an old name still present in this
+            # map would be just as wrong and much harder to notice.
+            self.archives = (
+                {self.default_archive: self.archive_path}
+                if self.default_archive else {})
             self.archives.update({k: Path(v) for k, v in archives.items()})
         # A feed that is gone should not keep a due time, and one that is new
         # should be due at once rather than an interval from now.
@@ -223,17 +230,17 @@ class Runner:
         self._next[name] = schedule.next_slot(now, every)
 
     def archive_for(self, name: str) -> str:
-        """Which series this feed reads. The default unless it says."""
-        return self.schedule.get(name, {}).get("archive") or DEFAULT_ARCHIVE
+        """Which series this feed reads, or empty when none is implicit."""
+        return self.schedule.get(name, {}).get("archive") or self.default_archive
 
-    def path_for(self, name: str) -> Path:
-        """The file behind that name, falling back to the default.
+    def path_for(self, name: str) -> Path | None:
+        """The exact file behind that feed's series, if it still exists.
 
-        Falling back rather than failing: the name is in a feed's settings,
-        and one pointing at an archive somebody removed should produce a page
-        from the series that is left.
+        An unknown name is never redirected. A page containing another
+        place's internally consistent readings is worse than a feed that
+        reports why it did not run.
         """
-        return self.archives.get(self.archive_for(name), self.archive_path)
+        return self.archives.get(self.archive_for(name))
 
     def due_now(self, name: str, because: str, now: float | None = None) -> bool:
         """Whether this feed runs on this pass."""
@@ -272,8 +279,12 @@ class Runner:
         wanted: dict[Path, list] = {}
         for name, build, into in self.feeds:
             if self.due_now(name, because):
-                wanted.setdefault(self.path_for(name), []).append(
-                    (name, build, into))
+                path = self.path_for(name)
+                if path is None:
+                    log.warning("feed %s names unknown series %r; leaving it out",
+                                name, self.archive_for(name))
+                    continue
+                wanted.setdefault(path, []).append((name, build, into))
 
         # Taken now, once the decisions are made, so a record arriving while
         # the feeds are producing is not thrown away with the batch it came

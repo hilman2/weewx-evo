@@ -5,8 +5,8 @@ and what WeeWX must be able to keep reading -- a column of predicted
 temperatures in it would be a lie that averages badly for years, and
 `archive_day_*` would cheerfully summarise the lie.
 
-So: `forecast.sdb`, beside the archive, and everything about it is designed
-around the fact that it is disposable.
+So: `forecast.sdb`, beside the installation's configuration, and everything
+about it is designed around the fact that it is disposable.
 
   * **Replaced, not accumulated.** A new run from a source deletes that
     source's previous one. Nobody wants yesterday's forecast for today, and
@@ -23,11 +23,10 @@ warnings from the DWD, the same station's English page shows Open-Meteo.
 
 And with the **series** they are for. An installation may keep several, each
 for its own place, and a forecast is about a place before it is about
-anything else. One file for all of them, beside whichever archive
-`archive_db` names: the path is a property of the installation, and a file
-per place would separate nothing on the layout the settings page offers,
-where every archive is proposed as `data/<name>.sdb` and every one of them
-resolves to the same parent.
+anything else. One file for all of them, beside `evo.toml` and
+`archives.toml`: the path is a property of the installation, so adding a
+place or moving its archive file cannot move the forecast cache. A file per
+place would separate nothing; the rows already carry the place name.
 
 So `archive` is the first part of every key here. Not merely a column: a run
 replaces what its source had by deleting on the key first, so an unkeyed

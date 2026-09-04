@@ -176,7 +176,7 @@ Two decisions:
   registered identifier.
 
 CWOP needs latitude and longitude — the packet **is** a position report. They
-are filled in from the station settings, so that nobody types them twice.
+are filled in from the selected place, so that nobody types them twice.
 
 ### MQTT
 
@@ -224,7 +224,7 @@ api_key = "..."
 [uploads.cwop]
 kind = "cwop"
 station = "DW1234"
-# latitude and longitude come from [station] if nothing is set here
+# latitude and longitude come from this upload's place
 ```
 
 Two accounts with the same service are two uploads with different names.

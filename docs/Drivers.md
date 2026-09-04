@@ -9,8 +9,23 @@
 check and writing to the live table. That is the same for every protocol, it is
 where push drivers go wrong, and doing it once means doing it once.
 
-**The driver owns everything else.** Parsing, field names, units, which device
-it answers at all, and **what that device has to hear back**.
+**The driver owns everything else.** Parsing, units, which device it answers at
+all, and **what that device has to hear back**.
+
+**The naming is shared, and the seam is data.** A driver hands over the
+readings under the names the hardware used, plus a versioned `DialectSpec`
+that describes the field map, units, scale factors and metadata using JSON
+values only. The listener stores both. When a record is built, core code
+combines that inert description with what this archive decided
+→ [Placements](Placements).
+
+That split is a security boundary, not just an interface choice. The archive
+process neither imports nor calls the driver that accepted an upload. A
+mapping cannot name a module, callable or class, and unknown keys or versions
+are rejected rather than guessed.
+
+A driver whose names are already WeeWX's says so by leaving `dialect` and
+`mapping` unset. That is every collector, the WeeWX shim and the envelope.
 
 ## The interface
 
@@ -18,6 +33,9 @@ it answers at all, and **what that device has to hear back**.
 class Driver(Protocol):
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
         ...
+
+    def dialect_spec(self, readings: dict, dialect: str) -> DialectSpec | None:
+        ...   # optional when the names are already WeeWX's
 ```
 
 `meta` carries `received` (arrival time, unix) and `source` (the peer address).
@@ -43,6 +61,7 @@ class MyDriver(BaseDriver):
 |---|---|
 | `response` | `(bytes, content_type)` — what the device wants to hear |
 | `packets(body, meta)` | The heart of it |
+| `dialect_spec(readings, dialect)` | Inert, versioned JSON vocabulary for a raw dialect. Required when a packet sets `dialect` |
 | `status()` | What should appear at `/status`. Optional |
 | `close()` | Release what is held. Optional |
 | `options()` | This driver's settings, as a list of `Group`s. Optional |
@@ -85,9 +104,10 @@ wrote it thinks.
 
 ## The registry
 
-`drivers.Registry` holds **instances, not classes**: a driver holds
-configuration and state — which consoles it answers, which field mapping belongs
-to which — and that has to survive between two uploads.
+`drivers.Registry` holds **instances, not classes**, in the Listener. A driver
+holds parser configuration and protocol state, which have to survive between
+two uploads. Field placement is not driver state; each Place applies it after
+reading the raw packet from the live database.
 
 | Method | What it means |
 |---|---|
@@ -194,12 +214,12 @@ and cannot judge intent — it catches the honest mistake and the lazy shortcut.
 ## Driver state
 
 `ingest/state.py`. A driver sometimes has to remember something across
-restarts. The Ecowitt driver remembers which console it adopted — otherwise the
-next console to upload becomes the station, and two sensors end up in one
-column.
+restarts. This is private protocol state, not sender selection, field placement
+or archive routing. The built-in push drivers identify every upload and leave
+those decisions to the Place.
 
-The obvious thing would be to give it the `ArchiveStore`. That is **too much**:
-it could then write records, create columns and delete history.
+The production Listener gives a stateful third-party driver a JSON-backed store
+beside the live database. It never gives that process an `ArchiveStore`.
 
 ```python
 class State(Protocol):
@@ -212,11 +232,14 @@ Three methods on strings. Nothing else.
 
 | Implementation | Where it lives |
 |---|---|
-| `ArchiveState` | The archive's `metadata` table. The right place: it sits with the readings the state protects, is in every backup of them, and moves with them |
-| `FileState` | A JSON file — for the listener on its own and for tests. Worse (a freshly set up machine loses it), but better than nothing |
+| `ArchiveState` | Optional adapter for a library caller that explicitly supplies an archive; not used by the production Listener |
+| `FileState` | A JSON file beside the live database — the production Listener's persistent driver state |
 | `NoState` | Remembers only within the process |
 
-`for_driver(name, archive=None, path=None)` picks the best safeguard available.
+`for_driver(name, archive=None, path=None)` uses only the backing its caller
+explicitly supplies. `ArchiveState` remains supported as an isolated library
+adapter; it is not a channel between Listener and Archiver.
+The driver sees the three string operations, not the backing object.
 
 The same logic as with `Settings.view()`: **give the narrow thing, and the wide
 thing is out of reach.**
@@ -478,7 +501,7 @@ def load(registry):
 loads it and takes an upload with it — the test that a third-party driver hangs
 off the same interface as a bundled one.
 
-→ [Driver-Ecowitt](Driver-Ecowitt), [Testing](Testing)
+→ [Push drivers](Driver-Ecowitt), [Testing](Testing)
 
 <!-- covers
 src/weewx_evo/ingest/drivers.py

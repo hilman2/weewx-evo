@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from weewx_evo import adminsearch  # noqa: E402
-from weewx_evo.admin import Admin, anchor  # noqa: E402
+from weewx_evo.admin import Admin  # noqa: E402
 from weewx_evo.cli import all_schemas  # noqa: E402
 
 failures = 0
@@ -74,19 +74,20 @@ def a_word_finds_its_setting() -> None:
         check("something comes back", bool(hits), True)
         check("and the first is the field itself",
               hits[0].title, "Altitude")
-        check("on the page it lives on", hits[0].href.startswith("./core#"),
+        check("on the page it lives on",
+              hits[0].href.startswith("./places?open="),
               True)
 
 
-def the_link_lands_on_the_section() -> None:
-    """Not at the top of a form with seven of them."""
-    print("\nthe link goes to the group, not the page")
+def the_link_lands_on_the_place() -> None:
+    """On the Place that owns the setting, not the legacy core field."""
+    print("\nthe link goes to the Place that owns the setting")
     with tempfile.TemporaryDirectory() as raw:
         admin = an_installation(Path(raw))
         hits = adminsearch.find(admin, "altitude")
-        check("it carries a fragment", "#" in hits[0].href, True)
-        check("and the fragment is the group's anchor",
-              hits[0].href.split("#", 1)[1], anchor("Station"))
+        check("it names a Place", "?open=" in hits[0].href, True)
+        check("and never points to the central form",
+              hits[0].href.startswith("./core"), False)
 
 
 def what_was_typed_comes_first() -> None:
@@ -133,14 +134,14 @@ def too_short_is_not_a_search() -> None:
               adminsearch.find(admin, ""), [])
 
 
-def nothing_found_says_where_it_looked() -> None:
+def nothing_found_is_concise() -> None:
     print("\nno match")
     with tempfile.TemporaryDirectory() as raw:
         admin = an_installation(Path(raw))
         page = adminsearch.results(admin, "zzzznotathing")
         check("it says nothing matched", "Nothing matches" in page, True)
-        check("and what it covers",
-              "the readings a chart draws" in page, True)
+        check("without an explanatory paragraph",
+              "the readings a chart draws" in page, False)
 
 
 def the_box_is_on_every_page() -> None:
@@ -157,11 +158,11 @@ def the_box_is_on_every_page() -> None:
 
 def main() -> int:
     a_word_finds_its_setting()
-    the_link_lands_on_the_section()
+    the_link_lands_on_the_place()
     what_was_typed_comes_first()
     a_chart_is_found_by_what_it_draws()
     too_short_is_not_a_search()
-    nothing_found_says_where_it_looked()
+    nothing_found_is_concise()
     the_box_is_on_every_page()
 
     print()

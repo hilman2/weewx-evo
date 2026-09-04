@@ -14,6 +14,7 @@ at all — no account, no key, and the coordinates come from the place.
 
 ```toml
 forecast.openmeteo.kind = "open-meteo"
+forecast.openmeteo.archive = "default"
 ```
 
 | | |

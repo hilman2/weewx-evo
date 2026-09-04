@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from weewx_evo import adminhome  # noqa: E402
+from weewx_evo import adminhome, adminpublish  # noqa: E402
 from weewx_evo.admin import Admin  # noqa: E402
 from weewx_evo.cli import all_schemas  # noqa: E402
 from weewx_evo.db.archive import ArchiveStore  # noqa: E402
@@ -42,6 +42,13 @@ def check(what: str, got: object, want: object) -> bool:
     print(f"  {'ok  ' if ok else 'FAIL'} {what}: {got!r}{tail}")
     failures += 0 if ok else 1
     return ok
+
+
+def sync_senders(work: Path) -> None:
+    from weewx_evo import stations as station_defs
+
+    with LiveStore(work / "data" / "live.sdb") as live:
+        live.sync_sender_labels(station_defs.load(work / "stations.toml"))
 
 
 def an_installation(work: Path, *, token: str = TOKEN,
@@ -64,20 +71,32 @@ def an_installation(work: Path, *, token: str = TOKEN,
     if announced:
         (work / "stations.toml").write_text(
             '[stations.kirchdorf]\ndriver = "wunderground"\n'
-            'identity = "evo-3f9a2c"\narchive = "default"\n', encoding="utf-8")
+            'identity = "evo-3f9a2c"\n', encoding="utf-8")
+    (work / "archives.toml").write_text(
+        '[archives.default]\n'
+        f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+        'label = "Kirchdorf"\nlatitude = 48.4012\n'
+        'longitude = 11.6301\naltitude = 440.0\n'
+        'stations = ["kirchdorf"]\n', encoding="utf-8")
 
     now = int(time.time())
     live = LiveStore(work / "data" / "live.sdb", interval_seconds=INTERVAL)
     if packets_ago is not None:
         for n in range(5):
             live.add(Packet(dateTime=now - packets_ago - n * 16, usUnits=1,
-                            data={"outTemp": 20.0}, source="kirchdorf"))
+                            data={"outTemp": 20.0}, driver="wunderground",
+                            identity="evo-3f9a2c"))
         if stranger:
             live.add(Packet(dateTime=now - packets_ago, usUnits=1,
-                            data={"outTemp": 9.0}, source="somebody-else"))
+                            data={"outTemp": 9.0}, driver="wunderground",
+                            identity="somebody-else"))
         # The archiver has taken these; a backlog is its own test.
         for stop, _seconds in live.due(now=now + 86400, grace=0):
             live.clear_pending(stop)
+    if announced:
+        from weewx_evo import stations as station_defs
+
+        live.sync_sender_labels(station_defs.load(work / "stations.toml"))
     live.close()
 
     archive = ArchiveStore(work / "data" / "weewx.sdb")
@@ -102,7 +121,7 @@ def a_working_station_says_nothing() -> None:
               ["kirchdorf"])
         check("and the archive is", len(state.archives), 1)
         check("with its records counted",
-              "1 records" in state.archives[0].detail, True)
+              "1 record" in state.archives[0].detail, True)
 
 
 def a_station_switched_off_is_not_a_fault() -> None:
@@ -165,7 +184,7 @@ def a_stranger_is_worth_saying() -> None:
         state = adminhome.read(admin)
         check("it is counted", state.strangers, 1)
         check("and named as not reaching an archive",
-              any("no station answers for" in one for one in state.concerns),
+              any("selected by no place" in one for one in state.concerns),
               True)
 
 
@@ -185,7 +204,7 @@ def a_console_that_was_renamed_is_not_a_stranger() -> None:
         live = LiveStore(work / "data" / "live.sdb", interval_seconds=INTERVAL)
         old = int(time.time() - adminhome.STRANGER_WINDOW - 3600)
         live.add(Packet(dateTime=old, usUnits=1, data={"outTemp": 20.0},
-                        source="3178AB6B42A759F51A5A4AD72E37F8DE"))
+                        identity="3178AB6B42A759F51A5A4AD72E37F8DE"))
         live.close()
 
         state = adminhome.read(admin)
@@ -209,52 +228,124 @@ def two_stations_claiming_one_archive() -> None:
     """A configuration that asks for the one failure that cannot be undone.
 
     Two stations of one archive both writing `outTemp` take turns at it every
-    few seconds. The listener moves the extra one aside rather than let that
-    happen -- but a configuration that asks for it is worth saying out loud
-    rather than silently working around.
+    few seconds. The place moves the extra one's reading aside rather than
+    let that happen -- but a configuration that leaves both as main is worth
+    saying out loud rather than silently working around.
     """
     print("\ntwo main stations in one archive")
     both = ('[stations.kirchdorf]\ndriver = "ecowitt"\n'
-            'identity = "AAAA"\narchive = "default"\n\n'
+            'identity = "AAAA"\n\n'
             '[stations.garten]\ndriver = "ecowitt"\n'
-            'identity = "BBBB"\narchive = "default"\n')
+            'identity = "BBBB"\n')
     with tempfile.TemporaryDirectory() as raw:
         work = Path(raw)
         admin = an_installation(work)
         (work / "stations.toml").write_text(both, encoding="utf-8")
+        sync_senders(work)
+        (work / "archives.toml").write_text(
+            '[archives.default]\n'
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf", "garten"]\n', encoding="utf-8")
 
         state = adminhome.read(admin)
-        # The words the settings use: `main` and `extra` are what
-        # stations.toml holds, what the log prints and what the Stations page
-        # offers, so the overview says them too rather than inventing a
-        # third vocabulary.
+        # The words the place settings use are `main` and `extra`, so the
+        # overview says them too rather than inventing a third vocabulary.
         check("it is reported",
-              any("as main" in one for one in state.concerns), True)
+              any("uses 2 senders for primary readings" in one
+                  for one in state.concerns), True)
         check("naming both",
               any("garten, kirchdorf" in one for one in state.concerns), True)
 
-        # One of each is the arrangement, not a fault.
+        # An old station-owned role must no longer decide this relationship.
         (work / "stations.toml").write_text(
             both + 'role = "extra"\nchannel = 1\n', encoding="utf-8")
         state = adminhome.read(admin)
-        check("with a role set, nothing is said",
-              [one for one in state.concerns if "as main" in one], [])
+        check("a station-owned legacy role is ignored",
+              any("uses 2 senders for primary readings" in one
+                  for one in state.concerns), True)
 
-        # And two archives are two places, so two main stations are right.
+        # One of each is the arrangement, but it is the place that says so.
         (work / "archives.toml").write_text(
-            "[archives.default]\n"
-            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n\n'
-            "[archives.nordfeld]\n"
-            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n',
-            encoding="utf-8")
-        (work / "stations.toml").write_text(
-            both.replace('[stations.garten]', '[stations.nordhof]')
-                .replace('identity = "BBBB"\narchive = "default"',
-                         'identity = "BBBB"\narchive = "nordfeld"'),
+            'member_policy_version = 1\n\n'
+            '[archives.default]\n'
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf", "garten"]\n\n'
+            '[archives.default.members.garten]\n'
+            'role = "extra"\nchannel = 1\nindoor = true\n',
             encoding="utf-8")
         state = adminhome.read(admin)
-        check("two archives, two main stations, no complaint",
-              [one for one in state.concerns if "main one" in one], [])
+        check("a place-owned extra role removes the concern",
+              [one for one in state.concerns
+               if "senders for primary readings" in one], [])
+
+        # The same station may be extra in the first place and main in a
+        # second. The dashboard must judge each place with its own policy.
+        (work / "archives.toml").write_text(
+            'member_policy_version = 1\n\n'
+            "[archives.default]\n"
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf", "garten"]\n\n'
+            '[archives.default.members.garten]\n'
+            'role = "extra"\nchannel = 1\nindoor = true\n\n'
+            "[archives.nordfeld]\n"
+            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf", "garten"]\n',
+            encoding="utf-8")
+        state = adminhome.read(admin)
+        clashes = [one for one in state.concerns
+                   if "senders for primary readings" in one]
+        check("only the place where both are main is reported",
+              len(clashes), 1)
+        check("and it names that place",
+              "'nordfeld'" in (clashes[0] if clashes else ""), True)
+
+
+def place_membership_drives_the_console_card() -> None:
+    print("\nplaces select consoles")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        (work / "stations.toml").write_text(
+            '[stations.kirchdorf]\ndriver = "ecowitt"\nidentity = "AAAA"\n\n'
+            '[stations.garten]\ndriver = "ecowitt"\nidentity = "BBBB"\n',
+            encoding="utf-8")
+        sync_senders(work)
+        (work / "archives.toml").write_text(
+            '[archives.sued]\n'
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'label = "South"\nstations = ["kirchdorf"]\n\n'
+            '[archives.nord]\n'
+            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
+            'label = "North"\nstations = ["kirchdorf"]\n\n'
+            '[archives.empty]\n'
+            f'file = "{(work / "data" / "empty.sdb").as_posix()}"\n'
+            'stations = []\n', encoding="utf-8")
+
+        state = adminhome.read(admin)
+        details = {one.name: one.detail for one in state.stations}
+        check("one console can be used by both places",
+              details.get("kirchdorf"), "Used by South, North")
+        check("an empty selection uses nobody",
+              details.get("garten"), "Not assigned")
+        check("the empty place creates no main-station collision",
+              [one for one in state.concerns if "'empty' uses" in one], [])
+
+        # `*` is an explicit broad selection and is deliberately different
+        # from `[]`. A missing key is reserved for one-time legacy migration.
+        (work / "archives.toml").write_text(
+            '[archives.all]\n'
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'label = "All"\nstations = "*"\n', encoding="utf-8")
+        state = adminhome.read(admin)
+        details = {one.name: one.detail for one in state.stations}
+        check("a broad selection uses every console",
+              details, {"kirchdorf": "Used by All", "garten": "Used by All"})
+        # Broad selection is evaluated against the live sender directory,
+        # not the two display names in stations.toml. The fixture already
+        # contains one unannounced live sender, so all three are selected.
+        check("and sees their role collision",
+              any("'all' uses 3 senders for primary readings" in one
+                  for one in state.concerns), True)
 
 
 def no_token_is_worth_saying() -> None:
@@ -399,6 +490,9 @@ def never_is_only_said_when_it_is_true() -> None:
         check("a refusal is what the page shows",
               broken["away"].unreachable, "530 login incorrect")
         check("marked as something wrong", broken["away"].wrong, True)
+        failed_state = adminhome.read(admin)
+        check("and the overview links to that export",
+              "./export:away" in failed_state.concern_hrefs, True)
 
         posted = {one.name: one for one in state.uploads}
         check("an upload nobody configured but that is running shows up",
@@ -522,7 +616,7 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
         from weewx_evo.forecast import Reading
         from weewx_evo.forecast.store import ForecastStore
 
-        store = ForecastStore(work / "data" / "forecast.sdb")
+        store = ForecastStore(work / "forecast.sdb")
         try:
             # Under the entry's name and its series, which is what the
             # runner writes. Stored under the provider it would be a row no
@@ -538,6 +632,43 @@ def every_section_is_the_one_the_rest_of_the_program_reads() -> None:
         check("a forecast that has been fetched is dated",
               found.when is not None, True)
         check("and not reported as unreachable", found.unreachable, "")
+
+
+def a_sole_custom_place_is_implicit() -> None:
+    """Implicit means unambiguous, not literally named ``default``."""
+    print("\na sole custom-named place is implicit")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        (work / "archives.toml").write_text(
+            '[archives.north]\n'
+            f'file = "{(work / "data" / "north.sdb").as_posix()}"\n'
+            'label = "North"\n'
+            'stations = ["kirchdorf"]\n', encoding="utf-8")
+
+        feed_dir = work / "data" / "feeds" / "deck"
+        feed_dir.mkdir(parents=True)
+        (feed_dir / "index.html").write_text("ok", encoding="utf-8")
+        current = admin.config()
+        current["feeds"] = {"deck": {"kind": "cheetah"}}
+        current["forecast"] = {"ahead": {"kind": "open-meteo"}}
+        admin.config = lambda: current  # type: ignore[method-assign]
+
+        from weewx_evo.forecast import Reading
+        from weewx_evo.forecast.store import ForecastStore
+
+        store = ForecastStore(work / "forecast.sdb")
+        try:
+            store.store(Reading(source="ahead", issued=int(time.time())),
+                        fetched=int(time.time() - 30), archive="north")
+        finally:
+            store.close()
+
+        state = adminhome.read(admin)
+        check("the feed card resolves the sole place",
+              "from north" in state.feeds[0].detail, True)
+        check("the forecast card reads that place's row",
+              state.forecasts[0].when is not None, True)
 
 
 def the_shape_of_the_last_day() -> None:
@@ -565,7 +696,7 @@ def the_shape_of_the_last_day() -> None:
             for n in range(4):
                 live.add(Packet(dateTime=start + bucket * 3600 + 1800 + n,
                                 usUnits=1, data={"outTemp": 20.0},
-                                source="kirchdorf"))
+                                identity="kirchdorf"))
         live.close()
 
         state = adminhome.read(admin)
@@ -596,16 +727,33 @@ def the_page_renders_and_carries_the_numbers() -> None:
     print("\nthe page")
     with tempfile.TemporaryDirectory() as raw:
         admin = an_installation(Path(raw), stranger=True)
+        state = adminhome.read(admin)
         html = adminhome.overview(admin)
         check("the station is on it", "kirchdorf" in html, True)
         check("so is the archive", "Kirchdorf" in html, True)
-        # Against the card grid, not against the first card's name. The
-        # anchor was "Arriving", and a test naming one card goes red the
-        # next time the cards are reworded while proving nothing about the
-        # order it exists to check.
+        # Problems precede the stable three-stage view and link straight to
+        # the page that can resolve them.
         check("the concern is at the top",
-              html.index("to look at") < html.index('<div class="cards">'),
+              html.index("Needs attention")
+              < html.index('<div class="overview-stages">'),
               True)
+        check("the warning has a direct action",
+              'href="./senders"' in html and '>Review</a>' in html, True)
+        check("every concern has a target",
+              len(state.concerns) == len(state.concern_hrefs), True)
+        check("the three stages are stable",
+              [html.index(f'id="stage-{name}"')
+               for name in ("intake", "places", "publishing")]
+              == sorted(html.index(f'id="stage-{name}"')
+                        for name in ("intake", "places", "publishing")),
+              True)
+        check("the seven-card layout is gone", 'class="cards"' in html,
+              False)
+        check("sender and place links use their canonical routes",
+              'href="./senders"' in html and 'href="./places"' in html,
+              True)
+        check("setup can be reopened from the overview",
+              'href="./setup"' in html, True)
         check("ages are words, not timestamps",
               "ago<" in html or "ago</" in html, True)
         check("and no unix timestamp leaked through",
@@ -614,6 +762,57 @@ def the_page_renders_and_carries_the_numbers() -> None:
         nav = "".join(adminhome.nav(admin, "overview"))
         check("the nav marks that there is something to see",
               'class="warn"' in nav, True)
+
+
+def publishing_is_a_complete_inventory() -> None:
+    """Every configured publishing object has one primary inventory row."""
+    print("\npublishing inventory")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        admin = an_installation(work)
+        current = admin.config()
+        current["feeds"] = {
+            "site": {"kind": "cheetah", "archive": "default"}}
+        current["exports"] = {
+            "hoster": {"kind": "ftp", "host": "weather.example",
+                       "directory": "/public", "source": "site"}}
+        current["uploads"] = {
+            "wu": {"kind": "wunderground", "archive": "default"}}
+        current["notify"] = {"mail": {"kind": "email"}}
+        current["forecast"] = {
+            "ahead": {"kind": "open-meteo", "archive": "default"}}
+        admin.config = lambda: current  # type: ignore[method-assign]
+
+        rendered = adminpublish.overview(admin)
+        for section in ("feeds", "exports", "uploads", "notifications",
+                        "forecasts"):
+            check(f"{section} has a fixed section",
+                  f'id="publishing-{section}"' in rendered, True)
+        for route, name in (("feed", "site"), ("export", "hoster"),
+                            ("upload", "wu"), ("notify", "mail"),
+                            ("forecast", "ahead")):
+            needle = f'class="title" href="./{route}:{name}"'
+            check(f"{route} {name} has one inventory row",
+                  rendered.count(needle), 1)
+        check("the feed names its destination",
+              'href="./export:hoster">hoster</a>' in rendered, True)
+        check("the destination names its feed",
+              'href="./feed:site">site</a>' in rendered, True)
+        check("all five creation paths remain available",
+              all(f'href="./{route}"' in rendered for route in (
+                  "new-feed", "new-export", "new-upload", "new-notify",
+                  "new-forecast")),
+              True)
+        check("forecasts appear in the overview summary",
+              'title="Forecasts">Forecasts</a>' in adminhome.overview(admin),
+              True)
+        check("the forecast form names its place",
+              'href="./places">default</a>'
+              in adminpublish.context(admin, "forecast:ahead"), True)
+        check("the page uses inventory instead of explanatory copy",
+              'class="lede"' in rendered, False)
+        check("the archiver is not a publishing control",
+              "archiver" in rendered.lower(), False)
 
 
 def ages_read_as_ages() -> None:
@@ -682,16 +881,19 @@ def main() -> int:
     a_stranger_is_worth_saying()
     a_console_that_was_renamed_is_not_a_stranger()
     two_stations_claiming_one_archive()
+    place_membership_drives_the_console_card()
     no_token_is_worth_saying()
     what_cannot_be_read_says_so()
     a_relative_path_and_an_environment_variable()
     never_is_only_said_when_it_is_true()
     every_section_is_the_one_the_rest_of_the_program_reads()
+    a_sole_custom_place_is_implicit()
     a_duration_is_a_duration()
     the_live_row_says_all_of_it()
     the_live_file_dates_itself()
     the_shape_of_the_last_day()
     the_page_renders_and_carries_the_numbers()
+    publishing_is_a_complete_inventory()
     ages_read_as_ages()
 
     print()

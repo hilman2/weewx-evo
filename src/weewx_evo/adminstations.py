@@ -1,21 +1,9 @@
-"""The stations page.
+"""Admin UI for the senders known to the live journal.
 
-Handwritten, like `adminplots.py` and for the same reason: the form generator
-does one named value at a time, and this is a list of things with a list of
-strangers beside it.
-
-Three lists on one page. What is announced, what has turned up and has not
-been announced, and what has been folded away. The second is the one that
-earns the page: today a console nobody has announced is invisible. A wrong
-identity becomes a second source and gets averaged into the first, an
-unrecognised upload falls to the default driver, and neither leaves a trace
-anywhere somebody looks.
-
-**Two ways in, one list out.** Where the operator can enter something on the
-device we state the values and they copy them across. Where they cannot -- an
-Ambient WS-2902 has no server field, an AcuRite Access is reached by pointing
-DNS at it -- the device turns up on its own and gets adopted from the second
-list. Both end as a row in the first.
+A sender is the stable ``driver + hardware identity`` data stream.  This
+page may give that stream a presentation name and show whether it is alive.
+Places alone decide whether and how they use it; no archive, role, channel or
+indoor policy is written here.
 """
 
 from __future__ import annotations
@@ -25,41 +13,52 @@ import logging
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
+from . import placement
 from . import stations as station_defs
 
 log = logging.getLogger(__name__)
 
 NEWLINE = "\n"
 
-#: Drivers whose hardware is told where to upload, so we can state an identity
-#: and the operator copies it over. Anything else has to be adopted: its
-#: identity comes off the wire and cannot be chosen.
-TELLABLE = {
-    "ecowitt": (
-        "Ecowitt",
-        ("A GW1000, GW2000, HP2551 or anything else set to the Ecowitt "
-         "protocol. Server, port and path are yours to set; the identity is "
-         "not, so it is read off the first upload."),
-    ),
-    "wunderground": (
-        "Weather Underground protocol",
-        ("Almost any console with a Custom Server field: Ambient, Froggit, "
-         "Sainlogic, La Crosse gateways, and Ecowitt hardware set to the WU "
-         "protocol."),
-    ),
-    "json": (
-        "weewx-evo envelope",
-        ("A collector you run yourself, or a WeeWX driver through "
-         "weewx-evo weewx-driver."),
-    ),
-}
+def setups() -> dict[str, Any]:
+    """What each installed driver says about pointing hardware at it.
 
-#: Drivers whose hardware carries its own identity, so we cannot hand one out
-#: and have to read it off the first upload instead. The console can still be
-#: told where to send, which is what separates these from hardware that has to
-#: be adopted outright.
-LEARNS_ITS_IDENTITY = frozenset({"ecowitt"})
+    Asked of the drivers rather than listed here, and that is the whole of
+    the fix: this page carried a hand-written table of three, so the four
+    protocols that were not on it could not be set up from the page at all.
+    It had also drifted from what the protocols say -- Ambient was turned
+    away with "has no server field" while `protocols/ambient.py` lists five,
+    Server IP and Port among them.
+
+    Ordered so that hardware which can be told where to upload comes first:
+    that is the list somebody is looking at, and the rest is the harder
+    arrangement rather than the usual one.
+    """
+    from .ingest import drivers as driver_defs
+
+    found = {}
+    for name in driver_defs.names():
+        said = driver_defs.setup_of(driver_defs.DEFAULT.get(name))
+        if said is not None and (said.label or said.hardware):
+            found[name] = said
+    return dict(sorted(found.items(), key=lambda one: not one[1].tellable))
+
+
+def tellable() -> dict[str, Any]:
+    """The ones whose hardware has a field to type an address into."""
+    return {name: one for name, one in setups().items() if one.tellable}
+
+
+def learns_its_identity(driver: str) -> bool:
+    """Whether this hardware carries a name of its own we have to read.
+
+    Where it does not, the identity is handed out here and typed in, which
+    is the better arrangement: one somebody chooses can be chosen twice.
+    """
+    said = setups().get(driver)
+    return bool(said is not None and said.identity)
 
 #: What a station carries until its console has uploaded once.
 #: A placeholder rather than an empty string: the identity has to
@@ -104,7 +103,7 @@ def live_db(admin: Any) -> Path | None:
     from . import config as config_file
 
     found = config_file.resolved_path(admin.config(), "live_db",
-                                      Path(admin.path).parent, "live.sdb")
+                                      Path(admin.path).parent, "data/live.sdb")
     return found if found.exists() else None
 
 
@@ -128,6 +127,17 @@ def sightings_for(admin: Any):
         return Sightings(None)
 
 
+def _close_sightings(seen: Any) -> None:
+    """Flush a page's short-lived view and give its database handle back."""
+    try:
+        seen.close()
+    finally:
+        store = getattr(seen, "store", None)
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+
+
 def last_seen(admin: Any, names: list[str]) -> dict[str, int]:
     """When each station last had a packet stored.
 
@@ -139,15 +149,23 @@ def last_seen(admin: Any, names: list[str]) -> dict[str, int]:
     where = live_db(admin)
     if where is None:
         return {}
+    register = load(admin)
     try:
         import sqlite3
         db = sqlite3.connect(f"file:{where}?mode=ro", uri=True)
         try:
-            marks = ",".join("?" * len(names))
             rows = db.execute(
-                f"SELECT source, MAX(dateTime) FROM packet "
-                f"WHERE source IN ({marks}) GROUP BY source", names)
-            return {row[0]: int(row[1] or 0) for row in rows}
+                "SELECT driver, identity, MAX(dateTime) FROM packet"
+                " GROUP BY driver, identity").fetchall()
+            # Keyed back to names here rather than in the query: the
+            # table records the pair a console uploads with, and the
+            # name it answers to is a lookup that changes.
+            found = {}
+            for driver, identity, when in rows:
+                name = placement.name_for(register, driver, identity)
+                if name in names:
+                    found[name] = int(when or 0)
+            return found
         finally:
             db.close()
     except Exception:
@@ -156,22 +174,6 @@ def last_seen(admin: Any, names: list[str]) -> dict[str, int]:
 
 
 # -- changing things ------------------------------------------------------
-
-def known_archives(admin: Any) -> list:
-    """Every measurement series, from the register that defines them.
-
-    From `archives.toml` and not from the stations: an archive nothing writes
-    into yet has to be offerable, or the second one can never be reached by
-    anything.
-    """
-    from . import adminarchives
-
-    try:
-        return list(adminarchives.load(admin).all())
-    except Exception:
-        log.debug("could not read the archives", exc_info=True)
-        return []
-
 
 def _readable(name: str) -> str:
     """A console's name, or a plain word for it where the name is a MAC.
@@ -186,71 +188,28 @@ def _readable(name: str) -> str:
     stripped = name.replace(":", "").replace("-", "")
     if len(stripped) >= 12 and all(c in "0123456789abcdefABCDEF"
                                    for c in stripped):
-        return f"unnamed console ({name[-4:]})"
+        return f"unnamed sender ({name[-4:]})"
     return name
 
 
-def _archive_choice(admin: Any, chosen: str, label: str = "Place") -> str:
-    """Which series this console's readings go into.
-
-    **Nothing at all where there is one.** A dropdown with a single entry is
-    a question with one answer, on a page whose job is to say whether the
-    readings are arriving -- and it would change the one-archive page for no
-    reader.
-
-    A `<select>`, like the role beside it and for the same reason: two inputs
-    of one name send two values when a box is ticked, and which one arrives
-    depends on the parser.
-    """
-    found = known_archives(admin)
-    if len(found) < 2:
-        return ""
-    options = NEWLINE.join(
-        f'<option value="{html.escape(one.name)}"'
-        f'{" selected" if one.name == chosen else ""}>'
-        f"{html.escape(one.title)}</option>"
-        for one in found)
-    return (f'<label class="tick">{html.escape(label)}'
-            f'<select name="archive">{options}</select></label>')
+def _sender_problem(problem: str) -> str:
+    """Translate legacy domain wording at the UI boundary."""
+    return (str(problem)
+            .replace("a station", "a sender")
+            .replace("station called", "sender called")
+            .replace("Station ", "Sender ")
+            .replace("console", "sender"))
 
 
-def _archive_refused(admin: Any, wanted: str) -> str:
-    """Why this series cannot be written into, or an empty string.
-
-    Refused rather than warned about, and this is a field where that is
-    right: `archives.Register.get` answers an unknown name with the default
-    rather than raising -- deliberately, so a feed pointed at a removed
-    archive still produces a page. A *station* pointed at one would quietly
-    write one site's readings into another site's series, and nothing
-    downstream could ever separate them again.
-
-    Only reachable by hand: the control above is a list of what exists. But
-    `stations.toml` says in its own header that editing it by hand is fine.
-    """
-    wanted = (wanted or "").strip()
-    found = known_archives(admin)
-    if not wanted or not found:
-        return ""
-    if any(one.name == wanted for one in found):
-        return ""
-    return (f"There is no series called {wanted!r}. There is: "
-            + ", ".join(sorted(one.name for one in found)) + ".")
-
-
-def adopt(admin: Any, driver: str, identity: str, name: str,
-          archive: str = "") -> str:
+def adopt(admin: Any, driver: str, identity: str, name: str) -> str:
     """Take a stranger into the register. Returns an error, or empty."""
-    refused = _archive_refused(admin, archive)
-    if refused:
-        return refused
     register = load(admin)
     station = station_defs.Station(
         name=(name or "").strip().lower(), driver=driver, identity=identity,
-        archive=(archive or station_defs.DEFAULT_ARCHIVE).strip(),
         learnt=True)
     problem = register.why_not(station)
     if problem:
-        return problem
+        return _sender_problem(problem)
     register.stations.append(station)
     error = store(admin, register, f"{station.name} adopted")
     if error:
@@ -258,11 +217,14 @@ def adopt(admin: Any, driver: str, identity: str, name: str,
     # Out of the sightings, because it is not a stranger any more. Leaving it
     # there would show the same console in two lists at once.
     seen = sightings_for(admin)
-    seen.forget(driver, identity)
+    try:
+        seen.forget(driver, identity)
+    finally:
+        _close_sightings(seen)
     return ""
 
 
-def announce(admin: Any, name: str, driver: str, archive: str = "") -> tuple:
+def announce(admin: Any, name: str, driver: str) -> tuple:
     """Create a station. Returns (station, error).
 
     Two shapes, and which one depends on where the identity comes from.
@@ -272,16 +234,15 @@ def announce(admin: Any, name: str, driver: str, archive: str = "") -> tuple:
     fills it in from the first upload that has nowhere else to go.
     """
     register = load(admin)
-    waiting = driver in LEARNS_ITS_IDENTITY
+    waiting = learns_its_identity(driver)
     identity = "" if waiting else register.identity_for(driver)
     station = station_defs.Station(
         name=(name or "").strip().lower(), driver=driver,
         identity=identity or f"{AWAITING}{name}".strip(),
-        archive=(archive or station_defs.DEFAULT_ARCHIVE).strip(),
         learnt=waiting)
     problem = register.why_not(station)
     if problem:
-        return None, problem
+        return None, _sender_problem(problem)
     register.stations.append(station)
     error = store(admin, register, f"{station.name} announced")
     return (None, error) if error else (station, "")
@@ -302,12 +263,16 @@ def learn(admin: Any, name: str) -> tuple:
     register = load(admin)
     station = register.by_name(name)
     if station is None:
-        return None, f"There is no station called {name!r}."
+        return None, f"There is no sender called {name!r}."
     if not station.identity.startswith(AWAITING):
         return station, ""          # already learnt; nothing to do
 
-    waiting = [one for one in sightings_for(admin).waiting()
-               if one.driver == station.driver and one.identity]
+    seen = sightings_for(admin)
+    try:
+        waiting = [one for one in seen.waiting()
+                   if one.driver == station.driver and one.identity]
+    finally:
+        _close_sightings(seen)
     if not waiting:
         return None, ""             # nothing has arrived yet, which is normal
 
@@ -317,12 +282,16 @@ def learn(admin: Any, name: str) -> tuple:
     filled = _replace(station, identity=found.identity, learnt=True)
     problem = register.why_not(filled, replacing=station.name)
     if problem:
-        return None, problem
+        return None, _sender_problem(problem)
     register.stations[register.stations.index(station)] = filled
     error = store(admin, register, f"{station.name} learnt its identity")
     if error:
         return None, error
-    sightings_for(admin).forget(found.driver, found.identity)
+    seen = sightings_for(admin)
+    try:
+        seen.forget(found.driver, found.identity)
+    finally:
+        _close_sightings(seen)
     return filled, ""
 
 
@@ -348,39 +317,13 @@ def _clock_field(form: dict, name: str, current: float | None) -> float | None:
 
 
 def configure(admin: Any, name: str, form: dict) -> str:
-    """Change what is true of one console. Returns an error, or empty.
-
-    Only what the page can send. A form arriving without a checkbox means it
-    was unticked, not that the field was left out -- which is why `indoor` is
-    read as presence rather than as a value, the same way the settings page
-    handles every other boolean.
-    """
+    """Change settings intrinsic to one console. Returns an error, or empty."""
     from dataclasses import replace as _replace
 
     register = load(admin)
     station = register.by_name(name)
     if station is None:
-        return f"There is no station called {name!r}."
-    from . import roles as role_defs
-
-    wanted = str(form.get("role") or station.role).strip() or role_defs.MAIN
-    if wanted not in role_defs.ROLES:
-        return f"{wanted!r} is not a role. It is 'main' or 'extra'."
-    channel = station.channel
-    if wanted == role_defs.EXTRA and not channel:
-        # The lowest free one in this archive. Not a decision anybody wants
-        # to make, and getting it wrong means two extra stations sharing a
-        # channel, which is the collision this was meant to avoid.
-        taken = {one.channel for one in register
-                 if one.name != name and one.archive == station.archive
-                 and one.role == role_defs.EXTRA and one.channel}
-        channel = role_defs.next_channel(taken) or 0
-        if not channel:
-            return (f"All {role_defs.CHANNELS} extra channels of "
-                    f"{station.archive!r} are taken. A further station needs "
-                    "an archive of its own.")
-    if wanted == role_defs.MAIN:
-        channel = 0
+        return f"There is no sender called {name!r}."
 
     try:
         behind = _clock_field(form, "max_behind", station.max_behind)
@@ -388,14 +331,7 @@ def configure(admin: Any, name: str, form: dict) -> str:
     except ValueError as exc:
         return str(exc)
 
-    changed = _replace(station,
-                       indoor=bool(form.get("indoor")),
-                       role=wanted, channel=channel,
-                       max_behind=behind, max_ahead=ahead,
-                       archive=str(form.get("archive") or station.archive))
-    refused = _archive_refused(admin, changed.archive)
-    if refused:
-        return refused
+    changed = _replace(station, max_behind=behind, max_ahead=ahead)
     if changed == station:
         return ""
     register.stations[register.stations.index(station)] = changed
@@ -405,38 +341,31 @@ def configure(admin: Any, name: str, form: dict) -> str:
 def remove(admin: Any, name: str) -> str:
     register = load(admin)
     if register.remove(name) is None:
-        return f"There is no station called {name!r}."
+        return f"There is no sender called {name!r}."
     return store(admin, register, f"{name} removed")
 
 
 def ignore(admin: Any, driver: str, identity: str, on: bool = True) -> str:
     seen = sightings_for(admin)
-    if not seen.ignore(driver, identity, on):
-        return "That console is not on the list any more."
-    return ""
+    try:
+        if not seen.ignore(driver, identity, on):
+            return "That sender is not on the list any more."
+        return ""
+    finally:
+        _close_sightings(seen)
 
 
 # -- the page -------------------------------------------------------------
 
 def nav(admin: Any, active: str) -> list[str]:
     register = load(admin)
-    # No sub-heading. "Stations" over a link called "Consoles" opening a page
-    # headed "Stations" was three words for one destination, and the page's
-    # own first line has to explain that two of them mean the same thing.
     out: list[str] = []
-    # No "+ Add" here. An action in the navigation is an action you find
-    # by looking for a place to put things rather than by being where the
-    # things are, and it is one more line per section in a list whose whole
-    # problem was length.
-    here = active in ("stations", "new-station")
+    here = active in ("senders", "stations", "new-sender", "new-station")
     current = " aria-current='page'" if here else ""
-    out.append(f'<a href="./stations"{current}>Consoles'
+    out.append(f'<a href="./senders"{current}>Senders'
                f'<span class="count">{len(register)}</span></a>')
     if not len(register):
-        # Under the link, not above it. Above, the sentence explaining what
-        # a console is arrived before the word it explains.
-        out.append('<p class="navempty">None yet. A console is the box that '
-                   'sends the readings.</p>')
+        out.append('<p class="navempty">None</p>')
     return out
 
 
@@ -453,127 +382,193 @@ def _ago(when: int) -> str:
     return f"{gap // 86400} days ago"
 
 
+def _sender_id(one: Any) -> str:
+    """The immutable selection key for one named sender."""
+    from .db.live import sender_id
+
+    return sender_id(one.driver, one.identity)
+
+
+def _sender_anchor(sender: str) -> str:
+    """The literal DOM id used by Place -> Sender links."""
+    return f"sender-{sender}"
+
+
+def _place_href(name: str) -> str:
+    """Open the sender membership section of one Place."""
+    encoded = quote(str(name), safe="")
+    return f"./places?open={encoded}#place-members-{encoded}"
+
+
+def _places(admin: Any) -> list[Any]:
+    """Place configuration for presentation; an unreadable file is empty."""
+    from . import adminarchives
+
+    try:
+        return list(adminarchives.load(admin).all())
+    except Exception:
+        log.debug("could not read the places for the sender page", exc_info=True)
+        return []
+
+
+def _used_by(places: list[Any], sender: str) -> list[Any]:
+    return [one for one in places if one.selects(sender)]
+
+
+def _place_cell(places: list[Any], sender: str) -> str:
+    """Places using this sender, and the one configuration action."""
+    used = _used_by(places, sender)
+    links = ", ".join(
+        f'<a href="{html.escape(_place_href(one.name), quote=True)}">'
+        f'{html.escape(one.title)}</a>' for one in used)
+    if links:
+        action = _place_href(used[0].name)
+        return (f'{links}<br><a class="note" '
+                f'href="{html.escape(action, quote=True)}">Change assignment</a>')
+    if places:
+        action = _place_href(places[0].name)
+        return (f'<span class="warn">Not assigned</span><br>'
+                f'<a href="{html.escape(action, quote=True)}">Assign to a Place</a>')
+    return '<a href="./places">Create a Place</a>'
+
+
+def _technical_identity(driver: str, identity: str, sender: str) -> str:
+    """Driver identity first; canonical key folded underneath it."""
+    return f'''
+      <span>{html.escape(driver)}</span>
+      <code>{html.escape(identity or "(none)")}</code>
+      <details class="technical-id">
+        <summary>Technical ID</summary>
+        <code>{html.escape(sender)}</code>
+      </details>'''
+
+
+def _sender_status(when: int, waiting: bool = False) -> str:
+    if when:
+        fresh = max(0, int(time.time()) - when) < 10 * 60
+        state = ('<span class="ok">Receiving</span>' if fresh else
+                 '<span class="warn">Stale</span>')
+        return f'{state}<br><span class="note">{html.escape(_ago(when))}</span>'
+    if waiting:
+        return '<span class="warn">Waiting for first data</span>'
+    return '<span class="note">No data</span>'
+
+
 def overview(admin: Any, message: str = "", error: str = "") -> str:
-    """The three lists."""
-    # Imported here rather than at the top, the way `known_archives` does it:
-    # `adminarchives` reaches for `adminhome`, and a circle at import time is
-    # a settings page that will not start.
+    """Named, newly discovered and ignored live senders."""
     from . import adminarchives
 
     chain = adminarchives.chain(admin, "stations")
     register = load(admin)
     seen = sightings_for(admin)
     when = last_seen(admin, [one.name for one in register])
+    places = _places(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
-    # The banner above the page says it. Printing it a second time in the
-    # body was two "Saved." one under the other, which reads as two things
-    # having happened.
-    said = ""
 
     rows = []
-    # What each place is called, so the column can print the name a person
-    # gave it. It held the key out of the file -- `testort` beside a page
-    # that says Testort everywhere else -- and a lower-case key with no
-    # spaces reads like a fault rather than like a choice somebody made.
-    titles = {a.name: a.title for a in known_archives(admin)}
     for one in sorted(register, key=lambda s: s.name):
         waiting = one.identity.startswith(AWAITING)
+        sender = _sender_id(one)
+        diagnostic = _what_it_sends_html(admin, one)
         if waiting:
-            shown = ('<span class="note">waiting for its first upload</span>'
-                     f'<br><a href="./new-station?learn='
-                     f'{html.escape(one.name)}">what to enter</a>')
+            identity = (f'<a href="./new-sender?learn={quote(one.name, safe="")}">'
+                        'Connection settings</a>')
         else:
-            mark = ("read off the hardware" if one.learnt
-                    else "copied onto the console")
-            shown = (f'<code>{html.escape(one.identity)}</code>'
-                     f'<br><span class="note">{mark}</span>')
+            identity = _technical_identity(one.driver, one.identity, sender)
+        anchor = html.escape(_sender_anchor(sender), quote=True)
+        detail = (f'''
+    <tr class="sendsrow" data-sender-detail="{html.escape(sender, quote=True)}">
+      <td colspan="5">{diagnostic}</td>
+    </tr>''' if diagnostic else "")
         rows.append(f'''
-    <tr>
+    <tr id="{anchor}" data-sender="{html.escape(sender, quote=True)}">
       <td><strong>{html.escape(_readable(one.name))}</strong>
           {f'<br><span class="note">{html.escape(one.note)}</span>' if one.note else ""}</td>
-      <td>{html.escape(one.driver)}</td>
-      <td>{shown}</td>
-      <td>{html.escape(titles.get(one.archive, one.archive))}
-          {_role_note(one)}</td>
-      <td>{html.escape(_ago(when.get(one.name, 0)))}</td>
+      <td>{identity}</td>
+      <td>{_sender_status(when.get(one.name, 0), waiting)}</td>
+      <td>{_place_cell(places, sender)}</td>
       <td class="act">
-        <form method="post" action="./stations/{html.escape(one.name)}/remove"
+        <form method="post" action="./senders/{html.escape(one.name)}/remove"
               class="inline">
-          <button type="submit" class="quiet">Remove</button></form></td>
-    </tr>
-    <tr class="sendsrow"><td colspan="6">{_what_it_sends_html(admin, one)}</td></tr>''')
+          <button type="submit" class="quiet">Remove name</button></form></td>
+    </tr>{detail}''')
     announced = f'''
   <table class="stations">
-    <thead><tr><th>Name</th><th>Driver</th><th>Identity</th><th>Place</th>
-               <th>Last reading</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Identity</th><th>Status</th>
+               <th>Used by</th><th></th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
-  </table>''' if rows else (
-        '<p class="lede">None announced yet. Readings still arrive and are '
-        'recorded under whatever identity the hardware sends. Announcing a '
-        'console gives it a name, and says which place its readings '
-        'belong to.</p>')
+  </table>''' if rows else '<p class="note">No named senders.</p>'
 
     add = ""
     if not admin.read_only:
         add = ('<div class="actions">'
-               '<a class="button" href="./new-station">Add a console</a>'
+               '<a class="button" href="./new-sender">Add sender</a>'
                "</div>")
+    try:
+        waiting = _waiting(admin, seen, register, places)
+        folded = _folded(seen)
+    finally:
+        _close_sightings(seen)
     return f'''
-<h2>Consoles</h2>
+<h2>Senders</h2>
 {chain}
-<p class="lede">A console is the box that sends the readings. Each one gets a
-   name, and the place its readings belong to. Two consoles in one garden
-   both feed that one place; a console at a second site needs a place of its
-   own, or its readings land in the first one's record.</p>
-{said}{problem}{add}
+{problem}{add}
 <section class="group">
   {announced}
 </section>
-{_waiting(admin, seen, register)}
-{_folded(seen)}'''
+{waiting}
+{folded}
+<script>
+(function () {{
+  var wanted = new URLSearchParams(location.search).get('open');
+  if (!wanted) return;
+  var row = Array.prototype.find.call(
+    document.querySelectorAll('[data-sender]'),
+    function (one) {{ return one.getAttribute('data-sender') === wanted; }});
+  if (!row) return;
+  var detail = Array.prototype.find.call(
+    document.querySelectorAll('[data-sender-detail]'),
+    function (one) {{ return one.getAttribute('data-sender-detail') === wanted; }});
+  if (detail) {{
+    var fold = detail.querySelector('details');
+    if (fold) fold.open = true;
+  }}
+  row.scrollIntoView({{block: 'center'}});
+}}());
+</script>'''
 
 
-def _waiting(admin: Any, seen: Any, register: Any) -> str:
-    """Consoles that have uploaded and are not announced.
-
-    `admin` because adopting one has to say which series it writes into, and
-    what series there are is in a file this has to be able to read.
-    """
+def _waiting(admin: Any, seen: Any, register: Any, places: list[Any]) -> str:
+    """Senders observed in live but not named yet."""
     waiting = seen.waiting()
     if not waiting:
-        return '''
-<section class="group">
-  <h3>Seen, not announced</h3>
-  <p class="lede">Nothing unaccounted for. Anything that uploads without being
-     announced appears here rather than being dropped in silence: hardware
-     that announces itself, a device reached by pointing DNS at us, or a
-     console whose identity has a typo in it.</p>
-</section>'''
+        return ""
 
     rows = []
     for one in waiting:
+        from .db.live import sender_id
+
+        sender = sender_id(one.driver, one.identity)
         fields = ", ".join(one.fields[:6])
-        suggested = (one.identity or one.peer or "console").lower()
+        suggested = (one.identity or one.peer or "sender").lower()
         suggested = "".join(c if c.isalnum() else "-" for c in suggested)[:20]
+        anchor = html.escape(_sender_anchor(sender), quote=True)
         rows.append(f'''
-    <tr>
-      <td><code>{html.escape(one.identity or "(no identity)")}</code>
-          <br><span class="note">from {html.escape(one.peer or "?")}</span></td>
-      <td>{html.escape(one.driver)}</td>
-      <td>{one.packets} packet(s)<br>
-          <span class="note">{html.escape(_ago(one.last_seen))}</span></td>
+    <tr id="{anchor}" data-sender="{html.escape(sender, quote=True)}">
+      <td>{_technical_identity(one.driver, one.identity, sender)}</td>
+      <td>{_sender_status(one.last_seen)}</td>
+      <td>{_place_cell(places, sender)}</td>
       <td><span class="note">{html.escape(fields)}</span></td>
       <td>
-        <form method="post" action="./stations/adopt" class="inline">
+        <form method="post" action="./senders/adopt" class="inline">
           <input type="hidden" name="driver" value="{html.escape(one.driver)}">
           <input type="hidden" name="identity" value="{html.escape(one.identity)}">
-          <input type="text" name="name" required placeholder="a name"
+          <input type="text" name="name" required placeholder="sender name"
                  value="{html.escape(suggested)}" autocomplete="off"
                  spellcheck="false">
-          {_archive_choice(admin, station_defs.DEFAULT_ARCHIVE, "into")}
-          <button type="submit">Adopt</button>
+          <button type="submit">Save name</button>
         </form>
-        <form method="post" action="./stations/ignore" class="inline">
+        <form method="post" action="./senders/ignore" class="inline">
           <input type="hidden" name="driver" value="{html.escape(one.driver)}">
           <input type="hidden" name="identity" value="{html.escape(one.identity)}">
           <button type="submit" class="quiet">Ignore</button>
@@ -583,14 +578,10 @@ def _waiting(admin: Any, seen: Any, register: Any) -> str:
 
     return f'''
 <section class="group">
-  <h3>Seen, not announced <span class="count">{len(waiting)}</span></h3>
-  <p class="lede">These uploaded and are not in the list above. Their readings
-     are being recorded under the identity the hardware sends. Adopting one
-     gives it a name and a place; ignoring folds it away without losing
-     it.</p>
+  <h3>New senders <span class="count">{len(waiting)}</span></h3>
   <table class="stations">
-    <thead><tr><th>Identity</th><th>Driver</th><th>Seen</th>
-               <th>Sends</th><th></th></tr></thead>
+    <thead><tr><th>Identity</th><th>Status</th><th>Used by</th>
+               <th>Fields</th><th>Name</th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
   </table>
 </section>'''
@@ -604,14 +595,13 @@ def _folded(seen: Any) -> str:
     for one in folded:
         rows.append(f'''
     <tr>
-      <td><code>{html.escape(one.identity or "(no identity)")}</code></td>
-      <td>{html.escape(one.driver)}</td>
+      <td>{html.escape(one.driver)} <code>{html.escape(one.identity or "(none)")}</code></td>
       <td><span class="note">{html.escape(_ago(one.last_seen))}</span></td>
       <td>
-        <form method="post" action="./stations/unignore" class="inline">
+        <form method="post" action="./senders/unignore" class="inline">
           <input type="hidden" name="driver" value="{html.escape(one.driver)}">
           <input type="hidden" name="identity" value="{html.escape(one.identity)}">
-          <button type="submit" class="quiet">Bring back</button>
+          <button type="submit" class="quiet">Restore</button>
         </form>
       </td>
     </tr>''')
@@ -619,11 +609,8 @@ def _folded(seen: Any) -> str:
 <section class="group">
   <details>
     <summary><h3>Ignored<span class="count">{len(folded)}</span></h3></summary>
-    <p class="lede">Folded away, not decided. Any of these can still be
-       adopted. One that stops uploading is forgotten after a fortnight, so a
-       neighbour's console seen once does not stay here.</p>
     <table class="stations">
-      <thead><tr><th>Identity</th><th>Driver</th><th>Last seen</th><th></th></tr></thead>
+      <thead><tr><th>Identity</th><th>Last seen</th><th></th></tr></thead>
       <tbody>{"".join(rows)}</tbody>
     </table>
   </details>
@@ -632,63 +619,58 @@ def _folded(seen: Any) -> str:
 
 def new(admin: Any, error: str = "", form: dict | None = None,
         made: Any = None) -> str:
-    """Announce a console we can state the values for."""
+    """Register a sender whose hardware can be pointed at the listener."""
     form = form or {}
     if made is not None:
         return _what_to_enter(admin, made)
 
-    chosen = form.get("driver") or "wunderground"
+    offered = tellable()
+    chosen = form.get("driver") or ("wunderground" if "wunderground" in offered
+                                    else next(iter(offered), ""))
     options = NEWLINE.join(
         f'<option value="{html.escape(kind)}"'
-        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
-        for kind, (label, _why) in TELLABLE.items())
+        f'{" selected" if chosen == kind else ""}>'
+        f'{html.escape(one.label)}</option>'
+        for kind, one in offered.items())
     explained = "".join(
-        f"<li><strong>{html.escape(label)}</strong>: {html.escape(why)}</li>"
-        for _kind, (label, why) in TELLABLE.items())
-    # From the archive register rather than from the stations: an archive
-    # nothing writes into yet has to be offerable, or the second one can
-    # never be reached.
-    from . import adminarchives
-
-    archives = NEWLINE.join(
-        f'<option value="{html.escape(one.name)}">'
-        f'{html.escape(one.title)}</option>'
-        for one in adminarchives.load(admin).all())
+        f"<li><strong>{html.escape(one.label)}</strong>: "
+        f"{html.escape(one.hardware)}</li>"
+        for one in offered.values())
+    # Named rather than described in general terms. "Hardware that cannot be
+    # told where to upload" leaves somebody holding an AcuRite bridge to work
+    # out which sentence is about them; the protocols say what they are, and
+    # each of them carries the steps for pointing DNS at us.
+    host, port, _guessed = _where_consoles_reach_us(admin)
+    token = admin.config().get("token") or ""
+    adopting = "".join(
+        f'<details class="kind"><summary>{html.escape(one.label)}: '
+        f'{html.escape(one.hardware)}</summary><ol class="steps">'
+        + "".join(_step(fill(note, host, port, token, name))
+                  for note in one.notes)
+        + "</ol></details>"
+        for name, one in setups().items() if not one.tellable)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
 
     return f'''
 <section class="group">
-  <p class="lede">For hardware you can point at this server. Fill this in and
-     the next page states exactly what to type into the console, including an
-     identity that is handed out here so it cannot be used twice.</p>
-  <p class="lede">Hardware that cannot be told where to upload is not added
-     here. An Ambient WS-2902 has no server field and an AcuRite Access is
-     reached by pointing DNS at it; those turn up on their own and are adopted
-     from <a href="./stations">the stations page</a>.</p>
+  <h3>Add sender</h3>
   {problem}
-  <form method="post" action="./new-station">
+  <form method="post" action="./new-sender">
     <div class="field">
       <label for="s-name">Name</label>
       <input type="text" id="s-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="garden" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _. This is what the
-         readings are recorded under, and what <code>sources.toml</code>
-         writes its rules against.</p>
+      <p class="help">Lowercase letters, digits, - and _.</p>
     </div>
     <div class="field">
       <label for="s-driver">Protocol</label>
       <select id="s-driver" name="driver">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
-    <div class="field">
-      <label for="s-archive">Archive</label>
-      <select id="s-archive" name="archive">{archives}</select>
-      <p class="help">The measurement series it writes into. One place, one
-         archive.</p>
-    </div>
-    <div class="actions"><button type="submit">Create</button></div>
+    <div class="actions"><button type="submit">Continue</button></div>
   </form>
+  {f'<details><summary>Other hardware</summary>{adopting}</details>' if adopting else ''}
 </section>'''
 
 
@@ -706,47 +688,30 @@ def _what_to_enter(admin: Any, station: Any) -> str:
     caveat = "" if not guessed else (
         '<p class="help warn">This address is what this machine sees of '
         'itself. Behind a reverse proxy or a published container port it is '
-        'not the one a console can reach -- set <strong>Address consoles '
+        'not the one a device can reach -- set <strong>Address devices '
         'reach it at</strong> under Listener, and this will say that '
         'instead.</p>')
 
-    if station.driver == "ecowitt":
-        rows = [
-            ("Protocol", "Ecowitt"),
-            ("Server / Hostname", host),
-            ("Port", str(port)),
-            ("Path", f"/{token}/ecowitt/" if token else "/ecowitt/"),
-            ("Upload Interval", "16 or 60 seconds"),
-        ]
-        note = ("Ecowitt consoles take a path, so the token goes there rather "
-                "than into a password field. The console names itself with a "
-                "PASSKEY of its own, which is why there is nothing to type for "
-                "an identity: it is read off the first upload.")
-    elif station.driver == "wunderground":
-        rows = [
-            ("Protocol", "Wunderground"),
-            ("Server / Hostname", host),
-            ("Port", str(port)),
-            ("Path", "/weatherstation/updateweatherstation.php"),
-            ("Station ID", station.identity),
-            ("Station Key / Password", token or "(no token set)"),
-        ]
-        note = ("The ID is the one handed out for this station. The password "
-                "is the upload token: these consoles have no field for a path, "
-                "so that is where it goes.")
-    else:
-        rows = [
-            ("Address", f"{_base(host, port)}/{token}/json/"),
-            ("Source", station.identity),
-        ]
-        note = ("Post the envelope to that address, with `source` set to the "
-                "identity. `weewx-evo weewx-driver run` does it for a WeeWX "
-                "driver.")
+    said = setups().get(station.driver)
+    rows = [(label, fill(value, host, port, token,
+                         station.driver, station.identity))
+            for label, value in (said.fields if said else ())]
+    notes = [fill(one, host, port, token, station.driver, station.identity)
+             for one in (said.notes if said else ())]
+    if said is None:
+        # A driver that says nothing still gets a station and a page. The
+        # address is all we can state, and stating it is better than the
+        # blank the generic branch used to be.
+        rows = [("Address", f"{_base(host, port)}/{token}/{station.driver}/"
+                            if token else
+                            f"{_base(host, port)}/{station.driver}/")]
+        notes = ["This driver does not provide connection instructions."]
 
     table = "".join(
         f'<tr><th>{html.escape(label)}</th>'
         f'<td><code>{html.escape(str(value))}</code></td></tr>'
         for label, value in rows)
+    told = "".join(_step(one) for one in notes)
 
     if waiting:
         # The other half of the wizard. The operator is standing at the
@@ -754,30 +719,70 @@ def _what_to_enter(admin: Any, station: Any) -> str:
         # rather than at some point in service, to whichever console happens
         # to speak first.
         after = f'''
-  <form method="post" action="./stations/{html.escape(station.name)}/learn">
+  <form method="post" action="./senders/{html.escape(station.name)}/learn">
     <div class="actions"><button type="submit">It is uploading now</button></div>
   </form>
-  <p class="lede">This console names itself and cannot be told what to call
-     itself, so press that once it is sending. The first upload from an
-     Ecowitt console this installation does not know yet becomes
+  <p class="help">This sender names itself with a
+     <code>{html.escape(said.identity if said else "name")}</code> of its own
+     and cannot be told what to call itself, so press that once it is
+     sending. The first upload from
+     {html.escape(said.label if said else station.driver)} hardware this
+     installation does not know yet becomes
      <strong>{html.escape(station.name)}</strong>.</p>'''
     else:
         after = '''
-  <p class="lede">The first upload appears on
-     <a href="./stations">the stations page</a> as a reading under this name.
-     Until then the console is not sending, or is not reaching this
-     address.</p>'''
+  <p class="help">Waiting for the first upload. Return to
+     <a href="./senders">Senders</a> to check its status.</p>'''
 
     return f'''
 <section class="group">
-  <h3>Enter this into the console</h3>
-  <p class="ok">Station <strong>{html.escape(station.name)}</strong> is
-     announced. It has not sent anything yet.</p>
+  <h3>Connect {html.escape(station.name)}</h3>
+  <p class="ok">Sender created</p>
   <table class="stations enter">{table}</table>
-  <p class="help">{html.escape(note)}</p>
+  <ol class="steps">{told}</ol>
   {caveat}
   {after}
 </section>'''
+
+
+def _step(note: str) -> str:
+    """One instruction, as a step. An indented line is a command to copy.
+
+    Upstream indents them by four spaces, which is how a `dnsmasq` line and
+    an `iptables` line are told apart from the sentence around them. Run
+    together as prose they are unusable: the whole value of an AcuRite page
+    is that the two lines can be copied.
+    """
+    if note.startswith("    "):
+        return (f'<li><pre class="cmd"><code>'
+                f'{html.escape(note.strip())}</code></pre></li>')
+    return f"<li>{html.escape(note)}</li>"
+
+
+def fill(text: str, host: str, port: str, token: str,
+         driver: str = "", identity: str = "") -> str:
+    """Put this installation's answers into a driver's placeholders.
+
+    Replaced rather than `%`-formatted. A driver is free to write a note
+    with a bare `%` in it -- an iptables rule, a percentage -- and `%`
+    formatting would raise on it and take the whole page with it, at the
+    moment somebody is trying to connect their first console. An unknown
+    placeholder is left standing instead, which is visible and harmless.
+
+    `driver` and `identity` are optional because the same notes are shown
+    before there is a station: hardware that has to be adopted is pointed
+    here by DNS, and that has to be readable on the page somebody is on when
+    they find out their bridge cannot be told an address.
+    """
+    path = f"/{token}/{driver}/" if token else f"/{driver}/"
+    for name, value in (("address", host),
+                        ("port", str(port)),
+                        ("base", _base(host, port)),
+                        ("path", path),
+                        ("identity", identity),
+                        ("token", token or "(no token set)")):
+        text = text.replace(f"%({name})s", value)
+    return text
 
 
 def _base(host: str, port: str) -> str:
@@ -854,19 +859,12 @@ def _own_address() -> str:
 
 
 def what_it_sends(admin: Any, station: Any) -> dict:
-    """What arrives from one station, and what the archive can hold.
+    """Latest raw readings for one sender, described only by stored data.
 
-    The point of this is the last column. A console gains a sensor and the
-    reading turns up in every upload, is stored in the live table, and is
-    dropped at every archive interval because nothing made a column for it.
-    The archive says so in the log -- once per name per run, into a file
-    nobody is tailing -- and the driver writes a report to `/var/tmp`.
-    Neither is anywhere somebody looks.
-
-    So it is asked here, of the same live table the readings are in, and it
-    comes with the upload that produced it. That upload is already redacted:
-    the driver takes its own secrets out (`redact`) before it is stored, which
-    it does precisely so this can be handed to somebody else.
+    Driver code is an ingest concern.  Once a packet is in the journal this
+    page uses its persisted dialect mapping, just like the archive side.  A
+    missing or damaged mapping stays visible as such; the UI never loads a
+    plugin to guess what the listener meant.
     """
     where = live_db(admin)
     if where is None:
@@ -879,8 +877,12 @@ def what_it_sends(admin: Any, station: Any) -> dict:
         return {}
     try:
         row = db.execute(
-            "SELECT data, raw, dateTime FROM packet WHERE source = ? "
-            "ORDER BY dateTime DESC LIMIT 1", (station.name,)).fetchone()
+            "SELECT p.data, p.raw, p.dateTime, p.dialect, p.mapping, m.spec "
+            "FROM packet AS p LEFT JOIN dialect_mapping AS m "
+            "ON m.digest = p.mapping "
+            "WHERE p.driver = ? AND p.identity = ? "
+            "ORDER BY p.dateTime DESC LIMIT 1",
+            (station.driver, station.identity)).fetchone()
     except Exception:
         log.debug("could not read what %r sends", station.name, exc_info=True)
         return {}
@@ -892,176 +894,199 @@ def what_it_sends(admin: Any, station: Any) -> dict:
     import json as _json
 
     try:
-        stored_values = _json.loads(row[0]) or {}
-    except ValueError:
+        values = _json.loads(row[0]) or {}
+    except (TypeError, ValueError):
         return {}
-    sent = sorted(stored_values)
+    if not isinstance(values, dict):
+        return {}
 
-    # The raw names, from the upload as it arrived. `data` holds the packet
-    # *after* mapping -- `barometer`, `extraTemp9` -- and showing those as
-    # the things to place made every row say "not written" about a reading
-    # that had just been written. What the hardware calls it is `baromrelin`
-    # and `tf_ch1`, and that is what a placement is a decision about.
-    values = _raw_values(row[1] or "") or stored_values
-    known = admin.columns()
-    # An empty schema means the archive could not be read, not that every
-    # field is homeless. Saying "45 dropped" there would be a false alarm on
-    # a page whose whole job is telling the truth about what is stored.
-    homeless = sorted(set(sent) - known) if known else []
+    spec = _stored_mapping(row[4], row[5])
+    values = _measurements(values, spec)
+    sent = sorted(values)
     return {
         "sent": sent,
-        # The readings themselves, so the table can show what a field last
-        # carried. A name alone does not say whether a placement is right;
-        # "65.5" beside `tf_ch1` does.
         "values": values,
-        "stored": sorted(set(sent) & known) if known else sent,
-        "homeless": homeless,
         "raw": row[1] or "",
         "when": int(row[2] or 0),
-        "catalog": _catalog_of(admin, station),
+        "dialect": row[3] or "",
+        "catalog": _catalog_of(spec, values),
+        "mapping": bool(spec) or row[3] in (None, ""),
     }
 
 
-def _raw_values(raw: str) -> dict[str, Any]:
-    """The name/value pairs of the upload as it came off the wire.
+def _stored_mapping(reference: Any, encoded: Any) -> dict[str, Any]:
+    """A packet's inert mapping object, accepting the brief inline format."""
+    import hashlib
+    import json as _json
 
-    Empty when there is none: the raw copy is kept for an hour, not for the
-    retention period, so a station that has been quiet longer than that has
-    only its packet left. The table then falls back to the mapped names,
-    which at least says what is being written.
+    raw = encoded
+    if raw is None and isinstance(reference, str) and reference.startswith("{"):
+        raw = reference
+    if not isinstance(raw, str) or len(raw.encode()) > 128 * 1024:
+        return {}
+    if encoded is not None and reference:
+        if hashlib.sha256(raw.encode()).hexdigest() != reference:
+            return {}
+    try:
+        found = _json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(found, dict) or found.get("version") != 1:
+        return {}
+    fields = found.get("fields")
+    metadata = found.get("metadata", [])
+    contested = found.get("contested", [])
+    absent = found.get("absent", [])
+    if not isinstance(fields, dict):
+        return {}
+    if not all(isinstance(key, str) and isinstance(value, str)
+               for key, value in fields.items()):
+        return {}
+    if not all(isinstance(one, str) for one in metadata):
+        return {}
+    if not all(isinstance(one, str) for one in contested):
+        return {}
+    if not isinstance(absent, list):
+        return {}
+    return found
+
+
+#: How far back the little curve beside each raw name reaches, and how many
+#: points it is drawn from. Six hours is long enough to tell a probe in the
+#: sun from one indoors, which is the question the curve is there to answer.
+SERIES_WINDOW = 6 * 3600
+SERIES_POINTS = 120
+
+
+def recent_series(admin: Any, station: Any,
+                  fields: set[str] | None = None) -> dict[str, list]:
+    """The last few hours of each raw reading, thinned to a drawable number.
+
+    A last value says what a sensor reads now. It does not say what it *is*,
+    and that is the decision this page is for: `tf_ch1` following the outdoor
+    temperature is a probe in the sun, `tf_ch1` flat at 21.2 all night is one
+    indoors. One packet cannot show either.
+
+    Thinned in SQL rather than read and sampled. A console reporting every
+    eight seconds puts 2,700 rows with sixty fields each into six hours, and
+    this is a page somebody leaves open -- decoding all of that per refresh
+    is how a settings page becomes the reason the archiver is late.
     """
-    if not raw:
+    where = live_db(admin)
+    if where is None:
+        return {}
+    import json as _json
+    import sqlite3
+
+    since = time.time() - SERIES_WINDOW
+    try:
+        db = sqlite3.connect(f"file:{where}?mode=ro", uri=True)
+    except Exception:
         return {}
     try:
-        from .ingest.plugins.push import transport
-
-        pairs = transport.parse(raw)
-        # `numbers`, not `parse`: the second gives everything in the upload
-        # including PASSKEY, stationtype and dateutc, and those name the
-        # device rather than measure anything. A chooser asking where to put
-        # `stationtype` is a question with no right answer.
-        readings, _ = transport.numbers(pairs, transport.METADATA,
-                                        transport.ABSENT)
-        return dict(readings)
+        found = db.execute(
+            "SELECT count(*), min(seq) FROM packet"
+            " WHERE driver = ? AND identity = ? AND dateTime > ?",
+            (station.driver, station.identity, since)).fetchone()
+        held, first = (found or (0, None))
+        if not held or first is None:
+            return {}
+        step = max(1, held // SERIES_POINTS)
+        rows = db.execute(
+            "SELECT dateTime, data FROM packet"
+            " WHERE driver = ? AND identity = ? AND dateTime > ?"
+            "   AND (seq - ?) % ? = 0 ORDER BY dateTime",
+            (station.driver, station.identity, since, first, step)).fetchall()
     except Exception:
-        log.debug("could not read the raw upload", exc_info=True)
-        return {}
-
-
-def _catalog_of(admin: Any, station: Any) -> dict[str, str]:
-    """What the station's driver would call each raw field, unmapped.
-
-    The starting point every row shows before anybody has decided anything.
-    A driver that cannot say returns nothing, and the rows then start empty
-    rather than wrong.
-    """
-    from .ingest import drivers
-
-    try:
-        drivers.DEFAULT.load()
-        driver = drivers.get(getattr(station, "driver", "") or "")
-        protocol = getattr(driver, "protocol", None)
-        return dict(getattr(protocol, "fields", None) or {})
-    except Exception:
-        log.debug("could not read the catalog for %r", station.name,
+        log.debug("could not read what %r has been sending", station.name,
                   exc_info=True)
         return {}
+    finally:
+        db.close()
+
+    series: dict[str, list] = {}
+    for when, raw in rows:
+        try:
+            data = _json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        for name, value in data.items():
+            if fields is not None and name not in fields:
+                continue
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                # Not a measurement: `stationtype`, `model`, a firmware
+                # string. There is no curve to draw for those and the row
+                # beside them says so by having none.
+                continue
+            series.setdefault(name, []).append((int(when), number))
+    return series
 
 
-def _role_note(one: Any) -> str:
-    """What being an extra station costs, said where the role is shown.
+def _measurements(values: dict[str, Any],
+                  spec: dict[str, Any]) -> dict[str, Any]:
+    """Numeric observations, using only the mapping persisted at ingest."""
+    metadata = set(spec.get("metadata") or ())
+    absent = tuple(spec.get("absent") or ())
+    found: dict[str, Any] = {}
+    for name, value in values.items():
+        if name in metadata:
+            continue
+        if isinstance(value, str) and value.strip() in absent:
+            continue
+        try:
+            float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        found[str(name)] = value
+    return found
 
-    Only for the extra ones: a main station is every station until somebody
-    says otherwise, and a note on all of them would be noise about a
-    situation almost nobody is in.
-    """
-    from . import roles as role_defs
 
-    if getattr(one, "role", role_defs.MAIN) != role_defs.EXTRA:
-        return ""
-    return (f'<br><span class="note">channel {one.channel}: temperature and '
-            f"humidity go to extraTemp{one.channel} and "
-            f"extraHumid{one.channel}. Wind, rain and pressure have nowhere "
-            "to go and are dropped: the schema has no extra columns "
-            "for them. Live readings come from the main console unless the "
-            "upload says otherwise.</span>")
-
-
-def _role_choice(one: Any) -> str:
-    """The role, in the words the rest of the system uses.
-
-    It read "Its readings are [its own | from an extra sensor]", which is
-    not a sentence anybody says -- and the first option said nothing at all:
-    every station's readings are its own. Worse, neither word was `main` or
-    `extra`, which is what `stations.toml` holds, what the log prints, what
-    `roles.py` is about and what the overview page says when two stations
-    collide. Four places using two vocabularies for one thing.
-
-    So: the words are the settings' words, and the label is the half of the
-    sentence that does not change.
-    """
-    from . import roles as role_defs
-
-    extra = getattr(one, "role", role_defs.MAIN) == role_defs.EXTRA
-    # A select, not a checkbox with a hidden field before it. Two inputs of
-    # one name send two values when the box is ticked, and which one arrives
-    # depends on the parser -- so the box would be impossible to tick, or
-    # impossible to untick, and which of the two only shows up in use.
-    title = ("main: its readings go in their own columns. "
-             "extra: they are moved into extraTemp and extraHumid, so two "
-             "consoles cannot take turns in one column")
-    return (f'<select name="role" title="{html.escape(title)}">'
-            f'<option value="{role_defs.MAIN}"'
-            f'{"" if extra else " selected"}>main: the station</option>'
-            f'<option value="{role_defs.EXTRA}"'
-            f'{" selected" if extra else ""}>'
-            "extra: a second sensor</option>"
-            "</select>")
+def _catalog_of(spec: dict[str, Any],
+                readings: dict[str, Any] | None = None) -> dict[str, str]:
+    """Uncontested raw-to-field descriptions stored with this packet."""
+    contested = set(spec.get("contested") or ())
+    fields = spec.get("fields") or {}
+    present = set(readings or fields)
+    return {str(raw): str(field) for raw, field in fields.items()
+            if raw in present and raw not in contested}
 
 
 def _what_it_sends_html(admin: Any, station: Any) -> str:
-    """One folded row per station: where each reading goes, and the upload.
-
-    The summary line was the whole of this once -- "45 fields, 38 in the
-    archive, 7 with nowhere to go" -- and there was nothing to be done about
-    the 7 except leave for a terminal. Now the fold holds a row per field
-    with somewhere to put it and a button for the column it needs.
-    """
-    from . import adminfields
-
+    """Read-only sender diagnostics; Place configuration stays elsewhere."""
     found = what_it_sends(admin, station)
     if not found:
         return ""
 
-    homeless = found["homeless"]
-    summary = (f"{len(found['sent'])} fields, {len(found['stored'])} in the "
-               f"archive")
-    if homeless:
-        summary += f", {len(homeless)} with nowhere to go"
+    summary = f"Latest readings ({len(found['sent'])})"
+    if found.get("dialect"):
+        summary += f" · {found['dialect']}"
+    if not found.get("mapping"):
+        summary += " · mapping unavailable"
 
-    # No warning line here any more. It named the fields with nowhere to go
-    # and sent the reader to `weewx-evo columns --add`; the table below now
-    # gives each of them its own row and a button that makes the column. Two
-    # statements about the same thing, and the second one can act.
+    readings = "".join(
+        f'<tr><td class="mono">{html.escape(name)}</td>'
+        f'<td class="mono">{html.escape(str(found["values"][name]))}</td>'
+        f'<td class="note">{html.escape(found["catalog"].get(name, ""))}</td></tr>'
+        for name in found["sent"])
+    table = f'''
+    <table class="stations sender-readings">
+      <thead><tr><th>Raw field</th><th>Latest value</th><th>Stored description</th></tr></thead>
+      <tbody>{readings}</tbody>
+    </table>''' if readings else ""
+
     raw = ""
     if found["raw"]:
-        # Already redacted by the driver, which is why it can be shown at all
-        # and why it is worth showing: this is what an issue about a new
-        # sensor needs, and the alternative is asking somebody to reconfigure
-        # a console and wait for an interval.
         raw = f'''
-    <p class="help">The last upload, with whatever the driver calls secret
-       already removed. This is what to paste into an issue about a sensor
-       nothing here recognises.</p>
+    <label>Redacted upload</label>
     <textarea class="rawupload" rows="4" readonly
               onclick="this.select()">{html.escape(found["raw"])}</textarea>'''
 
-    placements = adminfields.table(admin, station, found.get("values") or {},
-                                   found.get("catalog"))
     return f'''
   <details class="sends">
     <summary>{html.escape(summary)}</summary>
-    {_properties(admin, station)}{placements}{raw}
+    {table}{raw}{_properties(admin, station)}
   </details>'''
 
 
@@ -1072,26 +1097,16 @@ def _properties(admin: Any, station: Any) -> str:
     every station on a page whose job is to say whether the readings are
     arriving. Changing any of them is rare; reading the row is not.
 
-    Its own form rather than one save for the whole fold: the placements
-    write `field_map` and take effect on the next upload, and the role
-    changes which columns a station may write at all. One button for both
-    would make a typo in a channel number look like a placement that failed.
+    Its own form rather than one save for the whole fold: placements belong
+    to a place, while these tolerances belong to the console's clock.
     """
     if admin.read_only:
         return ""
     return f'''
-    <form method="post" action="./stations/{html.escape(station.name)}/set"
+    <form method="post" action="./senders/{html.escape(station.name)}/set"
           class="props">
-      <label class="tick" title="Record the room the console stands in">
-        <input type="checkbox" name="indoor" value="1"
-               {"checked" if station.indoor else ""}> indoor
-      </label>
-      <label class="tick">Role
-        {_role_choice(station)}
-      </label>
-      {_archive_choice(admin, station.archive)}
-      <button type="submit" class="quiet">Save</button>
       {_clock_fields(station)}
+      <button type="submit" class="quiet">Save clock</button>
     </form>'''
 
 
@@ -1112,10 +1127,8 @@ def _clock_fields(station: Any) -> str:
     opened = " open" if (behind or ahead) else ""
     return f'''
       <details class="clock"{opened}>
-        <summary>Its clock</summary>
-        <p class="hint">How far out a timestamp from this console may be
-           before its arrival time is used instead. Empty follows the
-           setting, which is what a console keeping NTP wants.</p>
+        <summary>Sender clock</summary>
+        <p class="hint">Allowed timestamp drift. Empty uses the global setting.</p>
         <label>behind
           <input type="text" name="max_behind" value="{html.escape(behind)}"
                  placeholder="as configured" size="10"></label>

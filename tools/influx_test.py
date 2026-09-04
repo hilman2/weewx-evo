@@ -633,7 +633,7 @@ def test_a_rebuild_winds_back_the_copy_and_not_the_services() -> None:
         for offset in range(0, 600, 30):
             live.add(Packet(dateTime=start + offset, usUnits=16,
                             data={"outTemp": 20.0 + offset / 100},
-                            source="test", kind="loop"))
+                            identity="test", kind="loop"))
 
     marks = Progress(where / "uploads.json")
     for name in ("influx", "wu"):
@@ -678,7 +678,7 @@ def test_no_resend_leaves_the_marks_alone() -> None:
     with LiveStore(where / "live.sdb", interval_seconds=300) as live:
         for offset in range(0, 600, 30):
             live.add(Packet(dateTime=start + offset, usUnits=16,
-                            data={"outTemp": 20.0}, source="test"))
+                            data={"outTemp": 20.0}, identity="test"))
 
     marks = Progress(where / "uploads.json")
     marks.sent("influx", start + 10_000)

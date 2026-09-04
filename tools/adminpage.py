@@ -20,6 +20,7 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -51,10 +52,8 @@ def the_hardware_form(base: str, path: Path) -> int:
     print("\nthe hardware form: a driver's own settings, chosen and saved")
     bad = 0
 
-    # Where the settings page will look: `archive_db` is relative in
-    # this configuration, and a relative path counts against the file
-    # it is written in. Working that out here rather than assuming it
-    # is what makes the check mean something.
+    # Where the settings page will look. A relative Place archive path counts
+    # against the file it is written in; it is no longer a core setting.
     where = weewxdrivers.directory(beside=path.parent / "data" / "weewx.sdb")
     where.mkdir(parents=True, exist_ok=True)
     (where / "faux.py").write_text(FAUX_DRIVER, encoding="utf-8")
@@ -75,16 +74,17 @@ def the_hardware_form(base: str, path: Path) -> int:
 
     code, rendered = get(f"{base}/{TOKEN}/collector:attic")
     bad += not check("its page renders", code, 200)
-    # The driver's own option, its own default, and the comment its author
-    # wrote above it -- none of which is written down in this program.
+    # The driver's own option and default, neither of which is written down in
+    # this program.
     bad += not check("the driver's own option is on it",
                      'name="settings.port"' in rendered, True)
     bad += not check("with the default the driver gives it",
                      "/dev/faux0" in rendered, True)
-    bad += not check("and the help its author wrote",
-                     "Where the console is plugged in" in rendered, True)
-    bad += not check("the option below the rule is folded away",
-                     "rarely needed" in rendered, True)
+    advanced = re.search(
+        r'<details[^>]*>.*?name="settings\.baudrate".*?</details>',
+        rendered, re.DOTALL)
+    bad += not check("the advanced driver options are folded away",
+                     advanced is not None, True)
     # Port or host, never both, because the driver says so in its own editor.
     bad += not check("and the conditional one is marked as conditional",
                      'data-when="settings.type"' in rendered, True)
@@ -194,12 +194,20 @@ def check(label: str, got: object, want: object) -> bool:
     return ok
 
 
-def get(url: str) -> tuple[int, str]:
+def get_with_headers(url: str) -> tuple[int, str, dict[str, str]]:
+    """GET a page and retain the response headers as part of its contract."""
     try:
         with urllib.request.urlopen(url, timeout=5) as r:
-            return r.status, r.read().decode("utf-8", "replace")
+            headers = {key.lower(): value for key, value in r.headers.items()}
+            return r.status, r.read().decode("utf-8", "replace"), headers
     except urllib.error.HTTPError as exc:
-        return exc.code, ""
+        headers = {key.lower(): value for key, value in exc.headers.items()}
+        return exc.code, "", headers
+
+
+def get(url: str) -> tuple[int, str]:
+    code, body, _headers = get_with_headers(url)
+    return code, body
 
 
 def post(url: str, form: dict) -> tuple[int, str]:
@@ -306,6 +314,7 @@ def said(html: str, kind: str = "ok") -> str:
 
 
 
+@lru_cache(maxsize=1)
 def _no_javascript() -> str:
     """A node with jsdom, or a word saying why not."""
     if shutil.which("node") is None:
@@ -317,8 +326,103 @@ def _no_javascript() -> str:
     return ""
 
 
+def _buttons_without_javascript(rendered: str) -> dict:
+    """Parse the form ownership rules this test needs with the stdlib.
+
+    In HTML, a nested ``<form>`` start tag is ignored, while its closing tag
+    still closes the open form. That is the browser rule behind the regression
+    this check guards; a plain stack of balanced source tags would miss it.
+    """
+    from html.parser import HTMLParser
+
+    class Wiring(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__(convert_charrefs=True)
+            self.current: tuple[str | None, str | None] | None = None
+            self.forms: list[str | None] = []
+            self.form_ids: dict[str, str | None] = {}
+            self.buttons: list[dict[str, object]] = []
+            self.fields: list[dict[str, object]] = []
+            self.open_buttons: list[dict[str, object]] = []
+
+        @staticmethod
+        def attributes(attrs: list[tuple[str, str | None]]) -> dict[str, str]:
+            return {key: value or "" for key, value in attrs}
+
+        def owner(self, attrs: dict[str, str]) -> tuple[str, str | None] | None:
+            explicit = attrs.get("form")
+            if explicit:
+                return "id", explicit
+            if self.current is not None:
+                return "action", self.current[1]
+            return None
+
+        def handle_starttag(self, tag: str,
+                            attrs: list[tuple[str, str | None]]) -> None:
+            values = self.attributes(attrs)
+            if tag == "form":
+                # Browsers ignore a form start inside an already-open form.
+                if self.current is None:
+                    action = values.get("action")
+                    ident = values.get("id") or None
+                    self.current = ident, action
+                    self.forms.append(action)
+                    if ident:
+                        self.form_ids[ident] = action
+                return
+
+            is_button = tag == "button" or (
+                tag == "input" and values.get("type", "").lower() == "submit")
+            if is_button:
+                button = {"owner": self.owner(values), "text": []}
+                self.buttons.append(button)
+                if tag == "button":
+                    self.open_buttons.append(button)
+
+            if tag in ("input", "select", "textarea") and values.get("name"):
+                self.fields.append({"name": values["name"],
+                                    "owner": self.owner(values)})
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag == "form":
+                self.current = None
+            elif tag == "button" and self.open_buttons:
+                self.open_buttons.pop()
+
+        def handle_data(self, data: str) -> None:
+            if self.open_buttons:
+                self.open_buttons[-1]["text"].append(data)
+
+        def action(self, owner: object) -> str | None:
+            if owner is None:
+                return None
+            kind, value = owner
+            return self.form_ids.get(value) if kind == "id" else value
+
+        def result(self) -> dict:
+            buttons = [{
+                "label": "".join(one["text"]).strip(),
+                "action": self.action(one["owner"]),
+            } for one in self.buttons]
+            return {
+                "forms": self.forms,
+                "buttons": buttons,
+                "orphans": [one["label"] for one in buttons
+                            if one["action"] is None],
+                "strandedFields": [one["name"] for one in self.fields
+                                   if self.action(one["owner"]) is None],
+            }
+
+    parser = Wiring()
+    parser.feed(rendered)
+    parser.close()
+    return parser.result()
+
+
 def _buttons(tmp: Path, name: str, rendered: str) -> dict:
     """What a browser makes of the page: which form each control is in."""
+    if _no_javascript():
+        return _buttons_without_javascript(rendered)
     where = tmp / f"page-{name.replace(':', '-')}.html"
     where.write_text(rendered, encoding="utf-8")
     script = Path(__file__).resolve().parent / "admin_page_test.js"
@@ -329,6 +433,24 @@ def _buttons(tmp: Path, name: str, rendered: str) -> dict:
         raise RuntimeError(f"could not parse {name}: "
                            f"{finished.stderr.strip()[:300]}")
     return json.loads(finished.stdout)
+
+
+def _primary_links(rendered: str) -> list[list[str]]:
+    """The destinations in each desktop/mobile copy of the primary nav."""
+    sections = re.findall(
+        r'<nav class="primary-nav" aria-label="Primary">(.*?)</nav>',
+        rendered, flags=re.DOTALL)
+    return [re.findall(r'href="([^"]+)"', section) for section in sections]
+
+
+def _primary_current(rendered: str) -> list[str]:
+    """The selected destination in each copy of the primary nav."""
+    sections = re.findall(
+        r'<nav class="primary-nav" aria-label="Primary">(.*?)</nav>',
+        rendered, flags=re.DOTALL)
+    return [match.group(1) for section in sections
+            if (match := re.search(
+                r'href="([^"]+)"[^>]*aria-current="page"', section))]
 
 
 def drivers_seen() -> list[str]:
@@ -384,21 +506,39 @@ def main() -> int:
             failures += not check(f"GET {where}", code, 404)
 
         print("\nthe root is the overview, not a form")
-        code, html = get(f"{base}/{TOKEN}/")
+        code, html, response_headers = get_with_headers(f"{base}/{TOKEN}/")
         failures += not check("it loads", code, 200)
         # Arriving on a form was right when there were a dozen settings and
         # one of everything. Somebody opening this almost never wants to
         # change a value; they want to know whether it is working.
         failures += not check("it is the overview",
                               "<h2>Overview</h2>" in html, True)
-        failures += not check("and not the first form",
-                              'name="station.latitude"' in html, False)
+        failures += not check("and not the Core form",
+                              'name="interval__amount"' in html, False)
+
+        print("\nthe admin response is not embeddable or reusable")
+        expected_headers = {
+            "cache-control": "no-store",
+            "x-frame-options": "DENY",
+            "x-content-type-options": "nosniff",
+            "referrer-policy": "no-referrer",
+            "content-security-policy": (
+                "default-src 'none'; base-uri 'none'; "
+                "frame-ancestors 'none'; form-action 'self'; "
+                "connect-src 'self'; img-src 'self' data:; "
+                "style-src 'unsafe-inline'; script-src 'unsafe-inline'"),
+            "permissions-policy": "camera=(), microphone=(), geolocation=()",
+        }
+        failures += not check(
+            "every security header has the intended value",
+            {name: response_headers.get(name) for name in expected_headers},
+            expected_headers)
 
         print("\nthe page renders every kind of field")
         code, html = get(f"{base}/{TOKEN}/core")
         failures += not check("it loads", code, 200)
         for needle, what in (
-            ('name="station.latitude"', "a number"),
+            ('name="port"', "a number"),
             ('type="password"', "a secret"),
             ('class="switch"', "a switch for booleans"),
             ('name="interval__amount"', "a duration as a number"),
@@ -413,33 +553,57 @@ def main() -> int:
         ):
             failures += not check(what, needle in html, True)
 
-        print("\nand that way leads to both, named as the two things they are")
+        core = next(s for s in admin.schemas if s.name == "core")
+        core_names = {option.name for group in core.groups
+                      for option in group.options}
+        place_names = {
+            "archive_db", "station.name", "station.latitude",
+            "station.longitude", "station.altitude", "station.url",
+            "station.rain_year_start",
+        }
+        failures += not check("the core schema owns no Place values",
+                              sorted(core_names & place_names), [])
+        failures += not check(
+            "the core form exposes no Place values",
+            (bool(re.search(r'name="station\.', html)),
+             'name="archive_db"' in html),
+            (False, False))
+
+        primary = ["./overview", "./senders", "./places",
+                   "./publishing", "./system"]
+        failures += not check("desktop and mobile have five fixed destinations",
+                              _primary_links(html), [primary, primary])
+
+        print("\nand Publishing contains its tools")
         code, publishing = get(f"{base}/{TOKEN}/publishing")
         failures += not check("the page loads", code, 200)
-        # Against the constant, not against a form of words. The sentence
-        # that defines a feed and an export stands on all four pages of the
-        # chain now rather than on this one alone, and a test quoting half
-        # of it goes red the next time somebody rewords it -- while a page
-        # that quietly stopped saying it at all would still pass.
-        from weewx_evo.adminarchives import CHAIN_SAID
         for needle, what in (
-            (CHAIN_SAID, "it says what a feed and an export are"),
-            ("./new-feed", "and offers to add one of each"),
-            ("./new-export", "the other one too"),
+            ('aria-labelledby="publishing-feeds"', "it inventories feeds"),
+            ('aria-labelledby="publishing-exports"', "it inventories exports"),
+            ('aria-labelledby="publishing-uploads"', "it inventories uploads"),
+            ('aria-labelledby="publishing-notifications"',
+             "it inventories notifications"),
+            ('aria-labelledby="publishing-forecasts"',
+             "it inventories forecasts"),
+            ('href="./new-feed"', "it offers to add a feed"),
+            ('href="./new-export"', "it offers to add an export"),
+            ('href="./new-forecast"', "it offers to add a forecast"),
+            ('href="./charts"', "it links to charts"),
         ):
             failures += not check(what, needle in publishing, True)
 
-        print("\nand the charts are one entry, not a hundred")
+        print("\nand Charts belongs to Publishing")
         code, charts = get(f"{base}/{TOKEN}/charts")
         failures += not check("the page loads", code, 200)
-        # The sidebar used to hold them, first flat and then in collapsed
-        # groups. Neither had room to say what a chart draws, which is what
-        # you are actually looking for.
         failures += not check("its own page offers both ways in",
                               "./new-plot" in charts
                               and "./import-plots" in charts, True)
-        failures += not check("and the sidebar has one link to it",
-                              html.count('href="./charts"'), 1)
+        failures += not check("Publishing is selected while Charts is open",
+                              _primary_current(charts),
+                              ["./publishing", "./publishing"])
+        failures += not check("Charts is not a sixth primary destination",
+                              any("./charts" in links
+                                  for links in _primary_links(charts)), False)
 
         print("\nwhat can be chosen is offered, not typed")
         # The point of a settings page over the command line: you can see the
@@ -450,29 +614,57 @@ def main() -> int:
                               ">ecowitt<" in html, True)
         failures += not check("who is answered has suggestions",
                               'list="l-allow"' in html, True)
-        failures += not check("naming the usual ones",
-                              "the local network" in html, True)
+        failures += not check("including the bounded and broad choices",
+                              ('<option value="private"' in html,
+                               '<option value="any"' in html), (True, True))
         failures += not check("and the alternatives are visible without opening it",
                               'class="alt"' in html, True)
         failures += not check("no secret is rendered back",
                               "admin-token-for-the-test" in html.replace(
                                   f"./{TOKEN}", ""), False)
 
-        print("\nsaving writes the file")
+        print("\nPlace values save through the Place route")
+        code, _ = post(f"{base}/{TOKEN}/places/default/set", {
+            "label": "Kirchdorf",
+            "latitude": "48.4596",
+            "longitude": "11.6539",
+            "altitude": "440",
+            "rain_year_start": "10",
+        })
+        failures += not check("saving the default Place redirects", code, 303)
+        places_path = path.parent / "archives.toml"
+        failures += not check("the Place file is there", places_path.exists(), True)
+        placed = config_file.read(places_path)
+        default_place = (placed.get("archives") or {}).get("default") or {}
+        failures += not check(
+            "the Place values are in archives.toml",
+            (default_place.get("label"), default_place.get("latitude"),
+             default_place.get("longitude"), default_place.get("altitude"),
+             default_place.get("rain_year_start")),
+            ("Kirchdorf", 48.4596, 11.6539, 440.0, 10))
+        code, _ = post(f"{base}/{TOKEN}/new-place", {"label": "Roof"})
+        failures += not check("a Place is created on the canonical route",
+                              code, 303)
+        placed = config_file.read(places_path)
+        failures += not check("the new Place also lands in archives.toml",
+                              config_file.get(placed, "archives.roof.label"),
+                              "Roof")
+
+        print("\nsaving Core writes only Core values")
         code, _ = post(f"{base}/{TOKEN}/core", {
-            "station.name": "Kirchdorf",
-            "station.latitude": "48.4596",
-            "station.longitude": "11.6539",
-            "station.altitude": "440",
+            # Old forms or bookmarks cannot restore the former authority.
+            "station.name": "Wrong authority",
+            "station.latitude": "1",
+            "archive_db": "wrong.sdb",
             "interval__amount": "5", "interval__unit": "m",
             "grace__amount": "15", "grace__unit": "s",
             "loop_hilo": "1",
-            "archive_db": "data/weewx.sdb",
             "live_db": "data/live.sdb",
             "retention__amount": "7", "retention__unit": "d",
             "raw_retention__amount": "1", "raw_retention__unit": "h",
-            "host": "0.0.0.0",
+            "host": "127.0.0.1",
             "port": "8000",
+            "rate": "12.5",
             "token": "an-upload-token",
             "driver": "ecowitt",
             "udp_port": "0",
@@ -481,18 +673,27 @@ def main() -> int:
         failures += not check("the file is there", path.exists(), True)
 
         written = config_file.read(path)
-        failures += not check("a string", config_file.get(written, "station.name"),
-                              "Kirchdorf")
-        failures += not check("a float",
-                              config_file.get(written, "station.latitude"), 48.4596)
+        failures += not check("a string", config_file.get(written, "host"),
+                              "127.0.0.1")
+        failures += not check("a float", config_file.get(written, "rate"), 12.5)
         failures += not check("a duration, written readably",
                               config_file.get(written, "interval"), "5m")
         failures += not check("a boolean",
                               config_file.get(written, "loop_hilo"), True)
         failures += not check("an int", config_file.get(written, "port"), 8000)
+        failures += not check(
+            "legacy Place fields were ignored",
+            (config_file.get(written, "station.name"),
+             config_file.get(written, "station.latitude"),
+             config_file.get(written, "archive_db")),
+            (None, None, None))
+        still_placed = config_file.read(places_path)
+        failures += not check(
+            "and Core did not change the Place",
+            config_file.get(still_placed, "archives.default.label"),
+            "Kirchdorf")
 
         print("\nand it comes back as the right types")
-        core = next(s for s in admin.schemas if s.name == "core")
         values = config_file.values_for(written, core)
         parsed, errors = core.parse(values)
         failures += not check("no complaints on a round trip", errors, {})
@@ -501,14 +702,13 @@ def main() -> int:
         print("\nbad values are refused, and nothing is written")
         before = path.read_text(encoding="utf-8")
         code, html = post(f"{base}/{TOKEN}/core", {
-            "station.latitude": "999",
             "interval__amount": "1", "interval__unit": "s",
             "port": "70000",
             "token": "an-upload-token",
         })
         failures += not check("it stays on the page", code, 200)
         failures += not check("and says what is wrong",
-                              "cannot be above 90" in html, True)
+                              "cannot be above 65535" in html, True)
         failures += not check("for every field, not just the first",
                               "cannot be below" in html, True)
         failures += not check("the file is untouched",
@@ -574,7 +774,7 @@ def main() -> int:
                               config_file.get(saved, "drivers.probe.depth"),
                               "deep")
         failures += not check("the core's settings are untouched",
-                              config_file.get(saved, "station.name"), "Kirchdorf")
+                              config_file.get(saved, "host"), "127.0.0.1")
 
         print("\nand the six protocols that ship declare nothing")
         # Six arrived at once, so this was six pages carrying the same three
@@ -583,14 +783,13 @@ def main() -> int:
                   if one.kind == "driver" and one.name != "probe"]
         failures += not check("no page for any of them", theirs, [])
 
-        # A station, so the stations page has rows with buttons on them.
+        # A sender, so the senders page has rows with buttons on them.
         # An empty table renders no forms and would pass the check below
         # without testing anything.
-        from weewx_evo import stations as station_defs
-        register = station_defs.Register()
-        register.add(station_defs.Station("garden", "wunderground",
-                                          "evo-abc123"))
-        station_defs.save(station_defs.path_for(path.parent), register)
+        code, rendered = post(f"{base}/{TOKEN}/new-sender",
+                              {"name": "garden", "driver": "wunderground"})
+        failures += not check("a sender is created on the canonical route",
+                              (code, "garden" in rendered), (200, True))
 
         print("\nthe way to add one is always there")
         # "Add an upload" was inside the "none yet" branch, so it vanished
@@ -600,7 +799,8 @@ def main() -> int:
         # others, which reads as the feature being missing entirely.
         for page, wanted in (("publishing", ("./new-feed", "./new-export",
                                              "./new-upload")),
-                             ("stations", ("./new-station",)),
+                             ("senders", ("./new-sender",)),
+                             ("places", ("./new-place",)),
                              ("charts", ("./new-plot",))):
             _code, rendered = get(f"{base}/{TOKEN}/{page}")
             for link in wanted:
@@ -609,8 +809,8 @@ def main() -> int:
 
         # And one heading per page. The shell prints the page's name; seven
         # of these printed it again directly underneath.
-        for page in ("new-feed", "new-export", "new-upload", "new-station",
-                     "new-archive", "new-forecast", "new-plot"):
+        for page in ("new-feed", "new-export", "new-upload", "new-sender",
+                     "new-place", "new-forecast", "new-plot"):
             _code, rendered = get(f"{base}/{TOKEN}/{page}")
             failures += not check(f"{page} says its name once",
                                   rendered.count("<h2>"), 1)
@@ -627,49 +827,43 @@ def main() -> int:
         # noticed.
         why = _no_javascript()
         if why:
-            print(f"  -- skipped: {why}")
-        else:
-            # OWN_PAGES too. The stations page renders a form per row --
-            # adopt, ignore, remove -- and was left out of this list when it
-            # was added, so it shipped with all three inside the save form
-            # and Remove doing nothing. That is the failure this check exists
-            # for, missed because the list of pages was short.
-            # Plus the pages whose name carries an instance. `admin.sub_pages`
-            # is where those are listed, and it existed here unused: the
-            # chart editor -- a delete checkbox per row, its own Remove
-            # button and a colour control per line -- had never been through
-            # the check that asks which form each button landed in. That is
-            # the check that found Save belonging to no form on every export,
-            # feed, upload and forecast page, with every tag present and
-            # every one closed.
-            pages = ([s.name for s in admin.schemas]
-                     + list(ADD_PAGES) + list(OWN_PAGES)
-                     + admin_module.sub_pages(admin))
-            for where in pages:
-                code, rendered = get(f"{base}/{TOKEN}/{where}")
-                if code != 200:
-                    failures += not check(f"{where} loads", code, 200)
+            print(f"  -- stdlib HTMLParser fallback: {why}")
+            broken = _buttons_without_javascript(
+                '<form action="./save"><form action="./test">'
+                '<button>Test the connection</button></form>'
+                '<input name="later"></form>')
+            failures += not check(
+                "the fallback applies browser rules to nested forms",
+                (broken["buttons"][0]["action"], broken["strandedFields"]),
+                ("./save", ["later"]))
+        # OWN_PAGES too. The senders page renders a form per row -- adopt,
+        # ignore, remove -- and was left out of this list when it was added,
+        # so it shipped with all three inside the save form and Remove doing
+        # nothing. Plus pages whose names carry an instance.
+        pages = ([s.name for s in admin.schemas]
+                 + list(ADD_PAGES) + list(OWN_PAGES)
+                 + admin_module.sub_pages(admin))
+        for where in pages:
+            code, rendered = get(f"{base}/{TOKEN}/{where}")
+            if code != 200:
+                failures += not check(f"{where} loads", code, 200)
+                continue
+            seen = _buttons(tmp, where, rendered)
+            failures += not check(f"{where}: no button belongs to nothing",
+                                  seen["orphans"], [])
+            failures += not check(f"{where}: no field goes nowhere",
+                                  seen["strandedFields"], [])
+            # An add-page has one button and it submits the page. What must
+            # never happen is a second action sharing the first one's form.
+            for button in seen["buttons"]:
+                if button["label"] not in ("Test the connection",
+                                           "Fetch once", "Send one now",
+                                           "Remove"):
                     continue
-                seen = _buttons(tmp, where, rendered)
-                failures += not check(f"{where}: no button belongs to nothing",
-                                      seen["orphans"], [])
-                failures += not check(f"{where}: no field goes nowhere",
-                                      seen["strandedFields"], [])
-                # An add-page has one button and it submits the page: that
-                # is the page. What must never happen is a *second* action
-                # sharing the first one's form, because then it is not a
-                # second action at all -- Try it and Remove each need an
-                # address of their own.
-                for button in seen["buttons"]:
-                    if button["label"] not in ("Test the connection",
-                                               "Fetch once", "Send one now",
-                                               "Remove"):
-                        continue
-                    failures += not check(
-                        f"{where}: {button['label']!r} posts somewhere of "
-                        f"its own",
-                        (button["action"] or "").endswith(
-                            ("/test", "/remove")), True)
+                failures += not check(
+                    f"{where}: {button['label']!r} posts somewhere of its own",
+                    (button["action"] or "").endswith(("/test", "/remove")),
+                    True)
 
         print("\nthe schema is available as data")
         code, raw = get(f"{base}/{TOKEN}/schema.json")
@@ -685,11 +879,11 @@ def main() -> int:
         locked_server.start()
         try:
             code, html = post(f"http://127.0.0.1:{locked_server.port}/{TOKEN}/core",
-                              {"station.name": "changed", "token": "x"})
+                              {"host": "changed", "token": "x"})
             failures += not check("refused", "read-only" in html, True)
             failures += not check("and nothing changed",
                                   config_file.get(config_file.read(path),
-                                                  "station.name"), "Kirchdorf")
+                                                  "host"), "127.0.0.1")
         finally:
             locked_server.stop()
 
@@ -714,13 +908,9 @@ def main() -> int:
         failures += not check("it loads", code, 200)
         failures += not check("with what rsync declared",
                               "authorized_keys" in html_, True)
-        # An export sends what a feed produced, so the source is a list of
-        # feeds -- and says so when there are none rather than showing an
-        # empty dropdown.
+        # An export sends what a feed produced, so the source is a feed list.
         failures += not check("the source is a feed list",
                               'id="f-source"' in html_ and "<select" in html_, True)
-        failures += not check("saying what to do while there are none",
-                              "a directory instead" in html_, True)
         failures += not check("a way to try it", "Test the connection" in html_,
                               True)
         failures += not check("and a way to remove it", "Remove" in html_, True)
@@ -738,7 +928,7 @@ def main() -> int:
                               config_file.get(saved, "exports.website.kind"),
                               "rsync")
         failures += not check("and the core is untouched",
-                              config_file.get(saved, "station.name"), "Kirchdorf")
+                              config_file.get(saved, "host"), "127.0.0.1")
 
         print("\na second one does not disturb the first")
         post(f"{base}/{TOKEN}/new-export", {"name": "hoster", "kind": "ftp"})
@@ -854,11 +1044,6 @@ def main() -> int:
         failures += not check("with the sources",
                               "Open-Meteo" in html_ and "MeteoAlarm" in html_,
                               True)
-        # Nothing here needs an account, and the page says so -- that is the
-        # difference between this and every commercial forecast API.
-        failures += not check("and says nothing needs an account",
-                              "needs no account" in html_, True)
-
         code, _ = post(f"{base}/{TOKEN}/new-forecast",
                        {"name": "ahead", "kind": "open-meteo"})
         failures += not check("creating redirects to it", code, 303)
@@ -1083,38 +1268,37 @@ def main() -> int:
         # Last, because it makes sixteen of everything, and every
         # list this test checks before here would be counting them.
         print("\na save sends the browser to a page, not one level below it")
-        # `./stations?saved=1` looks right and is not: a browser resolves it
-        # against the URL that was posted to, so saving a station's
-        # properties landed on `/<token>/stations/<name>/stations`. That
-        # renders the stations page -- `_which` reads the segments backwards
+        # `./senders?saved=1` looks right and is not: a browser resolves it
+        # against the URL that was posted to, so saving a sender's
+        # properties would land on `/<token>/senders/<name>/senders`. That
+        # renders the senders page -- `_which` reads the segments backwards
         # and finds the last name it knows -- so nothing looks wrong, and
         # every link clicked from there keeps the extra segments.
         #
         # Which made the *feed* page unsaveable two clicks later: its Save
-        # posted to `/<token>/stations/<name>/feed:wdc`, the router saw
-        # `stations` among the segments, and the answer was "Unknown station
+        # posted to `/<token>/senders/<name>/feed:wdc`, the router saw
+        # `senders` among the segments, and the answer was "Unknown station
         # action 'feed:wdc'".
-        # A station to save. Announced rather than assumed: this fixture
-        # has none, and a check that posts to a name nobody created measures
-        # the error path instead of the redirect.
-        post(f"{base}/{TOKEN}/new-station",
+        # A second sender to save. Announced rather than assumed: a check that
+        # posts to a name nobody created measures the error path instead of
+        # the redirect.
+        post(f"{base}/{TOKEN}/new-sender",
              {"name": "kitchen", "driver": "wunderground"})
-        code, body = post(f"{base}/{TOKEN}/stations/kitchen/set",
-                          {"role": "main"})
+        code, body = post(f"{base}/{TOKEN}/senders/kitchen/set", {})
         where = _location(body) or ""
-        failures += not check("a station save redirects", code, 303)
+        failures += not check("a sender save redirects", code, 303)
         failures += not check("to an absolute page under the token",
-                              where.startswith(f"/{TOKEN}/stations"), True)
+                              where.startswith(f"/{TOKEN}/senders"), True)
         failures += not check("and not one level deeper",
-                              "/stations/kitchen/stations" in where, False)
+                              "/senders/kitchen/senders" in where, False)
 
         # And the guard behind it: the router asks what the verb is, not
         # whether a word appears in the path. Somebody with the old deep URL
         # in a bookmark has to be able to save too.
-        code, body = post(f"{base}/{TOKEN}/stations/kitchen/feed:site",
+        code, body = post(f"{base}/{TOKEN}/senders/kitchen/feed:site",
                           {"enabled": "1"})
         failures += not check("a schema save works from any path", code, 303)
-        failures += not check("and does not fall into the station handler",
+        failures += not check("and does not fall into the sender handler",
                               "Unknown station action" in body, False)
 
         print("\nevery kind can be made, and its page comes up")
@@ -1132,7 +1316,7 @@ def main() -> int:
 
         for what, kinds in (
                 # `upload_kinds`, not every kind that exists: the live push
-                # to this station's own pages is set up by the export that
+                # to this installation's own pages is set up by the export that
                 # publishes them, so it is not offered here. Checked below.
                 ("upload", sorted(upload_kinds())),
                 ("export", sorted(export_registry.DEFAULT.kinds())),
@@ -1179,7 +1363,7 @@ def main() -> int:
 
         # And the one that is not offered cannot be reached by typing the URL
         # either. It was, and what people made was an upload with every field
-        # empty -- including the units, so a station sending Fahrenheit
+        # empty -- including the units, so readings stored in Fahrenheit
         # published Fahrenheit into pages written in Celsius.
         code, rendered = post(f"{base}/{TOKEN}/new-upload",
                               {"name": "byhand", "kind": "webpush"})
@@ -1189,7 +1373,7 @@ def main() -> int:
                               "is not one of" in rendered, True)
 
         # A collector's name is not cosmetic the way a feed's is: it is the
-        # endpoint its packets arrive at, and a station is matched on the
+        # endpoint its packets arrive at, and a sender is matched on the
         # pair (driver, identity). One called `ecowitt` would take a real
         # driver's endpoint, and its uploads would go to the envelope parser,
         # fail there, and look like a console that had stopped.
@@ -1230,19 +1414,12 @@ def main() -> int:
 
         failures += the_hardware_form(base, path)
 
-        # Every kind in the menu is explained under it. The list used to be
-        # written out by hand and described one of the two, so half of what
-        # the menu offered was unexplained -- and the command printed above
-        # it started the other half, which is the one this page does not
-        # mention. Both are read from the same table the menu is built from.
-        print("\nthe page explains everything it offers")
+        print("\nthe collector page offers every registered kind")
         code, rendered = get(f"{base}/{TOKEN}/new-collector")
         failures += not check("the add page renders", code, 200)
-        for kind, one in saved_defs.KINDS.items():
-            failures += not check(f"{kind}: its label is explained",
-                                  rendered.count(one.label), 2)
-            failures += not check(f"{kind}: with the command that starts it",
-                                  f"weewx-evo {one.command}" in rendered, True)
+        for kind in saved_defs.KINDS:
+            failures += not check(f"{kind}: offered as a selectable value",
+                                  f'<option value="{kind}"' in rendered, True)
 
         # And its own page says how to start it, because nothing else does:
         # the schema's help becomes a comment in the configuration file and

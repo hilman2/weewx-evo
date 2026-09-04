@@ -82,12 +82,12 @@ sitting next to it.
 |---|---|
 | [Ingest-Listener](Ingest-Listener) | HTTP + UDP, tokens, rate limit, status page |
 | [Drivers](Drivers) | The driver interface, bundled and third-party drivers |
-| [Driver-Ecowitt](Driver-Ecowitt) | The Ecowitt driver, in full |
+| [Push drivers](Driver-Ecowitt) | The six built-in push protocols |
 | [Uploads](Uploads) | The readings sent to a weather service |
 | [MQTT](MQTT) | The in-house client, and what makes it necessary |
 | [Forecast](Forecast) | Forecast and warnings, four sources |
 | [Plugins](Plugins) | What lives outside the core, and the catalogue for it |
-| [Multiple-Sources](Multiple-Sources) | Several stations, one record |
+| [Multiple senders](Multiple-Sources) | Several senders, one Place record |
 
 ### Processing and storage
 

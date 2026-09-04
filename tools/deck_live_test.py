@@ -378,7 +378,8 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
 
     local = FakeSettings({"site": {"kind": "local", "directory": "data/site",
                                    "live_push": True}})
-    made = live_readings_locally(local, {})
+    one_place = {"deck": {"archive": "default"}}
+    made = live_readings_locally(local, {}, schedule=one_place)
     check("one upload appears", sorted(made), ["live"])
     check("of the right kind", made["live"]["kind"], "webpush")
     check("pointed at the served directory",
@@ -388,7 +389,8 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
     # Switched off is switched off.
     off = FakeSettings({"site": {"kind": "local", "directory": "data/site",
                                  "live_push": False}})
-    check("nothing when the export says no", live_readings_locally(off, {}), {})
+    check("nothing when the export says no",
+          live_readings_locally(off, {}, schedule=one_place), {})
 
     # A web host, where the address is the decision. The switch defaults on,
     # so on its own it says nothing; `live_push_url` is empty until somebody
@@ -399,11 +401,11 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
     # are written in.
     quiet = FakeSettings({"host": {"kind": "ftp", "live_push": True}})
     check("an export with no address set up posts nowhere",
-          live_readings_locally(quiet, {}), {})
+          live_readings_locally(quiet, {}, schedule=one_place), {})
 
     away = FakeSettings({"host": {"kind": "ftp", "live_push": True,
                                   "live_push_url": "https://example.org/w"}})
-    made = live_readings_locally(away, {})
+    made = live_readings_locally(away, {}, schedule=one_place)
     check("with an address, the upload is set up", sorted(made), ["live"])
     check("pointed at the script beside the pages",
           made["live"].get("url"), "https://example.org/w/live.php")
@@ -411,7 +413,21 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
 
     # One that was configured on purpose is left alone, whatever it says.
     check("an upload that exists is not doubled",
-          live_readings_locally(local, {"mine": {"kind": "webpush"}}), {})
+          live_readings_locally(local, {"mine": {"kind": "webpush"}},
+                                schedule=one_place), {})
+
+    # An omitted source still identifies a place when every feed being sent
+    # belongs to that same place. The moment there are two answers it must
+    # stop rather than put one place's packet on the other's page.
+    same_place = {"deck": {"archive": "north"},
+                  "charts": {"archive": "north"}}
+    made = live_readings_locally(local, {}, schedule=same_place)
+    check("one distinct scheduled place settles an omitted source",
+          made["live"]["archive"], "north")
+    two_places = {"deck": {"archive": "north"},
+                  "charts": {"archive": "south"}}
+    check("two scheduled places leave an omitted source unanswered",
+          live_readings_locally(local, {}, schedule=two_places), {})
 
     # The units the pages are written in, not the ones the station reports.
     # A station on Fahrenheit publishing a page in Celsius is the ordinary
@@ -423,7 +439,9 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
          "imperial": {"kind": "local", "directory": "data/imperial",
                       "source": "seasons"}},
         {"deck": {"units": "METRICWX"}, "seasons": {"units": "US"}})
-    made = live_readings_locally(two, {})
+    made = live_readings_locally(
+        two, {}, schedule={"deck": {"archive": "default"},
+                           "seasons": {"archive": "default"}})
     check("two unit systems are two uploads", sorted(made),
           ["live-metricwx", "live-us"])
     check("each with its own directory",
@@ -439,7 +457,9 @@ def test_a_local_site_is_live_with_nothing_configured() -> None:
     spoken = German({"site": {"kind": "local", "directory": "data/site",
                               "source": "deck"}}, {"deck": {}})
     check("the language settles it when the feed does not",
-          live_readings_locally(spoken, {})["live"]["unit_system"], "METRICWX")
+          live_readings_locally(
+              spoken, {}, schedule={"deck": {"archive": "default"}})
+          ["live"]["unit_system"], "METRICWX")
 
 
 # ---------------------------------------------------------------------------
@@ -941,8 +961,12 @@ def test_a_web_host_sets_itself_up_too() -> None:
             path = Path(raw) / "evo.toml"
             path.write_text("\n".join(lines) + "\n", encoding="utf-8")
             settings_state.set_running(None, None)
-            cfg = cli.settings_for(argparse.Namespace(config=path))
-            return cli.live_readings_locally(cfg, existing or {})
+            args = argparse.Namespace(config=path)
+            cfg = cli.settings_for(args)
+            # Through `args`, which is how `serve` calls it: the feed
+            # schedule says which place each export publishes, and without
+            # it every export has an unanswered series and nothing is set up.
+            return cli.live_readings_locally(cfg, existing or {}, args)
 
     live_on = common + ['exports.evoftp.live_push = true']
     with_url = live_on + [

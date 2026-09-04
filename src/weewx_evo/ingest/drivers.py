@@ -6,10 +6,17 @@ The split is the whole architecture, so it is worth stating flatly:
 check, and writing to the live table. Those are the same for every protocol,
 they are where push drivers go wrong, and doing them once is doing them once.
 
-**The driver owns everything else.** Parsing, field names, units, which device
-it will answer to, and what that device needs to hear back. It hands over a
-finished packet. The core does not inspect it, does not know what an Ecowitt
-is, and cannot be made to care.
+**The driver owns everything else.** Parsing, units, which device it will
+answer to, and what that device needs to hear back. The core does not know
+what an Ecowitt is and cannot be made to care.
+
+**The naming is shared, and the seam is data.** A driver hands over readings
+under the names the hardware used and a declarative `DialectSpec`: field map,
+scale factors, missing values and unit system, made entirely of JSON values.
+The listener stores both. The archiver executes the description with core
+code and never imports or calls the driver. A driver whose names are already
+WeeWX's leaves `dialect` and `mapping` unset, which is every collector, the
+WeeWX shim, and the envelope.
 
 That last part is not tidiness. Field lists are the hard part of this business
 and they change faster than releases: a current HP2561AE Pro sends 45 fields,
@@ -36,8 +43,11 @@ factory, or a plain function for the trivial case.
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from ..db.live import Packet
@@ -68,6 +78,10 @@ class Driver(Protocol):
         because a console that gets an error stops uploading and the next
         measurement is worth more than the tidy status code.
         """
+        ...
+
+    def dialect_spec(self, readings: dict[str, Any], dialect: str) -> DialectSpec:
+        """Describe a dialect using JSON data only. Optional."""
         ...
 
 
@@ -106,12 +120,350 @@ class BaseDriver:
         """
         return 0.0
 
+    def dialect_spec(self, readings: dict[str, Any], dialect: str
+                     ) -> DialectSpec | None:
+        """A serializable account of `dialect`, or None for WeeWX names.
+
+        Called by the listener, while the driver is already in scope. The
+        returned data is stored beside the readings; no driver method is
+        called while an archive record is built.
+        """
+        return None
+
     def status(self) -> dict[str, Any]:
         """Whatever the driver wants reported at /status. Optional."""
         return {}
 
     def close(self) -> None:
         """Release anything held. Optional."""
+
+    def place(self, readings: dict[str, Any], dialect: str,
+              decisions: dict[str, str], infer: str = "off") -> Placed | None:
+        """Propose names for the listener's settings page. Optional.
+
+        This compatibility hook runs only in the listener process. Archive
+        records are built from `dialect_spec`, never through this method.
+
+        Args:
+            readings (dict): What `packets()` put in `Packet.data`, read back.
+            dialect (str): The `Packet.dialect` those readings were stored
+                with, so a driver reading two catalogs knows which one.
+            decisions (dict): Raw name -> archive column, or `-` for nowhere.
+                The operator's, merged from the widest scope to the narrowest
+                by `placement.Placements.extensions`.
+            infer (str): Whether to guess at names nothing has placed: `off`,
+                `series` or `all`.
+
+        Returns:
+            Placed|None: None means "my names are already WeeWX's", which is
+            the default and what a driver that never implements this says.
+
+        What a driver would like to infer is proposed at ingest and written
+        down -- see `placement.promote`.
+        """
+        return None
+
+
+DIALECT_SPEC_VERSION = 1
+MAX_DIALECT_NAME = 128
+MAX_SPEC_BYTES = 128 * 1024
+MAX_SPEC_ENTRIES = 2048
+MAX_SPEC_NAME = 256
+MAX_ABSENT_VALUES = 256
+_SPEC_KEYS = frozenset({
+    "version", "fields", "contested", "scale", "metadata", "absent",
+    "groups", "usUnits",
+})
+_UNIT_SYSTEMS = frozenset({1, 16, 17})
+
+
+def valid_dialect_name(value: object) -> bool:
+    """Whether a driver-supplied dialect is safe to retain and diagnose."""
+    return (isinstance(value, str) and 0 < len(value) <= MAX_DIALECT_NAME
+            and all(character.isprintable() for character in value))
+
+
+@dataclass(frozen=True, slots=True)
+class DialectSpec:
+    """A driver's vocabulary in the only form the archiver accepts.
+
+    Every value is a JSON primitive, list or object. In particular there is
+    no class name, module name or callable for the read side to import. A
+    packet therefore carries everything core code needs to map it without
+    granting its driver access to the archive process.
+    """
+
+    fields: dict[str, str]
+    usUnits: int
+    contested: frozenset[str] = frozenset()
+    scale: dict[str, float] = field(default_factory=dict)
+    metadata: frozenset[str] = frozenset()
+    absent: tuple[str | int | float, ...] = ()
+    groups: dict[str, str] = field(default_factory=dict)
+    version: int = DIALECT_SPEC_VERSION
+
+    def __post_init__(self) -> None:
+        if type(self.version) is not int or self.version != DIALECT_SPEC_VERSION:
+            raise ValueError(f"dialect mapping version must be {DIALECT_SPEC_VERSION}")
+        if type(self.usUnits) is not int or self.usUnits not in _UNIT_SYSTEMS:
+            raise ValueError("dialect mapping usUnits must be 1, 16 or 17")
+        object.__setattr__(self, "fields", _string_map(self.fields, "fields"))
+        object.__setattr__(self, "groups", _string_map(self.groups, "groups"))
+        object.__setattr__(self, "contested",
+                           frozenset(_string_list(self.contested, "contested")))
+        object.__setattr__(self, "metadata",
+                           frozenset(_string_list(self.metadata, "metadata")))
+        factors: dict[str, float] = {}
+        if not isinstance(self.scale, dict):
+            raise ValueError("dialect mapping scale must be an object")
+        if len(self.scale) > MAX_SPEC_ENTRIES:
+            raise ValueError("dialect mapping scale has too many entries")
+        for name, value in self.scale.items():
+            if (not isinstance(name, str) or not name
+                    or len(name) > MAX_SPEC_NAME):
+                raise ValueError("dialect mapping scale names must be non-empty strings")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"dialect mapping scale for {name!r} must be a number")
+            try:
+                factor = float(value)
+            except OverflowError as exc:
+                raise ValueError(
+                    f"dialect mapping scale for {name!r} must be finite") from exc
+            if not math.isfinite(factor):
+                raise ValueError(f"dialect mapping scale for {name!r} must be finite")
+            factors[name] = factor
+        object.__setattr__(self, "scale", factors)
+        if not isinstance(self.absent, (list, tuple)):
+            raise ValueError("dialect mapping absent must be a list")
+        if len(self.absent) > MAX_ABSENT_VALUES:
+            raise ValueError("dialect mapping absent has too many values")
+        absent = []
+        for value in self.absent:
+            if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+                raise ValueError("dialect mapping absent values must be strings or numbers")
+            if isinstance(value, str) and len(value) > MAX_SPEC_NAME:
+                raise ValueError("dialect mapping absent strings are too long")
+            try:
+                finite = not isinstance(value, str) and math.isfinite(float(value))
+            except OverflowError:
+                finite = False
+            if not isinstance(value, str) and not finite:
+                raise ValueError("dialect mapping absent numbers must be finite")
+            absent.append(value)
+        object.__setattr__(self, "absent", tuple(absent))
+        try:
+            size = len(json.dumps(
+                self.as_dict(), sort_keys=True, separators=(",", ":"),
+                allow_nan=False).encode())
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("dialect mapping must contain JSON values only") from exc
+        if size > MAX_SPEC_BYTES:
+            raise ValueError(
+                f"dialect mapping is larger than {MAX_SPEC_BYTES} bytes")
+
+    @classmethod
+    def from_dict(cls, raw: object) -> DialectSpec:
+        if not isinstance(raw, dict):
+            raise ValueError("dialect mapping must be an object")
+        unknown = set(raw) - _SPEC_KEYS
+        if unknown:
+            raise ValueError("unknown dialect mapping key(s): "
+                             + ", ".join(sorted(str(one) for one in unknown)))
+        missing = {"version", "fields", "usUnits"} - set(raw)
+        if missing:
+            raise ValueError("missing dialect mapping key(s): "
+                             + ", ".join(sorted(missing)))
+        return cls(
+            version=raw["version"], fields=raw["fields"],
+            usUnits=raw["usUnits"], contested=raw.get("contested", ()),
+            scale=raw.get("scale", {}), metadata=raw.get("metadata", ()),
+            absent=raw.get("absent", ()), groups=raw.get("groups", {}),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        """A stable object containing JSON values and nothing executable."""
+        return {
+            "version": self.version,
+            "fields": dict(sorted(self.fields.items())),
+            "contested": sorted(self.contested),
+            "scale": dict(sorted(self.scale.items())),
+            "metadata": sorted(self.metadata),
+            "absent": list(self.absent),
+            "groups": dict(sorted(self.groups.items())),
+            "usUnits": self.usUnits,
+        }
+
+
+def _string_map(raw: object, label: str) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        raise ValueError(f"dialect mapping {label} must be an object")
+    if len(raw) > MAX_SPEC_ENTRIES:
+        raise ValueError(f"dialect mapping {label} has too many entries")
+    made = {}
+    for name, value in raw.items():
+        if (not isinstance(name, str) or not name
+                or len(name) > MAX_SPEC_NAME):
+            raise ValueError(f"dialect mapping {label} names must be non-empty strings")
+        if (not isinstance(value, str) or not value
+                or len(value) > MAX_SPEC_NAME):
+            raise ValueError(f"dialect mapping {label} values must be non-empty strings")
+        made[name] = value
+    return made
+
+
+def _string_list(raw: object, label: str) -> list[str]:
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        raise ValueError(f"dialect mapping {label} must be a list")
+    if len(raw) > MAX_SPEC_ENTRIES:
+        raise ValueError(f"dialect mapping {label} has too many entries")
+    if any(not isinstance(one, str) or not one or len(one) > MAX_SPEC_NAME
+           for one in raw):
+        raise ValueError(f"dialect mapping {label} values must be non-empty strings")
+    return list(raw)
+
+
+@dataclass(frozen=True, slots=True)
+class Placed:
+    """One packet's readings, in archive column names."""
+
+    #: Column name -> value. A value of None is a reading the console said it
+    #: did not take; the caller drops those.
+    record: dict[str, Any] = field(default_factory=dict)
+    #: Which unit system `record` is in. The driver's, because the dialect
+    #: decides it and only the driver has the dialect.
+    usUnits: int = 1
+    #: What the driver would have guessed about names it could not place, for
+    #: the listener's proposal collector. Empty when nothing is inferred.
+    proposals: tuple[Any, ...] = ()
+
+
+def dialect_spec_of(driver: object, packet: Packet) -> dict[str, Any] | None:
+    """The validated JSON description to persist beside one raw packet.
+
+    A driver may put one on the packet itself or provide `dialect_spec`.
+    Validation happens at this boundary, in the listener process. The same
+    validation runs again when the archive reads it, because the live database
+    is a file and files can be edited independently of this process.
+    """
+    if packet.dialect is None:
+        return None
+    if not valid_dialect_name(packet.dialect):
+        return None
+    found: object = packet.mapping
+    if found is None:
+        fn = getattr(driver, "dialect_spec", None)
+        if fn is None:
+            return None
+        try:
+            found = fn(packet.data, packet.dialect)
+        except Exception:
+            log.exception("driver could not describe its %r dialect", packet.dialect)
+            return None
+    if found is None:
+        return None
+    try:
+        spec = found if isinstance(found, DialectSpec) else DialectSpec.from_dict(found)
+        if type(packet.usUnits) is not int or packet.usUnits != spec.usUnits:
+            raise ValueError("dialect mapping unit system disagrees with its packet")
+    except (TypeError, ValueError, OverflowError):
+        log.exception("driver returned an invalid description for %r", packet.dialect)
+        return None
+    return spec.as_dict()
+
+
+def place_with(driver: object, readings: dict[str, Any], dialect: str,
+               decisions: dict[str, str], infer: str = "off") -> Placed | None:
+    """Ask a driver for listener-side proposals, or None if it cannot.
+
+    This must stay out of the archive path: calling it there would execute
+    third-party code in the process holding the archive database.
+    """
+    if driver is None:
+        return None
+    fn = getattr(driver, "place", None)
+    if fn is None:
+        return None
+    try:
+        found = fn(readings, dialect, decisions, infer)
+    except Exception:
+        log.exception("driver could not place a %r packet", dialect)
+        return None
+    return found if isinstance(found, Placed) else None
+
+
+@dataclass(frozen=True, slots=True)
+class Setup:
+    """How somebody points a console at this driver.
+
+    What the Senders page needs in order to offer a piece of hardware and
+    then say what to type into it. A driver that says nothing gets the
+    generic envelope text, which is what everything before this had.
+
+    The values in `fields` and `notes` carry placeholders, filled in by
+    whoever renders them:
+
+        %(address)s   the host a console sends to, on its own
+        %(port)s      the port, on its own
+        %(base)s      the two as a URL, with the scheme and without a
+                      redundant `:80` -- for a field that takes one string
+        %(path)s      the upload path, token included where it carries one
+        %(identity)s  what this sender is called, where we hand that out
+        %(token)s     the upload token, for hardware with a field for it
+
+    This process cannot know the first two: port publishing, NAT and any
+    reverse proxy all sit between the console and us, and a container asked
+    of its own socket answers with its bridge address in complete
+    confidence. So the answer belongs to the page, which has the operator's
+    setting for it. The last two are the page's for a different reason --
+    they are per sender, and a driver is not.
+    """
+
+    #: What to call the protocol in a list: "Ecowitt", "Ambient Weather".
+    label: str = ""
+    #: The devices that speak it, as a sentence. This is what somebody
+    #: standing over a box actually searches for -- they know they have a
+    #: WS-2902, not that it speaks Weather Underground.
+    hardware: str = ""
+    #: `(label, value)` per line of what to type into the console. Empty
+    #: means the hardware cannot be pointed anywhere and has to be adopted:
+    #: a WeatherFlow hub broadcasts, and the two bridges have their endpoint
+    #: burned into the firmware.
+    fields: tuple[tuple[str, str], ...] = ()
+    #: The steps around it, in the order somebody does them.
+    notes: tuple[str, ...] = ()
+    #: What the console calls itself with, if it brings its own identity.
+    #: Empty means one can be handed out, which is the better arrangement:
+    #: an identity somebody chooses can be chosen twice.
+    identity: str = ""
+    #: Where the token goes on this protocol: `path`, `password`, or empty
+    #: for hardware that carries neither.
+    secret: str = ""
+
+    @property
+    def tellable(self) -> bool:
+        """Whether this hardware can be told where to upload."""
+        return bool(self.fields)
+
+
+def setup_of(driver: object) -> Setup | None:
+    """How to point hardware at this driver, or None if it does not say.
+
+    Optional, like `status` and `unit_groups`. The six push protocols each
+    carry their own answer already -- what to type into the app, what the
+    console names itself with, which of them cannot be pointed anywhere at
+    all -- and before this nothing read any of it. The Senders page had a
+    list of three written out by hand instead, so the four protocols that
+    were not on it could not be set up from the page at all.
+    """
+    fn = getattr(driver, "setup", None)
+    if fn is None:
+        return None
+    try:
+        found = fn()
+    except Exception:
+        log.exception("driver setup failed")
+        return None
+    return found if isinstance(found, Setup) else None
 
 
 def response_of(driver: object) -> Response:
@@ -201,9 +553,9 @@ def _parsed(factory: Callable[..., object],
 class Registry:
     """The drivers this installation has.
 
-    Instances, not classes: a driver holds configuration and state -- which
-    consoles it answers to, which field map belongs to which of them -- and
-    that has to survive between uploads.
+    Instances, not classes: a driver holds parser configuration and protocol
+    state, and those have to survive between uploads. Place-specific field
+    mappings are downstream data and never belong to this registry.
     """
 
     def __init__(self) -> None:

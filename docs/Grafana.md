@@ -47,9 +47,9 @@ unit_system = "metricwx"
 ```
 
 **The tag is the archive, not the station.** By the time a record exists the
-stations that fed it have been merged ([sources](Multiple-Sources)) or moved
-out of each other's way ([roles](Stations-and-Archives)), so a record has no
-station and tagging one on would invent a fact. One upload per archive, each
+Place's membership, roles and mappings have moved its senders out of each
+other's way, so a record has no station and tagging one on would invent a fact.
+One upload per archive, each
 with its own `location`, all into the same bucket — which is what lets a
 single query draw all of them.
 

@@ -18,8 +18,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from weewx_evo import stations  # noqa: E402
-from weewx_evo.db.live import LiveStore  # noqa: E402
+from weewx_evo import archives as archive_defs  # noqa: E402
+from weewx_evo import placement, stations  # noqa: E402
+from weewx_evo.db.live import LiveStore, sender_id  # noqa: E402
 from weewx_evo.ingest import drivers  # noqa: E402
 from weewx_evo.ingest.listener import Ingest  # noqa: E402
 from weewx_evo.ingest.sightings import Sightings  # noqa: E402
@@ -47,7 +48,10 @@ def the_register() -> None:
           reg.by_identity("wunderground", "EVO-3F9A2C"), one)
     check("another driver with the same string is not it",
           reg.by_identity("ecowitt", "evo-3f9a2c"), None)
-    check("the default archive is filled in", one.archive, "default")
+    check("the console carries no archive assignment",
+          hasattr(one, "archive"), False)
+    check("and neither does the register",
+          hasattr(reg, "for_archive") or hasattr(reg, "archives"), False)
 
     print("\nwhat is refused, and why it is refused rather than merged")
     for station, why in (
@@ -79,22 +83,6 @@ def the_identity_we_hand_out() -> None:
           reg.identity_for("wunderground") == one, False)
 
 
-def several_archives() -> None:
-    """`archive` is here from the first version, not added later."""
-    print("\nstations belong to archives")
-    reg = stations.Register()
-    reg.add(stations.Station("haus", "wunderground", "evo-a", archive="haus"))
-    reg.add(stations.Station("boden", "ecowitt", "PASS1", archive="haus"))
-    reg.add(stations.Station("koppel", "wunderground", "evo-b", archive="koppel"))
-
-    check("two stations in one series",
-          [s.name for s in reg.for_archive("haus")], ["haus", "boden"])
-    check("one in the other",
-          [s.name for s in reg.for_archive("koppel")], ["koppel"])
-    check("and the default is always offered",
-          reg.archives(), ["default", "haus", "koppel"])
-
-
 def the_file() -> None:
     print("\nwritten and read back")
     with tempfile.TemporaryDirectory() as raw:
@@ -102,20 +90,55 @@ def the_file() -> None:
         reg = stations.Register()
         reg.add(stations.Station("kirchdorf", "wunderground", "evo-3f9a2c",
                                  note='a "quoted" note'))
-        reg.add(stations.Station("garten", "ecowitt", "4F2A9C", archive="haus",
-                                 learnt=True))
+        reg.add(stations.Station("garten", "ecowitt", "4F2A9C", learnt=True,
+                                 model="GW2000",
+                                 field_map={"tf_ch1": "soilTemp1"},
+                                 max_behind=1200, max_ahead=60))
         stations.save(path, reg)
 
         back = stations.load(path)
         check("both came back", len(back), 2)
         check("the note survived quoting",
               back.by_name("kirchdorf").note, 'a "quoted" note')
-        check("the archive survived", back.by_name("garten").archive, "haus")
         check("and whether it was learnt", back.by_name("garten").learnt, True)
+        check("console settings survived", (
+            back.by_name("garten").model,
+            back.by_name("garten").field_map,
+            back.by_name("garten").max_behind,
+            back.by_name("garten").max_ahead,
+        ), ("GW2000", {"tf_ch1": "soilTemp1"}, 1200.0, 60.0))
 
         # An operator opens this file. It should say what it is.
         text = path.read_text(encoding="utf-8")
         check("the file explains itself", text.startswith("#"), True)
+        check("a new file carries no archive assignment", "archive =" in text,
+              False)
+        legacy_policy = stations.legacy_member_settings(path)
+        check("a new file carries no station-owned member policy",
+              legacy_policy, {})
+
+        print("\nlegacy routing data is not runtime station state")
+        path.write_text(text.replace(
+            'identity = "4F2A9C"',
+            'identity = "4F2A9C"\narchive = "haus"\n'
+            'role = "extra"\nchannel = 3\nindoor = false'),
+            encoding="utf-8")
+        legacy = stations.load(path)
+        check("the old file still loads", legacy.by_name("garten") is not None,
+              True)
+        check("the old assignment is not part of the station",
+              hasattr(legacy.by_name("garten"), "archive"), False)
+        check("nor is its old role runtime station state",
+              hasattr(legacy.by_name("garten"), "role"), False)
+        check("but the archive migration can still read it",
+              stations.legacy_member_settings(path), {"garten": {
+                  "role": "extra", "channel": 3, "indoor": False}})
+        stations.save(path, legacy)
+        check("the next save removes the old assignment",
+              "archive =" in path.read_text(encoding="utf-8"), False)
+        check("and preserves policy until the archive has migrated it",
+              stations.legacy_member_settings(path), {"garten": {
+                  "role": "extra", "channel": 3, "indoor": False}})
         check("no file, no stations, not an error",
               len(stations.load(Path(raw) / "nothing.toml")), 0)
 
@@ -191,12 +214,18 @@ def an_upload_from_each() -> None:
                           "/wunderground/", "192.168.33.51")
 
             stored = list(live.packets(0, 2_000_000_000))
-            names = sorted(one.source for one in stored)
+            # The name is a lookup and the table records the pair, so the
+            # name comes from the register on the way out. Frozen into the
+            # row it used to split a series in two the moment somebody
+            # renamed a console.
+            placer = placement.Placer('default', placement.Placements(), reg,
+                                       drivers.DEFAULT)
+            names = sorted(placer.name_of(one) for one in stored)
             check("both were stored", len(stored), 2)
-            check("the announced one under its name, not its identity",
+            check("the announced one resolves to its name, not its identity",
                   "kirchdorf" in names, True)
-            check("the stranger under whatever it called itself",
-                  "KSTRANGER" in names, True)
+            check("the stranger to whatever it called itself",
+                  sender_id("wunderground", "KSTRANGER") in names, True)
             check("and the stranger is on the list",
                   [s.identity for s in seen.waiting()], ["KSTRANGER"])
             check("the announced one is not",
@@ -205,21 +234,15 @@ def an_upload_from_each() -> None:
             live.close()
 
 
-def indoor_is_the_stations_answer() -> None:
-    """And the core applies it, for every driver.
-
-    It was a setting on the Weather Underground driver and absent from the
-    Ecowitt one: the same question answered twice and once not at all. A
-    protocol has no opinion about the room a console stands in.
-    """
-    print("\nindoor readings are left out when the station says so")
+def indoor_is_the_places_answer() -> None:
+    """The journal stays raw; each place decides whether indoor belongs."""
+    print("\nindoor readings are left out when the place says so")
     with tempfile.TemporaryDirectory() as raw:
         live = LiveStore(Path(raw) / "live.sdb", interval_seconds=60)
         try:
             reg = stations.Register()
             reg.add(stations.Station("inside", "wunderground", "evo-in"))
-            reg.add(stations.Station("outside", "wunderground", "evo-out",
-                                     indoor=False))
+            reg.add(stations.Station("outside", "wunderground", "evo-out"))
             ingest = Ingest(live, token=None, default_driver="wunderground",
                             stations=reg, sightings=Sightings(live))
 
@@ -228,13 +251,30 @@ def indoor_is_the_stations_answer() -> None:
             ingest.submit(body % b"evo-in", "/wunderground/", "1.2.3.4")
             ingest.submit(body % b"evo-out", "/wunderground/", "1.2.3.4")
 
-            stored = {p.source: p for p in live.packets(0, 2_000_000_000)}
+            # Both packets are stored whole -- the indoor reading of the
+            # console that does not want it recorded is in the table, which
+            # is what makes turning the setting back on a rebuild rather
+            # than a week of measurements nobody kept.
+            raws = list(live.packets(0, 2_000_000_000))
+            check("both consoles sent their indoor reading",
+                  [("indoortempf" in one.data) for one in raws], [True, True])
+            inside = sender_id("wunderground", "evo-in")
+            outside = sender_id("wunderground", "evo-out")
+            archive = archive_defs.Archive(
+                "default", "default.sdb", stations=(inside, outside),
+                members={outside: archive_defs.MemberPolicy(indoor=False)})
+            placer = placement.Placer(archive, placement.Placements(), reg)
+            stored = {}
+            for one in raws:
+                placed = placer.place(one)
+                if placed is not None:
+                    stored[placed.source] = placed
             check("the one that wants them has them",
-                  stored["inside"].data.get("inTemp"), 70.1)
+                  stored[inside].data.get("inTemp"), 70.1)
             check("the one that does not, does not",
-                  "inTemp" in stored["outside"].data, False)
+                  "inTemp" in stored[outside].data, False)
             check("and its outdoor reading is untouched",
-                  stored["outside"].data.get("outTemp"), 68.4)
+                  stored[outside].data.get("outTemp"), 68.4)
         finally:
             live.close()
 
@@ -251,9 +291,80 @@ def nothing_announced_changes_nothing() -> None:
             stored = list(live.packets(0, 2_000_000_000))
             check("stored", len(stored), 1)
             check("under the identity its driver gave it",
-                  stored[0].source, "KTEST")
+                  stored[0].identity, "KTEST")
         finally:
             live.close()
+
+
+def only_sender_clocks_reach_the_driver() -> None:
+    """Legacy field maps stop at the explicit Place migration boundary."""
+    print("\nonly sender clocks reach the listener driver")
+    from weewx_evo import cli
+    from weewx_evo import options as option_defs
+    from weewx_evo.settings import Settings
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        config_path = work / "evo.toml"
+        config_path.write_text("", encoding="utf-8")
+        register = stations.Register(stations=[
+            stations.Station(
+                "clocked", "ecowitt", "AAAA",
+                field_map={"tf_ch1": "soilTemp1"}, max_behind=1800),
+            stations.Station(
+                "map-only", "ecowitt", "BBBB",
+                field_map={"tf_ch1": "extraTemp9"}),
+        ])
+        stations.save(work / "stations.toml", register)
+        schema = option_defs.Schema(
+            name="core", label="core", groups=tuple(option_defs.core_options()))
+        cfg = Settings(schema, config={"live_db": str(work / "live.sdb")},
+                       path=config_path)
+
+        cli.configure_drivers(cfg, placements=placement.Placements())
+        configured = drivers.get("ecowitt")
+        clocked = configured.stations.get("aaaa") or {}
+        check("the sender-specific clock tolerance remains",
+              clocked.get("max_behind"), 1800)
+        check("its legacy field map is not injected",
+              "field_map_extensions" in clocked, False)
+        check("a field map alone creates no driver-side sender entry",
+              "bbbb" in configured.stations, False)
+
+
+def the_live_database_schema_default() -> None:
+    """The Admin and process schema resolve an omitted live_db identically."""
+    print("\nthe sender page follows the live database schema default")
+    import os
+
+    from weewx_evo import adminstations
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        (work / "data").mkdir()
+        expected = work / "data" / "live.sdb"
+        LiveStore(expected).close()
+
+        class BareAdmin:
+            path = work / "evo.toml"
+
+            @staticmethod
+            def config():
+                return {}
+
+        names = ("WEEWX_EVO_LIVE", "WEEWX_EVO_LIVE_DB")
+        previous = {name: os.environ.get(name) for name in names}
+        try:
+            for name in names:
+                os.environ.pop(name, None)
+            check("an omitted setting means data/live.sdb",
+                  adminstations.live_db(BareAdmin()), expected)
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
 
 
 def the_settings_page() -> None:
@@ -303,6 +414,17 @@ def the_settings_page() -> None:
         path.write_text(
             f'live_db = "{(tmp / "live.sdb").as_posix()}"\n'
             f'token = "{"u" * 32}"\n', encoding="utf-8")
+        # Place membership is a relation to the canonical live sender, never
+        # a setting owned by the sender page.
+        (tmp / "archives.toml").write_text(
+            "member_policy_version = 2\n\n"
+            "[archives.default]\n"
+            f'file = "{(tmp / "default.sdb").as_posix()}"\n'
+            'senders = []\n\n'
+            "[archives.roof]\n"
+            f'file = "{(tmp / "roof.sdb").as_posix()}"\n'
+            'senders = []\n',
+            encoding="utf-8")
         live = LiveStore(tmp / "live.sdb", interval_seconds=60)
         # A stranger the listener would have noted.
         Sightings(live).saw("ecowitt", "STRANGER1", "192.168.33.51",
@@ -315,27 +437,58 @@ def the_settings_page() -> None:
         server.start()
         base = f"http://127.0.0.1:{server.port}/{token}"
         try:
-            status, body = get(f"{base}/stations")
+            status, body = get(f"{base}/senders")
             check("the page is there", status, 200)
             check("and the stranger is on it", "STRANGER1" in body, True)
+            check("the page consistently calls them senders",
+                  ("<h2>Senders</h2>" in body, "Add sender" in body),
+                  (True, True))
+            check("it does not display an archive column",
+                  "<th>Place</th>" in body, False)
+            check("it does not offer an archive while adopting",
+                  'name="archive"' in body, False)
+            check("a new sender has an explicit assignment action",
+                  "Assign to a Place" in body, True)
+
+            status, body = get(f"{base}/new-sender")
+            check("the add page is there", status, 200)
+            check("it does not offer an archive while announcing",
+                  'name="archive"' in body, False)
 
             print("\nannouncing one hands out an identity to copy over")
-            status, body = post(f"{base}/new-station",
-                                {"name": "garden", "driver": "wunderground",
-                                 "archive": "default"})
+            status, body = post(f"{base}/new-sender",
+                                {"name": "garden", "driver": "wunderground"})
             check("it answers with what to enter", status, 200)
             check("naming the console", "garden" in body, True)
             check("and the identity it was given", "evo-" in body, True)
             check("with the upload token to type in",
                   ("u" * 32) in body, True)
 
+            # Assignment is configured on the Place, then reflected here as
+            # a read-only link back to that authority.
+            from dataclasses import replace
+
+            named = stations.load(tmp / "stations.toml").by_name("garden")
+            places = archive_defs.Register.load(tmp / "archives.toml")
+            current = places.get("default")
+            canonical = sender_id(named.driver, named.identity)
+            places.replace("default", replace(
+                current, stations=(canonical,),
+                members={canonical: archive_defs.MemberPolicy()}))
+            places.save()
+            _, assigned_page = get(f"{base}/senders")
+            check("a Place-owned assignment is shown",
+                  (">default</a>" in assigned_page,
+                   "./places?open=default#place-members-default"
+                   in assigned_page), (True, True))
+
             print("\nadopting the stranger")
-            status, _ = post(f"{base}/stations/adopt",
+            status, _ = post(f"{base}/senders/adopt",
                              {"driver": "ecowitt", "identity": "STRANGER1",
                               "name": "roof"})
             check("it redirects rather than rendering", status, 303)
 
-            _, body = get(f"{base}/stations")
+            _, body = get(f"{base}/senders")
             check("both are announced now",
                   "garden" in body and "roof" in body, True)
             check("and the stranger is off the waiting list",
@@ -352,12 +505,33 @@ def the_settings_page() -> None:
                   register.by_name("roof").identity, "STRANGER1")
             check("and is marked as read off it",
                   register.by_name("roof").learnt, True)
+            check("the console page does not own a member role",
+                  'name="role"' in body, False)
+            check("or the place-specific indoor decision",
+                  'name="indoor"' in body, False)
+            garden_sender = sender_id("wunderground",
+                                      register.by_name("garden").identity)
+            check("the canonical ID is secondary and read-only",
+                  ("<summary>Technical ID</summary>" in body,
+                   garden_sender in body), (True, True))
+
+            # Old bookmarks or hand-written POSTs cannot put the policy back
+            # on the console. Only clock tolerances are accepted here; the
+            # place form owns these values now.
+            status, _ = post(f"{base}/senders/garden/set", {
+                "role": "extra", "channel": "4", "indoor": ""})
+            check("an obsolete policy post still redirects", status, 303)
+            untouched = stations.load(tmp / "stations.toml").by_name("garden")
+            check("and cannot restore station-owned policy fields",
+                  tuple(hasattr(untouched, name)
+                        for name in ("role", "channel", "indoor")),
+                  (False, False, False))
 
             print("\na name already taken is refused, and says so")
-            status, body = post(f"{base}/new-station",
+            status, body = post(f"{base}/new-sender",
                                 {"name": "garden", "driver": "wunderground"})
             check("the page comes back", status, 200)
-            check("saying what is wrong", "already a station" in body, True)
+            check("saying what is wrong", "already a sender" in body, True)
             check("and nothing was added",
                   len(stations.load(tmp / "stations.toml")), 2)
 
@@ -369,41 +543,53 @@ def the_settings_page() -> None:
             from weewx_evo.db.live import Packet
 
             live2 = LiveStore(tmp / "live.sdb", interval_seconds=60)
+            # Keyed on the pair the console uploads with, which is what
+            # the page looks the row up by, and under the names the
+            # console used -- a placement is a decision about `tempf`.
+            garden = stations.load(tmp / "stations.toml").by_name("garden")
             live2.add(Packet(
-                dateTime=1787800000, usUnits=1, source="garden",
-                data={"outTemp": 68.4, "somethingNew": 1.5},
+                dateTime=1787800000, usUnits=1, driver=garden.driver,
+                identity=garden.identity, dialect="wunderground",
+                mapping={"version": 1, "usUnits": 1,
+                         "fields": {"tempf": "outTemp"},
+                         "metadata": [], "contested": [], "scale": {},
+                         "absent": [], "groups": {}},
+                data={"tempf": 68.4, "somethingNew": 1.5},
                 raw="ID=evo-x&PASSWORD=[redacted]&tempf=68.4&somethingNew=1.5"))
             live2.close()
 
             station = stations.load(tmp / "stations.toml").by_name("garden")
-            found = adminstations.what_it_sends(admin, station)
+            old_load = drivers.DEFAULT.load
+            old_get = drivers.get
+
+            def forbidden(*_args, **_kwargs):
+                raise AssertionError("driver registry used after ingest")
+
+            drivers.DEFAULT.load = forbidden
+            drivers.get = forbidden
+            try:
+                found = adminstations.what_it_sends(admin, station)
+            finally:
+                drivers.DEFAULT.load = old_load
+                drivers.get = old_get
             check("it knows what arrived",
-                  found.get("sent"), ["outTemp", "somethingNew"])
+                  found.get("sent"), ["somethingNew", "tempf"])
+            check("the stored mapping describes it without the driver",
+                  found.get("catalog"), {"tempf": "outTemp"})
             check("and keeps the upload to hand on",
                   "somethingNew=1.5" in found.get("raw", ""), True)
             check("with the secret already out of it",
                   "[redacted]" in found.get("raw", ""), True)
-
-            print("\nwhat is true of the console, not of its protocol")
-            # `indoor` was a setting on the WU driver and missing from the
-            # Ecowitt one. It is one console's answer, so it lives here and
-            # the core applies it for every driver.
-            status, _ = post(f"{base}/stations/garden/set", {})
-            check("unticking it saves", status, 303)
-            again = stations.load(tmp / "stations.toml").by_name("garden")
-            check("indoor is off", again.indoor, False)
-            check("and written as such",
-                  "indoor = false" in (tmp / "stations.toml").read_text(),
-                  True)
-
-            status, _ = post(f"{base}/stations/garden/set", {"indoor": "1"})
-            check("ticking it again saves", status, 303)
-            check("indoor is on",
-                  stations.load(tmp / "stations.toml").by_name("garden").indoor,
-                  True)
+            _, sender_page = get(f"{base}/senders")
+            check("sender details stay read-only about Place fields",
+                  ('name="place:' in sender_page
+                   or 'action="./senders/garden/fields"' in sender_page),
+                  False)
+            check("but the raw diagnosis is available",
+                  "somethingNew" in sender_page, True)
 
             print("\nremoving one")
-            status, _ = post(f"{base}/stations/roof/remove", {})
+            status, _ = post(f"{base}/senders/roof/remove", {})
             check("redirects", status, 303)
             check("and it is gone",
                   stations.load(tmp / "stations.toml").by_name("roof"), None)
@@ -415,13 +601,14 @@ def main() -> int:
     drivers.DEFAULT.load()
     the_register()
     the_identity_we_hand_out()
-    several_archives()
     the_file()
     the_sightings()
     an_upload_from_each()
     nothing_announced_changes_nothing()
-    indoor_is_the_stations_answer()
+    indoor_is_the_places_answer()
     the_settings_page()
+    only_sender_clocks_reach_the_driver()
+    the_live_database_schema_default()
 
     print()
     if failures:

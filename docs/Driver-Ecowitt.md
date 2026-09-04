@@ -1,289 +1,173 @@
-# Driver: Ecowitt
+# Push drivers
 
-`ingest/plugins/ecowitt/`. **Core weewx-evo**, not an adopted foreign repo.
+`src/weewx_evo/ingest/plugins/push/`. Six built-in protocols share one
+transport, mapper and weewx-evo adapter:
 
-Its origin is [weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt) — the
-catalogue, the protocol and the 59 tests came from there. That is history, not a
-running tie: the driver is developed further here and follows this repo's rules.
+- Ecowitt
+- Ambient Weather
+- Weather Underground
+- Acurite
+- LaCrosse LW30x
+- WeatherFlow
 
-> **No back-flow.** weewx-ecowitt is a WeeWX plugin. It knows neither
-> `options()` nor `view()`, neither the live table nor the provenance of a field
-> — it knows `weewx.drivers` and a `weewx.conf`. Mirroring a fix from here to
-> there would mean serving two different programs with the same diff. Anyone
-> maintaining both ports by hand and with judgement.
+The Ecowitt catalogue and the first mapping tests originated in
+[weewx-ecowitt](https://github.com/hilman2/weewx-ecowitt). The protocol and
+catalogue modules are shared with `weewx-ultimate-push`; they import neither
+WeeWX nor weewx-evo.
 
 ## The files
 
-| File | Lines | What |
-|---|---|---|
-| `catalog.py` | 1074 | What the hardware sends and where it belongs in WeeWX. **Generated, do not edit by hand** |
-| `protocol.py` | 165 | Turning what was sent into named readings. Pure: text in, dict out |
-| `mapping.py` | 207 | Catalogue, custom mapping and inference meet here |
-| `infer.py` | 200 | What happens to a field nobody has mapped |
-| `consoles.py` | 215 | Which consoles this driver answers |
-| `columns.py` | 110 | Which database columns a station really needs |
-| `report.py` | 69 | Leaving a report where somebody will find it |
-| `driver.py` | 384 | The weewx-evo end. Deliberately thin |
-| `__main__.py` | 174 | Listen once and say what the hardware sends |
-
-## `protocol.py` — two protocols, one function
-
-Ecowitt gateways speak two protocols, and both land here:
-
-- **Ecowitt POST** — a urlencoded form body
-- **Wunderground GET** — the same shape in the query string
-
-A urlencoded body and a query string are the same thing, so one function does.
-
-| Function | What it means |
+| File | What |
 |---|---|
-| `parse(text)` | Break into raw name/value pairs, in arrival order |
-| `device_time(raw, now, max_behind, max_ahead)` | The device's timestamp, or `None` |
-| `numbers(raw)` | `(readings, text)` — what was readable as a number and what was not |
-| `redact(text)` | Replace the values that identify a station |
-| `station_id(text)` | What identifies the console, without parsing the rest |
+| `protocols/` | Detection, identity, response and payload shape for all six protocols |
+| `catalogs/` | Raw field names, target fields, units and sensor channels |
+| `transport.py` | Form, query-string and JSON parsing; timestamps and redaction |
+| `mapping.py` | Catalogue, explicit placement and inference |
+| `infer.py` | Rules for fields no catalogue knows yet |
+| `report.py` | A redacted report for unresolved fields |
+| `driver.py` | The adapter between a protocol and the listener/live journal |
+| `roles.py` | The `main`/`extra` placement preset used by a Place |
 
-Everything here is **pure**: text in, dictionary out, no sockets, no clock, no
-configuration. That is what makes the fieldwork testable from a stored
-recording.
+## Protocol and dialect
 
-### The console's clock
+A protocol is the exchange: endpoint, response, station identity and payload
+shape. A dialect is a field catalogue. Weather Underground, for example, is
+one protocol with metric and imperial dialects.
+
+`protocols.registry()` returns the six protocols. Detection chooses the most
+specific claim for an upload. `protocols.posting()` enables the HTTP protocols
+for `auto`; WeatherFlow uses UDP port 50222 and must be selected explicitly.
+
+`transport.parse()` accepts the three wire shapes used here:
+
+- URL-encoded HTTP bodies
+- Weather Underground query strings
+- WeatherFlow JSON datagrams
+
+The protocol then turns that neutral input into readings and selects its
+dialect.
+
+### The sender's clock
 
 `MAX_BEHIND = 3600`, `MAX_AHEAD = 60`.
 
-Consoles are frequently wrong, sometimes by years, and a record stamped 2015 is
-worse than no record at all. A timestamp that is merely late, on the other hand,
-is exactly the case the live table exists for. Hence the two limits and not one.
-
-There are no readings from the future, so `max_ahead` only covers drift between
-two roughly correct clocks.
+`transport.device_time()` keeps a plausible device timestamp and otherwise
+uses the listener's receive time. These limits can be overridden for one
+Sender because clock drift belongs to the physical sender, not its protocol.
 
 ### Redaction
 
-`SECRETS = ("PASSKEY", "ID", "PASSWORD", "key", "stationkey")`
+`transport.redact()` removes identities and credentials from both URL-encoded
+and JSON payloads before a report can be shared.
 
-A payload ends up in an issue tracker sooner or later, and the PASSKEY is how
-Ecowitt's servers recognise a station. Everything else in it is readings.
+## Catalogues
 
-## `catalog.py` — the field catalogue
+Each module under `catalogs/` defines what one hardware family sends and where
+the readings belong. The Ecowitt catalogue is generated by
+`tools/import_catalog.py` from Werner Krenn's `ecowittcustom` driver, which
+descends from Matthew Wall's `interceptor` driver.
 
-Generated by `tools/import_catalog.py` from Werner Krenn's `ecowittcustom`
-driver, which itself descends from Matthew Wall's `interceptor` driver. Both
-GPLv3, so this one too.
-
-> **Do not edit by hand.** Run the tool again instead, so that the next update
-> upstream stays a change to one file.
-
-| Constant | What |
+| Name | Meaning |
 |---|---|
 | `FIELDS` | Raw name → WeeWX field |
 | `GROUPS` | WeeWX field → unit group |
-| `CHANNELS` | Which sensor family has how many channels |
-| `PLACEMENT_UNKNOWN` | Fields where the name claims more than the hardware knows |
-| `CONTESTED` | Fields two drivers disagree about |
-| `CONTESTED_WITH` | With whom — `ecowittcustom` |
+| `CHANNELS` | Sensor families and their channel counts |
+| `PLACEMENT_UNKNOWN` | Fields whose physical placement only the operator knows |
+| `CONTESTED` | Fields for which drivers disagree |
+| `SCALE` | Conversion before the value reaches its WeeWX field |
 
-### `PLACEMENT_UNKNOWN`
+## Unknown fields
 
-A WN34 reports on `tf_chN` whether it is a probe in a flower bed or a line in a
-pool, and the catalogue has to call it something. Whoever installed it is the
-only one who knows — so the driver says so rather than guessing.
-
-## `infer.py` — unknown fields
-
-Ecowitt brings new sensors out faster than drivers are updated, and the usual
-result is that the readings arrive and are thrown away. An HP2561 sends
-`tf_ch1`, `lightning_num` and six `soil_ec_*` fields, and a driver that does not
-know them logs "unrecognized parameter".
-
-Two things can be said about an unknown field:
-
-1. **It continues a known series.** The catalogue knows `temp1` through `temp8`;
-   `temp9` visibly belongs with them. `_learn_series()` finds these families in
-   the catalogue itself: a stem and a suffix whose members all point at targets
-   with a common stem and suffix, at a constant index offset.
-2. **Its name says something.** `RULES` is the list: `rssi$` → `group_db`,
-   `_sig$` → `group_count`, `batt` → `group_count`, `_time$` → `group_time`.
-
-```python
-@dataclass
-class Guess:
-    raw: str      # the hardware's name
-    field: str    # the WeeWX field
-    group: str    # the unit group
-    unit: str
-    certain: bool
-    why: str
-```
-
-`report(guesses)` renders them as what a person needs in order to act.
-
-### The three modes
+`infer.py` handles fields that are not in a catalogue. It can recognise a new
+member of a known numbered series and a small set of unambiguous name patterns.
 
 | `infer_unknown` | Behaviour |
 |---|---|
-| `off` | Drop them |
-| `series` | **Default.** Take them if they continue a known series; report the rest |
-| `all` | Take everything that can be named |
+| `off` | Drop unknown fields |
+| `series` | Accept continuations of known series; report the rest |
+| `all` | Accept every field that can be named |
 
-`series` is the sensible default: a channel the hardware gains needs no release,
-and what is only recognisable from the name is reported rather than guessed. **A
-reading in the wrong column cannot be separated out afterwards.**
+`series` is the default. A guessed field is not written until the configured
+policy allows it.
 
-## `mapping.py` — where it all comes together
+## Mapping and placement
 
-`Mapper.to_packet(text, now)` returns `(packet, guesses)`. The packet is ready
-for WeeWX apart from its unit system, which the caller sets — that is a decision
-about the whole driver, not about one upload.
+`mapping.Mapper` combines a dialect with explicit field decisions. The listener
+stores the raw readings and a serialised `DialectSpec` in the live database.
+The Archiver later applies the selected Place's membership, role and field
+mappings. Driver code is not required in the archive process.
 
-The module keeps itself free of WeeWX imports so that it is testable with
-nothing but a recorded payload: the unit groups it wants registered come back as
-**data**, and the driver registers them.
+The sender identity does not select an archive. The listener turns protocol
+and identity into the stable Sender ID stored with every packet; each Place
+then selects the Sender IDs it needs.
 
-`_check_shared_channels()` warns when two sensors do describe the same field
-after all. A WH51 and a WH52 are documented with sixteen channels each, but the
-console's compatibility table gives them one shared set —
-`SHARED_CHANNELS = [("soilmoisture", "soil_ec_hum")]`.
+## The adapter
 
-`_say_undecided()` says **once** that a field is waiting on a decision, and what
-settles it.
+`driver.py` registers one driver class per protocol while sharing one
+implementation.
 
-## `consoles.py` — which consoles get answered
-
-A listener answers anything that reaches its port. Anyone who knows the address
-can point a console at it, and Ecowitt hardware announces itself with a PASSKEY
-derived from its MAC address.
-
-**Two consoles both number their channels from one.** A second one writing into
-the same fields would mix two sensors into one column, and after that nothing
-can separate them.
-
-`Store` reads and writes the list. **The database is asked first and written
-first**; the file (`ecowitt-consoles.txt`) is the fallback, for tests and for
-when the driver runs on its own.
-
-The key in the metadata table is `ecowitt_consoles` — **the same one WeeWX
-uses**. That is how a shared database keeps the same station, whichever of the
-two systems is recording at the time.
-
-`_StateMetadata` makes a weewx-evo `State` look like a WeeWX manager, so that
-`Store` can stay unchanged. The state is `get`/`set`/`delete` on strings and
-nothing else — there is no route from there to the archive.
-→ [Drivers](Drivers#driver-state)
-
-`path_for()` puts the fallback file **next to the database**: that is a
-directory the service writes to as itself, and the one people back up. With a
-package installation the configuration directory belongs to root.
-
-## `columns.py` — what fits in the database
-
-A reading survives the archive interval only if the table has a column for it.
-The default schema has 113; Ecowitt hardware can fill four times that.
-
-Two ways to deal with it. Ship a schema with every conceivable field — which is
-what the alternatives do, and what means four hundred columns for the twelve
-sensors somebody actually has. Or say what is missing and let the person decide.
-
-| Function | What it means |
+| Method | What it does |
 |---|---|
-| `schema_fields()` | What the default schema already has |
-| `missing(packet, groups, known)` | Which columns a packet needs and the database does not have |
-| `commands(wanted, config)` | As `weectl` commands — unchanged from the WeeWX build, because a database is often shared |
-| `evo_commands(wanted, archive)` | The same for weewx-evo |
-| `occupied(archive)` | `{field: (count, last timestamp)}` for columns holding data |
+| `claims(body, meta)` | Scores whether this protocol owns the upload |
+| `packets(body, meta)` | Stores raw readings, identity, dialect and mapping metadata |
+| `dialect_spec(readings, dialect)` | Serialises the catalogue for the archive process |
+| `place(readings, dialect, decisions, infer)` | Applies one Place's field decisions |
+| `unit_groups()` | Returns the catalogue's additional unit groups |
+| `redact(raw)` | Removes sender identities and credentials |
+| `status()` | Reports protocol, hardware, dialects and unresolved fields |
 
-**`occupied()` is what stands between a driver change and a ruined record.** If
-a field this driver wants to write to already holds history, that came from
-somewhere else — and two sources in one column cannot be separated afterwards.
+The built-in protocols have no separate settings pages. Shared inference
+settings belong to the listener; clock limits may be overridden on a Sender.
 
-## `driver.py` — the weewx-evo end
+## Running it
 
-Deliberately thin, exactly as `driver.py` is thin in the WeeWX build. The socket
-belongs to the core listener, the protocol to `protocol.py`, the field names to
-`catalog.py`, the console list to `consoles.py`.
-
-```python
-ECOWITT_RESPONSE = (b'{"errcode":"0","errmsg":"ok"}', "application/json")
-ALIASES = ("wunderground",)
-```
-
-| Method | What it means |
-|---|---|
-| `packets(body, meta)` | The interface |
-| `options()` | The settings → [Settings-Reference](Settings-Reference#driver-ecowitt) |
-| `redact(raw)` | The upload with the PASSKEY replaced |
-| `status()` | |
-| `unit_groups()` | Which group belongs to which field — the catalogue's, plus what the mappers have learned since |
-| `missing_columns(known)` | What this station needs and the database does not have |
-| `hardware_name()` | |
-
-### Adoption
-
-`_adopt()` remembers the first console it ever heard and answers that one from
-then on. `_suggest_passkey()` then points at the setting that does not depend on
-a file surviving: a copied database, a freshly set up machine or a directory
-nobody backed up leaves it behind.
-
-`_refuse()` turns an unknown console away. `_maybe_report()` writes the upload
-out the **first time** something cannot be placed — getting hold of a raw upload
-otherwise means reconfiguring the console and waiting an interval.
-
-## `__main__.py` — before wiring anything up
+The removed package-level `__main__` command has no replacement inside the
+plugin. Run the normal listener:
 
 ```bash
-python -m weewx_evo.ingest.plugins.ecowitt --port 8000
+weewx-evo listen --config evo.toml --port 8000 --token … --driver ecowitt
 ```
 
-Waits for **one** upload and then prints:
+Use the protocol name in the upload path to select another HTTP protocol.
+WeatherFlow additionally needs the listener's UDP port. Current placement can
+be inspected with:
 
-- what arrived
-- what the driver could not place
-- the commands that would give those readings somewhere to live
-- **which of those fields already hold somebody else's history**
-
-Nothing is changed. Run it before wiring anything up, or when a sensor is
-missing from the reports.
+```bash
+weewx-evo placement list --config evo.toml
+```
 
 ## The tests
 
-59 tests, adopted unchanged:
+The current suite contains 135 tests for all six protocols:
 
 ```bash
-wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
-  cd /mnt/d/Git/weewx-evo && python -m pytest tests/ecowitt -q'
+python -m pytest tests/push -q
 ```
 
 | File | What |
 |---|---|
-| `test_protocol.py` | Both protocols, timestamps, redaction |
-| `test_mapping.py` | Catalogue, extensions, inference |
-| `test_infer.py` | Series detection and the naming rules |
-| `test_consoles.py` | Adoption, refusal, file and database |
-| `test_columns.py` | What is missing, what is occupied |
-| `test_report.py` | The report |
-| `test_resilience.py` | What happens when the payload is nonsense |
-| `fixtures/hp2561ae_pro.txt` | A real recording |
+| `test_protocols.py` | Detection, registry, responses and unit systems |
+| `test_transport.py` | Parsing, timestamps and redaction |
+| `test_mapping.py` | Catalogues, placement and inference |
+| `test_infer.py` | Series detection and naming rules |
+| `test_ambient.py` | Ambient captures and catalogue |
+| `test_wunderground.py` | Both Weather Underground dialects |
+| `test_weatherflow.py` | WeatherFlow observations, events and status |
+| `test_bridges.py` | Acurite and LaCrosse captures |
+| `test_report.py` | Redacted diagnostic reports |
 
-**Recordings are the only honest check**, because consoles do not send what
-their documentation says.
+The fixtures are captures from real hardware.
 
 <!-- covers
-src/weewx_evo/ingest/plugins/ecowitt/__init__.py
-src/weewx_evo/ingest/plugins/ecowitt/driver.py
-src/weewx_evo/ingest/plugins/ecowitt/protocol.py
-src/weewx_evo/ingest/plugins/ecowitt/mapping.py
-src/weewx_evo/ingest/plugins/ecowitt/infer.py
-src/weewx_evo/ingest/plugins/ecowitt/catalog.py
-src/weewx_evo/ingest/plugins/ecowitt/consoles.py
-src/weewx_evo/ingest/plugins/ecowitt/columns.py
-src/weewx_evo/ingest/plugins/ecowitt/report.py
-src/weewx_evo/ingest/plugins/ecowitt/__main__.py
-tests/ecowitt/test_protocol.py
-tests/ecowitt/test_mapping.py
-tests/ecowitt/test_infer.py
-tests/ecowitt/test_consoles.py
-tests/ecowitt/test_columns.py
-tests/ecowitt/test_report.py
-tests/ecowitt/test_resilience.py
-tests/ecowitt/conftest.py
+tests/push/conftest.py
+tests/push/helpers.py
+tests/push/test_ambient.py
+tests/push/test_bridges.py
+tests/push/test_infer.py
+tests/push/test_mapping.py
+tests/push/test_protocols.py
+tests/push/test_report.py
+tests/push/test_transport.py
+tests/push/test_weatherflow.py
+tests/push/test_wunderground.py
 -->

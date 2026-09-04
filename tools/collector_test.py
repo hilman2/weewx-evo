@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""A collector is a station like any other.
+"""A collector gives its packets a distinct canonical sender identity.
 
 The point of naming a collector. A WeeWX driver used to deliver at
 `/<token>/json/`, so the listener recorded its packets as driver `json` --
 and `stations.by_identity(driver, identity)` matches on **both**. Two
-collectors were therefore one driver with two identities, and everything
-that hangs off a station came apart with them:
-
-    the archive it writes into          two places in one series
-    its role                            a second console not moved aside
-    whether its indoor readings count   a shed recorded as a living room
-    its field map                       tf_ch1 on the wrong thermometer
+collectors were therefore one driver with two identities. The listener must
+store both unchanged; a Place then selects their canonical IDs and applies
+its relationship policy.
 
 So a configured collector claims its own endpoint, and this measures that it
 really is one -- not that the code path exists, but that a packet sent by a
-collector comes out under the station announced for it, with the station's
-rules applied.
+collector reaches the live journal under the right canonical sender and is
+interpreted only by the Place.
 
     python tools/collector_test.py
 
@@ -46,9 +42,10 @@ def check(what: str, got: object, want: object) -> bool:
 
 
 def main() -> int:
-    from weewx_evo import collectors
+    from weewx_evo import collectors, placement
     from weewx_evo import stations as station_defs
-    from weewx_evo.db.live import LiveStore, Packet
+    from weewx_evo.archives import Archive, MemberPolicy
+    from weewx_evo.db.live import LiveStore, Packet, sender_id
     from weewx_evo.ingest import drivers
     from weewx_evo.ingest.listener import HttpListener, Ingest, push
 
@@ -83,7 +80,7 @@ def main() -> int:
         check("the envelope endpoint still answers",
               registry.known("json"), True)
 
-        # -- the stations, one per collector ---------------------------
+        # -- display metadata, one sender per collector ----------------
         # Both consoles are a WH1080 and both report themselves as one --
         # `hardware_name` is the model, not a serial. Which collector they
         # came through is the only thing telling them apart.
@@ -91,15 +88,10 @@ def main() -> int:
 [stations.Shed]
 driver = "shed"
 identity = "WH1080 (USB)"
-archive = "default"
-indoor = false
 
 [stations.Roof]
 driver = "roof"
 identity = "WH1080 (USB)"
-archive = "default"
-role = "extra"
-channel = 3
 """, encoding="utf-8")
         book = station_defs.load(work / "stations.toml")
 
@@ -129,39 +121,63 @@ channel = 3
                 ("shed", Packet(dateTime=now, usUnits=16,
                                 data={"outTemp": 15.2, "inTemp": 21.3,
                                       "outHumidity": 61.0},
-                                source="WH1080 (USB)", kind="loop",
+                                identity="WH1080 (USB)", kind="loop",
                                 interval=None)),
                 ("roof", Packet(dateTime=now, usUnits=16,
                                 data={"outTemp": 18.4, "inTemp": 24.0,
                                       "outHumidity": 55.0},
-                                source="WH1080 (USB)", kind="loop",
+                                identity="WH1080 (USB)", kind="loop",
                                 interval=None))):
             push([packet], host="127.0.0.1", port=port, as_driver=name)
 
         time.sleep(0.4)
         arrived = list(store.packets(now - 60, now + 60))
-        by_source = {p.source: p for p in arrived}
-        print(f"  arrived: {sorted(by_source)}")
 
-        check("two packets, under two station names", sorted(by_source),
-              ["Roof", "Shed"])
+        # Stored under the pair the console uploads with, not under a name.
+        # Both are a `WH1080 (USB)`; the collector is the whole difference,
+        # and it is what makes the register's answer two stations rather
+        # than one with two readings a second apart.
+        check("two packets, told apart by their collector",
+              sorted((p.driver, p.identity) for p in arrived),
+              [("roof", "WH1080 (USB)"), ("shed", "WH1080 (USB)")])
 
-        shed = by_source.get("Shed")
-        roof = by_source.get("Roof")
+        # And nothing was left out on the way in -- which is the point of the
+        # table. The Place applies the archive relationship only when a record
+        # is built, so it is rebuildable rather than lost at ingest.
+        from_shed = [p.data for p in arrived if p.driver == "shed"]
+        check("the shed's indoor reading is in the table",
+              (from_shed[0] if from_shed else {}).get("inTemp"), 21.3)
 
-        # The shed said `indoor = False`, so its inTemp is dropped. A console
-        # in a shed measures a shed, and that is not a living room.
-        check("the shed's indoor reading was left out",
+        shed_id = sender_id("shed", "WH1080 (USB)")
+        roof_id = sender_id("roof", "WH1080 (USB)")
+        place = Archive(
+            name="default", file=str(work / "archive.sdb"),
+            stations=(shed_id, roof_id),
+            members={
+                shed_id: MemberPolicy(indoor=False),
+                roof_id: MemberPolicy(role="extra", channel=3),
+            })
+        placer = placement.Placer(
+            place, placement.Placements(), directory=book, registry=registry)
+        placed = {p.sender_id: p for p in
+                  (placer.place(one) for one in arrived) if p is not None}
+        print(f"  placed as: {sorted(placed)}")
+        check("two canonical senders, once placed", sorted(placed),
+              sorted([roof_id, shed_id]))
+
+        shed = placed.get(shed_id)
+        roof = placed.get(roof_id)
+
+        # This Place excludes the shed sender's indoor readings.
+        check("the shed's indoor reading is not in the record",
               "inTemp" in (shed.data if shed else {}), False)
         check("its outdoor reading was kept",
               (shed.data if shed else {}).get("outTemp"), 15.2)
 
-        # The roof is an `extra` station on channel 3, so its readings are
-        # moved out of the main station's way rather than taking turns in
-        # the same column.
+        # This Place uses the roof sender as an additional sensor on channel 3.
         check("the roof's outTemp moved to extraTemp3",
               (roof.data if roof else {}).get("extraTemp3"), 18.4)
-        check("and outTemp is not in its packet",
+        check("and outTemp is not in its record",
               "outTemp" in (roof.data if roof else {}), False)
         check("its humidity moved too",
               (roof.data if roof else {}).get("extraHumid3"), 55.0)
@@ -212,7 +228,7 @@ channel = 3
     if failures:
         print(f"{failures} check(s) failed")
         return 1
-    print("a collector is a station: its own name, its own rules")
+    print("a collector writes one distinct sender; the Place owns its rules")
     return 0
 
 

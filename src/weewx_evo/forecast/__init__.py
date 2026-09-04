@@ -234,15 +234,19 @@ def place_options() -> list:
     *which of this installation's places the answer is about*, which is what
     keys the rows and what a page filters on.
     """
-    from ..feeds import archive_names
+    from ..feeds import archive_names, default_archive_name
     from ..options import Group, Option
 
+    default_archive = default_archive_name()
     return [
         Group("Which place",
               "A forecast is an answer about a pair of coordinates, so it "
               "belongs to one place.", (
             Option("archive", "Place", kind="choice",
-                   default=DEFAULT_ARCHIVE, choices_from=archive_names,
+                   default=default_archive,
+                   choices=(() if default_archive else
+                            (("", "Choose a place"),)),
+                   choices_from=archive_names,
                    help="The coordinates come from the place; a station id "
                         "or a warning region is typed per entry, because "
                         "neither can be worked out from a latitude. Two "
@@ -253,17 +257,33 @@ def place_options() -> list:
     ]
 
 
-def store_path(archive_db: object = None, base: object = None) -> Path:
-    """Where the forecast is kept: beside the archive, never in it.
+def shared_store_path(configuration: object = None) -> Path:
+    """The installation's one forecast store, beside its configuration.
 
-    One file for the whole installation whatever the archive, because the
-    rows name the series they are for.
-
-    Derived here because it was derived in three places, and two of them
-    stopped agreeing the day `archive_db` briefly became a per-place setting:
-    the feed opened a file nothing writes, and said nothing about it.
+    The rows carry their archive name, so this is deliberately one file for
+    the whole installation. Anchoring it on an archive made its location
+    depend on which archive happened to be the implicit default; two archives
+    without one could not start the forecaster at all, and adding or reordering
+    a place could move the cache.  The configuration directory is the stable
+    thing all processes in an installation share.
     """
-    found = Path(str(archive_db or "data/weewx.sdb"))
+    found = Path(str(configuration or "archives.toml"))
+    return found.parent / "forecast.sdb"
+
+
+def store_path(archive_file: object = None, base: object = None) -> Path:
+    """Compatibility fallback: a forecast beside one archive file.
+
+    New runtime callers use :func:`shared_store_path` and pass that path to
+    renderers. A renderer constructed directly only has its placed archive,
+    so it can still find an existing cache beside that archive without ever
+    consulting the removed central ``archive_db`` setting.
+
+    This helper remains separate because an archive path and a configuration
+    path have different meanings even when their parent happens to be the
+    same directory.
+    """
+    found = Path(str(archive_file or "data/weewx.sdb"))
     if not found.is_absolute() and base is not None:
         found = Path(base) / found
     return found.parent / "forecast.sdb"

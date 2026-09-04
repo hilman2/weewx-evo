@@ -26,14 +26,12 @@ Replaces WeeWX's `StdArchive`. → [Archiver](Archiver)
 **Catch-up** — Build every interval the live table covers.
 `weewx-evo catchup`.
 
-**Channel** — With Ecowitt: a sensor position, `ch1` through `ch8`. Two
-consoles both number from one — hence the console list.
-→ [Driver-Ecowitt](Driver-Ecowitt)
+**Channel** — With Ecowitt: a sensor position, `ch1` through `ch8`. A Place
+also gives each `extra` sender a separate numbered archive channel.
+→ [Push drivers](Driver-Ecowitt)
 
-**Console** — The box that sends the readings. What the settings page calls a
-station in the file and a console on the page: one row in `stations.toml`, one
-identity, and the place its readings belong to.
-→ [Several places](Places#pointing-a-console-at-a-place)
+**Console** — The physical box that sends readings. It may be one sender, or a
+gateway for several sensors.
 
 **Deriver** — What adds dewpoint, wind chill and the rain delta. Replaces
 WeeWX's `StdWXCalculate`. → [Derived-Readings](Derived-Readings)
@@ -94,16 +92,25 @@ address. Redacted before anything is stored that somebody might pass on.
 **Place** — One spot whose weather is kept: its own coordinates, its own
 height above sea level, its own file of readings. Sunrise and the barometer
 reduction are worked out from them, so each place has its own. One entry in
-`archives.toml`, which is why the code calls it an archive.
+`archives.toml`, including the first; that entry also selects its senders and
+defines their Place-specific roles.
+This is why the code calls it an archive.
 → [Several places](Places)
+
+**Sender** — The stable source of raw packets: a canonical ID made from driver
+and hardware identity. Drivers and collectors write under this ID in
+`live.sdb`; Places select it. Its display name never controls routing.
+→ [Stations and Archives](Stations-and-Archives)
 
 **Plot** — A plot **definition**: a name, a timespan, and the readings in it.
 Belongs to weewx-evo, not to a renderer. → [Plots](Plots)
 
 **Policy** — Two meanings. (1) `obstypes.Policy`: how each observation
-aggregates. (2) `sources.Policy`: which source wins for which field.
+aggregates. (2) `sources.Policy`: optional low-level field arbitration, not
+loaded by the configured Archiver.
 
-**Provenance** — Which field of an archive record came from which source.
+**Provenance** — Which field came from which sender when the optional
+`sources.Policy` API is used.
 → [Multiple-Sources](Multiple-Sources)
 
 **Retention** — How long packets stay in the live table. Default 7 days. As long
@@ -119,8 +126,8 @@ can be configured with.
 **`skip_if_empty`** — A **timespan**, not a boolean. Says over what period a
 sensor must have reported nothing for a plot not to be produced at all.
 
-**Source** — A station. Attached to every packet. Several sources are merged
-**while the interval is being built**, field by field.
+**Source** — Legacy wording in `sources.py`. Product configuration uses the
+canonical **Sender** ID and Place membership instead.
 
 **Span** — Two meanings. (1) The group a plot belongs to: `day`, `week`,
 `month`, `year`. (2) A timespan in general. `time_length` is what actually
@@ -150,6 +157,21 @@ Which unit a group has depends on the system. → [Units](Units)
 `usUnits`.
 
 **`usUnits`** — The column that says which unit system a record is in.
+
+**Placement** — Which archive column one raw reading is written into. Decided
+in `placement.toml` and applied when a record is built, so changing one and
+rebuilding moves the readings already stored → [Placements](Placements).
+
+**Dialect** — A catalog: the same protocol with different field names, or the
+same names in different units. Fine Offset firmwares speak Weather Underground
+in Fahrenheit and inches, or in Celsius and millimetres, on one endpoint. One
+protocol, two dialects. Recorded on every packet, because a raw name means
+nothing without it.
+
+**Identity** — What a console calls itself: a PASSKEY, a serial, a station id.
+Together with the driver that read it, this is how a packet is recognised — the
+pair determines its canonical Sender ID. A readable label is presentation
+metadata and never changes routing.
 
 **View** — `Settings.view(prefix, schema)`. The corner of the settings that
 belongs to one component, and nothing else. A driver gets that, not the whole

@@ -32,6 +32,9 @@ services:
       - TZ=${TZ:-Europe/Berlin}
       - PYTHONDONTWRITEBYTECODE=1
       - WEEWX_EVO_LIVE=/data/live.sdb
+      # Bootstrap only: if /data/archives.toml does not exist yet, its first
+      # entry is migrated from this path. Once written, archives.toml is the
+      # only archive configuration, including with one place.
       - WEEWX_EVO_ARCHIVE=/data/weewx.sdb
       # Empty unless somebody sets them, and that is the whole point. The
       # environment beats the configuration file, so a default here is a

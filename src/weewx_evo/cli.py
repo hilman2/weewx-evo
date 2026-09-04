@@ -38,7 +38,7 @@ from typing import Any
 
 from . import api as api_module
 from . import archives as archives_module
-from . import collectors, maintenance, units, watchdog, weewxconf
+from . import collectors, maintenance, placement, units, watchdog, weewxconf
 from . import config as config_file
 from . import exports as export_registry
 from . import feedrunner as feed_runner
@@ -52,7 +52,7 @@ from . import uploads as upload_registry
 from .admin import Admin, AdminServer
 from .archiver import Archiver
 from .db.archive import ArchiveStore
-from .db.live import LiveStore
+from .db.live import LiveStore, sender_id
 from .derive import from_settings as deriver_from
 from .exports import livepush
 from .exports import record as export_record
@@ -62,6 +62,7 @@ from .forecast import codes as forecast_codes
 from .forecast import runner as forecast_runner
 from .forecast.store import ForecastStore
 from .ingest import drivers, userdrivers, weewxdrivers
+from .ingest import proposals as proposal_defs
 from .ingest import state as state_module
 from .ingest.listener import HttpListener, Ingest, UdpListener
 from .netaccess import Access, warn_if_open
@@ -84,10 +85,8 @@ def env(name: str, default: str | None = None) -> str | None:
 def add_archive_arg(parser: argparse.ArgumentParser) -> None:
     """Which series a single-shot command works on.
 
-    `--series` rather than `--archive`, because `--archive` is already the
-    path to a database file. Two meanings for one flag -- a path here, a name
-    there -- is the sort of thing that works until somebody has an archive
-    called `data`.
+    The database path belongs to its entry in archives.toml. Commands select
+    that entry by name and never override its file separately.
 
     `default=None` like everything else here: argparse cannot tell "not
     given" from "given the default", and naming the default here would beat
@@ -106,14 +105,13 @@ def add_common(parser: argparse.ArgumentParser) -> None:
     # nothing. Defaults live in the schema; see settings.py for the order.
     parser.add_argument("--live", type=Path, default=None,
                         help="the live packet database")
-    parser.add_argument("--archive", type=Path, default=None,
-                        help="the WeeWX archive database")
     parser.add_argument("--interval", default=None,
                         help="archive interval, e.g. 5m (default: 5m)")
     parser.add_argument("--table", default=None)
     parser.add_argument("--sources", type=Path, default=(
         Path(env("SOURCES")) if env("SOURCES") else None),
-        help="TOML file saying which station wins for which field")
+        help="obsolete source-routing file; accepted only to report that it "
+             "is ignored")
     parser.add_argument("--quality", type=Path, default=(
         Path(env("QUALITY")) if env("QUALITY") else None),
         help="TOML file with the calibration and the limits "
@@ -127,16 +125,16 @@ def add_common(parser: argparse.ArgumentParser) -> None:
                              "(default: beside the archive database)")
     parser.add_argument("--config", type=Path, default=(
         Path(env("CONFIG")) if env("CONFIG") else None),
-        help="TOML file with [drivers.<name>] and [sources] sections")
+        help="the TOML configuration file")
 
 
 def _add_driver_dir(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--driver-dir", type=Path, default=None,
                         help="where third-party drivers live "
                              "(default: beside the archive database)")
-    parser.add_argument("--archive", type=Path,
-                        default=Path(env("ARCHIVE", "data/weewx.sdb")),
-                        help="used to find the default driver directory")
+    parser.add_argument("--config", type=Path, default=(
+        Path(env("CONFIG")) if env("CONFIG") else None))
+    add_archive_arg(parser)
 
 
 def add_listen_args(parser: argparse.ArgumentParser) -> None:
@@ -229,7 +227,8 @@ def read_config(path: Path | None) -> dict:
     return config_file.read(path)
 
 
-def configure_drivers(cfg: Settings, archive: Any = None) -> None:
+def configure_drivers(cfg: Settings, archive: Any = None,
+                      placements: Any = None) -> None:
     """Hand each driver its options, and somewhere to keep its own state.
 
     Until this runs the drivers are unconfigured instances -- enough to accept
@@ -253,14 +252,14 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
         # everything else is. It never sees the rest -- not the upload token,
         # not the database paths, not another driver's console list.
         options = dict(section.get(name, {}))
-        # The field maps come from the stations, not from the driver's own
-        # section. Two consoles both number their channels from one, so the
-        # map belongs to the console; it is handed to the driver because only
-        # the driver knows what `tf_ch1` means before it is parsed.
-        maps = station_field_maps(cfg, name)
+        # A sender's clock is judged at ingest, so its tolerances have to
+        # reach the driver. Field placement does not: the listener stores
+        # raw names and each Place maps them while reading the journal.
+        # Legacy Station.field_map values are read only by `placement import`.
+        clocks = sender_clock_settings(cfg, name)
         instance = drivers.DEFAULT.get(name)
-        if maps and _accepts(instance, "stations"):
-            options.setdefault("stations", maps)
+        if clocks and _accepts(instance, "stations"):
+            options.setdefault("stations", clocks)
         # How to read an upload used to be asked once per protocol, so six
         # protocols were six forms carrying the same three fields -- and on
         # a running installation not one of them was ever filled in. What
@@ -314,17 +313,17 @@ def configure_drivers(cfg: Settings, archive: Any = None) -> None:
     # nothing of it is imported here.
     collectors.register_names(drivers.DEFAULT, cfg)
 
-    install_driver_groups()
+    install_driver_groups(placements)
 
 
-def station_field_maps(cfg: Settings, driver: str) -> dict:
-    """Per-console field maps for one driver, out of `stations.toml`.
+def sender_clock_settings(cfg: Settings, driver: str) -> dict:
+    """Per-sender clock tolerances for one driver, out of `stations.toml`.
 
-    In the shape the driver already takes them -- keyed by a name, each with a
-    passkey and its own extensions -- so nothing about the driver changes. All
-    that moves is where the answer comes from: a console's own field names sat
-    under `[drivers.ecowitt.stations]`, which is a second place to describe a
-    console after `stations.toml` was built to be the first.
+    These are front-door policy: a timestamp is accepted or rejected before
+    the raw packet is stored. Field maps are deliberately absent. They used
+    to be injected here, which made the listener decide an archive field
+    before any Place had selected the packet. Old maps remain readable only
+    to the explicit `placement import` migration.
     """
     # `_path` rather than a public one: Settings keeps the file it was
     # read from and nothing else needed it until now.
@@ -342,12 +341,8 @@ def station_field_maps(cfg: Settings, driver: str) -> dict:
     for one in register:
         if one.driver != driver:
             continue
-        # A console with nothing of its own said about it needs no entry.
-        # With one, the entry carries everything that is true of the box
-        # rather than of the protocol -- its field names and its clock.
+        # A sender following both global clock defaults needs no entry.
         settings = {}
-        if one.field_map:
-            settings["field_map_extensions"] = dict(one.field_map)
         if one.max_behind is not None:
             settings["max_behind"] = one.max_behind
         if one.max_ahead is not None:
@@ -357,7 +352,7 @@ def station_field_maps(cfg: Settings, driver: str) -> dict:
     return made
 
 
-def install_driver_groups() -> None:
+def install_driver_groups(placements: Any = None) -> None:
     """Tell the core what the drivers call their own fields.
 
     Without this a station's own columns -- `extraTemp9`, `soilEC1`, the
@@ -370,8 +365,16 @@ def install_driver_groups() -> None:
     once, and the ten places that never got it were the MQTT document, the
     live document, the realtime files, every upload, the WeeWX compatibility
     layer, and the two commands that render without a listener.
+
+    `placements` adds what the operator has decided about columns no catalog
+    names. Those used to be collected off the drivers' mappers, which never
+    worked: this runs once at startup, before any packet, so a group learned
+    from an upload could not be in it. Written down beside the placement that
+    produced it, it is here on the next start and in every process.
     """
     groups = drivers.DEFAULT.unit_groups()
+    if placements is not None:
+        groups = {**groups, **placements.groups}
     units.contribute(groups)
     if groups:
         log.debug("%d field(s) named by the drivers", len(groups))
@@ -410,14 +413,135 @@ def archives_path(args: argparse.Namespace, cfg: Settings) -> Path:
     return base / archives_module.FILENAME
 
 
+def placement_path(args: argparse.Namespace, cfg: Settings) -> Path:
+    """Where placement.toml lives: beside stations.toml, for the same reason."""
+    if getattr(args, "config", None):
+        base = Path(args.config).parent
+    else:
+        base = Path(cfg.get("live_db")).parent
+    return placement.path_for(base)
+
+
+def read_placements(args: argparse.Namespace, cfg: Settings) -> Any:
+    """Where each console's readings go. A missing file is "wherever the catalog says"."""
+    path = placement_path(args, cfg)
+    try:
+        return placement.load(path)
+    except Exception:
+        # Reported, and then nothing is placed by hand. Falling back to the
+        # catalog is what an installation that has never opened the settings
+        # page does, so the readings keep arriving in their usual columns --
+        # but an extra station loses its `nowhere`, so it is said loudly.
+        log.exception("could not read %s; every reading will go where its catalog says",
+                      path)
+        return placement.Placements(path=path)
+
+
+def migrate_legacy_placements(args: argparse.Namespace, cfg: Settings,
+                              registry: Any) -> bool:
+    """Bind old global scopes while this listener still knows all places.
+
+    Archive-only processes deliberately never call this: they have no
+    migration authority and must not make a rule reach a place created after
+    the upgrade snapshot.
+    """
+    plans = read_placements(args, cfg)
+    if not placement.bind_legacy_scopes(plans, registry.names()):
+        return False
+    placement.save(placement_path(args, cfg), plans,
+                   "Legacy scopes bound to the places present at migration.")
+    return True
+
+
+def build_placer(archive: Any, placements: Any, directory: Any,
+                 archives: Any = None) -> Any:
+    """One archive's placer."""
+    return placement.Placer(archive, placements, directory,
+                            archives=archives)
+
+
+def status_placer(registry: Any, placements: Any, stations: Any) -> Any:
+    """A placer for the listener's headline, or none when none is implicit.
+
+    Placement is not part of ingest: the listener keeps every packet under
+    its hardware identity. Its status headline may show the columns of the
+    unambiguous default place, but an installation with two named places and
+    no literal ``default`` has made no such choice. Showing the raw names is
+    then more truthful than either refusing to listen or picking the first.
+    """
+    try:
+        archive = registry.get(registry.default_name())
+    except LookupError:
+        return None
+    return build_placer(archive, placements, stations)
+
+
+def stranded_field_maps(stations: Any, placements: Any,
+                        archives: Any) -> dict[str, list[str]]:
+    """Placements still in `stations.toml` that nothing reads any more.
+
+    A field map used to live on the station and be handed to the driver. It
+    lives in `placement.toml` now, and an installation upgrading with a map
+    already in the old place would have it quietly stop being read -- every
+    reading falling back to whatever its catalog says, which for a contested
+    field means two sensors in one column.
+
+    So it is measured and said, once, at startup. Not migrated behind
+    anybody's back: which column a year of readings goes into is the one
+    decision on this page that cannot be taken back, and a program that made
+    it on being upgraded would be making it for somebody who was not asked.
+    `weewx-evo placement import` is the answer, and it prints what it would
+    do before it does it.
+
+    Asked exactly as `cmd_placement_import` asks it: per place, and keyed on
+    the canonical sender ID. Asked with the friendly name instead, every
+    lookup misses and every installation is told its maps are stranded --
+    and a warning that is always there is one nobody reads. Asked with an
+    empty archive it is worse: no scope covers one, so the answer is the
+    same whether the placements are there or not.
+    """
+    stranded: dict[str, list[str]] = {}
+    for one in stations or ():
+        mapped = getattr(one, "field_map", None) or {}
+        if not mapped:
+            continue
+        sender = sender_id(one.driver, one.identity)
+        for archive in archives.all():
+            if not archive.selects(sender):
+                continue
+            known = placements.extensions(archive.name, sender, "")
+            missing = sorted(raw for raw, column in mapped.items()
+                             if known.get(raw) != column)
+            if missing:
+                stranded.setdefault(one.name, [])
+                stranded[one.name] = sorted(set(stranded[one.name]) | set(missing))
+    return stranded
+
+
+def say_if_stranded(stations: Any, placements: Any, archives: Any) -> None:
+    """Report a field map nothing reads. Never fatal."""
+    try:
+        stranded = stranded_field_maps(stations, placements, archives)
+    except Exception:
+        log.debug("could not check the old field maps", exc_info=True)
+        return
+    for name, missing in stranded.items():
+        log.warning(
+            "%s has %d placement(s) in stations.toml that nothing reads any "
+            "more: %s. They are in placement.toml now. Until they are moved, "
+            "those readings go wherever their catalog says -- run "
+            "'weewx-evo placement import --write'.",
+            name, len(missing), ", ".join(missing[:6])
+            + (" ..." if len(missing) > 6 else ""))
+
+
 def read_archives(args: argparse.Namespace,
                   cfg: Settings) -> archives_module.Register:
     """Every measurement series this installation keeps.
 
-    A missing file is one archive, described by the settings, which is every
-    installation that has not asked for a second one. Nothing to migrate: the
-    file appears when somebody adds the second, and the page writes the first
-    into it at the same moment.
+    A missing file is the one legacy case: `Register.load` writes the former
+    central archive settings into the first entry, atomically. From then on
+    this file is the only authority, including on a one-place installation.
     """
     where = archives_path(args, cfg)
     register = archives_module.Register.load(where, cfg)
@@ -432,6 +556,35 @@ def read_archives(args: argparse.Namespace,
     for name, said in register.concerns().items():
         log.warning("archive %r: %s", name, said)
     return register
+
+
+def selected_archive(registry: archives_module.Register,
+                     wanted: str | None = None) -> archives_module.Archive:
+    """One exact archive, or a short command-line error.
+
+    An omitted name means the registry's declared default. An unknown name
+    never falls through to another database: a command that writes or uploads
+    the wrong place's records is worse than one that refuses to start.
+    """
+    try:
+        return registry.get(wanted)
+    except (KeyError, LookupError, ValueError) as exc:
+        names = ", ".join(registry.names()) or "none"
+        if wanted:
+            print(f"No series called {wanted!r}. Configured: {names}.",
+                  file=sys.stderr)
+        else:
+            print(f"No default series is unambiguous. Configured: {names}. "
+                  "Choose one with --series.", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+
+def archive_path_of(args: argparse.Namespace, archive: archives_module.Archive) -> Path:
+    """An archive path, relative to the configuration that names it."""
+    path = Path(archive.file)
+    if not path.is_absolute() and getattr(args, "config", None):
+        path = Path(args.config).parent / path
+    return path
 
 
 def open_archive(archive: archives_module.Archive, cfg: Settings,
@@ -450,41 +603,67 @@ def open_archive(archive: archives_module.Archive, cfg: Settings,
 
 def build_archivers(args: argparse.Namespace, cfg: Settings, live: LiveStore,
                     archives: archives_module.Register,
-                    stations: Any) -> list[tuple[Any, ArchiveStore, Archiver]]:
-    """One archiver per series, each with its own place and its own stations.
+                    only: set[str] | None = None
+                    ) -> list[tuple[Any, ArchiveStore, Archiver]]:
+    """One archiver per series, selected only through live sender ids.
 
     The three numbers come off the archive rather than out of the settings,
     which is the whole point of there being archives: sunrise for the north
     field computed with the south field's coordinates is wrong by seconds and
     looks entirely correct.
 
-    With a single archive nothing is filtered. That is not a shortcut -- it is
-    what every installation did before stations existed, and an unannounced
-    sensor must go on reaching the series it has been reaching for a year.
+    The station registry belongs to the listener and is deliberately absent
+    here. ``Archive.senders`` contains canonical ids from the live database;
+    its explicit ``*`` takes every sender and an empty list takes none.
     """
     base = Path(args.config).parent if getattr(args, "config", None) else None
-    sources = read_sources(cfg, args.sources)
+    warn_obsolete_sources(cfg, getattr(args, "sources", None))
     quality = read_quality(args, cfg)
-    several = archives.several()
+    placements = read_placements(args, cfg)
+    # A split archiver deliberately does not load the driver registry. Groups
+    # chosen in placement.toml are already data; catalog groups join them from
+    # each packet's stored dialect specification when it is placed.
+    units.contribute({**units.contributed(), **placements.groups})
     built = []
     for archive in archives.all():
+        if only is not None and archive.name not in only:
+            continue
         store = open_archive(archive, cfg, base)
-        mine = None
-        if several:
-            mine = sorted(one.name for one in stations.for_archive(archive.name))
-            if not mine:
-                log.warning("archive %r has no stations, so nothing will be "
-                            "written to %s", archive.name, archive.file)
+        selected = archive_senders(archive)
+        placer = build_placer(archive, placements, live, archives)
+        if selected is not None and not selected:
+            log.warning("Place %r has no senders, so nothing will be "
+                        "written to %s", archive.name, archive.file)
         built.append((archive, store, Archiver(
             live, store,
             interval_seconds=cfg.get("interval"),
             loop_hilo=cfg.get("loop_hilo"),
-            sources=sources,
             deriver=deriver_from(cfg, archive),
             name=archive.name,
-            stations=mine,
-            quality=quality)))
+            quality=quality,
+            placer=placer)))
     return built
+
+
+def archive_senders(archive: Any) -> list[str] | None:
+    """Which canonical live senders write one series. None means explicit *.
+
+    This answer comes only from the archive. A station has an identity, not a
+    destination; putting the same station in two lists deliberately feeds two
+    series. None remains the compatible statement "all arrivals", while an
+    explicit empty list means none.
+
+    An empty list from the archive is not None: it says this place's consoles
+    are known and there are none. Read as the same thing, a place created
+    yesterday would republish the first one's readings under its own name.
+    """
+    selected = getattr(archive, "senders", ())
+    return None if selected is None else list(selected)
+
+
+def archive_stations(archive: Any) -> list[str] | None:
+    """Temporary consumer alias; archive runtime uses ``archive_senders``."""
+    return archive_senders(archive)
 
 
 def read_stations(args: argparse.Namespace, cfg: Settings,
@@ -552,11 +731,12 @@ def read_quality(args: argparse.Namespace, cfg: Settings) -> Any:
 
 
 def read_sources(cfg: Settings, path: Path | None = None) -> SourcePolicy:
-    """Which station wins for which field.
+    """Read the retired source-policy format for tools and compatibility.
 
-    Normally a [sources] section in the configuration file, beside everything
-    else. A separate file is still accepted, because a policy for a dozen
-    fields is worth keeping apart from the settings nobody touches.
+    Production archivers do not call this. Place membership, member roles and
+    Place-scoped field mappings are the complete routing authority. Keeping
+    the parser here lets diagnostics read an old file without making it active
+    again.
 
         [sources]
         outTemp = "garden, roof"     # the garden is the temperature series
@@ -580,38 +760,66 @@ def read_sources(cfg: Settings, path: Path | None = None) -> SourcePolicy:
     return policy
 
 
+def warn_obsolete_sources(cfg: Settings, path: Path | None = None) -> None:
+    """Say when retired global source routing is present; never interpret it."""
+    configured = getattr(cfg, "config", {})
+    in_config = isinstance(configured, dict) and "sources" in configured
+    if path is None and not in_config:
+        return
+    locations = []
+    if in_config:
+        locations.append("[sources] in the configuration file")
+    if path is not None:
+        locations.append(str(path))
+    log.warning(
+        "%s %s obsolete and ignored. Archive routing comes only from each "
+        "Place's sender membership, member roles and placement.toml.",
+        " and ".join(locations), "are" if len(locations) > 1 else "is")
+
+
 def open_stores(args: argparse.Namespace) -> tuple[LiveStore, ArchiveStore]:
     cfg = settings_for(args)
+    one = selected_archive(read_archives(args, cfg),
+                           getattr(args, "series", None))
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
-    archive = ArchiveStore(cfg.get("archive_db"), table_name=cfg.get("table"))
-    return live, archive
+    archive = None
+    try:
+        archive = open_archive(
+            one, cfg, Path(args.config).parent
+            if getattr(args, "config", None) else None)
+        return live, archive
+    except Exception:
+        live.close()
+        if archive is not None:
+            archive.close()
+        raise
 
 
 def make_archiver(args: argparse.Namespace) -> tuple[LiveStore, ArchiveStore, Archiver]:
-    """One archiver, for the series `--archive` named or for the default.
+    """One archiver, for the series `--series` names or for the default.
 
     The single-shot commands work on one at a time. Catching up or rebuilding
     every series at once would be the sort of thing somebody runs on a
     Saturday and cannot stop halfway.
     """
     cfg = settings_for(args)
+    registry = read_archives(args, cfg)
+    wanted = selected_archive(registry, getattr(args, "series", None))
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
-    announced, _sightings = read_stations(args, cfg, live)
-    registry = read_archives(args, cfg)
-    live.archives = registry.names()
-
-    wanted = getattr(args, "series", None) or archives_module.DEFAULT
-    if wanted not in registry.names():
-        print(f"no series called {wanted!r}. There is: "
-              f"{', '.join(registry.names())}", file=sys.stderr)
-        raise SystemExit(2)
-    for archive_def, store, archiver in build_archivers(
-            args, cfg, live, registry, announced):
-        if archive_def.name == wanted:
-            return live, store, archiver
-    raise SystemExit(2)  # unreachable: the name was checked above
+    made: list[tuple[Any, ArchiveStore, Archiver]] = []
+    try:
+        live.archives = registry.names()
+        made = build_archivers(args, cfg, live, registry,
+                               only={wanted.name})
+        _archive_def, store, archiver = made[0]
+        return live, store, archiver
+    except Exception:
+        live.close()
+        for _archive_def, store, _archiver in made:
+            store.close()
+        raise
 
 
 def start_watchdog(cfg: Any, live: Any,
@@ -638,11 +846,12 @@ def start_watchdog(cfg: Any, live: Any,
 
 def cmd_listen(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
+    warn_obsolete_sources(cfg, getattr(args, "sources", None))
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
     # The listener alone does not open the archive, so a driver that keeps
     # state there falls back to its file. Say so rather than let it surprise.
-    configure_drivers(cfg, None)
+    configure_drivers(cfg, None, read_placements(args, cfg))
     try:
         access = Access.parse(cfg.get("allow"))
     except ValueError as exc:
@@ -655,11 +864,25 @@ def cmd_listen(args: argparse.Namespace) -> int:
     # The listener writes the live table, and every archive reads it. It has
     # to mark all of them pending, so it needs their names even though it
     # opens none of them.
-    live.archives = read_archives(args, cfg).names()
+    archives_module.migrate_station_ownership(
+        archives_path(args, cfg), cfg, stations_path(args, cfg))
+    archive_register = read_archives(args, cfg)
+    migrate_legacy_placements(args, cfg, archive_register)
+    say_if_stranded(announced, read_placements(args, cfg), archive_register)
+    live.archives = archive_register.names()
     ingest = Ingest(live, token=cfg.get("token"),
                     default_driver=cfg.get("driver"),
                     access=access, limits=limits,
                     stations=announced, sightings=sightings)
+    # Only for the status page's headline. Everything else the listener
+    # does is deliberately free of placement -- it stores what arrived.
+    ingest.placer = status_placer(
+        archive_register, read_placements(args, cfg), announced)
+    # And the one place inference runs. A raw name nothing has placed is
+    # noted here, once, with whatever the driver would guess about it; the
+    # reader never guesses, which is what keeps a rebuild reproducible.
+    ingest.infer_unknown = cfg.get("infer_unknown")
+    ingest.proposals = proposal_defs.Proposals(store=live)
     if cfg.get("token") is None:
         log.warning("no token set: anything that can reach this port can write "
                     "to the measurement series")
@@ -698,24 +921,17 @@ def cmd_archive(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
-    announced, _sightings = read_stations(args, cfg, live)
     registry = read_archives(args, cfg)
-    series = build_archivers(args, cfg, live, registry, announced)
+    asked = getattr(args, "series", None)
+    only = None
+    if asked:
+        only = {selected_archive(registry, asked).name}
+    series = build_archivers(args, cfg, live, registry, only=only)
     # Every archive is still marked pending, whichever ones this process
     # works: another process is doing the rest, and an interval nobody marked
     # is one nobody builds.
     live.archives = registry.names()
 
-    wanted = getattr(args, "series", None)
-    if wanted:
-        # One process, one place. This is how two sites in two timezones
-        # work: the day boundary comes from the process clock, so each gets
-        # its own archiver with its own TZ, both reading this one live table.
-        series = [one for one in series if one[0].name == wanted]
-        if not series:
-            print(f"no series called {wanted!r}. There is: "
-                  f"{', '.join(registry.names())}", file=sys.stderr)
-            return 2
     stopping = threading.Event()
 
     def handle(signum: int, frame: object) -> None:
@@ -880,15 +1096,12 @@ def cmd_upload_check(args: argparse.Namespace) -> int:
         return 0
 
     cfg = settings_for(args)
+    registry = read_archives(args, cfg)
     problems = 0
     for name, settings in sorted(entries.items()):
-        settings = dict(settings)
-        if str(settings.get("kind", "")) == "cwop":
-            settings.setdefault("latitude", cfg.get("station.latitude"))
-            settings.setdefault("longitude", cfg.get("station.longitude"))
         try:
-            upload = build_upload(name, settings)
-        except ValueError as exc:
+            upload = build_upload_for_place(name, settings, cfg, registry)
+        except (KeyError, LookupError, ValueError) as exc:
             print(f"  {name}: {exc}")
             problems += 1
             continue
@@ -934,10 +1147,11 @@ def cmd_upload_compare(args: argparse.Namespace) -> int:
     which of them is right.
     """
     cfg = settings_for(args)
-    archive = Path(cfg.get("archive_db") or "")
-    if not archive.exists():
-        print(f"No archive at {archive}.", file=sys.stderr)
-        return 1
+    registry = read_archives(args, cfg)
+    try:
+        default_name = registry.default_name()
+    except LookupError:
+        default_name = ""
 
     entries = {name: settings for name, settings in configured_uploads(args).items()
                if str(settings.get("kind", "")) == "influx"
@@ -950,11 +1164,16 @@ def cmd_upload_compare(args: argparse.Namespace) -> int:
     every = int(args.window)
     stop = int(time.time())
     start = stop - int(args.days) * 86400
-    here = _archive_counts(archive, start, stop, every)
 
     problems = 0
     for name, settings in sorted(entries.items()):
         try:
+            wanted = str(settings.get("archive") or default_name)
+            archive_def = registry.get(wanted)
+            archive = archive_path_of(args, archive_def)
+            if not archive.exists():
+                raise ValueError(f"no archive at {archive}")
+            here = _archive_counts(archive, start, stop, every)
             upload = build_upload(name, dict(settings))
             there = upload.counts(start, stop, every,
                                   token=args.read_token or "")
@@ -1061,9 +1280,25 @@ def cmd_forecast_check(args: argparse.Namespace) -> int:
         return 0
 
     cfg = settings_for(args)
-    place = forecast_place(cfg)
+    registry = read_archives(args, cfg)
+    try:
+        default_name = registry.default_name()
+    except LookupError:
+        default_name = ""
     problems = 0
     for name, settings in sorted(entries.items()):
+        wanted = str(settings.get("archive") or default_name)
+        if not wanted:
+            print(f"  {name}: does not name a series and no default is configured")
+            problems += 1
+            continue
+        try:
+            archive = registry.get(wanted)
+        except (KeyError, LookupError, ValueError):
+            print(f"  {name}: names unknown series {wanted!r}")
+            problems += 1
+            continue
+        place = forecast_place(archives_module.placed(cfg, archive))
         try:
             source = build_forecast_source(name, dict(settings))
         except ValueError as exc:
@@ -1192,16 +1427,26 @@ def cmd_serve(args: argparse.Namespace) -> int:
     live = LiveStore(cfg.get("live_db"), interval_seconds=cfg.get("interval"),
                      keep_raw_seconds=cfg.get("raw_retention"))
     announced, sightings = read_stations(args, cfg, live)
+    # This is the last startup path allowed to know both the old station
+    # registry and the place registry. The archive-only commands never call
+    # the migration helper and therefore never open stations.toml.
+    archives_module.migrate_station_ownership(
+        archives_path(args, cfg), cfg, stations_path(args, cfg))
     registry = read_archives(args, cfg)
-    series = build_archivers(args, cfg, live, registry, announced)
+    migrate_legacy_placements(args, cfg, registry)
+    # Said here, where both registries are still readable. A map left in
+    # stations.toml is not an error and nothing waits for it -- but it is
+    # the one upgrade in which readings quietly change column, so it is
+    # named at the start of every run until somebody moves it.
+    say_if_stranded(announced, read_placements(args, cfg), registry)
+    series = build_archivers(args, cfg, live, registry)
     # Every archive marks its own pending intervals, so the table has to know
     # who is reading it before the first packet lands.
     live.archives = registry.names()
-    # The first one is the default, and it is what anything wanting "the
-    # archive" without saying which gets: the drivers' state, the status
-    # command, a feed that names nothing.
-    archive = series[0][1]
-    configure_drivers(cfg, archive)
+    # Driver state stays on the listener side even in the combined process.
+    # Giving plugin code the ArchiveStore here made `serve` wider than the
+    # split listener and defeated the boundary the split is meant to enforce.
+    configure_drivers(cfg, None, read_placements(args, cfg))
     try:
         access = Access.parse(cfg.get("allow"))
     except ValueError as exc:
@@ -1214,6 +1459,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
                     default_driver=cfg.get("driver"),
                     access=access, limits=limits,
                     stations=announced, sightings=sightings)
+    # Only for the status page's headline. Everything else the listener
+    # does is deliberately free of placement -- it stores what arrived.
+    ingest.placer = status_placer(
+        registry, read_placements(args, cfg), announced)
+    # And the one place inference runs. A raw name nothing has placed is
+    # noted here, once, with whatever the driver would guess about it; the
+    # reader never guesses, which is what keeps a rebuild reproducible.
+    ingest.infer_unknown = cfg.get("infer_unknown")
+    ingest.proposals = proposal_defs.Proposals(store=live)
     if cfg.get("token") is None:
         log.warning("no token set: anything that can reach this port can write "
                     "to the measurement series")
@@ -1272,7 +1526,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # time -- for pages that were sitting there, complete, the entire while.
     web = metrics = None
     if cfg.get("web.enabled"):
-        site = site_from(cfg)
+        site = site_from(archives_module.placed(cfg, registry.get(None)))
         metrics = build_metrics(args, cfg, live=live)
         web = WebServer(site, cfg.get("web.host"), cfg.get("web.port"),
                         access=Access.parse(cfg.get("web.allow")),
@@ -1297,7 +1551,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if feeds is not None:
         # Once at startup, so a restart does not leave yesterday's pages
         # up until the next record lands a minute later.
-        feeds.record_written()
+        for archive_name in registry.names():
+            feeds.record_written(archive_name)
         # And every reading, for a feed that asked for one. `realtime.txt` is
         # polled every ten seconds by the scripts that read it, so producing
         # it on the archive record made it as old as the interval -- which is
@@ -1530,10 +1785,9 @@ def _resend_rebuilt(args: argparse.Namespace, start: int) -> list[str]:
     second one is a fact about the service.
     """
     cfg = settings_for(args)
-    base = Path(getattr(args, "config", None) or ".").parent
-    archive = Path(cfg.get("archive_db") or "data/weewx.sdb")
-    if not archive.is_absolute():
-        archive = base / archive
+    archive = archive_path_of(
+        args, selected_archive(read_archives(args, cfg),
+                               getattr(args, "series", None)))
 
     progress = Progress(archive.parent / "uploads.json")
     rewound = []
@@ -1595,7 +1849,10 @@ def cmd_derive(args: argparse.Namespace) -> int:
     cfg = settings_for(args)
     live, archive = open_stores(args)
     try:
-        deriver = derive_module.from_settings(cfg)
+        archive_def = selected_archive(
+            read_archives(args, cfg), getattr(args, "series", None))
+        deriver = derive_module.from_settings(
+            archives_module.placed(cfg, archive_def))
         # A backfill is exactly the case where the hardware is not there to
         # ask, so nothing waits on it.
         deriver.how = {name: ("software" if args.replace else how)
@@ -1730,8 +1987,10 @@ def _shim_config(args: argparse.Namespace) -> dict:
             # against the configuration file it was written in, so this looks
             # where the service looks. The settings page has to do that part
             # itself -- see `collectors._driver_directory`.
-            where = weewxdrivers.directory(
-                beside=settings_for(args).get("archive_db"))
+            cfg = settings_for(args)
+            beside = archive_path_of(
+                args, selected_archive(read_archives(args, cfg), None))
+            where = weewxdrivers.directory(beside=beside)
             found = weewxdrivers.by_module(str(module), where)
         if found is None and from_file:
             found = weewxdrivers.read(from_file, str(module or ""))
@@ -1813,9 +2072,11 @@ def cmd_weewx_driver_list(args: argparse.Namespace) -> int:
 
 def _weewx_driver_dir(args: argparse.Namespace):
     """Where this installation keeps WeeWX driver files."""
+    cfg = settings_for(args)
     return weewxdrivers.directory(
         configured=getattr(args, "weewx_driver_dir", None),
-        beside=(settings_for(args) or {}).get("archive_db"))
+        beside=archive_path_of(
+            args, selected_archive(read_archives(args, cfg), None)))
 
 
 def cmd_weewx_driver_hardware(args: argparse.Namespace) -> int:
@@ -2195,11 +2456,7 @@ def cmd_import_dump(args: argparse.Namespace) -> int:
         return 0
 
     registry = read_archives(args, cfg)
-    one = registry.get(getattr(args, "series", None) or registry.default_name())
-    if one is None:
-        print(f"No series called {getattr(args, 'series', '')!r}.",
-              file=sys.stderr)
-        return 2
+    one = selected_archive(registry, getattr(args, "series", None))
     store = open_archive(one, cfg,
                          Path(args.config).parent
                          if getattr(args, "config", None) else None)
@@ -2260,11 +2517,7 @@ def cmd_import_csv(args: argparse.Namespace) -> int:
         return 0
 
     registry = read_archives(args, cfg)
-    one = registry.get(getattr(args, "series", None) or registry.default_name())
-    if one is None:
-        print(f"No series called {getattr(args, 'series', '')!r}.",
-              file=sys.stderr)
-        return 2
+    one = selected_archive(registry, getattr(args, "series", None))
     store = open_archive(one, cfg,
                          Path(args.config).parent
                          if getattr(args, "config", None) else None)
@@ -2364,8 +2617,14 @@ def cmd_columns(args: argparse.Namespace) -> int:
     afterwards can separate. For a closer look at what hardware is sending,
     the driver has its own tool: `python -m user.ecowitt`.
     """
+    cfg = settings_for(args)
     live, archive = open_stores(args)
     try:
+        # This diagnostic explicitly asks installed drivers which archive
+        # columns their catalogs need. Keep that plugin load here, rather
+        # than in `open_stores`, where it also reached derive/backfill and
+        # every future caller merely for opening the two databases.
+        configure_drivers(cfg, archive, read_placements(args, cfg))
         known = set(archive.schema.columns)
         wanted: dict[str, str] = {}
         counts: dict[str, int] = {}
@@ -2383,11 +2642,21 @@ def cmd_columns(args: argparse.Namespace) -> int:
                 log.exception("driver %r could not work its columns out", name)
 
         # And what has actually arrived, which is the authority on what is
-        # being lost right now.
+        # being lost right now. Placed first: the table holds the names the
+        # console used, and a column is a thing the archive has -- counting
+        # `tempf` as homeless would report every reading of every console as
+        # having nowhere to live.
         first, last = live.span()
         if first is not None:
+            archive_def = selected_archive(
+                read_archives(args, cfg), getattr(args, "series", None))
+            placer = build_placer(archive_def, read_placements(args, cfg),
+                                  read_stations(args, cfg)[0])
             for packet in live.packets(first - 1, last):
-                for field in packet.data:
+                placed = placer.place(packet)
+                if placed is None:
+                    continue
+                for field in placed.data:
                     counts[field] = counts.get(field, 0) + 1
                     if field not in known:
                         wanted.setdefault(field, "REAL")
@@ -2397,8 +2666,7 @@ def cmd_columns(args: argparse.Namespace) -> int:
             return 0
 
         print(f"{len(wanted)} reading(s) have nowhere to live.")
-        print("They show up as current conditions and are gone at the next"
-              " archive interval.")
+        print("They remain in the live journal until its retention expires.")
         print()
         for field, sql_type in sorted(wanted.items()):
             seen = f"{counts[field]:>7} packet(s)" if field in counts else "  from driver"
@@ -2407,7 +2675,9 @@ def cmd_columns(args: argparse.Namespace) -> int:
         if not args.add:
             print()
             print("To keep them:")
-            print(f"  weewx-evo columns --add --archive {args.archive}")
+            selected = getattr(args, "series", None)
+            suffix = f" --series {selected}" if selected else ""
+            print(f"  weewx-evo columns --add{suffix}")
             print()
             print("Back the database up first: adding a column rewrites the table.")
             print("Check where each one belongs before you do. A reading in the")
@@ -2591,20 +2861,18 @@ def _qr(text: str) -> None:
 def driver_directory(args: argparse.Namespace) -> Path:
     """Where third-party drivers live, resolved like everything else.
 
-    The command line first, then the setting, then beside the archive. The
-    driver commands take no --config of their own, so a bare `weewx-evo
-    driver list` still finds them next to the database.
+    The command line first, then the setting, then beside the selected place's
+    archive. Its path comes only from archives.toml.
     """
     if getattr(args, "driver_dir", None):
         return Path(args.driver_dir)
-    archive = getattr(args, "archive", None)
-    if getattr(args, "config", None):
-        cfg = settings_for(args)
-        configured = cfg.get("driver_dir")
-        if configured:
-            return Path(configured)
-        archive = archive or cfg.get("archive_db")
-    return userdrivers.directory(None, archive)
+    cfg = settings_for(args)
+    configured = cfg.get("driver_dir")
+    if configured:
+        return Path(configured)
+    archive = selected_archive(
+        read_archives(args, cfg), getattr(args, "series", None))
+    return userdrivers.directory(None, archive_path_of(args, archive))
 
 
 def all_schemas(config_path: Path | None = None) -> list[option_defs.Schema]:
@@ -2811,7 +3079,7 @@ def replace_group(group: option_defs.Group, prefix: str) -> option_defs.Group:
 def cmd_config_show(args: argparse.Namespace) -> int:
     """Print the configuration as it stands, commented."""
     current = config_file.read(args.config) if args.config else {}
-    schemas = all_schemas()
+    schemas = all_schemas(Path(args.config) if args.config else None)
     if args.defaults:
         for schema in schemas:
             config_file.apply(current, schema,
@@ -2827,7 +3095,7 @@ def cmd_config_set(args: argparse.Namespace) -> int:
         print("Say which file with --config.", file=sys.stderr)
         return 1
     current = config_file.read(args.config)
-    schemas = all_schemas()
+    schemas = all_schemas(Path(args.config))
 
     for schema in schemas:
         for group, option in schema:
@@ -2856,7 +3124,7 @@ def cmd_config_check(args: argparse.Namespace) -> int:
     """Check every value against its schema and say what is wrong."""
     current = config_file.read(args.config) if args.config else {}
     problems = 0
-    for schema in all_schemas():
+    for schema in all_schemas(Path(args.config) if args.config else None):
         values = config_file.values_for(current, schema)
         _parsed, errors = schema.parse(values)
         for name, message in errors.items():
@@ -2868,6 +3136,99 @@ def cmd_config_check(args: argparse.Namespace) -> int:
         return 1
     print("The configuration is valid.")
     return 0
+
+
+_IMPORTED_PLACE_FIELDS = {
+    "archive_db": "file",
+    "station.name": "label",
+    "station.latitude": "latitude",
+    "station.longitude": "longitude",
+    "station.altitude": "altitude",
+    "station.url": "url",
+    "station.rain_year_start": "rain_year_start",
+}
+
+
+def _remove_setting(config: dict[str, Any], dotted: str) -> None:
+    """Remove one old dotted setting and any empty tables it leaves behind."""
+    parts = dotted.split(".")
+    node: Any = config
+    parents: list[tuple[dict[str, Any], str]] = []
+    for part in parts[:-1]:
+        if not isinstance(node, dict) or not isinstance(node.get(part), dict):
+            return
+        parents.append((node, part))
+        node = node[part]
+    if not isinstance(node, dict):
+        return
+    node.pop(parts[-1], None)
+    for parent, name in reversed(parents):
+        child = parent.get(name)
+        if isinstance(child, dict) and not child:
+            parent.pop(name, None)
+        else:
+            break
+
+
+class _ImportedPlace:
+    """The narrow settings view used to construct one imported Place."""
+
+    def __init__(self, values: dict[str, Any]) -> None:
+        self.values = values
+
+    def get(self, name: str, default: Any = None) -> Any:
+        value = self.values.get(name)
+        return default if value in (None, "") else value
+
+
+def _import_place(args: argparse.Namespace, current: dict[str, Any],
+                  imported: dict[str, Any]) -> Path | None:
+    """Write legacy WeeWX location/database values to the Place authority.
+
+    Returns the path when a Place was created or changed. A present multi-
+    Place file without an unambiguous default is left alone: a weewx.conf
+    describes one location but does not say which of those Places it is.
+    """
+    target = Path(args.config).parent / archives_module.FILENAME
+    incoming = {name: value for name, value in imported.items()
+                if name in _IMPORTED_PLACE_FIELDS}
+    legacy = {name: config_file.get(current, name)
+              for name in _IMPORTED_PLACE_FIELDS
+              if config_file.get(current, name) is not None}
+
+    if not target.exists():
+        values = dict(legacy)
+        for name, value in incoming.items():
+            if args.overwrite or name not in values:
+                values[name] = value
+        if not values:
+            return None
+        archive = archives_module.from_settings(_ImportedPlace(values))
+        archives_module.Register([archive], target).save(target)
+        return target
+
+    if not incoming or not args.overwrite:
+        return None
+
+    register = archives_module.Register.load(target)
+    try:
+        name = register.default_name()
+        old = register.get(name)
+    except LookupError:
+        print("  kept existing place settings: no default Place is unambiguous")
+        return None
+
+    # Parse through the same constructor used by the one-time migration, but
+    # copy only values the import actually supplied. This cannot clear member
+    # selection or presentation settings that weewx.conf knows nothing about.
+    parsed = archives_module.from_settings(_ImportedPlace(incoming))
+    values = old.as_dict()
+    for dotted, field_name in _IMPORTED_PLACE_FIELDS.items():
+        if dotted in incoming:
+            values[field_name] = getattr(parsed, field_name)
+    register.replace(name, archives_module.Archive(name=name, **values))
+    register.save(target)
+    return target
 
 
 def cmd_config_import(args: argparse.Namespace) -> int:
@@ -2890,14 +3251,28 @@ def cmd_config_import(args: argparse.Namespace) -> int:
         return 1
 
     current = config_file.read(args.config)
+    place_written = _import_place(args, current, result.values)
     for dotted, value in result.values.items():
+        if dotted in _IMPORTED_PLACE_FIELDS:
+            continue
         if not args.overwrite and config_file.get(current, dotted) is not None:
             print(f"  kept existing {dotted}")
             continue
         config_file.put(current, dotted, value)
-    written = config_file.write(args.config, current, all_schemas())
+    # These keys may predate archives.toml, but they must not survive a write
+    # as a second authority. A present Place file is the whole answer even
+    # when there is only one Place.
+    for dotted in _IMPORTED_PLACE_FIELDS:
+        _remove_setting(current, dotted)
+    written = config_file.write(
+        args.config, current, all_schemas(Path(args.config)))
     print()
     print(f"Written to {written}.")
+    if place_written is not None:
+        print(f"Place written to {place_written}.")
+    elif any(name in result.values for name in _IMPORTED_PLACE_FIELDS):
+        where = Path(args.config).parent / archives_module.FILENAME
+        print(f"Place settings already live in {where}.")
     return 0
 
 
@@ -3035,6 +3410,63 @@ def build_upload(name: str, settings: dict) -> object:
     return factory(**settings)
 
 
+def build_upload_for_place(name: str, values: dict, cfg: Settings,
+                           registry: archives_module.Register | None = None,
+                           base: Path | None = None) -> object:
+    """Make one upload with the settings owned by its Place.
+
+    The scheduler, the command-line check and the admin-page check must build
+    the same object.  Keeping the Place enrichment here prevents a successful
+    check from proving a different configuration than the running upload uses.
+    """
+    settings = dict(values)
+    if registry is None:
+        config_path = getattr(cfg, "_path", None)
+        if config_path is None:
+            raise ValueError("cannot locate archives.toml for this upload")
+        registry = archives_module.Register.load(
+            Path(config_path).parent / archives_module.FILENAME, cfg)
+    try:
+        default_name = registry.default_name()
+    except LookupError:
+        default_name = ""
+    wanted = str(settings.get("archive") or default_name).strip()
+    if not wanted:
+        raise ValueError("does not name a series and no default is configured")
+    place = archives_module.placed(cfg, registry.get(wanted))
+    kind = str(settings.get("kind", "")).strip()
+
+    if kind == "cwop":
+        settings.setdefault("latitude", place.get("station.latitude"))
+        settings.setdefault("longitude", place.get("station.longitude"))
+    if kind == "mqtt" and not settings.get("station"):
+        settings["station"] = place.get("station.name") or ""
+    if kind == "webpush":
+        from .uploads.webpush import WebPushUpload
+
+        where, token, directories, system = WebPushUpload.from_exports(cfg)
+        if not settings.get("unit_system") and system:
+            settings["unit_system"] = system
+        if not settings.get("url") and where:
+            settings["url"] = where
+            settings["_inferred"] = True
+        if not settings.get("token") and token:
+            settings["token"] = token
+        if not settings.get("directories") and directories:
+            settings["directories"] = directories
+            settings["_inferred"] = True
+        written = settings.get("directories") or []
+        if isinstance(written, str):
+            written = [written]
+        if base is None:
+            configured_at = getattr(cfg, "_path", None)
+            base = Path(configured_at).parent if configured_at else Path()
+        settings["directories"] = [
+            one if Path(one).is_absolute() else str(base / one)
+            for one in (str(value).strip() for value in written) if one]
+    return build_upload(name, settings)
+
+
 def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     """What the uploads are, right now.
 
@@ -3047,13 +3479,32 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     if not configured:
         return []
     base = Path(getattr(args, "config", None) or ".").parent
-    archive = Path(cfg.get("archive_db") or "data/weewx.sdb")
-    if not archive.is_absolute():
-        archive = base / archive
+    registry = read_archives(args, cfg)
+    archives = registry.all()
+    if not archives:
+        log.warning("no archive is configured, so no uploads can run")
+        return []
+    try:
+        default_name = registry.default_name()
+        default = registry.get(default_name)
+    except LookupError:
+        # Explicitly named uploads can still run. An upload that names
+        # nothing is skipped below rather than being pointed at an arbitrary
+        # place.
+        default_name = ""
+        default = archives[0]
+
+    by_archive: dict[str, Any] = {}
+    paths: dict[str, Path] = {}
+    for one in archives:
+        where = archive_path_of(args, one)
+        paths[one.name] = where
+        by_archive[one.name] = upload_records.source(where)
+
     # Beside the archive, not in it. Losing this file costs one repeated
     # post, which every one of these services treats as an overwrite.
-    progress = Progress(archive.parent / "uploads.json")
-    records = upload_records.source(archive)
+    progress = Progress(paths[default.name].parent / "uploads.json")
+    records = by_archive[default.name]
 
     # The live table, for an upload set to publish every packet. Absent in a
     # split deployment where this process has the archive and another has the
@@ -3062,81 +3513,29 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     live_db = Path(cfg.get("live_db") or "data/live.sdb")
     if not live_db.is_absolute():
         live_db = base / live_db
-    # The same rules the archiver applies, on the other reader of the same
-    # table. Without this a spike the archive throws away was still
-    # published live, every ten seconds, and the reading a visitor saw was
-    # one the station's own charts did not have.
-    packets = (upload_records.live_source(live_db, read_quality(args, cfg))
-               if live_db.exists() else None)
-
-    # One reader per series, for an installation with more than one. An
-    # upload is a station registered with a weather service, and that station
-    # stands in one place.
-    registry = read_archives(args, cfg)
-    by_archive: dict[str, Any] = {}
-    if registry.several():
-        for one in registry.all():
-            where = Path(one.file)
-            if not where.is_absolute():
-                where = base / where
-            by_archive[one.name] = upload_records.source(where)
+    # The same quality and placement rules the archiver applies, split by
+    # place. Sender identities and their optional labels come from the live
+    # database; an upload path must not pull listener configuration into the
+    # archive side of the process.
+    placements = read_placements(args, cfg)
+    policy = read_quality(args, cfg)
+    directory = []
+    if live_db.exists():
+        with LiveStore(live_db) as live:
+            directory = live.senders()
+    placers = {
+        one.name: build_placer(one, placements, directory, registry)
+        for one in archives
+    }
+    packets_by_archive = ({
+        one.name: upload_records.live_source(
+            live_db, policy, placers[one.name])
+        for one in archives
+    } if live_db.exists() else {})
+    packets = packets_by_archive.get(default_name)
 
     def with_station(name: str, settings: dict) -> object:
-        # Two settings that belong to the station rather than to a service,
-        # filled in here so nobody types them twice -- and only when the
-        # upload did not say its own.
-        kind = str(settings.get("kind", ""))
-        # The place this upload reports from. Its coordinates go out with
-        # every CWOP packet, so a second site sending the first one's
-        # position puts a station on the map in the wrong field.
-        place = archives_module.placed(cfg, registry.get(
-            settings.get("archive"))) if registry.several() else cfg
-        if kind == "cwop":
-            # The packet is a position report; without one there is nothing
-            # to send.
-            settings.setdefault("latitude", place.get("station.latitude"))
-            settings.setdefault("longitude", place.get("station.longitude"))
-        if kind == "mqtt" and not settings.get("station"):
-            # What Home Assistant calls the device.
-            settings["station"] = place.get("station.name") or ""
-        if kind == "webpush":
-            # Where the pages are and what the token is: both already known
-            # to the export that publishes them. Asking again here is how
-            # the two drift apart, and a token that does not match shows up
-            # as a page that renders perfectly and never updates.
-            from .uploads.webpush import WebPushUpload
-
-            where, token, directories, system = WebPushUpload.from_exports(cfg)
-            if not settings.get("unit_system") and system:
-                # The units the pages are written in. Without this an upload
-                # added by hand for a web host published whatever the station
-                # sends -- Fahrenheit from an Ecowitt, into pages in Celsius,
-                # with nothing on either side able to notice. The local ones
-                # have always had it; this is the same figure, from the same
-                # function.
-                settings["unit_system"] = system
-            if not settings.get("url") and where:
-                settings["url"] = where
-                settings["_inferred"] = True
-            if not settings.get("token") and token:
-                settings["token"] = token
-            # Local exports publish into directories this machine serves.
-            # There is no script there and nothing to post to: the file is
-            # written where the server will hand it out.
-            if not settings.get("directories") and directories:
-                settings["directories"] = directories
-                settings["_inferred"] = True
-            # Beside the settings, not beside whatever directory this process
-            # started in -- the same rule the exports follow. In a container
-            # the second reading points inside the image, where the file is
-            # written and nobody serves it.
-            written = settings.get("directories") or []
-            if isinstance(written, str):
-                written = [written]
-            settings["directories"] = [
-                one if Path(one).is_absolute() else str(base / one)
-                for one in (str(w).strip() for w in written) if one]
-        return build_upload(name, settings)
+        return build_upload_for_place(name, settings, cfg, registry, base)
 
     # Which consoles belong to which series, so a live upload for one site
     # publishes that site's readings. The live table holds the whole
@@ -3146,16 +3545,17 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
     # publish at all, the second which of them it prefers.
     consoles: dict[str, list[str]] = {}
     main_consoles: dict[str, list[str]] = {}
-    register, _sightings = read_stations(args, cfg)
-    for one in registry.all():
-        mine = list(register.for_archive(one.name))
-        if registry.several():
-            consoles[one.name] = sorted(station.name for station in mine)
-        # The main ones even with a single archive: a station with a shed
-        # sensor has the same question, and it is the commoner case.
-        main_consoles[one.name] = sorted(
-            station.name for station in mine
-            if getattr(station, "role", "main") == "main")
+    for one in archives:
+        placer = placers[one.name]
+        selected = placer.selected_senders()
+        if selected is not None:
+            # Empty is intentional and must stay different from broad: a new
+            # Place with no member may not publish another Place's readings.
+            consoles[one.name] = selected
+        # Main/extra describes this Place's relation to a sender. The placer
+        # also expands any reachable legacy alias under the canonical
+        # sender's policy, so an old row cannot silently regain main status.
+        main_consoles[one.name] = placer.selected_main_senders()
 
     # Every series, in the order pages present them, with the label and the
     # short code a page prints. `presented()`, so a place nobody coloured or
@@ -3166,14 +3566,17 @@ def build_upload_schedule(args: argparse.Namespace, cfg: Settings) -> list:
 
     return upload_runner.build(configured, with_station, progress, records,
                                packets, by_archive=by_archive,
+                               packets_by_archive=packets_by_archive,
                                consoles=consoles,
                                main_consoles=main_consoles,
-                               places=places)
+                               places=places,
+                               default_archive=default_name)
 
 
 def live_readings_locally(cfg: Settings,
                           configured: dict[str, dict],
-                          args: argparse.Namespace | None = None
+                          args: argparse.Namespace | None = None,
+                          schedule: dict[str, dict] | None = None,
                           ) -> dict[str, dict]:
     """The live upload an export has already asked for, with nothing to fill in.
 
@@ -3214,12 +3617,24 @@ def live_readings_locally(cfg: Settings,
     # Without this both sites were handed one document taken from whichever
     # console reported last: a north-field page showing the south field's
     # temperature beside its own archive's, and nothing able to notice.
-    per_feed = feed_schedule(args) if args is not None else {}
+    per_feed = (schedule if schedule is not None else
+                feed_schedule(args, cfg) if args is not None else {})
+    implied = {
+        str(one.get("archive") or "").strip()
+        for one in per_feed.values() if isinstance(one, dict)
+        and str(one.get("archive") or "").strip()
+    }
+    only_series = next(iter(implied)) if len(implied) == 1 else ""
 
     def series_of(export: dict) -> str:
         feed = str(export.get("source") or "").strip()
-        return str((per_feed.get(feed) or {}).get("archive")
-                   or archives_module.DEFAULT)
+        if not feed:
+            # A local export traditionally omitted `source`: it publishes
+            # the only feed directory. That remains unambiguous when every
+            # scheduled feed names the same place, including a one-place
+            # installation; with several places it must stay unanswered.
+            return only_series
+        return str((per_feed.get(feed) or {}).get("archive") or "").strip()
 
     grouped: dict[tuple[str, str], list[str]] = {}
     posted: dict[tuple[str, str], str] = {}
@@ -3227,7 +3642,12 @@ def live_readings_locally(cfg: Settings,
         if not isinstance(export, dict) or not export.get("live_push", True):
             continue
         system = livepush.rendered_units(cfg, export)
-        where_from = (system, series_of(export))
+        series = series_of(export)
+        if not series:
+            log.warning("export %s has no feed with an unambiguous series; "
+                        "no live-reading upload was inferred", _name)
+            continue
+        where_from = (system, series)
         if export.get("kind") == "local":
             where = str(export.get("directory") or "").strip()
             if where:
@@ -3282,12 +3702,14 @@ def configured_forecasts(args: argparse.Namespace) -> dict[str, dict]:
 
 
 def forecast_db(args: argparse.Namespace, cfg: Settings) -> Path:
-    """Where the forecast is kept. Beside the archive, never in it."""
-    base = Path(getattr(args, "config", None) or ".").parent
-    archive = Path(cfg.get("archive_db") or "data/weewx.sdb")
-    if not archive.is_absolute():
-        archive = base / archive
-    return archive.parent / "forecast.sdb"
+    """The installation's shared forecast store, beside its configuration."""
+    from .forecast import shared_store_path
+
+    # `archives_path` has the same anchor as the configuration when one was
+    # named, and the live database's directory for a configuration-free
+    # process. Neither answer depends on a place being called ``default`` or
+    # on which archive happens to come first.
+    return shared_store_path(archives_path(args, cfg))
 
 
 def forecast_place(cfg: Settings) -> ForecastPlace:
@@ -3329,7 +3751,9 @@ def build_forecast_source(name: str, settings: dict) -> object:
     return factory(**settings)
 
 
-def mirror_forecast(uploader: Any, store: Any) -> Callable[..., None]:
+def mirror_forecast(uploader: Any, store: Any,
+                    default_archive: str = forecast_registry.DEFAULT_ARCHIVE
+                    ) -> Callable[..., None]:
     """A callback that copies a fresh forecast into every InfluxDB upload.
 
     Only InfluxDB. Every other upload in that package sends readings to a
@@ -3350,15 +3774,16 @@ def mirror_forecast(uploader: Any, store: Any) -> Callable[..., None]:
     def send(name: str, archive: str = "") -> None:
         if uploader is None or store is None:
             return
-        wanted = archive or forecast_registry.DEFAULT_ARCHIVE
+        wanted = archive or default_archive
+        if not wanted:
+            return
         for scheduled in getattr(uploader, "uploads", []):
             upload = getattr(scheduled, "upload", None)
             if not hasattr(upload, "post_forecast"):
                 continue
             # An upload that names no series is the default one's, the same
             # way it reads the default archive's records.
-            mine = (getattr(scheduled, "archive", "")
-                    or forecast_registry.DEFAULT_ARCHIVE)
+            mine = getattr(scheduled, "archive", "") or default_archive
             if mine != wanted:
                 continue
             try:
@@ -3387,20 +3812,18 @@ def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
     if not configured:
         return []
     registry = read_archives(args, cfg)
-    several = registry.several()
+    try:
+        default_name = registry.default_name()
+    except LookupError:
+        default_name = ""
 
     def place_of(settings: dict) -> tuple[str, ForecastPlace]:
         """Which series this entry is for, and where that is."""
-        wanted = str(settings.get("archive") or archives_module.DEFAULT)
-        if not several:
-            return wanted, forecast_place(cfg)
+        wanted = str(settings.get("archive") or default_name)
+        if not wanted:
+            raise ValueError("does not name a series and no default is configured")
         known = {one.name for one in registry.all()}
         if wanted not in known:
-            # Not `Register.get`'s fallback. That answers an unknown name
-            # with the default deliberately, so a feed pointed at a removed
-            # archive still renders a page. Here it would put the wrong
-            # point's forecast on the default's key, beside the default's own
-            # entry, and the two would erase each other every hour.
             raise ValueError(
                 f"names the series {wanted!r}, which does not exist. "
                 f"There is: {', '.join(sorted(known))}.")
@@ -3409,7 +3832,7 @@ def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
 
     return forecast_runner.build(configured, build_forecast_source,
                                  place_of, store,
-                                 mirror_forecast(uploader, store))
+                                 mirror_forecast(uploader, store, default_name))
 
 
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
@@ -3438,7 +3861,7 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             log.info("%d notification channel(s) running", len(names))
 
     if series is not None:
-        _repoint_stations(args, cfg, series)
+        _refresh_archiver_inputs(args, cfg, series)
         _recheck_readings(args, cfg, series)
 
     if runner is not None:
@@ -3467,7 +3890,7 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             # success. The builders are closures over the settings; making
             # them again costs one read of plots.toml.
             before = [n for n, _b, _i in feeds.feeds]
-            feeds.replace(made, feed_schedule(args),
+            feeds.replace(made, feed_schedule(args, cfg),
                           archives=_archive_files(cfg, args))
             if [n for n, _b, _i in made] != before:
                 log.info("%d feed(s) producing", len(made))
@@ -3492,14 +3915,20 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
         # The API's map of series is built once, at startup. A place added
         # on the settings page was then answered with a 404 by the one part
         # of this program whose whole job is to say what series there are.
-        fresh = build_api(args, cfg, None)
+        fresh = build_api(args, cfg, web.api.stations)
         if fresh is not None:
             web.api.archives = fresh.archives
+            web.api.default = fresh.default
+            web.api.station_name = fresh.station_name
 
+    title = ""
+    try:
+        title = read_archives(args, cfg).get(None).title
+    except Exception:
+        log.debug("could not refresh the site's place name", exc_info=True)
     if web is not None and web.site.update(
             served_directories(args, cfg),
-            str(cfg.get("web.default") or ""),
-            str(cfg.get("station.name") or "")):
+            str(cfg.get("web.default") or ""), title):
         log.info("serving %d feed(s)%s", len(web.site.feeds),
                  f", {web.site.default} at /" if web.site.default
                  else ", listing them at /")
@@ -3730,7 +4159,8 @@ def cmd_web(args: argparse.Namespace) -> int:
     shows the pages does not have to be the one recording them.
     """
     cfg = settings_for(args)
-    site = site_from(cfg)
+    registry = read_archives(args, cfg)
+    site = site_from(archives_module.placed(cfg, registry.get(None)))
     api = build_api(args, cfg)
     # A station with the API switched on and no feed yet has something to
     # serve: the readings themselves. Refusing to start there would mean the
@@ -3884,7 +4314,7 @@ def feed_dirs(cfg: Settings,
     return out
 
 
-def feed_schedule(args: argparse.Namespace) -> dict:
+def feed_schedule(args: argparse.Namespace, cfg: Settings | None = None) -> dict:
     """When each configured feed runs, and which archive it reads.
 
     Read here rather than asked of the feed class, because it is the
@@ -3893,10 +4323,19 @@ def feed_schedule(args: argparse.Namespace) -> dict:
     installation -- hourly charts on a slow machine, a summary once a night.
 
     A feed that says nothing runs on the archive record, which is what every
-    feed did when there was no choice.
+    feed did when there was no choice. Its series is filled only when the
+    registry has an unambiguous implicit one.
     """
     from . import feeds as feed_registry
     from .options import parse_duration
+
+    cfg = cfg or settings_for(args)
+    registry = read_archives(args, cfg)
+    known = set(registry.names())
+    try:
+        implicit = registry.default_name()
+    except LookupError:
+        implicit = ""
 
     out: dict[str, dict] = {}
     for name, settings in (configured_feeds(args) or {}).items():
@@ -3920,11 +4359,20 @@ def feed_schedule(args: argparse.Namespace) -> dict:
                 log.warning("the feed %r has an unreadable schedule %r; "
                             "using an hour", name, settings.get("every"))
                 every = 3600.0
+        archive = str(settings.get("archive") or implicit).strip()
+        if archive and archive not in known:
+            # Keep the bad name in the schedule. The builder leaves this feed
+            # out, and the runner also refuses unknown paths; replacing it
+            # with the default here would publish another place's readings.
+            log.warning("the feed %r names unknown series %r; it will not run",
+                        name, archive)
+        elif not archive:
+            log.warning("the feed %r names no series and no default is "
+                        "unambiguous; it will not run", name)
         out[name] = {
             "trigger": wanted,
             "every": every,
-            "archive": str(settings.get("archive")
-                           or feed_registry.DEFAULT_ARCHIVE),
+            "archive": archive,
         }
     return out
 
@@ -3941,6 +4389,10 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
     where = feed_dirs(cfg, args)
     configured = configured_feeds(args)
     registry = read_archives(args, cfg)
+    try:
+        default_name = registry.default_name()
+    except LookupError:
+        default_name = ""
 
     def rank(item: tuple[str, dict]) -> tuple[int, str]:
         # A feed that reads another one goes second.
@@ -3961,9 +4413,13 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
         # a blank latitude fell back to *this feed's* archive rather than to
         # the settings -- and the number it fell back to looked entirely
         # ordinary.
-        home = str(settings.get("archive") or archives_module.DEFAULT)
-        placed = (archives_module.placed(cfg, registry.get(home))
-                  if registry.several() else cfg)
+        home = str(settings.get("archive") or default_name)
+        try:
+            placed = archives_module.placed(cfg, registry.get(home))
+        except (KeyError, LookupError):
+            log.warning("feed %s names unknown series %r; leaving it out",
+                        name, home)
+            continue
         if kind == "json":
             made.append((name, _json_feed(cfg, placed, name, charts, args,
                                           home), where[name]))
@@ -3975,7 +4431,7 @@ def build_feeds(args: argparse.Namespace, cfg: Settings,
                          where[name]))
         elif kind == "diagnostic":
             reads = str(settings.get("source") or "json")
-            made.append((name, _diagnostic_feed(cfg, name,
+            made.append((name, _diagnostic_feed(placed, name,
                                                 where.get(reads, where[name])),
                          where[name]))
         else:
@@ -4117,8 +4573,7 @@ def _cheetah_feed(cfg: Settings, placed: Any, home: str, name: str,
         #
         # `presented()` rather than `all()`: it is the display order, with a
         # colour and a short code filled in for anything nobody named. `all()`
-        # stays the storage order, because `cmd_serve` takes its first entry
-        # as the default archive.
+        # stays the storage order; display order is a separate decision.
         base = Path(args.config).parent if getattr(args, "config", None) else None
         for one in registry.presented():
             where = Path(one.file)
@@ -4136,7 +4591,7 @@ def _cheetah_feed(cfg: Settings, placed: Any, home: str, name: str,
     def build(reader):
         feed = cheetah.from_settings(
             placed, reader, load_plots(args, cfg), prefix=f"feeds.{name}",
-            archive=home)
+            archive=home, forecast_path=forecast_db(args, cfg))
         if places:
             # Assigned rather than handed to `from_settings`, because the
             # entries are already in the shape the feed keeps them in --
@@ -4169,7 +4624,8 @@ def _watched_files(args: argparse.Namespace, cfg: Settings,
             beside / archives_module.FILENAME,
             beside / stations_module.FILENAME,
             plots_path(args, cfg),
-            quality_path(args, cfg)]
+            quality_path(args, cfg),
+            beside / placement.FILENAME]
 
 
 class _Watcher:
@@ -4212,14 +4668,14 @@ class _Watcher:
         return True
 
 
-def _repoint_stations(args: argparse.Namespace, cfg: Settings,
-                      series: Any) -> None:
-    """Which consoles each archiver takes, after `stations.toml` changed.
+def _refresh_archiver_inputs(args: argparse.Namespace, cfg: Settings,
+                             series: Any) -> None:
+    """Refresh each archiver's Place policy and placement rules.
 
-    An archiver filters the live table by station name, and that list was
-    read once at startup. So a console adopted afterwards -- or moved to
-    another series on the stations page -- went on being archived exactly
-    where it was, or nowhere at all, until somebody restarted the process.
+    Membership comes only from ``archives.toml`` and is already expressed as
+    immutable sender IDs.  Labels in ``stations.toml`` are a listener/UI
+    concern and are deliberately absent from this path; the live database is
+    the archiver's sender directory.
 
     Measured on the beta instance: the container started, logged "archive
     'testort' has no stations, so nothing will be written", and the console
@@ -4239,28 +4695,45 @@ def _repoint_stations(args: argparse.Namespace, cfg: Settings,
     it.
     """
     try:
-        announced, _sightings = read_stations(args, cfg)
         registry = read_archives(args, cfg)
+        placements = read_placements(args, cfg)
     except Exception:
-        log.exception("could not re-read the stations; leaving the archivers "
+        log.exception("could not re-read the Place configuration; leaving the archivers "
                       "as they are")
         return
 
-    several = registry.several()
     moved = []
     for archive, _store, archiver in series:
-        # None means every console, which is what one archive wants and has
-        # always had. Recomputed rather than left alone: an installation that
-        # went from two archives to one would otherwise keep filtering.
-        mine = (sorted(one.name for one in announced.for_archive(archive.name))
-                if several else None)
-        if mine == archiver.stations:
-            continue
-        archiver.stations = mine
-        moved.append(f"{archive.name} <- "
-                     + (", ".join(mine) if mine else "every console"))
+        fresh = _fresh(registry, archive)
+        placer = archiver.placer
+        before = placer.selected_senders() if placer is not None else []
+        if placer is None:
+            placer = build_placer(fresh, placements, archiver.live, registry)
+            archiver.placer = placer
+        else:
+            placer.archives = registry
+            placer.replace(placements=placements, directory=archiver.live,
+                           archive=fresh)
+        selected = placer.selected_senders()
+        if selected != before:
+            shown = ("every sender" if selected is None else
+                     ", ".join(selected) if selected else "no sender")
+            moved.append(f"{archive.name} <- {shown}")
     if moved:
-        log.info("stations changed: %s", "; ".join(moved))
+        log.info("Place members changed: %s", "; ".join(moved))
+
+
+def _fresh(registry: Any, archive: Any) -> Any:
+    """The archive as the file now describes it, or as it was.
+
+    `series` holds the archives from startup, so asking one of those for its
+    station list would answer with the list from before the save -- which is
+    the whole thing this function's caller exists to notice.
+    """
+    for one in registry.all():
+        if one.name == archive.name:
+            return one
+    return archive
 
 
 def _collector_shape(cfg: Settings) -> list[str]:
@@ -4283,7 +4756,7 @@ def _recheck_readings(args: argparse.Namespace, cfg: Settings,
 
     Read once at startup and never again, so a limit saved on the settings
     page refused nothing until somebody restarted the container -- and the
-    page said saved, because it had been. The same failure `_repoint_stations`
+    page said saved, because it had been. The same failure `_refresh_archiver_inputs`
     describes, arriving through the other control on that page.
 
     Every archiver, not the one whose page was open: there is one
@@ -4594,14 +5067,19 @@ def cmd_plots_run(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
-    archive = Path(cfg.get("archive_db"))
+    archive_registry = read_archives(args, cfg)
+    archive_def = selected_archive(
+        archive_registry, getattr(args, "series", None))
+    archive = archive_path_of(args, archive_def)
     if not archive.exists():
         print(f"No archive at {archive}.", file=sys.stderr)
         return 1
 
     connection = sqlite3.connect(f"file:{archive}?mode=ro", uri=True)
     try:
-        generator = jsongenerator.from_settings(cfg, Reader(connection), charts)
+        generator = jsongenerator.from_settings(
+            archives_module.placed(cfg, archive_def), Reader(connection), charts,
+            archive=archive_def.name)
         into = Path(args.into or (Path(cfg.get("feeds_dir") or "data/feeds")
                                   / "json"))
         made = generator.produce(into)
@@ -4620,7 +5098,8 @@ def cmd_plots_run(args: argparse.Namespace) -> int:
         # alternative is reading JSON by eye.
         from .feeds import diagnostic
 
-        page = diagnostic.from_settings(cfg, made.directory)
+        page = diagnostic.from_settings(
+            archives_module.placed(cfg, archive_def), made.directory)
         drawn = page.produce(made.directory.parent)
         print()
         print(f"  {drawn.note}")
@@ -4661,10 +5140,20 @@ def start_feeds(args: argparse.Namespace,
             where = base / where
         paths[archive.name] = where
 
+    try:
+        default_name = registry.default_name()
+    except LookupError:
+        default_name = ""
+    # `archive_path` remains for old Runner callers. Runtime schedules carry
+    # an exact archive name, and Runner never redirects an unknown one to this
+    # path. Thus the first path is only a construction fallback where the
+    # registry intentionally has no implicit default.
+    fallback = paths.get(default_name) or next(iter(paths.values()))
     runner = feed_runner.Runner(build_feeds(args, cfg, charts),
-                                archive_path=paths[archives_module.DEFAULT],
-                                schedule=feed_schedule(args),
-                                archives=paths)
+                                archive_path=fallback,
+                                schedule=feed_schedule(args, cfg),
+                                archives=paths,
+                                default_archive=default_name)
     runner.start()
     # Every feed's directory, not `where["json"]`. That indexed a feed by
     # name on the assumption there was one called `json`, so an installation
@@ -4731,8 +5220,9 @@ def build_metrics(args: argparse.Namespace, cfg: Settings, dog: Any = None,
     from .metrics import Metrics
 
     base = Path(args.config).parent if getattr(args, "config", None) else None
+    registry = read_archives(args, cfg)
     where: dict[str, Path] = {}
-    for archive in read_archives(args, cfg).all():
+    for archive in registry.all():
         path = Path(archive.file)
         if not path.is_absolute() and base is not None:
             path = base / path
@@ -4742,10 +5232,15 @@ def build_metrics(args: argparse.Namespace, cfg: Settings, dog: Any = None,
     if not live_db.is_absolute() and base is not None:
         live_db = base / live_db
 
+    try:
+        station_name = registry.get(None).title
+    except (KeyError, LookupError, ValueError):
+        station_name = "weewx-evo"
+
     return Metrics(live=live_db, archives=where, dog=dog,
                    senders=sorted(set(configured_uploads(args))
                                   | set(configured_exports(args))),
-                   station_name=str(cfg.get("station.name") or ""))
+                   station_name=station_name)
 
 
 def build_api(args: argparse.Namespace, cfg: Settings,
@@ -4761,18 +5256,20 @@ def build_api(args: argparse.Namespace, cfg: Settings,
     from .api import Api
 
     base = Path(args.config).parent if getattr(args, "config", None) else None
+    registry = read_archives(args, cfg)
     where: dict[str, Path] = {}
-    for archive in read_archives(args, cfg).all():
+    for archive in registry.all():
         path = Path(archive.file)
         if not path.is_absolute() and base is not None:
             path = base / path
         where[archive.name] = path
     if not where:
         return None
-    return Api(where, default=archives_module.DEFAULT,
+    default = registry.default_name()
+    return Api(where, default=default,
                token=str(cfg.get("api.token") or ""),
                stations=stations,
-               station_name=str(cfg.get("station.name") or ""))
+               station_name=registry.get(default).title)
 
 
 def build_notify_runner(args: argparse.Namespace, cfg: Settings, live: Any,
@@ -4813,9 +5310,22 @@ def build_notify_runner(args: argparse.Namespace, cfg: Settings, live: Any,
         return None
     senders = sorted(set(configured_uploads(args))
                      | set(configured_exports(args)))
-    return notify_runner.Runner(
-        channels, live=live, stations=stations, dog=dog, senders=senders,
-        station_name=str(cfg.get("station.name") or ""))
+    registry = read_archives(args, cfg)
+    try:
+        default = registry.get(None)
+    except (KeyError, LookupError, ValueError):
+        default = None
+    watched = stations if stations is not None else live.senders()
+    made = notify_runner.Runner(
+        channels, live=live, stations=watched, dog=dog, senders=senders,
+        station_name=default.title if default is not None else "weewx-evo")
+    # The battery check looks for `txBatteryStatus` and its eight neighbours,
+    # which are archive column names. Given raw packets it finds none of them
+    # and reports nothing, for ever.
+    if default is not None:
+        made.placer = placement.Placer(
+            default, read_placements(args, cfg), live, archives=registry)
+    return made
 
 
 def _databases(args: argparse.Namespace, cfg: Settings) -> list[tuple[str, Path]]:
@@ -5007,11 +5517,10 @@ def cmd_notify_status(args: argparse.Namespace) -> int:
     from .notify import Memory
     from .notify import rules as notify_rules
 
-    stations, _sightings = read_stations(args, cfg)
     senders = sorted(set(configured_uploads(args))
                      | set(configured_exports(args)))
     with LiveStore(live_db) as live:
-        seen = notify_rules.everything(live, stations, None, senders)
+        seen = notify_rules.everything(live, live.senders(), None, senders)
         memory = Memory(live)
 
     if not seen:
@@ -5029,6 +5538,172 @@ def cmd_notify_status(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_placement_list(args: argparse.Namespace) -> int:
+    """What each console sends, and which column it reaches.
+
+    Reads the two files and the proposals; asks no hardware and writes
+    nothing. The state beside each row is what the settings page shows in a
+    colour: `decided` is yours, `learned` was worked out and written down,
+    `proposed` is waiting, `nowhere` is a deliberate no.
+    """
+    cfg = settings_for(args)
+    plans = read_placements(args, cfg)
+    archives = read_archives(args, cfg)
+    live_db = Path(cfg.get("live_db") or "")
+    if not live_db.exists():
+        print(f"No live database at {live_db}. Nothing has arrived yet.")
+        return 0
+
+    with LiveStore(live_db) as live:
+        directory = live.senders()
+        notes = proposal_defs.Proposals(store=live)
+    labels = {one.sender: one.label or one.sender for one in directory}
+    rows = notes.all()
+    if not rows:
+        print("Nothing unplaced. Every reading goes where its catalog says.")
+
+    for scope in sorted(plans.takes,
+                        key=lambda one: (one.archive, one.station, one.dialect)):
+        where = " / ".join(x for x in (scope.archive or "inactive legacy scope",
+                                       labels.get(scope.station, scope.station)
+                                       if scope.station else "every sender",
+                                       scope.dialect or "every catalog") if x)
+        kind = "learned" if scope.learned else "decided"
+        print(f"\n{where}  ({kind}"
+              + (f", unlisted: {scope.unlisted}" if scope.unlisted != "catalog"
+                 else "") + ")")
+        for raw, column in sorted(scope.fields.items()):
+            print(f"  {raw:24} -> "
+                  + ("nowhere" if column == placement.NOWHERE else column))
+
+    # A proposal is a question for every place that selects this console.
+    # Looking at a removed Station.archive pointer made the same raw reading
+    # appear decided merely because a different place had decided it.
+    waiting = []
+    for one in rows:
+        for archive in archives.all():
+            selected = archive_stations(archive)
+            if selected is not None and one.station not in selected:
+                continue
+            if one.raw not in plans.extensions(
+                    archive.name, one.station, one.dialect):
+                waiting.append((archive.name, one))
+    if waiting:
+        print(f"\n{len(waiting)} name(s) nothing has placed:")
+        several = archives.several()
+        for archive_name, one in waiting:
+            guess = f" -> {one.field}" if one.field else ""
+            sure = "" if one.certain else "  (a guess)" if one.field else ""
+            owner = ((f"{archive_name}/" if several else "")
+                     + labels.get(one.station, one.station))
+            print(f"  {owner}/{one.raw:20}{guess}{sure}"
+                  f"   last {one.last_value!r}")
+        print("\n  weewx-evo placement accept --write   writes the certain ones down")
+    return 0
+
+
+def cmd_placement_import(args: argparse.Namespace) -> int:
+    """Move a field map out of `stations.toml` and into `placement.toml`.
+
+    For an installation that had one before placements were a file of their
+    own. Nothing is written without `--write`, and nothing already decided is
+    overwritten: this only fills in what the new file does not say.
+
+    The station's own entries are left in `stations.toml` afterwards. Deleting
+    them would mean editing a file the operator may have edited by hand for a
+    year, on a run that was meant to add something.
+    """
+    cfg = settings_for(args)
+    register, _sightings = read_stations(args, cfg)
+    plans = read_placements(args, cfg)
+    archives = read_archives(args, cfg)
+    migrated = placement.bind_legacy_scopes(plans, archives.names())
+    stranded: list[tuple[Any, Any, str, list[str]]] = []
+    for station in register:
+        mapped = getattr(station, "field_map", None) or {}
+        if not mapped:
+            continue
+        sender = sender_id(station.driver, station.identity)
+        for archive in archives.all():
+            if not archive.selects(sender):
+                continue
+            known = plans.extensions(archive.name, sender, "")
+            missing = sorted(raw for raw, column in mapped.items()
+                             if known.get(raw) != column)
+            if missing:
+                stranded.append((archive, station, sender, missing))
+    if not stranded and not migrated:
+        print("Nothing to move. Every placement in stations.toml is already "
+              "in placement.toml, or there are none.")
+        return 0
+
+    moved = 0
+    for archive, station, sender, missing in stranded:
+        print(f"\n{station.name} -> {archive.name}")
+        for raw in missing:
+            column = station.field_map[raw]
+            print(f"  {raw:24} -> {column}")
+            plans.decide(archive.name, sender, "", raw, column)
+            moved += 1
+
+    if migrated:
+        print("\nLegacy placements were bound to the Places that exist now.")
+
+    if not args.write:
+        print(f"\n{moved} placement(s). Nothing written; add --write.")
+        return 0
+    path = placement_path(args, cfg)
+    placement.save(path, plans, f"Moved {moved} placement(s) from stations.toml.")
+    print(f"\n{moved} placement(s) written to {path}.")
+    print("The entries in stations.toml are left where they are; nothing "
+          "reads them.")
+    return 0
+
+
+def cmd_placement_accept(args: argparse.Namespace) -> int:
+    """Turn what inference worked out into lines somebody can read.
+
+    Nothing is written without `--write`, for the reason `plots import` has
+    the same flag: a placement decides which column a year of readings goes
+    into, and a command that did it on being typed would be one somebody
+    typed to see what it would do.
+    """
+    cfg = settings_for(args)
+    plans = read_placements(args, cfg)
+    archives = read_archives(args, cfg)
+    archive = selected_archive(archives, args.series)
+    migrated = placement.bind_legacy_scopes(plans, archives.names())
+    mode = str(args.mode or cfg.get("infer_unknown") or "series")
+    live_db = Path(cfg.get("live_db") or "")
+    if not live_db.exists():
+        print(f"No live database at {live_db}. Nothing has arrived yet.")
+        return 0
+
+    with LiveStore(live_db) as live:
+        notes = proposal_defs.Proposals(store=live)
+    written = placement.promote(notes, plans, archive.name, mode)
+    if not written and not migrated:
+        print(f"Nothing to write ({mode})."
+              + ("" if mode != "off" else
+                 " `infer_unknown = off` promotes nothing by design; place"
+                 " them on the settings page, or pass --mode series."))
+        return 0
+
+    for raw, column in written:
+        print(f"  {raw:24} -> {column}")
+    if migrated:
+        print("  legacy scopes -> current Places")
+    if not args.write:
+        print(f"\n{len(written)} placement(s). Nothing written; add --write.")
+        return 0
+    path = placement_path(args, cfg)
+    placement.save(path, plans, f"Accepted {len(written)} inferred placement(s).")
+    print(f"\n{len(written)} placement(s) written to {path}.")
+    print("They take effect on the next record. `weewx-evo rebuild` applies "
+          "them to what is still in the live table.")
+    return 0
+
+
 def cmd_quality_suggest(args: argparse.Namespace) -> int:
     """Work rules out of what this station has actually recorded.
 
@@ -5044,7 +5719,10 @@ def cmd_quality_suggest(args: argparse.Namespace) -> int:
 
     cfg = settings_for(args)
     install_driver_groups()
-    archive = Path(cfg.get("archive_db") or "")
+    archive_registry = read_archives(args, cfg)
+    archive_def = selected_archive(
+        archive_registry, getattr(args, "series", None))
+    archive = archive_path_of(args, archive_def)
     if not archive.exists():
         print(f"No archive at {archive}.", file=sys.stderr)
         return 1
@@ -5064,7 +5742,17 @@ def cmd_quality_suggest(args: argparse.Namespace) -> int:
         with LiveStore(live_db) as live:
             first, last = live.span()
             if first and last:
-                packets = [p.record() for p in live.packets(first - 1, last)]
+                # Placed, because the file this writes has a section per
+                # archive column and somebody keeps it. Suggested from raw
+                # names it would be a `quality.toml` of rules that match
+                # nothing -- saved, listed on the settings page, and silently
+                # refusing no reading ever.
+                placer = build_placer(archive_def,
+                                      read_placements(args, cfg), live,
+                                      archive_registry)
+                packets = [placed.record() for placed
+                           in (placer.place(p) for p in live.packets(first - 1, last))
+                           if placed is not None]
                 close = quality_module.watch(packets, system=system)
     if not close:
         print("# No live packets. The spike figures below therefore come from "
@@ -5113,7 +5801,9 @@ def cmd_quality_check(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
-    archive = Path(cfg.get("archive_db") or "")
+    archive_def = selected_archive(
+        read_archives(args, cfg), getattr(args, "series", None))
+    archive = archive_path_of(args, archive_def)
     since = int(time.time()) - int(args.days) * 86400
     rows = _archive_rows(archive, since) if archive.exists() else []
     if not rows:
@@ -5217,7 +5907,8 @@ def cmd_grafana_provision(args: argparse.Namespace) -> int:
     # unlabelled and in the wrong unit. Same call, same reason, as `plots run`.
     install_driver_groups()
 
-    archive = Path(cfg.get("archive_db") or "")
+    archive_def = selected_archive(read_archives(args, cfg), None)
+    archive = archive_path_of(args, archive_def)
     report = grafana.provision(
         _grafana_out(args, cfg),
         dict(configured_uploads(args)),
@@ -5287,7 +5978,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             "drivers": drivers.names(),
             # The default one under its old name, so anything reading this
             # output goes on working, and every one of them under "archives".
-            "archive": series[archives_module.DEFAULT],
+            "archive": series[registry.default_name()],
             "archives": series,
         }
         print(json.dumps(report, indent=2))
@@ -5341,6 +6032,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("derive",
                        help="work out derived readings on stored records")
     add_common(p)
+    add_archive_arg(p)
     p.add_argument("--start", type=int, default=None,
                    help="unix timestamp, exclusive. The whole archive by "
                         "default.")
@@ -5547,6 +6239,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("columns", help="readings that have nowhere to live")
     add_common(p)
+    add_archive_arg(p)
     p.add_argument("--add", action="store_true",
                    help="create the missing columns; back the database up first")
     p.set_defaults(func=cmd_columns)
@@ -5770,6 +6463,7 @@ def main(argv: list[str] | None = None) -> int:
 
     q = plots_sub.add_parser("run", help="write the JSON now")
     add_common(q)
+    add_archive_arg(q)
     q.add_argument("--into", default=None, help="where to write it")
     q.add_argument("--no-page", dest="page", action="store_false",
                    help="skip the diagnostic page that draws it all")
@@ -5827,6 +6521,7 @@ def main(argv: list[str] | None = None) -> int:
     q = quality_sub.add_parser(
         "suggest", help="rules worked out from what this station recorded")
     add_common(q)
+    add_archive_arg(q)
     q.add_argument("--days", type=int, default=365,
                    help="how much history to look at (default: a year)")
     q.add_argument("--units", default=None,
@@ -5839,9 +6534,39 @@ def main(argv: list[str] | None = None) -> int:
     q = quality_sub.add_parser(
         "check", help="what the configured rules would refuse")
     add_common(q)
+    add_archive_arg(q)
     q.add_argument("--days", type=int, default=30,
                    help="how much history to run them over (default: 30)")
     q.set_defaults(func=cmd_quality_check)
+
+    p = sub.add_parser("placement", help="where each reading is written")
+    placement_sub = p.add_subparsers(dest="placement_command", required=True)
+
+    q = placement_sub.add_parser(
+        "list", help="what arrives, and where it goes")
+    add_common(q)
+    q.set_defaults(func=cmd_placement_list)
+
+    q = placement_sub.add_parser(
+        "import", help="move a field map out of stations.toml")
+    add_common(q)
+    q.add_argument("--write", action="store_true",
+                   help="write placement.toml. Without it, nothing is saved")
+    q.set_defaults(func=cmd_placement_import)
+
+    q = placement_sub.add_parser(
+        "accept", help="write down what inference has worked out")
+    add_common(q)
+    # The archive path belongs to archives.toml; this selects its entry.
+    q.add_argument("--series", default=None,
+                   help="the measurement series to write the decisions for "
+                        "(default: all of them)")
+    q.add_argument("--mode", default=None,
+                   help="off, series or all; default is the configured "
+                        "infer_unknown")
+    q.add_argument("--write", action="store_true",
+                   help="write placement.toml. Without it, nothing is saved")
+    q.set_defaults(func=cmd_placement_accept)
 
     p = sub.add_parser("grafana", help="dashboards for the InfluxDB uploads")
     grafana_sub = p.add_subparsers(dest="grafana_command", required=True)
@@ -5877,7 +6602,10 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
+        # Command output is a data interface. In particular, `quality
+        # suggest` emits TOML that can be redirected straight into a file;
+        # migration and status logs must not become invalid TOML lines.
+        stream=sys.stderr,
     )
     return args.func(args)
 

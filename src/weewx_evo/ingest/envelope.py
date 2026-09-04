@@ -21,13 +21,40 @@ import json
 
 from ..db.live import Packet
 from ..units import METRICWX
-from .drivers import BaseDriver
+from .drivers import BaseDriver, Setup
 
 RESERVED = frozenset({"dateTime", "usUnits", "source", "kind", "interval", "received"})
 
 
 class EnvelopeDriver(BaseDriver):
     """Reads the envelope. The only driver that ships in the core."""
+
+    @staticmethod
+    def setup() -> Setup:
+        """One address and one name, which is the whole of the contract.
+
+        The identity is handed out here rather than read off the wire: what a
+        collector calls itself is `source` in the envelope it sends, so it
+        carries whatever it is given -- and an identity somebody chooses for
+        themselves can be chosen twice.
+        """
+        return Setup(
+            label="weewx-evo envelope",
+            hardware=("A collector you run yourself, or any WeeWX driver "
+                      "through `weewx-evo weewx-driver run`."),
+            fields=(("Address", "%(base)s%(path)s"),
+                    ("source", "%(identity)s")),
+            notes=(("Post the envelope to that address, one object or a list "
+                    "of them, with `source` set to the identity."),
+                   ("`weewx-evo weewx-driver run --conf /etc/weewx/weewx.conf`"
+                    " does it for a WeeWX driver, and `weewx-evo collector "
+                    "run --collector <name>` for one configured here.")),
+            # The token is in the path, like every other protocol whose
+            # address is ours to choose. Not a password: S106 reads the
+            # keyword name, and what this says is which kind of secret the
+            # hardware can carry.
+            secret="path",  # noqa: S106
+        )
 
     def packets(self, body: bytes, meta: dict) -> list[Packet]:
         payload = json.loads(body)
@@ -42,7 +69,14 @@ class EnvelopeDriver(BaseDriver):
                 dateTime=int(item.get("dateTime") or meta["received"]),
                 usUnits=int(item.get("usUnits", METRICWX)),
                 data=data,
-                source=str(item.get("source") or meta.get("source", "json"))[:64],
+                # The envelope's `source` is what this collector calls itself,
+                # which is exactly what an identity is: the listener looks it
+                # up in the station register like any PASSKEY, and an
+                # unannounced one is known by it.
+                identity=str(item.get("source") or meta.get("source", ""))[:64],
+                # No dialect: these names are already WeeWX's. That is the
+                # whole of the envelope contract, and it is why a collector in
+                # Go or shell needs to know nothing about placement.
                 kind=item.get("kind", "loop"),
                 interval=item.get("interval"),
             ))

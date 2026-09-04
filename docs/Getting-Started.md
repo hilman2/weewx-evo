@@ -35,32 +35,37 @@ unguessable path is the practical answer.
 python -c "import secrets; print(secrets.token_hex(24))"
 ```
 
-### 2. Create a configuration file
+### 2. Create the configuration and first place
 
 ```bash
 weewx-evo config set --config evo.toml token <the-token-from-just-now>
-weewx-evo config set --config evo.toml station.name "Kirchdorf an der Amper"
-weewx-evo config set --config evo.toml station.latitude 48.4596
-weewx-evo config set --config evo.toml station.longitude 11.6539
-weewx-evo config set --config evo.toml station.altitude 440
 ```
 
-`config set` checks every value against the schema that owns it. A typo in the
-name or a latitude of 95 comes straight back, not at startup.
+`config set` checks every value against the schema that owns it and reports an
+unknown name immediately.
 
-Or write the lot at once — the file is TOML and meant for people:
+The place and its database belong in `archives.toml`, including on a one-place
+installation:
 
 ```toml
-# evo.toml
-token = "…"
-interval = "5m"
+# archives.toml
+member_policy_version = 2
 
-[station]
-name = "Kirchdorf an der Amper"
+[archives.default]
+file = "data/weewx.sdb"
+label = "Kirchdorf an der Amper"
 latitude = 48.4596
 longitude = 11.6539
 altitude = 440.0
+senders = "*"
 ```
+
+The file sits beside `evo.toml`. Later, the settings page edits the same entry.
+Its sender selection also belongs here. The explicit `"*"` above accepts every
+arrival for the initial one-sender setup; replace it with selected sender IDs
+on the **Places** page after the sender appears. Omitting the selection from a
+current file selects nothing.
+The **Senders** page remains the diagnostic view of what actually arrived.
 
 ### 3. Start it
 
@@ -69,8 +74,9 @@ weewx-evo serve --config evo.toml
 ```
 
 That starts the listener and the archiver in one process. The first start
-creates `data/live.sdb` and `data/weewx.sdb` — the latter with the same schema
-WeeWX creates for a new database (`wview_extended`, 113 columns).
+creates `data/live.sdb` and the file named by `[archives.default]` — the latter
+with the same schema WeeWX creates for a new database (`wview_extended`, 113
+columns).
 
 ### 4. Find the address
 
@@ -103,10 +109,16 @@ weewx-evo status --config evo.toml
 
 ## Using an existing WeeWX database
 
-This is the real case. Point weewx-evo at the file you have:
+This is the real case. Put the file on the first place:
 
-```bash
-weewx-evo config set --config evo.toml archive_db /etc/weewx/archive/weewx.sdb
+```toml
+[archives.default]
+file = "/etc/weewx/archive/weewx.sdb"
+label = "Kirchdorf an der Amper"
+latitude = 48.4596
+longitude = 11.6539
+altitude = 440.0
+senders = "*"
 ```
 
 The schema is **read from the file**, not from a list in the code. An
@@ -131,6 +143,11 @@ weewx-evo config import /etc/weewx/weewx.conf --config evo.toml --write
 
 Without `--write` it only reports. The report also names what was **not**
 taken over, and why — silence reads like "lost".
+
+On an installation without `archives.toml`, the imported `archive_db` and
+`station.*` values are migration input: the first read writes them once to
+`[archives.default]`. From then on, edit the place; the old central values are
+not consulted again.
 → [WeeWX-Compatibility](WeeWX-Compatibility)
 
 ### Taking the plots from a skin
@@ -188,13 +205,13 @@ weewx-evo serve --config evo.toml --explain
 ```
 
 ```
-  station.name    'Kirchdorf an der Amper'   the configuration file
-  interval        60                         $WEEWX_EVO_INTERVAL
-  station.altitude 440.0                     weewx.conf
-  grace           15                         default
+  interval        60       $WEEWX_EVO_INTERVAL
+  grace           15       default
+  live_db         data/live.sdb  default
 ```
 
-One line per setting, with its origin. Then the program stops.
+One line per process setting, with its origin. Place settings are shown on the
+Places page and stored in `archives.toml`. Then the program stops.
 → [Configuration](Configuration)
 
 ## A page of your own on the local network

@@ -80,7 +80,10 @@ def parse_json(body: bytes, meta: dict) -> list[Packet]:
             dateTime=int(item.get("dateTime") or meta["received"]),
             usUnits=int(item.get("usUnits", METRICWX)),
             data=data,
-            source=str(item.get("source") or meta.get("source", "json"))[:64],
+            # The envelope's `source` is what the collector calls itself:
+            # an identity, looked up in the station register like a PASSKEY.
+            # No dialect -- these names are already WeeWX's.
+            identity=str(item.get("source") or meta.get("source", ""))[:64],
             kind=item.get("kind", "loop"),
             interval=item.get("interval"),
         ))

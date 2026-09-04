@@ -1,4 +1,4 @@
-"""Publishing: what gets made, and where each of those goes.
+"""Publishing: the complete output inventory.
 
 A feed makes files. An export moves them. Those are two different things and
 the settings page was right to keep the settings apart -- but it also kept
@@ -6,15 +6,16 @@ the *listing* apart, so the sidebar had "Feed: wdc" under one heading and
 "Export: wdc" under another and nothing anywhere said that the second
 publishes the first. The operator held the connection in their head.
 
-Here it is on the screen. One block per feed, its exports indented under it,
-in the order the files actually move:
+The page lists each configured object exactly once, in five fixed sections:
 
-    wdc          a WeeWX skin        40 files      38 s ago
-      -> wdc     into /data/wdc      local          8 s ago
+    feeds -> exports
+    uploads
+    notifications
+    forecasts
 
-An export that names no feed gets its own block at the end rather than being
-hidden: it is configured and it runs, and a page that only showed the tidy
-cases would be a page you cannot trust when something is untidy.
+The connection stays visible in both directions: a feed names its destinations
+and a destination names every feed it carries. An incomplete connection stays
+in the inventory and says what is missing.
 
 ## Why this is not the overview
 
@@ -54,7 +55,7 @@ KINDS = {
 }
 
 
-def _rows_for(admin: Any) -> tuple[dict, dict, dict]:
+def _rows_for(admin: Any) -> tuple[dict, dict, dict, dict, dict]:
     current = admin.config()
     feeds = {n: s for n, s in (current.get("feeds") or {}).items()
              if isinstance(s, dict)}
@@ -62,7 +63,11 @@ def _rows_for(admin: Any) -> tuple[dict, dict, dict]:
                if isinstance(s, dict)}
     uploads = {n: s for n, s in (current.get("uploads") or {}).items()
                if isinstance(s, dict)}
-    return feeds, exports, uploads
+    notifications = {n: s for n, s in (current.get("notify") or {}).items()
+                     if isinstance(s, dict)}
+    forecasts = {n: s for n, s in (current.get("forecast") or {}).items()
+                 if isinstance(s, dict)}
+    return feeds, exports, uploads, notifications, forecasts
 
 
 def _short(where: str, keep: int = 34) -> str:
@@ -111,7 +116,7 @@ def _age(admin: Any, state: adminhome.State, name: str,
          which: str) -> tuple[str, str]:
     """(what it says, extra class) for one thing's age."""
     links = {"feed": state.feeds, "export": state.exports,
-             "upload": state.uploads}[which]
+             "upload": state.uploads, "forecast": state.forecasts}[which]
     for one in links:
         if one.name == name:
             if one.unreachable:
@@ -127,31 +132,6 @@ def _chip(text: str, tone: str = "") -> str:
     return f'<span class="chip {tone}">{html.escape(text)}</span>'
 
 
-def _services() -> str:
-    """The upload targets that are installed, named.
-
-    Asked of the registry rather than written out. The sentence said
-    "Weather Underground, Windy, CWOP, or an MQTT broker" and there are
-    eight, so it read as a list of what exists rather than the sample it
-    was -- and the four it left out include the one somebody was looking
-    for.
-    """
-    from . import uploads as upload_registry
-
-    names = []
-    for kind in sorted(upload_registry.DEFAULT.kinds()):
-        factory = upload_registry.DEFAULT.factory_for(kind)
-        label = str(getattr(factory, "label", "") or kind)
-        # Not a weather service: it publishes into the pages this station
-        # writes, and it is set up from an export rather than from here.
-        if kind == "webpush":
-            continue
-        names.append(html.escape(label))
-    if not names:
-        return "none are installed"
-    return ", ".join(names[:-1]) + " or " + names[-1]
-
-
 def _carried(settings: dict) -> list[tuple[str, str]]:
     """The further feeds an export takes along, as (feed, sub-path).
 
@@ -165,74 +145,141 @@ def _carried(settings: dict) -> list[tuple[str, str]]:
     return export_runner.named(settings)
 
 
-def _export_row(admin: Any, state: adminhome.State, name: str,
-                settings: dict, carried: str | None = None) -> str:
-    """One export under one feed.
+def _status(said: str, tone: str, off: bool = False,
+            from_end: bool = False) -> str:
+    if off:
+        return '<span class="note when">Off</span>'
+    if not said:
+        return ""
+    shown = ("Not run" if said == "never" else
+             _short(said, 42) if from_end else _first(said))
+    return (f'<span class="{tone}" title="{html.escape(said)}">'
+            f'{html.escape(shown)}</span>')
 
-    `carried` is set where this feed is not the export's main source but one
-    it takes along: the path it lands in, which may be the empty string for
-    the destination itself. Without a row here, the JSON feed a skin draws
-    from reads "nothing publishes this yet" on the very page whose job is to
-    show what reaches the outside -- while it is being published every time.
-    """
-    said, tone = _age(admin, state, name, "export")
-    off = settings.get("enabled") is False
-    # A host's refusal can be a paragraph. The first line of it is what
-    # somebody acts on, and the whole of it is one hover away.
-    shown = _first(said)
-    where = _where(admin, settings)
-    if carried is not None:
-        where = f"{where.rstrip('/')}/{carried}" if carried else where
+
+def _feed_names(settings: dict) -> list[str]:
+    """Every feed an export sends, once and in configured order."""
+    names = []
+    source = str(settings.get("source") or "").strip()
+    if source:
+        names.append(source)
+    for feed, _into in _carried(settings):
+        if feed not in names:
+            names.append(feed)
+    return names
+
+
+def _links(names: list[str], kind: str) -> str:
+    return ", ".join(
+        f'<a href="./{kind}:{html.escape(name)}">{html.escape(name)}</a>'
+        for name in names)
+
+
+def _place_html(name: str, labels: dict[str, str]) -> str:
+    if not name:
+        return '<span class="note warn">No place selected</span>'
+    label = labels.get(name, name)
+    return (f'<span class="note">Place: <a href="./places">'
+            f'{html.escape(label)}</a></span>')
+
+
+def _feed_row(admin: Any, state: adminhome.State, name: str,
+              settings: dict, destinations: list[str], place: str,
+              place_labels: dict[str, str]) -> str:
+    kind = str(settings.get("kind") or "")
+    said, tone = _age(admin, state, name, "feed")
+    sends = (f'<span class="note">Destinations: '
+             f'{_links(destinations, "export")}</span>' if destinations
+             else '<span class="note">No destination</span>')
     return f'''
       <li>
-        <span class="arrow" aria-hidden="true">&rarr;</span>
-        <a href="./export:{html.escape(name)}">{html.escape(name)}</a>
-        <span class="note" title="{html.escape(where)}"
-              >into {html.escape(_short(where))}</span>
-        {'<span class="chip">carried along</span>'
-         if carried is not None else ""}
-        {_chip(str(settings.get("kind") or ""))}
-        <span class="{tone}" title="{html.escape(said)}"
-              >{"switched off" if off else html.escape(shown)}</span>
+        <a class="title" href="./feed:{html.escape(name)}">{html.escape(name)}</a>
+        {_chip(kind)}
+        <span class="note">{html.escape(KINDS.get(kind, kind))}</span>
+        {_place_html(place, place_labels)}{sends}
+        {_status(said, tone, settings.get("enabled") is False, from_end=True)}
       </li>'''
 
 
-def _block(admin: Any, state: adminhome.State, name: str, settings: dict,
-           exports: list[tuple[str, dict]]) -> str:
-    kind = str(settings.get("kind") or "")
-    said, tone = _age(admin, state, name, "feed")
-    off = settings.get("enabled") is False
-    reads = str(settings.get("archive") or "").strip()
-    where = _chip(f"from {reads}") if reads and reads != "default" else ""
-    sent = NEWLINE.join(_export_row(admin, state, n, s, carried)
-                        for n, s, carried in exports)
-    if not exports:
-        sent = ('<li class="none">Nothing publishes this yet. '
-                '<a href="./new-export">Add an export</a></li>')
-    # "nothing written yet" is a long sentence naming a long path, and on
-    # this page it is one row among many. The path goes in the title.
-    shown = _short(said, 40) if tone == "note" else said
+def _export_row(admin: Any, state: adminhome.State, name: str,
+                settings: dict) -> str:
+    said, tone = _age(admin, state, name, "export")
+    where = _where(admin, settings)
+    sources = _feed_names(settings)
+    trigger = str(settings.get("trigger") or "feed")
+    if sources:
+        from_where = (f'<span class="note">Feeds: '
+                      f'{_links(sources, "feed")}</span>')
+    elif trigger == "feed":
+        from_where = '<span class="note warn">No feed selected</span>'
+    else:
+        from_where = f'<span class="note">Trigger: {html.escape(trigger)}</span>'
     return f'''
-  <section class="flow">
-    <div class="made">
-      <a class="title" href="./feed:{html.escape(name)}">{html.escape(name)}</a>
-      <span class="note">{html.escape(KINDS.get(kind, kind))}</span>
-      {where}
-      <span class="{tone}" title="{html.escape(said)}"
-        >{"switched off" if off else html.escape(shown)}</span>
-    </div>
-    <ul class="sends">{sent}</ul>
-  </section>'''
+      <li>
+        <a class="title" href="./export:{html.escape(name)}">{html.escape(name)}</a>
+        {_chip(str(settings.get("kind") or ""))}
+        {from_where}
+        <span class="note" title="{html.escape(where)}"
+              >To: {html.escape(_short(where))}</span>
+        {_status(said, tone, settings.get("enabled") is False)}
+      </li>'''
+
+
+def _upload_row(admin: Any, state: adminhome.State, name: str,
+                settings: dict, place: str,
+                place_labels: dict[str, str]) -> str:
+    said, tone = _age(admin, state, name, "upload")
+    return f'''
+      <li>
+        <a class="title" href="./upload:{html.escape(name)}">{html.escape(name)}</a>
+        {_chip(str(settings.get("kind") or ""))}
+        {_place_html(place, place_labels)}
+        {_status(said, tone, settings.get("enabled") is False)}
+      </li>'''
+
+
+def _notification_row(name: str, settings: dict) -> str:
+    off = settings.get("enabled") is False
+    return f'''
+      <li>
+        <a class="title" href="./notify:{html.escape(name)}">{html.escape(name)}</a>
+        {_chip(str(settings.get("kind") or ""))}
+        {'<span class="note when">Off</span>' if off else ""}
+      </li>'''
+
+
+def _forecast_row(admin: Any, state: adminhome.State, name: str,
+                  settings: dict, place: str,
+                  place_labels: dict[str, str]) -> str:
+    said, tone = _age(admin, state, name, "forecast")
+    return f'''
+      <li>
+        <a class="title" href="./forecast:{html.escape(name)}">{html.escape(name)}</a>
+        {_chip(str(settings.get("kind") or ""))}
+        {_place_html(place, place_labels)}
+        {_status(said, tone, settings.get("enabled") is False)}
+      </li>'''
+
+
+def _section(name: str, add_href: str, add_label: str,
+             rows: list[str], empty: str) -> str:
+    body = NEWLINE.join(rows) if rows else (
+        f'<li class="none">{html.escape(empty)}</li>')
+    ident = name.lower().replace(" ", "-")
+    return f'''
+<section class="publishing-section flow" aria-labelledby="publishing-{ident}">
+  <div class="made">
+    <h3 class="title" id="publishing-{ident}">{html.escape(name)}</h3>
+    <span class="note">{len(rows)}</span>
+    <a class="aside" href="{html.escape(add_href)}"
+       aria-label="Add {html.escape(name.lower())}">{html.escape(add_label)}</a>
+  </div>
+  <ul class="sends plain">{body}</ul>
+</section>'''
 
 
 def overview(admin: Any, message: str = "", error: str = "") -> str:
-    # Imported here rather than at the top: `adminarchives` reaches for
-    # `adminhome`, which this module imports at the top, and a circle at
-    # import time is a settings page that will not start.
-    from . import adminarchives
-
-    chain = adminarchives.chain(admin, "feeds")
-    feeds, exports, uploads = _rows_for(admin)
+    feeds, exports, uploads, notifications, forecasts = _rows_for(admin)
     state = adminhome.read(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     # The banner above the page says it. Printing it a second time in the
@@ -240,108 +287,85 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     # having happened.
     said = ""
 
-    by_feed: dict[str, list] = {name: [] for name in feeds}
-    homeless = []
+    place_labels: dict[str, str] = {}
+    implicit_place = ""
+    try:
+        # Kept local: adminarchives imports adminhome, which this module also
+        # imports, and doing this at module load would make a cycle.
+        from . import adminarchives
+
+        register = adminarchives.load(admin)
+        place_labels = {one.name: one.title for one in register.all()}
+        implicit_place = register.default_name()
+    except LookupError:
+        pass
+    except Exception:
+        log.debug("could not name places on the publishing page",
+                  exc_info=True)
+
+    by_feed: dict[str, list[str]] = {name: [] for name in feeds}
     for name, settings in sorted(exports.items()):
-        source = str(settings.get("source") or "").strip()
-        if source in by_feed:
-            by_feed[source].append((name, settings, None))
-        else:
-            homeless.append((name, settings))
-        # And under every feed it carries as well. One export sends a skin
-        # and the charts it draws from; the charts are a feed of their own
-        # and this page is where somebody looks to see that they go out.
-        for feed, into in _carried(settings):
+        for feed in _feed_names(settings):
             if feed in by_feed:
-                by_feed[feed].append((name, settings, into))
+                by_feed[feed].append(name)
 
-    blocks = [_block(admin, state, name, settings, by_feed[name])
-              for name, settings in sorted(feeds.items())]
-    if not blocks:
-        blocks = [('<p class="navempty">No feed is configured, so nothing '
-                   'is being written. <a href="./new-feed">Add a feed</a>.'
-                   "</p>")]
-
-    loose = ""
-    if homeless:
-        rows = NEWLINE.join(_export_row(admin, state, n, s)
-                            for n, s in homeless)
-        loose = f'''
-  <section class="flow loose">
-    <div class="made"><span class="title">Not tied to a feed</span>
-      <span class="note aside">these run on the archive record or on their
-      own clock</span></div>
-    <ul class="sends">{rows}</ul>
-  </section>'''
-
-    posted = ""
-    rows = []
-    for name, settings in sorted(uploads.items()):
-        age, tone = _age(admin, state, name, "upload")
-        off = settings.get("enabled") is False
-        rows.append(f'''
-      <li>
-        <a href="./upload:{html.escape(name)}">{html.escape(name)}</a>
-        {_chip(str(settings.get("kind") or ""))}
-        <span class="{tone}">{"switched off" if off
-                              else html.escape(age)}</span>
-      </li>''')
+    feed_rows = [
+        _feed_row(
+            admin, state, name, settings, by_feed[name],
+            str(settings.get("archive") or implicit_place).strip(),
+            place_labels)
+        for name, settings in sorted(feeds.items())]
+    export_rows = [
+        _export_row(admin, state, name, settings)
+        for name, settings in sorted(exports.items())]
+    upload_rows = [
+        _upload_row(
+            admin, state, name, settings,
+            str(settings.get("archive") or implicit_place).strip(),
+            place_labels)
+        for name, settings in sorted(uploads.items())]
     automatic = [one for one in state.uploads
                  if one.name not in uploads]
     for one in automatic:
-        rows.append(f'''
+        last = adminhome.ago(one.when) if one.when is not None else "Not run"
+        upload_rows.append(f'''
       <li><span class="title">{html.escape(one.name)}</span>
+        <span class="chip">Automatic</span>
         <span class="note">{html.escape(one.detail)}</span>
-        <span class="when">{html.escape(adminhome.ago(one.when))}</span></li>''')
-    if rows:
-        posted = f'''
-  <h3 class="sectionhead">Posted to services</h3>
-  <p class="lede">An upload sends readings rather than files, so it does not
-     wait for a feed. It reads the archive itself.</p>
-  <section class="flow">
-    <ul class="sends plain">{NEWLINE.join(rows)}</ul>
-  </section>'''
-    else:
-        posted = f'''
-  <h3 class="sectionhead">Posted to services</h3>
-  <p class="navempty">None yet. An upload sends the readings to a weather
-     service: {_services()}. <a href="./new-upload">Add an upload</a>.</p>'''
+        <span class="when">{html.escape(last)}</span></li>''')
+    notification_rows = [
+        _notification_row(name, settings)
+        for name, settings in sorted(notifications.items())]
+    forecast_rows = [
+        _forecast_row(
+            admin, state, name, settings,
+            str(settings.get("archive") or implicit_place).strip(),
+            place_labels)
+        for name, settings in sorted(forecasts.items())]
 
     return f'''
 <h2>Publishing</h2>
-{chain}
-<p class="lede">{adminarchives.CHAIN_SAID}</p>
 {problem}{said}
-<p class="lede">Feeds and exports are shown together because that is how
-   they run: an export set to "when the feed above has finished" starts the
-   moment its feed stops writing. That order is the whole point -- a page
-   that goes up before the chart it draws is a broken page nobody can
-   reproduce.</p>
-<div class="actions">
-  <a class="button" href="./new-feed">Add a feed</a>
-  <a class="button quiet" href="./new-export">Add an export</a>
-  <a class="button quiet" href="./new-upload">Add an upload</a>
-  <a class="button quiet" href="./new-notify">Add a notification</a>
+<div class="actions lead">
+  <a class="button" href="./new-feed">New feed</a>
+  <a class="button quiet" href="./charts">Charts</a>
+  <a class="button quiet" href="./new-export">New export</a>
+  <a class="button quiet" href="./new-upload">New upload</a>
+  <a class="button quiet" href="./new-notify">New notification</a>
+  <a class="button quiet" href="./new-forecast">New forecast</a>
 </div>
-{NEWLINE.join(blocks)}
-{loose}
-{posted}
+{_section("Feeds", "./new-feed", "Add", feed_rows, "No feeds.")}
+{_section("Exports", "./new-export", "Add", export_rows, "No exports.")}
+{_section("Uploads", "./new-upload", "Add", upload_rows, "No uploads.")}
+{_section("Notifications", "./new-notify", "Add", notification_rows,
+          "No notifications.")}
+{_section("Forecasts", "./new-forecast", "Add", forecast_rows, "No forecasts.")}
 '''
 
 
 def nav(admin: Any, active: str) -> list[str]:
-    feeds, exports, _uploads = _rows_for(admin)
     current = " aria-current='page'" if active == "publishing" else ""
-    # A count of both, because the point of the page is that they are one
-    # arrangement. Two numbers under two headings is what it replaces.
-    # Spelled out. "2 / 1" is a ratio to anybody who has not been told
-    # otherwise, and the `title` the first fix used does not exist on a
-    # phone and is not read aloud.
-    count = (f"{len(feeds)}&thinsp;feed{'' if len(feeds) == 1 else 's'}"
-             f", {len(exports)}&thinsp;export"
-             f"{'' if len(exports) == 1 else 's'}")
-    return [(f'<a href="./publishing"{current}>Publishing'
-             f'<span class="count">{count}</span></a>')]
+    return [f'<a href="./publishing"{current}>Publishing</a>']
 
 
 def feeds_dir(admin: Any) -> Path:
@@ -364,7 +388,7 @@ def context(admin: Any, active: str) -> str:
     if ":" not in active:
         return ""
     kind, _, name = active.partition(":")
-    feeds, exports, uploads = _rows_for(admin)
+    feeds, exports, uploads, notifications, forecasts = _rows_for(admin)
 
     if kind == "feed" and name in feeds:
         publishes = [n for n, one in sorted(exports.items())
@@ -401,12 +425,20 @@ def context(admin: Any, active: str) -> str:
 
     if kind == "upload" and name in uploads:
         reads = str(uploads[name].get("archive") or "").strip()
-        where = "the archive"
+        where = "the default place"
         if reads:
-            where = (f'the <a href="./archives">{html.escape(reads)}</a>'
-                     " archive")
+            where = (f'<a href="./places">{html.escape(reads)}</a>')
         return _band(f"Sends readings from {where}",
                      "it does not wait for a feed")
+
+    if kind == "notify" and name in notifications:
+        channel = str(notifications[name].get("kind") or "")
+        return _band("Operational notifications", html.escape(channel))
+    if kind == "forecast" and name in forecasts:
+        reads = str(forecasts[name].get("archive") or "").strip()
+        where = (f'<a href="./places">{html.escape(reads)}</a>'
+                 if reads else "the default place")
+        return _band(f"Forecast for {where}", "")
     return ""
 
 

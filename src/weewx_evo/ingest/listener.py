@@ -29,8 +29,7 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
-from .. import roles
-from ..db.live import LiveStore, Packet
+from ..db.live import LiveStore, Packet, sender_id
 from ..netaccess import PRIVATE_ONLY, Access
 from ..ratelimit import Limits
 from . import drivers, statuspage
@@ -40,6 +39,16 @@ log = logging.getLogger(__name__)
 MAX_BODY = 1 << 20  # 1 MB. No console sends more; anything that does is not one.
 #: A kept upload is for reading, so it is capped well below MAX_BODY.
 MAX_RAW = 8192
+MAX_DIAGNOSTICS = 256
+INVALID_DIALECT = "<invalid>"
+
+
+def _first(seen: set, key: object) -> bool:
+    """Remember a diagnostic without letting attacker-made names grow forever."""
+    if key in seen or len(seen) >= MAX_DIAGNOSTICS:
+        return False
+    seen.add(key)
+    return True
 
 
 class Ingest:
@@ -55,7 +64,8 @@ class Ingest:
                  access: Access = PRIVATE_ONLY,
                  limits: Limits | None = None,
                  stations: object | None = None,
-                 sightings: object | None = None) -> None:
+                 sightings: object | None = None,
+                 infer_unknown: str = "series") -> None:
         self.store = store
         self.token = token
         self.default_driver = default_driver
@@ -67,6 +77,17 @@ class Ingest:
         self.stations = stations
         #: Where uploads from anything unannounced are noted.
         self.sightings = sightings
+        #: Turns a stored reading into archive column names, for the
+        #: status page's headline. The table underneath it shows the
+        #: names the console used, which is the point of that page.
+        self.placer: object | None = None
+        #: Where a raw name nothing has placed is noted, with whatever the
+        #: driver would guess about it. The one place inference runs, so
+        #: that the read side can be a lookup -- see ingest/proposals.py.
+        self.proposals: object | None = None
+        #: What to do about a name no catalog knows. Passed to the driver
+        #: when a proposal is recorded and nowhere else.
+        self.infer_unknown = infer_unknown
         #: Called after packets are stored, for feeds that want every reading
         #: rather than every record. A callback rather than a reference to the
         #: feed runner: the listener has no business knowing feeds exist, and
@@ -85,7 +106,24 @@ class Ingest:
         self.duplicates = 0
         self.rejected = 0
         self.last_packet: float | None = None
+        self._undescribed: set[tuple[str, str]] = set()
         self._lock = threading.Lock()
+        self._sync_sender_labels()
+
+    def _sync_sender_labels(self) -> None:
+        """Publish listener-owned names through the live DB boundary."""
+        if self.stations is None:
+            return
+        sync = getattr(self.store, "sync_sender_labels", None)
+        if sync is None:
+            return
+        try:
+            sync(self.stations)
+        except Exception:
+            # A label is presentation metadata. Losing it must be loud, but it
+            # must not lose the raw measurement whose canonical sender id is
+            # still written with the packet.
+            log.exception("could not update sender labels in the live database")
 
     def authorised(self, path: str, query: str = "") -> bool:
         """Whether a request carries the token.
@@ -220,14 +258,32 @@ class Ingest:
         stored = 0
         for one in packets:
             packet = self._named(one, name, peer)
-            if packet is None:
-                # An extra station that sent nothing this archive has room
-                # for. Said once by `roles.apply`, not once per upload.
-                continue
+            if (packet.dialect is not None
+                    and not drivers.valid_dialect_name(packet.dialect)):
+                if _first(self._undescribed, (name, INVALID_DIALECT)):
+                    log.error(
+                        "the %s driver returned an invalid dialect name; its "
+                        "readings are kept but cannot be archived", name)
+                packet = replace(packet, dialect=INVALID_DIALECT, mapping=None)
+            else:
+                mapping = drivers.dialect_spec_of(driver, packet)
+                if mapping is None:
+                    key = (name, packet.dialect)
+                    if packet.dialect is not None and _first(
+                            self._undescribed, key):
+                        log.error(
+                            "the %s driver returned raw %r readings without a "
+                            "declarative dialect mapping; they are kept, but an "
+                            "archive cannot translate them", name, packet.dialect)
+                # Always replace it. A driver that labels its names as WeeWX
+                # cannot smuggle a large, unvalidated document into the DB by
+                # setting mapping while leaving dialect empty.
+                packet = replace(packet, mapping=mapping)
             if raw is not None and packet.raw is None:
                 packet = replace(packet, raw=raw)
             if self.store.add(packet):
                 stored += 1
+                self._propose(packet)
             else:
                 with self._lock:
                     self.duplicates += 1
@@ -245,21 +301,54 @@ class Ingest:
                 log.exception("could not hand the reading on to the feeds")
         return stored
 
-    def _named(self, packet: Packet, driver: str, peer: str) -> Packet:
-        """Record the packet under its station's name, or note a stranger.
+    def _propose(self, packet: Packet) -> None:
+        """Note any raw name this installation has not placed before.
 
-        The identity a driver puts on a packet is the hardware's: an Ecowitt
-        PASSKEY, a Weather Underground ID, a serial. The name is the
-        operator's, and it is what `sources.toml` writes its rules against, so
-        renaming a station must not mean rewriting those rules. Hence the
-        translation here rather than in each driver.
+        The one place inference runs. Costs a set difference on the ordinary
+        path -- a console sends the same field names every sixteen seconds,
+        so after the first packet there is nothing new and the driver is not
+        asked anything.
 
-        **Nothing is refused.** An upload from something not announced is
-        stored exactly as it arrived and noted on the settings page. Turning
-        that into a refusal is a separate decision with a separate cost, and
-        making it here would mean an upgrade quietly stops recording a station
-        that has been working for a year.
+        Never fatal. A guess that cannot be recorded is a row missing from a
+        settings page; the reading itself is already stored, which is what
+        makes the guess recoverable at all.
         """
+        if self.proposals is None:
+            return
+        try:
+            # A placement is keyed by the immutable sender id. The friendly
+            # station name is live-database metadata for pages only; using it
+            # here would make a rename change which decision a rebuild reads.
+            self.proposals.saw(packet,
+                               packet.sender_id,
+                               self.registry.get(packet.driver),
+                               self.infer_unknown)
+        except Exception:
+            log.debug("could not record what %r sends", packet.driver, exc_info=True)
+
+    def _named(self, packet: Packet, driver: str, peer: str) -> Packet:
+        """Stamp the packet with the driver that read it, and note a stranger.
+
+        The driver name is stamped here rather than by the driver itself
+        because this is what knows the name it is registered under -- one
+        driver answering two protocols is registered twice, and a driver that
+        had to know its own name would be one more thing to keep in step.
+
+        Together with the identity the hardware gave, that pair is how a
+        packet is recognised for as long as it is in the table. **The station
+        name is not written down**: it is a lookup that changes, and freezing
+        it here is what used to split a series in two the moment somebody
+        renamed a console.
+
+        **Nothing is refused, and nothing is left out.** An upload from
+        something not announced is stored exactly as it arrived and noted on
+        the settings page. What a console records, which of its readings this
+        installation wants and where they go is decided when a record is
+        built, from files somebody can change afterwards -- see
+        `placement.py`.
+        """
+        packet = replace(packet, driver=driver,
+                         sender=sender_id(driver, packet.identity))
         if self.stations is None:
             return packet
         # The settings page writes that file and this is a different process.
@@ -269,49 +358,16 @@ class Ingest:
         # which the page looks broken.
         refresh = getattr(self.stations, "refresh", None)
         if refresh is not None:
-            refresh()
-        station = self.stations.by_identity(driver, packet.source)
-        if station is not None:
-            return self._as_configured(packet, station)
-        if self.sightings is not None:
-            self.sightings.saw(driver, packet.source, peer,
+            if refresh():
+                self._sync_sender_labels()
+        if self.stations.by_identity(driver, packet.identity) is None and self.sightings:
+            # The raw names, which is what somebody adopting this console
+            # actually has to look at. They used to be the mapped ones, so a
+            # console whose readings the catalog had not placed showed up with
+            # a shorter list than it sent and no way to see the difference.
+            self.sightings.saw(driver, packet.identity, peer,
                                fields=sorted(packet.data)[:12])
         return packet
-
-    @staticmethod
-    def _as_configured(packet: Packet, station: object) -> Packet:
-        """The packet under its station's name, with what it asked for left out.
-
-        Applied here rather than in each driver, because it is not a question
-        about a protocol. Whether the room a console stands in is worth
-        recording is a fact about that console: one in a living room measures
-        a living room, one in a shed on the same station measures a shed, and
-        only one of them is worth a column. It used to be a setting on the
-        Weather Underground driver and absent from the Ecowitt one, which was
-        the same question answered twice and once not at all.
-        """
-        data = packet.data
-        if not getattr(station, "indoor", True):
-            dropped = {name: value for name, value in data.items()
-                       if name not in ("inTemp", "inHumidity", "inDewpoint")}
-            if len(dropped) != len(data):
-                data = dropped
-
-        # And out of the main station's way, where this is not it. Two
-        # stations of one archive both sending `outTemp` would otherwise take
-        # turns writing it every few seconds, and the column would hold a
-        # mixture nothing afterwards can separate. See roles.py, and note
-        # that a `main` station -- which is every station until somebody says
-        # otherwise -- passes through this untouched.
-        role = getattr(station, "role", roles.MAIN)
-        if role != roles.MAIN:
-            data = roles.apply(data, role, getattr(station, "channel", 0),
-                               station.name)
-            if not data:
-                return None
-        if station.name == packet.source and data is packet.data:
-            return packet
-        return replace(packet, source=station.name, data=data)
 
     def _redacted(self, driver: object, body: bytes) -> str | None:
         """The upload as it arrived, with whatever the driver calls secret gone.
@@ -369,7 +425,30 @@ class _Handler(BaseHTTPRequestHandler):
     ingest: Ingest  # set on the server class
 
     def log_message(self, fmt: str, *args: object) -> None:
-        log.debug("%s %s", self.address_string(), fmt % args)
+        # BaseHTTPRequestHandler's ordinary line contains the complete
+        # request target. Here that is a credential: either the upload token
+        # is a path segment or a WU console puts PASSWORD/ID in the query.
+        # Keep the useful method/status/size and never format the target.
+        if fmt == '"%s" %s %s' and len(args) >= 3:
+            method = str(args[0]).split(" ", 1)[0]
+            log.debug("%s %s %s %s", self.address_string(), method,
+                      args[1], args[2])
+        else:
+            log.debug("%s HTTP request", self.address_string())
+
+    def _request_length(self) -> int:
+        """A single non-negative length for a body this server can parse."""
+        if self.headers.get("Transfer-Encoding") is not None:
+            raise ValueError("transfer encoding is not supported")
+        values = self.headers.get_all("Content-Length", [])
+        if len(values) > 1:
+            raise ValueError("more than one content length")
+        if not values:
+            return 0
+        raw = values[0].strip()
+        if not raw or not raw.isascii() or not raw.isdecimal():
+            raise ValueError("invalid content length")
+        return int(raw)
 
     def handle_one_request(self) -> None:
         """Every request, with a net under it.
@@ -460,14 +539,43 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         if not self._permitted():
+            # The body is still on the wire. It must not become a second
+            # request after the refusal already sent on this connection.
+            self.close_connection = True
+            return
+        path = urlparse(self.path).path
+        # Authenticate before waiting for a body. Otherwise anybody who can
+        # reach the port can occupy a request thread by announcing a long body
+        # and sending it one byte at a time. `submit` checks again at the data
+        # boundary; this early check exists only to decide whether to read.
+        if not self._has_token(path):
+            with self.ingest._lock:
+                self.ingest.rejected += 1
+            log.warning("rejected upload from %s: bad or missing token",
+                        self.client_address[0])
+            self.close_connection = True
+            self._reply(404, b"not found", headers={"Connection": "close"})
             return
         try:
-            length = int(self.headers.get("Content-Length") or 0)
+            length = self._request_length()
         except ValueError:
-            length = 0
-        body = self.rfile.read(min(length, MAX_BODY)) if length else b""
+            with self.ingest._lock:
+                self.ingest.rejected += 1
+            self.close_connection = True
+            self._reply(400, b"invalid request body length",
+                        headers={"Connection": "close"})
+            return
+        if length > MAX_BODY:
+            with self.ingest._lock:
+                self.ingest.rejected += 1
+            # Truncating leaves attacker-controlled bytes on a persistent
+            # connection. Refuse the whole upload and close it instead.
+            self.close_connection = True
+            self._reply(413, b"upload is too large",
+                        headers={"Connection": "close"})
+            return
+        body = self.rfile.read(length) if length else b""
 
-        path = urlparse(self.path).path
         _stored, reason, response = self.ingest.submit(body, path,
                                                        self.client_address[0])
         if reason == "unauthorised":
@@ -570,10 +678,18 @@ class _Datagram(socketserver.BaseRequestHandler):
         if not self.ingest.limits.allow(peer):
             return
         body = self.request[0]
-        # A datagram has no path to carry a token, so the driver is fixed at
-        # configuration time and the port itself is the access control. Nothing
-        # is sent back: there is nobody listening for a reply.
-        self.ingest.submit(body, f"/{self.driver}/", self.client_address[0])
+        # A datagram has no path to carry a token, so the port itself is the
+        # access control. Nothing is sent back: there is nobody listening.
+        #
+        # The driver is asked for rather than fixed. Naming it in the path --
+        # which is what this did -- means `driver_for` matches the segment and
+        # never reaches detection, and the configured name is `json`: a
+        # WeatherFlow hub's broadcast went to the envelope parser, which reads
+        # it as JSON and stores `serial_number`, `type` and `obs` as though
+        # they were measurements. It is the only protocol here that
+        # broadcasts, and it recognises its own datagram, so ask.
+        name = self.ingest.registry.claimant(body, {"path": "/"}) or self.driver
+        self.ingest.submit(body, f"/{name}/", self.client_address[0])
 
 
 class UdpListener:
@@ -622,8 +738,13 @@ def push(packets: list[Packet], host: str = "127.0.0.1", port: int = 8000,
 
     endpoint = (as_driver or "json").strip("/") or "json"
     path = f"/{token}/{endpoint}/" if token else f"/{endpoint}/"
+    # The identity, which is what the envelope's `source` means: how this
+    # collector names itself, for `stations.by_identity` to match on. Falls
+    # back to `source` for a caller holding a packet that has been through a
+    # placer and carries the name somebody chose instead.
     body = json.dumps([{
-        "dateTime": p.dateTime, "usUnits": p.usUnits, "source": p.source,
+        "dateTime": p.dateTime, "usUnits": p.usUnits,
+        "source": p.identity or p.source,
         "kind": p.kind, "interval": p.interval, "data": p.data,
     } for p in packets]).encode()
 

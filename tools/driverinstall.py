@@ -61,7 +61,7 @@ class TinyDriver:
         if not data:
             return []
         return [Packet(dateTime=int(meta["received"]), usUnits=METRICWX,
-                       data=data, source="tiny", kind="loop")]
+                       data=data, identity="tiny", kind="loop")]
 
     def status(self):
         return {"reads": "t=;h=;p="}

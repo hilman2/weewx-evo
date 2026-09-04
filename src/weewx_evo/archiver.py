@@ -31,10 +31,10 @@ from dataclasses import dataclass, field
 from . import units
 from .aggregate import Accumulator, start_of_archive_day
 from .db.archive import ArchiveStore
-from .db.live import DEFAULT_ARCHIVE, LiveStore, interval_stop
+from .db.live import DEFAULT_ARCHIVE, LiveStore, interval_stop, sender_parts
 from .derive import Deriver
 from .obstypes import DEFAULT_POLICY, Policy
-from .quality import Check
+from .quality import Check, sender_for
 from .quality import Policy as QualityPolicy
 from .sources import Policy as SourcePolicy
 from .sources import apply as source_merge
@@ -55,6 +55,38 @@ def _run_up(policy: QualityPolicy, seconds: int) -> int:
         return seconds
     longest = max((rule.stuck or 0) for rule in policy.limits.values())
     return min(MAX_RUN_UP, max(seconds, longest * 60))
+
+
+def _pairs(stations: Iterable) -> list[tuple[str, str]]:
+    """The station list as (driver, identity) pairs, or a clear refusal.
+
+    A caller holding station *names* is the mistake this catches, and it is
+    one that used to pass: `tuple("kirchdorf")` is thirteen single characters,
+    which selects nothing at all. The archive would then have been built from
+    an empty table, stored, and reported as an interval with no readings --
+    which is what a station that has gone quiet also looks like.
+    """
+    found = []
+    for one in stations:
+        if isinstance(one, str) or len(tuple(one)) != 2:
+            raise TypeError(
+                f"an archiver takes (driver, identity) pairs, not {one!r}. "
+                "A name is a lookup that changes; the live table is keyed on "
+                "the pair. `placement.Placer.identities` turns one into the "
+                "other.")
+        driver, identity = one
+        found.append((str(driver), str(identity)))
+    return found
+
+
+def _sender_ids(senders: Iterable[str]) -> list[str]:
+    """Strict canonical ids, never friendly names or driver objects."""
+    found = []
+    for one in senders:
+        value = str(one)
+        sender_parts(value)
+        found.append(value)
+    return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,34 +118,55 @@ class Archiver:
                  loop_hilo: bool = True, sources: SourcePolicy | None = None,
                  deriver: Deriver | None = None,
                  name: str = DEFAULT_ARCHIVE,
-                 stations: Iterable[str] | None = None,
-                 quality: QualityPolicy | None = None) -> None:
+                 stations: Iterable[tuple[str, str]] | None = None,
+                 quality: QualityPolicy | None = None,
+                 placer: object | None = None,
+                 senders: Iterable[str] | None = None) -> None:
         self.live = live
         self.archive = archive
         #: Which series this is. It keys this archiver's own place in the
         #: pending table, so two of them working the same live table do not
         #: clear each other's work.
         self.name = name
-        #: Whose packets belong here, or None for all of them. None is the
-        #: single-archive case and is what every installation had before
-        #: there could be two: it takes everything that arrives, including
-        #: sources nobody has announced. With two archives that guess is not
-        #: available, so each is told.
+        #: Which consoles belong here, as (driver, identity) pairs, or None
+        #: for all of them. None is the single-archive case and is what every
+        #: installation had before there could be two: it takes everything
+        #: that arrives, including consoles nobody has announced. With two
+        #: archives that guess is not available, so each is told.
+        #:
+        #: The pair rather than the name, because the live table records the
+        #: pair -- a name is a lookup that changes, and this list has to go on
+        #: selecting the same rows after somebody renames a console.
+        if stations is not None and senders is not None:
+            raise TypeError("choose canonical senders or legacy station pairs")
+        self.stations = None if stations is None else _pairs(stations)
+        #: Canonical live-journal keys for callers without a place-aware
+        #: placer. The service gets its current selection from
+        #: ``placer.selected_senders()`` at the start of every build, so a
+        #: member edit in archives.toml needs no restart.
+        self.senders = None if senders is None else _sender_ids(senders)
+        #: Turns a stored reading into an archive column, out of
+        #: `placement.toml`. None means the packets are taken as they are,
+        #: which is what a WeeWX-named packet from a collector or a test
+        #: already is.
+        self.placer = placer
+        #: Which dialects have already been reported as unplaceable, so a
+        #: misconfiguration is one line rather than one per packet.
+        self._said_unplaced: set[str] = set()
         self.interval_seconds = interval_seconds
         self.policy = policy
         # Whether LOOP packets sharpen the daily highs and lows. WeeWX's
         # StdArchive option of the same name, and on by default there too.
         self.loop_hilo = loop_hilo
-        # Which station wins for which field when several report it. Empty by
-        # default, which means every packet contributes everything it carries --
-        # the right answer when there is only one station.
-        self.sources = sources or SourcePolicy()
+        # Optional low-level source selection for callers of this class. The
+        # product runtime never supplies it: Place membership, member roles and
+        # Place-scoped mappings are its complete routing authority.
+        self.sources = sources
         # Readings that follow from other readings: dew point, wind chill,
         # and -- the one that is a measurement rather than a convenience --
         # rain, which almost no console sends and which is otherwise absent
         # from the record entirely.
         self.deriver = deriver or Deriver()
-        self.stations = None if stations is None else list(stations)
         # Calibration and limits. Applied per packet and before deriving, so
         # a corrected reading is what the dew point is computed from and a
         # refused one never reaches the accumulator. Empty by default.
@@ -131,19 +184,48 @@ class Archiver:
         seconds = seconds or self.interval_seconds
         start = stop - seconds
 
+        # One reading of the placements for the whole interval, run-up
+        # included. Consulted live, a rebuild running while somebody saves the
+        # settings page would place the first half of a span by one file and
+        # the second half by another -- and the record it produced would be
+        # plausible, reproducible by nothing, and impossible to notice.
+        placer = self._placing()
+        place_selects = (placer is not None
+                         and getattr(placer, "archive_definition", None) is not None
+                         and hasattr(placer, "selected_senders"))
+        selected_senders = (placer.selected_senders()
+                            if place_selects else self.senders)
+        selected_stations = (None if selected_senders is not None
+                             or place_selects else self.stations)
+
         loop, archived = [], []
-        for packet in self.live.packets(start, stop,
-                                        sources=self.stations):
-            (archived if packet.kind == "archive" else loop).append(packet)
+        for packet in self.live.packets(
+                start, stop, stations=selected_stations,
+                senders=selected_senders):
+            if placer is None:
+                self._unplaced(packet)
+                placed = packet
+            else:
+                placed = placer.place(packet)
+            if placed is None:
+                # Nothing this archive has a column for. An extra station's
+                # upload of wind and rain, or a console every one of whose
+                # readings is placed nowhere.
+                continue
+            (archived if placed.kind == "archive" else loop).append(placed)
 
-        # Decide which station supplies which field before any arithmetic. Two
-        # thermometers must not be averaged into one; one of them is the series
-        # and the other is a different place.
-        loop, provenance = source_merge(loop, self.sources)
-        archived, archive_provenance = source_merge(archived, self.sources)
-        provenance = {**archive_provenance, **provenance}
+        # `sources.Policy` remains an explicit low-level API, but is not part
+        # of the configured Archiver path. A caller opting into it gets the old
+        # per-field reduction after placement; ordinary runs have no second
+        # routing decision hidden behind their Place policy.
+        provenance: dict[str, str] = {}
+        if self.sources is not None:
+            loop, provenance = source_merge(loop, self.sources)
+            archived, archive_provenance = source_merge(archived, self.sources)
+            provenance = {**archive_provenance, **provenance}
 
-        checker = self._checker(start, seconds)
+        checker = self._checker(start, seconds, placer,
+                                selected_senders, selected_stations)
 
         accum = Accumulator(start, stop, policy=self.policy)
         n = 0
@@ -197,7 +279,58 @@ class Archiver:
                      provenance=provenance,
                      dropped=dict(checker.dropped) if checker else {})
 
-    def _checker(self, start: int, seconds: int) -> Check | None:
+    def _unplaced(self, packet: object) -> None:
+        """Say once that a packet arrived in a vocabulary nothing translates.
+
+        An archiver with no placer takes the readings as they are, which is
+        right for a WeeWX-named packet from a collector or a test. Given one
+        that names a dialect it is not right and it is not visible: every
+        field goes to the accumulator under the console's own name, the
+        archive has a column for none of them, and the record written is
+        empty. It builds, it stores, it reports success.
+        """
+        dialect = getattr(packet, "dialect", None)
+        if dialect is None or dialect in self._said_unplaced:
+            return
+        self._said_unplaced.add(dialect)
+        log.error(
+            "%s: packets arrive as %r and this archiver has no placement, so their "
+            "readings keep the names the console used and the archive has a column "
+            "for none of them. Records will be built and will be empty.",
+            self.name, dialect)
+
+    def _placing(self):
+        """This archiver's placements, re-read and then frozen for one build.
+
+        Re-read, because the settings page writes that file and this is a
+        different process: without it a placement saved on the page would not
+        reach a record until somebody restarted, which is the promise the page
+        makes and the bug this whole arrangement exists to make impossible.
+
+        Frozen, because `build` has to be a function of a time span. Consulted
+        live, a rebuild running while somebody saves would place the first half
+        of a span by one file and the second half by another, and the record it
+        produced would be plausible and reproducible by nothing.
+
+        `replace` rather than two assignments: the merged copies the placer
+        keeps have to go with the file they were merged from, and a caller
+        that swapped one and kept the other gets a placer reporting the new
+        file and applying the old one.
+
+        None where nothing places, which is a store handed WeeWX-named
+        packets by a test or by a collector and given no placer at all.
+        """
+        if self.placer is None:
+            return None
+        refresh = getattr(self.placer, "refresh", None)
+        if refresh is not None:
+            refresh()
+        self.placer.placements.refresh()
+        self.placer.replace(placements=self.placer.placements.snapshot())
+        return self.placer
+
+    def _checker(self, start: int, seconds: int, placer=None,
+                 senders=None, stations=None) -> Check | None:
         """A fresh checker for this span, seeded from the packets before it.
 
         Fresh, because `build` has to be a function of a time span and
@@ -209,23 +342,38 @@ class Archiver:
         the first packet of an interval has none. Without the run-up, a
         boundary is a hole a spike walks through every five minutes. It reads
         the same live table the span comes from, so it is deterministic.
+
+        The run-up is placed like everything else. Missed, the limits would be
+        matched against raw names, no rule would find its field, and the spike
+        and stuck checks would run over the boundary they exist for and
+        silently pass everything.
         """
         if not self.quality:
             return None
         checker = Check(self.quality)
         run_up = _run_up(self.quality, seconds)
         if run_up:
-            checker.context(self.live.packets(start - run_up, start,
-                                              kind="loop",
-                                              sources=self.stations))
+            checker.context(self._placed(
+                self.live.packets(start - run_up, start, kind="loop",
+                                  stations=stations, senders=senders), placer))
         return checker
+
+    @staticmethod
+    def _placed(packets, placer):
+        for packet in packets:
+            found = placer.place(packet) if placer is not None else packet
+            if found is not None:
+                yield found
 
     def _sound(self, checker: Check | None, packet: object) -> dict:
         """One packet, corrected and checked. The record itself where neither."""
         record = packet.record()
         if checker is None:
             return record
-        station = getattr(packet, "source", "") or ""
+        # Calibration follows the immutable live-journal key. A display name
+        # may change, and the bare hardware identity is not unique across
+        # drivers; neither may select a physical correction.
+        station = sender_for(packet)
         system = units.system_from(record.get("usUnits"),
                                    default=units.METRICWX)
         record = checker.calibrate(record, station, system)
@@ -258,7 +406,11 @@ class Archiver:
         sod = start_of_archive_day(built.stop)
         day = self.archive._load_day(sod, built.record.get("usUnits"))
         day.merge_hilo(built.accumulator)
-        with self.archive.conn:
+        # ArchiveStore runs in autocommit mode. Its connection context manager
+        # therefore does not start a transaction; without the explicit helper
+        # every one of the standard schema's daily rows is an individual
+        # FULL-sync commit. Keep the record and its LOOP extrema atomic, too.
+        with self.archive._transaction():
             self.archive._store_day(sod, day)
 
     # -- the loop --------------------------------------------------------

@@ -94,10 +94,10 @@ rewrites every daily-summary table of a day for **each individual** record. At
 one record every five minutes you do not notice; on a catch-up over a year you
 do.
 
-`set_meta` is also where drivers put their state: the Ecowitt driver keeps its
-console list here, under the same key WeeWX writes it under — which is how a
-shared database keeps the same station.
-→ [Drivers](Drivers#driver-state)
+`set_meta` also supports the isolated `ArchiveState` adapter. The production
+Listener never opens an archive: sender identity is stored with each live
+packet, and Place membership selects what the Archiver reads.
+→ [Drivers](Drivers#driver-state), [Architecture](Architecture)
 
 ### Columns
 

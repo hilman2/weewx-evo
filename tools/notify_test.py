@@ -191,8 +191,13 @@ def test_the_state_survives_a_restart() -> None:
 # ---------------------------------------------------------------------------
 
 class Station:
+    # Named by the pair the live table records, because that is what the
+    # alarms have to select rows on. A fake with only a name would let a
+    # check pass while the query it makes selects nothing.
     def __init__(self, name: str) -> None:
         self.name = name
+        self.driver = "json"
+        self.identity = name
 
 
 class Stations:
@@ -207,7 +212,7 @@ def a_live_table(packets: list[tuple[str, float, dict]]) -> LiveStore:
     live = LiveStore(Path(tempfile.mkdtemp()) / "live.sdb")
     for source, when, data in packets:
         live.add(Packet(dateTime=int(when), usUnits=units.METRICWX,
-                        data=data, source=source))
+                        data=data, driver="json", identity=source))
     return live
 
 
@@ -237,9 +242,9 @@ def test_silence_is_measured_against_the_station_s_own_rhythm() -> None:
                          for i in range(30)])
     try:
         check("measured, not assumed",
-              round(notify_rules.rhythm(live, "fast", now)), 16)
+              round(notify_rules.rhythm(live, "json", "fast", now)), 16)
         check("and a station nobody has heard from is not measured",
-              notify_rules.rhythm(live, "nobody", now),
+              notify_rules.rhythm(live, "json", "nobody", now),
               notify_rules.DEFAULT_RHYTHM)
     finally:
         live.close()

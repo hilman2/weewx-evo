@@ -8,10 +8,12 @@
 # `import sqlite3` is all it takes; no interface prevents code from going
 # around an interface. What does prevent it is not having the file.
 #
-#   * The listener holds the drivers. It mounts the live database read-write
-#     and the archive not at all. A driver in it can try whatever it likes.
-#   * The archiver holds no drivers, listens on nothing, and mounts both. It
-#     reads packets the listener wrote and writes records.
+#   * The listener holds the drivers. It mounts the live database and the
+#     configuration, but no archive files. A driver in it can try whatever
+#     it likes without reaching an archive.
+#   * The archiver holds no drivers, listens on nothing, and mounts the same
+#     configuration plus live and archive storage. It reads packets the
+#     listener wrote and writes records.
 #
 # They never speak to each other. The live database is the entire interface,
 # which is what makes splitting them a change to this file and to nothing else.
@@ -24,10 +26,16 @@ services:
     command: ["listen"]
     volumes:
       - /opt/weewx-evo/data/live:/data
+      # evo.toml, archives.toml, stations.toml and placement.toml. The
+      # listener needs the archive names to mark each interval pending, but
+      # never opens the archive paths named there.
+      - /opt/weewx-evo/data/config:/config
     environment:
       - WEEWX_EVO_LIVE=/data/live.sdb
-      # No WEEWX_EVO_ARCHIVE. A driver that wants somewhere to remember
-      # something gets a file in /data, not the archive's metadata table.
+      - WEEWX_EVO_CONFIG=/config/evo.toml
+      # No WEEWX_EVO_ARCHIVE. /config/archives.toml is required. A driver
+      # that wants somewhere to remember something gets a file in /data,
+      # not an archive's metadata table.
       - WEEWX_EVO_STATE_DIR=/data
       - WEEWX_EVO_DRIVER_DIR=/data/drivers
     read_only: true
@@ -43,15 +51,18 @@ services:
     container_name: weewx-evo-archiver
     restart: unless-stopped
     mem_limit: 256m
-    command: ["archive", "--spool", "/data/packets"]
+    command: ["archive", "--spool", "/live/packets"]
     volumes:
-      # The live database read-only: this side only ever reads packets.
-      - /opt/weewx-evo/data/live:/data/live:ro
+      # SQLite readers need to maintain WAL shared memory beside live.sdb,
+      # so this directory is writable even though the archiver never inserts
+      # packets into it.
+      - /opt/weewx-evo/data/live:/live
       - /opt/weewx-evo/data/archive:/data
+      - /opt/weewx-evo/data/config:/config:ro
     environment:
       - TZ=Europe/Berlin
-      - WEEWX_EVO_LIVE=/data/live/live.sdb
-      - WEEWX_EVO_ARCHIVE=/data/weewx.sdb
+      - WEEWX_EVO_LIVE=/live/live.sdb
+      - WEEWX_EVO_CONFIG=/config/evo.toml
       # Not set here. The paths above are container layout and belong in
       # this file; the interval and the retention are settings, and a value
       # here would outrank the one on the settings page without saying so.
@@ -71,8 +82,7 @@ services:
 #
 #   * Retention belongs to the archiver, not the listener. Packets may only be
 #     dropped once they are in a record, and only this side knows that.
-#   * The live database is opened read-only here, but SQLite in WAL mode needs
-#     to write `-shm` and `-wal` beside it to read at all. Mounting the
-#     directory read-only is therefore not the same as mounting the file
-#     read-only, and the former will fail. Use a user without write permission
-#     on the archive instead, which is the check that actually matters.
+#   * SQLite in WAL mode needs to write `-shm` beside the live database even
+#     for a reader. The live directory is therefore writable on both sides;
+#     isolation is applied to the archive directory, which the listener never
+#     mounts.

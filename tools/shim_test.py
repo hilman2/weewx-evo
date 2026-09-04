@@ -124,7 +124,12 @@ def the_envelope() -> None:
     check("dateTime moved out", packet.dateTime, 1787800000)
     check("usUnits moved out", packet.usUnits, weewx.METRIC)
     check("the reading stayed in", packet.data, {"outTemp": 21.5})
-    check("source carried", packet.source, "somewhere")
+    # As the identity, which is what a collector naming itself means: the
+    # listener looks that up in the station register like any PASSKEY. The
+    # name it answers to is not written into the packet, because a name is a
+    # lookup and freezing one there is what splits a series on a rename.
+    check("the collector names itself", packet.identity, "somewhere")
+    check("and its names are already ours", packet.dialect, None)
 
     # A record with no time would otherwise be stamped with the moment we
     # noticed it, which is a different measurement that looks identical.

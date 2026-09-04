@@ -32,12 +32,13 @@ import tempfile
 import urllib.request
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from weewx_evo import units
 from weewx_evo.db.archive import ArchiveStore
-from weewx_evo.db.live import LiveStore, Packet
+from weewx_evo.db.live import LiveStore, Packet, sender_id
 from weewx_evo.exports import record as export_record
 from weewx_evo.metrics import Metrics
 
@@ -168,11 +169,11 @@ def a_station() -> tuple[Path, Path]:
         for index in range(40):
             live.add(Packet(dateTime=int(NOW - index * 30),
                             usUnits=units.METRICWX,
-                            data={"outTemp": 20.0}, source="haus"))
+                            data={"outTemp": 20.0}, identity="haus"))
         for index in range(20):
             live.add(Packet(dateTime=int(NOW - 3600 - index * 60),
                             usUnits=units.METRICWX,
-                            data={"outTemp": 19.0}, source="schuppen"))
+                            data={"outTemp": 19.0}, identity="schuppen"))
         export_record.write(live, "site", error="refused", when=NOW - 300)
         export_record.write(live, "site", error="refused", when=NOW - 100)
 
@@ -221,7 +222,10 @@ def test_a_label_with_a_quotation_mark_survives() -> None:
     with LiveStore(live_path) as live:
         live.add(Packet(dateTime=int(NOW - 10), usUnits=units.METRICWX,
                         data={"outTemp": 20.0},
-                        source='Kirchdorf "old"'))
+                        identity='Kirchdorf "old"'))
+        live.sync_sender_labels([SimpleNamespace(
+            driver="unknown", identity='Kirchdorf "old"',
+            name='Kirchdorf "old"')])
     found = parse(some_metrics().render(NOW))
     names = {marks.get("station")
              for marks, _v in found["weewx_evo_station_last_seen_seconds"]}
@@ -271,15 +275,15 @@ def test_a_station_that_stopped_shows_as_stopped() -> None:
     found = parse(some_metrics().render(NOW))
     close_to("the one still reporting",
              only(found, "weewx_evo_station_last_seen_seconds",
-                  station="haus"), 0, tol=60)
+                  station=sender_id("unknown", "haus")), 0, tol=60)
     close_to("and the one that stopped an hour ago",
              only(found, "weewx_evo_station_last_seen_seconds",
-                  station="schuppen"), 3600, tol=120)
+                  station=sender_id("unknown", "schuppen")), 3600, tol=120)
 
     # Thirty seconds apart is two a minute.
     close_to("its rate is what it does",
              only(found, "weewx_evo_station_packets_per_minute",
-                  station="haus"), 2.0, tol=0.5)
+                  station=sender_id("unknown", "haus")), 2.0, tol=0.5)
 
 
 def test_a_failing_export_is_counted() -> None:

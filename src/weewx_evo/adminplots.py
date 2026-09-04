@@ -366,7 +366,7 @@ def _colour_field(name: str, line: Any, index: int) -> str:
     look at -- and a separate tick says whether that is a choice. Unticked
     sends nothing, which is exactly "no colour of its own"; a checkbox and a
     same-named hidden field would send two values and which one arrives
-    depends on the parser, which is why the station role is a `<select>`.
+    depends on the parser, which is why closed alternatives use a `<select>`.
 
     The tick is a `<label>` of its own, so the caption above cannot be one:
     a label may not contain a label, and an outer one with no `for` takes
@@ -557,8 +557,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
         return f'''
 <h2>Charts</h2>
 {problem}{said}
-<p class="lede">A chart is a definition, not a picture: the feeds draw it,
-   each in their own way. One set serves the PNGs, the JSON and every skin.</p>
+<p class="lede">Definitions shared by all feeds.</p>
 {add}
 <p class="navempty">None yet. Add one, or bring a whole set over from an
    existing WeeWX skin -- the importer reads a skin.conf and reports what it
@@ -604,8 +603,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     return f'''
 <h2>Charts</h2>
 {problem}{said}
-<p class="lede">A chart is a definition, not a picture: the feeds draw it,
-   each in their own way. One set serves the PNGs, the JSON and every skin.</p>
+<p class="lede">Definitions shared by all feeds.</p>
 {add}
 {NEWLINE.join(blocks)}
 '''
@@ -816,8 +814,7 @@ def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
     return f'''
 <section class="group">
   <h3>{html.escape(plot.name)}</h3>
-  <p class="lede">Written as <code>{html.escape(plot.name)}.json</code>, and
-     drawn by whatever reads it.</p>
+  <p class="lede">Output: <code>{html.escape(plot.name)}.json</code>.</p>
   <form method="post" action="./plot:{html.escape(plot.name)}">
   {datalist}
   <div class="row">
@@ -892,8 +889,7 @@ def edit(admin: Any, name: str, columns: set[str], errors: dict[str, str],
 
 <section class="group danger">
   <h3>Remove</h3>
-  <p class="lede">Takes {html.escape(plot.name)} out of plots.toml. Files it
-     has already written are left where they are.</p>
+  <p class="lede">Removes the definition. Existing files remain.</p>
   <form method="post" action="./plot:{html.escape(plot.name)}/remove"
         onsubmit="return confirm('Remove the chart {html.escape(plot.name)}?')">
     <div class="actions"><button class="warn" type="submit">Remove</button></div>
@@ -910,9 +906,7 @@ def new(admin: Any, columns: set[str], error: str = "",
                   for s, v in plot_defs.SPANS.items())
     return f'''
 <section class="group">
-  <p class="lede">A name, how far back, and one reading. Everything else is on
-     the page that appears next -- asking for twelve settings before there is
-     anything to save them in is how a form loses what somebody typed.</p>
+  <p class="lede">Name, time span and first reading.</p>
   {f'<p class="err">{html.escape(error)}</p>' if error else ""}
   <form method="post" action="./new-plot">
     <datalist id="readings">
@@ -953,9 +947,8 @@ def importer(admin: Any, message: str = "", error: str = "",
     return f'''
 <section class="group">
   <h3>Import from a WeeWX skin</h3>
-  <p class="lede">Reads an <code>[ImageGenerator]</code> section and makes the
-     same charts. Everything about drawing a picture is left behind, and it
-     says what it left. Nothing is overwritten unless you ask.</p>
+  <p class="lede">Imports <code>[ImageGenerator]</code> from
+     <code>skin.conf</code>. Existing charts remain unless Replace is selected.</p>
   {f'<p class="err">{html.escape(error)}</p>' if error else ""}
 
   <form method="post" action="./import-plots" enctype="multipart/form-data">

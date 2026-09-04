@@ -23,11 +23,11 @@ python tools/export_test.py                     # FTP and rsync
 python tools/web_test.py                        # routing and the directory boundary
 ```
 
-Plus the adopted driver tests:
+Plus the six built-in push protocols:
 
 ```bash
 wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
-  cd /mnt/d/Git/weewx-evo && python -m pytest tests/ecowitt -q'
+  cd /mnt/d/Git/weewx-evo && python -m pytest tests/push -q'
 ```
 
 ## What a test is worth here
@@ -166,9 +166,16 @@ This is the test that catches the bugs the individual tests cannot:
 `post()` returns both the body **and** the content type. Both count: the gateway
 checks both.
 
-### `multisource.py` — several stations
+### `archives_e2e.py` — two Places end to end
 
-Checks exactly the three cases `weewx-metadriver` names as its own limits.
+Starts the configured services with two Places and three canonical senders.
+It checks that Place membership and an `extra` member route the packets into
+the intended databases without station-owned archive assignments.
+
+### `multisource.py` — routing boundary
+
+Checks the retained low-level `sources.Policy` API, then builds the product
+Archivers and proves that they use only Place membership, role and mapping.
 
 → [Multiple-Sources](Multiple-Sources)
 
@@ -277,16 +284,16 @@ wsl -d Ubuntu -- bash -lc 'source ~/venvs/weewx/bin/activate && \
 
 ## The driver tests
 
-59 tests under `tests/ecowitt/`, originally from weewx-ecowitt.
+135 tests under `tests/push/`, covering all six built-in push protocols.
 
 ```bash
-python -m pytest tests/ecowitt -q
+python -m pytest tests/push -q
 ```
 
 They belong here now and are allowed to grow: the driver is core, not a mirrored
 foreign repo.
 
-→ [Driver-Ecowitt](Driver-Ecowitt#the-tests)
+→ [Push drivers](Driver-Ecowitt#the-tests)
 
 ## The reference data
 
@@ -338,7 +345,7 @@ tools/ratelimit_test.py
 tools/settings_test.py
 tools/export_test.py
 tools/web_test.py
-tests/ecowitt/fixtures/README.md
+tests/push/fixtures/README.md
 pyproject.toml
 tools/adminfields_test.py
 tools/adminhome_test.py

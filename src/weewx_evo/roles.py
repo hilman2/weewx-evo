@@ -3,28 +3,27 @@
 One station needs none of this. It is the station, its readings go to the
 fields they belong in, and nothing here does anything. That case has to stay
 exactly as simple as it was, so everything below only comes into play once a
-second station names the same archive.
+place selects a second station.
 
 With two, the question is unavoidable: they both send `outTemp`, and there is
 one `outTemp`. Left alone they take turns writing it every few seconds, and
 the column ends up holding a mixture that nothing afterwards can separate --
-the same failure the contested fields, the source policy and the placement
-page all exist to prevent, arriving from a different direction.
+the same failure contested fields and explicit placement both exist to
+prevent, arriving from a different direction.
 
-## Three answers, and this is the third
+## Two answers
 
-    a second archive     two places, two files. Nothing is shared, so
+    separate selection   two places, two files. Nothing is shared, so
                          nothing collides. The right answer whenever the
                          two are genuinely different places.
-    sources.toml         one archive, and per field: this station's
-                         `outTemp` is the series, the other's is discarded.
-    a role               one archive, and the second station's readings are
+    a role               one place, and the second station's readings are
                          *moved* rather than dropped. `outTemp` becomes
                          `extraTemp3`, and it keeps its own history.
 
-The third is what a second sensor in one garden wants. `sources.toml` throws
-its temperature away; a second archive gives it its own sunrise and its own
-altitude, which is wrong for a probe ten metres from the first.
+The role is what a second sensor in one garden wants. A second archive gives
+it its own sunrise and its own altitude, which is wrong for a probe ten metres
+from the first. An explicit Place-to-Sender mapping can keep, rename or drop
+individual fields when the role preset is not enough.
 
 ## Honest about the limit
 
@@ -40,11 +39,10 @@ discovering a year later that only two of its readings were ever kept.
 
 ## Where this sits
 
-After the mapping, not before it. Upstream shifts raw field names, because
-there the mapper and the roles are in one process; here a packet arrives at
-the core already carrying `outTemp`, so the move is `outTemp -> extraTemp3`
-and needs no catalog at all. One rule, six protocols, and a driver somebody
-else wrote gets it for nothing.
+After the dialect mapping, not before it. The Listener stores the raw values
+and the inert mapping supplied with the packet. When the Archiver reads that
+row, the Place maps it to `outTemp` first and only then applies the role, so
+the move is `outTemp -> extraTemp3`. The role is independent of the driver.
 """
 
 from __future__ import annotations
@@ -149,16 +147,3 @@ def collisions(by_station: dict[str, set[str]]) -> dict[str, list[str]]:
             owners.setdefault(field, set()).add(station)
     return {field: sorted(who) for field, who in sorted(owners.items())
             if len(who) > 1}
-
-
-def too_many_main(stations: list) -> list[str]:
-    """The stations of one archive that all call themselves the main one.
-
-    Empty is the good answer, and so is a list of one. Two is a
-    configuration that asks for the failure this module prevents, and the
-    driver dropping the second one's readings is not a reason to leave it
-    unsaid.
-    """
-    main = sorted(one.name for one in stations
-                  if getattr(one, "role", MAIN) == MAIN)
-    return main if len(main) > 1 else []

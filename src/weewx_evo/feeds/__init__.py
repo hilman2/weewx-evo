@@ -76,9 +76,8 @@ CHOOSABLE_TRIGGERS = (
     ("schedule", "on its own clock"),
 )
 
-#: The archive a feed with no `archive` set reads from. Matches
-#: `stations.DEFAULT_ARCHIVE`: a station writes into an archive and a feed
-#: reads out of one, so they have to agree about the name.
+#: The conventional archive a feed with no `archive` set reads from. Runtime
+#: selection is validated against archives.toml; stations have no destination.
 DEFAULT_ARCHIVE = "default"
 
 ENTRY_POINT_GROUP = "weewx_evo.feeds"
@@ -239,8 +238,27 @@ def archive_names() -> list[tuple[str, str]]:
                  for one in register.all()]
     except Exception:
         log.debug("could not read the archives", exc_info=True)
-        found = [(DEFAULT_ARCHIVE, DEFAULT_ARCHIVE)]
+        found = []
     return found
+
+
+def default_archive_name() -> str:
+    """The implicit place while this schema is being built.
+
+    A sole custom-named place is just as unambiguous as ``default``. With
+    several custom-named places there is deliberately no implicit answer.
+    """
+    from .. import archives as archive_defs
+
+    try:
+        register = archive_defs.Register.load(
+            _config_dir() / archive_defs.FILENAME, _said())
+        return register.default_name()
+    except LookupError:
+        return ""
+    except Exception:
+        log.debug("could not determine the default archive", exc_info=True)
+        return ""
 
 
 class _Said:
@@ -312,6 +330,8 @@ def schedule_options() -> list:
     """
     from ..options import Group, Option
 
+    default_archive = default_archive_name()
+    empty_choice = (() if default_archive else (("", "Choose a place"),))
     return [
         Group("What it is about, and when it runs",
               "A feed builds files -- pages, charts, a JSON document -- out "
@@ -332,7 +352,8 @@ def schedule_options() -> list:
                               "hour rather than an hour after the service "
                               "started."),
                   Option("archive", "Place", kind="choice",
-                         default=DEFAULT_ARCHIVE,
+                         default=default_archive,
+                         choices=empty_choice,
                          # No literal fallback beside `choices_from`: the two
                          # are concatenated, so the default appeared twice in
                          # the list -- both marked selected -- the moment the

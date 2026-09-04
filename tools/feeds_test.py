@@ -15,6 +15,7 @@ wrong on the second.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -151,17 +152,26 @@ feeds.theme.encoding = "utf8"
                                   encoding="utf-8"), True)
 
         print("\nthe skin ran too, on the same database")
-        rendered = where["theme"] / "index.html"
-        failures += not check("its page was written", rendered.exists(),
-                              True)
-        page_text = rendered.read_text(encoding="utf-8")
-        failures += not check("with a reading in it",
-                              page_text.startswith("temp="), True)
-        # Stored in Fahrenheit, and nobody overruled it: this feed was
-        # told nothing and the skin says nothing, so the archive's own
-        # unit stands.
-        failures += not check("in what the archive holds",
-                              "°F" in page_text, True)
+        has_cheetah = (importlib.util.find_spec("Cheetah") is not None
+                       and importlib.util.find_spec("Cheetah.Template")
+                       is not None)
+        if not has_cheetah:
+            # The named-feed and dependency-order checks above are useful
+            # without an optional renderer.  The dedicated Cheetah tests are
+            # skipped by runtests.py for the same missing dependency.
+            print("  --   Cheetah is not installed; render check skipped")
+        else:
+            rendered = where["theme"] / "index.html"
+            failures += not check("its page was written", rendered.exists(),
+                                  True)
+            page_text = rendered.read_text(encoding="utf-8")
+            failures += not check("with a reading in it",
+                                  page_text.startswith("temp="), True)
+            # Stored in Fahrenheit, and nobody overruled it: this feed was
+            # told nothing and the skin says nothing, so the archive's own
+            # unit stands.
+            failures += not check("in what the archive holds",
+                                  "°F" in page_text, True)
 
         print("\nand a file that names no feeds still gets some")
         bare = tmp / "bare.toml"

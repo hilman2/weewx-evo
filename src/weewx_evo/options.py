@@ -639,22 +639,7 @@ def website_options() -> list[Group]:
 def core_options() -> list[Group]:
     """What weewx-evo itself is configured with."""
     return [
-        Group("Station", "Where the readings come from, and where it is.", (
-            Option("station.name", "Station name", default="weewx-evo",
-                   help="Shown on the live page and in reports."),
-            Option("station.latitude", "Latitude", kind="float",
-                   minimum=-90, maximum=90, unit="° N", placeholder="48.4596",
-                   help="Decimal degrees. Negative south of the equator. "
-                        "Used for sunrise, sunset and the clear-sky radiation "
-                        "a solar sensor is measured against."),
-            Option("station.longitude", "Longitude", kind="float",
-                   minimum=-180, maximum=180, unit="° E", placeholder="11.6539",
-                   help="Decimal degrees. Negative west of Greenwich."),
-            Option("station.altitude", "Altitude", kind="float", unit="m above sea level",
-                   help="Above sea level. This is what turns station pressure "
-                        "into the barometer reading everyone compares. Take it "
-                        "from a map, not from the console: consoles are usually "
-                        "set to whatever made the display look right."),
+        Group("Language", "", (
             Option("language", "Language", kind="choice", default="en",
                    choices_from=available_languages, restart=False,
                    help="What everything is written in: the labels on the "
@@ -664,17 +649,6 @@ def core_options() -> list[Group]:
                         "by the people who live near it and they read one "
                         "language. A feed can still be pointed at another "
                         "on its own page, for a site published twice."),
-            Option("station.url", "Station web page", default="",
-                   placeholder="https://example.org/weather",
-                   help="Where the published pages live. A skin prints it in "
-                        "its footer and a weather network wants it in a "
-                        "registration."),
-            Option("station.rain_year_start", "Rain year starts in",
-                   kind="int", default=1, minimum=1, maximum=12,
-                   advanced=True,
-                   help="Which month a rainfall year is counted from. "
-                        "January nearly everywhere; October where the water "
-                        "year is what people mean by a wet or dry year."),
         )),
 
         Group("Archive", "How readings become the record that is kept.", (
@@ -710,11 +684,6 @@ def core_options() -> list[Group]:
                         "file rather than a section here: it is a list of "
                         "many similar records, and one imported from an old "
                         "skin is something you want to be able to diff."),
-            Option("archive_db", "Archive database", kind="path",
-                   default="data/weewx.sdb", restart=True,
-                   help="The WeeWX database. Existing ones are used as they "
-                        "are -- the schema is read from the file, so an "
-                        "installation with its own columns keeps them."),
             Option("live_db", "Live database", kind="path",
                    default="data/live.sdb", restart=True,
                    help="Where packets are kept until they have been worked "
@@ -729,9 +698,12 @@ def core_options() -> list[Group]:
             Option("raw_retention", "Keep raw uploads for", kind="duration",
                    default=3600, minimum=0, maximum=86400, advanced=True,
                    help="How long the upload as it came off the wire is kept "
-                        "beside the parsed packet. It is a debugging aid -- "
-                        "the thing to attach to an issue about a sensor the "
-                        "driver could not place. 0 does not keep them."),
+                        "beside the readings. What it is for is something the "
+                        "driver could not parse at all: the readings show what "
+                        "it understood, so the one it did not is exactly what "
+                        "is missing from them. Where a reading *goes* does not "
+                        "depend on this -- the names the console used are kept "
+                        "for the whole retention period. 0 does not keep them."),
             Option("spool", "Write packets out before dropping them",
                    kind="path", advanced=True,
                    help="A directory. Each day of packets leaving the live "
@@ -781,18 +753,21 @@ def core_options() -> list[Group]:
               "What every pushing console has in common.", (
             Option("infer_unknown", "Fields the catalog does not know",
                    kind="choice", default="series",
-                   choices=(("off", "Drop them"),
-                            ("series", ("Take them when they continue a "
-                                        "known series, report the rest")),
-                            ("all", "Take whatever can be named")),
+                   choices=(("off", "Only list them"),
+                            ("series", ("Place them when they continue a "
+                                        "known series, list the rest")),
+                            ("all", "Place whatever can be named")),
                    help="Hardware ships sensors faster than any catalog is "
                         "updated. 'series' is the sensible default: a channel "
                         "the hardware gains needs no release, and anything "
-                        "merely recognisable by its name is reported rather "
-                        "than guessed at -- a reading put in the wrong column "
-                        "cannot be separated out afterwards. This is a policy "
-                        "rather than a property of any one protocol, so it is "
-                        "asked once and every driver that can use it gets it."),
+                        "merely recognisable by its name is listed rather "
+                        "than guessed at. This is a policy rather than a "
+                        "property of any one protocol, so it is asked once "
+                        "and every driver that can use it gets it. "
+                        "Nothing is lost either way: the reading is stored "
+                        "under the name the console used whatever this says, "
+                        "and what this decides is only whether a guess is "
+                        "written down for you or left for you to make."),
             Option("max_behind", "Accept timestamps up to this old",
                    # upstream's own figures. Changing one here would change
                    # how uploads are treated without anybody asking for it.
@@ -802,7 +777,7 @@ def core_options() -> list[Group]:
                         "rather than a wrong clock. Past this the arrival "
                         "time is used instead. A console whose clock is "
                         "genuinely bad can be given its own figure on the "
-                        "stations page."),
+                        "Senders page."),
             Option("max_ahead", "And this far into the future",
                    kind="duration", default=60.0, minimum=0, advanced=True,
                    help="There is no such thing as a reading from the future, "

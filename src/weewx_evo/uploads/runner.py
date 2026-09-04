@@ -460,9 +460,11 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
           records: Callable[[int, int], list[dict]],
           packets: Callable[[int, int], list[dict]] | None = None,
           by_archive: dict[str, Callable[[int, int], list[dict]]] | None = None,
+          packets_by_archive: dict[str, Any] | None = None,
           consoles: dict[str, list[str]] | None = None,
           main_consoles: dict[str, list[str]] | None = None,
           places: list[tuple[str, str, str]] | None = None,
+          default_archive: str = "",
           ) -> list[Scheduled]:
     """Turn configuration into things the runner can run.
 
@@ -470,11 +472,13 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
     upload must not stop the others, and it certainly must not stop the
     station: the readings are what matters, and an upload is a copy of them.
 
-    `by_archive` is one reader per measurement series, for an installation
-    that has more than one. `records` is the one everything else uses, and it
-    stays the answer for an upload that names a series nobody defined --
-    posting the default site's readings beats posting nothing while somebody
-    works out why the name is wrong.
+    `by_archive` is one reader per measurement series. An upload naming a
+    series that is not there is left out: silently publishing another place's
+    data under its credentials is not a fallback.
+
+    `packets_by_archive` is the same split for live readers. Placement is a
+    property of the place, so sharing one reader would apply the default
+    place's column choices to every other one.
 
     `places` is every series, as `(name, label, code)`, in the order pages
     present them. Only a live-readings upload uses it, and only where there
@@ -490,8 +494,12 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         except Exception as exc:
             log.warning("upload %s is not usable: %s", name, exc)
             continue
-        wanted = str(settings.get("archive") or "").strip()
-        source = (by_archive or {}).get(wanted, records) if wanted else records
+        wanted = str(settings.get("archive") or default_archive).strip()
+        if by_archive is not None and wanted not in by_archive:
+            log.warning("upload %s names unknown series %r; leaving it out",
+                        name, wanted)
+            continue
+        source = (by_archive or {}).get(wanted, records)
 
         # And the live packets, through this site's consoles. One live table
         # serves the whole installation, so an upload for one series has to
@@ -506,7 +514,7 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         # reading is one packet, so something has to say which -- and
         # "whichever reported last" makes a page flicker between a garden
         # and a shed.
-        mine = packets
+        mine = (packets_by_archive or {}).get(wanted, packets)
         named = (consoles or {}).get(wanted) if wanted else None
         main = (main_consoles or {}).get(wanted or "") or []
         pick = str(settings.get("live_source") or "main")
@@ -517,8 +525,8 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         # installation's live table, so a site with nothing behind its
         # second place published its first place's readings under the
         # second one's name and counted it as reporting.
-        if (named is not None or main) and hasattr(packets, "for_sources"):
-            mine = packets.for_sources(named, pick, main)
+        if (named is not None or main) and hasattr(mine, "for_sources"):
+            mine = mine.for_sources(named, pick, main)
 
         # One document, every place, for a site that publishes several. The
         # page reads one file and finds a slice per place; without this an
@@ -529,7 +537,8 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
         # which kind it is: `carry` exists on the live-readings upload and
         # nowhere else, and it is `carry` that refuses a one-place list.
         if places and len(places) > 1 and hasattr(upload, "carry"):
-            upload.carry(_places_for(wanted, places, packets, consoles,
+            upload.carry(_places_for(wanted, places, packets,
+                                     packets_by_archive, consoles,
                                      main_consoles, pick))
         ready.append(Scheduled(name, upload, progress, source, mine,
                                wanted))
@@ -538,6 +547,7 @@ def build(configured: dict[str, dict], make: Callable[[str, dict], Any],
 
 def _places_for(home: str, places: list[tuple[str, str, str]],
                 packets: Any,
+                packets_by_archive: dict[str, Any] | None,
                 consoles: dict[str, list[str]] | None,
                 main_consoles: dict[str, list[str]] | None,
                 pick: str) -> list[Any]:
@@ -557,7 +567,7 @@ def _places_for(home: str, places: list[tuple[str, str, str]],
     ordered = sorted(places, key=lambda one: one[0] != home)
     out = []
     for name, label, code in ordered:
-        reader = packets
+        reader = (packets_by_archive or {}).get(name, packets)
         named = (consoles or {}).get(name)
         main = (main_consoles or {}).get(name) or []
         if named is not None and not named and not main:
@@ -575,8 +585,8 @@ def _places_for(home: str, places: list[tuple[str, str, str]],
             log.debug("no console writes into %r yet; it carries no live "
                       "readings", name)
             continue
-        if (named or main) and hasattr(packets, "for_sources"):
-            reader = packets.for_sources(named, pick, main)
+        if (named is not None or main) and hasattr(reader, "for_sources"):
+            reader = reader.for_sources(named, pick, main)
         if reader is None:
             # A split deployment where the live table is on another machine.
             # Left out rather than carried empty: a slice with no reading is

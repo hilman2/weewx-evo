@@ -105,7 +105,8 @@ def an_archive() -> Path:
 
 
 def an_api(**kw: object) -> Api:
-    return Api({"default": an_archive()}, station_name="Kirchdorf", **kw)
+    return Api({"default": an_archive()}, default="default",
+               station_name="Kirchdorf", **kw)
 
 
 def asked(api: Api, path: str, query: str = "") -> tuple[int, dict]:
@@ -357,6 +358,25 @@ def test_an_archive_that_is_not_there_is_named() -> None:
     check("and points at /archives", "/archives" in body["error"], True)
 
 
+def test_no_default_never_means_the_first_archive() -> None:
+    """Dictionary order is not a place-selection policy."""
+    api = Api({"north": an_archive(), "south": an_archive()}, default="")
+    check("an absent default stays absent", api.default, "")
+
+    status, body = asked(api, "/api/v1/current")
+    check("a nameless ambiguous request is refused", status, 400)
+    check("and says what has to be named",
+          "archive" in body["error"] and "/archives" in body["error"], True)
+
+    status, body = asked(api, "/api/v1/current", "archive=south")
+    check("an explicit archive is still answered", status, 200)
+    check("and is not redirected", body.get("archive"), "south")
+
+    one = Api({"north": an_archive()}, default="")
+    status, _body = asked(one, "/api/v1/current")
+    check("even one archive is not made implicit by the API", status, 400)
+
+
 # ---------------------------------------------------------------------------
 # The token.
 # ---------------------------------------------------------------------------
@@ -382,7 +402,7 @@ def test_stations_do_not_give_away_their_identities() -> None:
     reachable by anybody the web server answers."""
 
     class Station:
-        name, driver, archive, role, indoor = "haus", "ecowitt", "default", "main", True
+        name, driver = "haus", "ecowitt"
         identity = "evo-3f9a2c"
 
     class Stations:
@@ -394,6 +414,10 @@ def test_stations_do_not_give_away_their_identities() -> None:
     check("the station is listed", body["stations"][0]["name"], "haus")
     check("and its identity is not",
           "identity" in json.dumps(body), False)
+    check("and it has no archive assignment",
+          "archive" in body["stations"][0], False)
+    check("and no place-specific policy",
+          set(body["stations"][0]), {"name", "driver"})
 
 
 # ---------------------------------------------------------------------------

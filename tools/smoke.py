@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from weewx_evo import placement
 from weewx_evo.archiver import Archiver
 from weewx_evo.db.archive import ArchiveStore
 from weewx_evo.db.live import LiveStore
@@ -83,8 +84,16 @@ def main() -> int:
 
         live = LiveStore(tmp / "live.sdb", interval_seconds=INTERVAL)
         archive = ArchiveStore(tmp / "weewx.sdb")
-        archiver = Archiver(live, archive, interval_seconds=INTERVAL)
+        # The placer is what turns `tempf` into `outTemp`. It is not
+        # optional for a console: the readings are stored under the names
+        # the hardware used, so an archiver without one builds a record the
+        # archive has no column for.
+        placer = placement.Placer('default', placement.Placements(),
+                                  None, drivers.DEFAULT)
+        archiver = Archiver(live, archive, interval_seconds=INTERVAL,
+                            placer=placer)
         ingest = Ingest(live, token=TOKEN)
+        ingest.placer = placer
         http = HttpListener(ingest, "127.0.0.1", 0)
         http.start()
         base = f"http://127.0.0.1:{http.port}"

@@ -61,6 +61,13 @@ def _archive_names() -> list[tuple[str, str]]:
     return archive_names()
 
 
+def _default_archive_name() -> str:
+    """The sole or explicitly default place, for a new upload entry."""
+    from ..feeds import default_archive_name
+
+    return default_archive_name()
+
+
 ENTRY_POINT_GROUP = "weewx_evo.uploads"
 
 #: Long enough for a service having a slow afternoon, short enough that a dead
@@ -454,6 +461,7 @@ def when_options(trigger: str = "record", every: int = 900,
         # there would be an invitation to get an account rate-limited.
         choices = (("live", "every few seconds, as readings arrive"),) + choices
 
+    default_archive = _default_archive_name()
     return [
         Group("When it runs", "", (
             Option("trigger", "Post", kind="choice", default=trigger,
@@ -485,7 +493,10 @@ def when_options(trigger: str = "record", every: int = 900,
                         "an upload writing to the operator's own database "
                         "raises it."),
             Option("archive", "Place", kind="choice",
-                   default=DEFAULT_ARCHIVE, choices_from=_archive_names,
+                   default=default_archive,
+                   choices=(() if default_archive else
+                            (("", "Choose a place"),)),
+                   choices_from=_archive_names,
                    advanced=True,
                    help="Whose readings get sent. With one place there is "
                         "nothing to choose. With two, a registration with a "

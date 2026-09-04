@@ -41,13 +41,14 @@ about a database holding a year.
 ## The file stays hand-editable
 
 This writes the same `quality.toml` a person would, in the same shape --
-`[limits.<obs>]` and `[calibrate.<station>.<obs>]`. Same rule as
+`[limits.<obs>]` and `[calibrate.<sender-id>.<obs>]`. Same rule as
 `plots.toml`: the file is the thing, and this is a way of editing it.
 """
 
 from __future__ import annotations
 
 import html
+import json
 import logging
 import sqlite3
 import time
@@ -118,7 +119,7 @@ def as_toml(policy: quality_defs.Policy) -> str:
     for obs in sorted(policy.limits):
         rule = policy.limits[obs]
         lines.append("")
-        lines.append(f"[limits.{obs}]")
+        lines.append(f"[limits.{_key(obs)}]")
         if rule.minimum is not None:
             lines.append(f"minimum = {rule.minimum:g}")
         if rule.maximum is not None:
@@ -130,17 +131,25 @@ def as_toml(policy: quality_defs.Policy) -> str:
         if rule.resolution:
             lines.append(f"resolution = {rule.resolution:g}")
 
-    for station in sorted(policy.calibration):
-        for obs in sorted(policy.calibration[station]):
-            adjust = policy.calibration[station][obs]
-            who = station or "everywhere"
+    entries = {**policy.obsolete_calibration, **policy.calibration}
+    for sender in sorted(entries):
+        for obs in sorted(entries[sender]):
+            adjust = entries[sender][obs]
+            who = sender or "everywhere"
             lines.append("")
-            lines.append(f"[calibrate.{who}.{obs}]")
+            if sender in policy.obsolete_calibration:
+                lines.append("# Ignored legacy label: use a canonical sender ID.")
+            lines.append(f"[calibrate.{_key(who)}.{_key(obs)}]")
             if adjust.offset:
                 lines.append(f"offset = {adjust.offset:g}")
             if adjust.scale != 1.0:
                 lines.append(f"scale = {adjust.scale:g}")
     return NEWLINE.join(lines) + NEWLINE
+
+
+def _key(value: str) -> str:
+    """One quoted TOML key, including slashes and dots in sender IDs."""
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +357,11 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     policy = load(admin)
     seen, dropped, records = survey(admin)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
+    obsolete = ""
+    if policy.obsolete_calibration:
+        names = ", ".join(sorted(policy.obsolete_calibration))
+        obsolete = (f'<p class="err">Ignored calibration labels: '
+                    f'{html.escape(names)}. Use canonical Sender IDs.</p>')
 
     # Readings with a rule first, then the ones the archive holds. A page
     # that lists a hundred schema columns is a page nobody scrolls.
@@ -368,25 +382,17 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     return f'''
 <section class="group">
   <h3>Sensor checks</h3>
-  <p class="lede">What a reading has to survive before it is kept. A sensor
-     with a flat battery reports -40, a rain gauge being hosed down reports
-     300 mm/h, and a radio sensor at the edge of its range repeats the same
-     number for a quarter of an hour. A refused reading is dropped, not
-     zeroed -- zero is a measurement, and a rain gauge reading 0.0 because
-     its value was thrown away is a dry afternoon. Nothing is checked until
-     you say so.</p>
+  <p class="lede">Limits applied before readings are archived. No saved
+     rule means no check.</p>
   {problem}
+  {obsolete}
   {_dry_run(dropped, records)}
   <div class="actions">
     <form method="post" action="./quality/suggest">
-      <button class="button" type="submit">Work them out from the
-        archive</button>
+      <button class="button" type="submit">Suggest from archive</button>
     </form>
   </div>
-  <p class="help">Suggestions come from what this station has actually
-     recorded over the last year, with room added, and never replace a rule
-     you wrote. They are only as good as the year: a station that has not
-     seen a cold winter has not seen its own floor either.</p>
+  <p class="help">Uses the last year. Existing rules stay unchanged.</p>
 
   <form method="post" action="./quality">
     <table class="rules">{_head()}{NEWLINE.join(rows) or _empty()}</table>
@@ -395,11 +401,8 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     </div>
   </form>
   {hidden}
-  <p class="help">Figures are in
-     <strong>{html.escape(units.name(policy.system).lower())}</strong>, and
-     are converted for a console reporting anything else. A spike is per
-     minute. Stuck counts identical readings in a row and needs the
-     resolution, or a calm night looks like a dead sensor.</p>
+  <p class="help">Units: <strong>{html.escape(units.name(policy.system).lower())}</strong>.
+     Spike: per minute. Stuck: identical readings; requires resolution.</p>
 </section>'''
 
 

@@ -53,15 +53,15 @@ place — which is the WeeWX arrangement this project removed.
 **With one place nothing changes.** No overview, no subdirectory, no
 comparison pages, and the output is what it has always been, file for file.
 The gate is how many places *this feed shows*: a one-entry `archives.toml`
-makes the settings page correctly say that `station.*` has moved, and is
-still one place.
+is still one place. The entry is the source of its name and coordinates just
+as it is on a multi-place site.
 
 ### What the operator sets
 
 | | |
 |---|---|
 | `feeds.<name>.places` | which archives this instance shows, in that order. Empty is every one of them. This feed's own place is always first, whatever the list says: a site linking to places but not to the one its own pages are built from would publish an archive nothing on it can reach |
-| `feeds.<name>.site_title` | what to head the overview with. Empty is the installation's own `station.name` — **not** `$station.location`, which under `archives.Placed` is the *default place's* label, so an overview headed "Kirchdorf" listing four places is a lie the page cannot detect |
+| `feeds.<name>.site_title` | what to head the multi-place overview with. Empty uses the selected place's title; set it when the site needs a name of its own |
 | `feeds.<name>.place_pages` | which of the pages below each place gets. Empty is all of them |
 | `feeds.<name>.places_fold` | how many places the sidebar lists before folding them into one entry |
 

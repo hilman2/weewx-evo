@@ -31,9 +31,10 @@
 **Readings coming in**
 - [Listener](Ingest-Listener)
 - [Drivers](Drivers)
-- [Ecowitt](Driver-Ecowitt)
+- [Push drivers](Driver-Ecowitt)
 - [Plugins](Plugins)
-- [Multiple sources](Multiple-Sources)
+- [Multiple senders](Multiple-Sources)
+- [Placements](Placements)
 - [Stations and Archives](Stations-and-Archives)
 
 **Kept**

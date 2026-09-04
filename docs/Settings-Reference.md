@@ -1,7 +1,8 @@
 # Settings A–Z
 
-Every core setting, as `options.core_options()` declares them. The environment
-variable is always `WEEWX_EVO_` + the name in upper case, dots to underscores.
+Every core setting, as `options.core_options()` declares them, followed by the
+place fields in `archives.toml`. For core settings the environment variable is
+`WEEWX_EVO_` + the name in upper case, dots to underscores.
 → [Configuration](Configuration)
 
 Generated versions of the same list:
@@ -14,20 +15,47 @@ weewx-evo serve --explain           # values with their origin
 Key: **A** = advanced (behind a toggle on the admin page),
 **R** = needs a restart, **!** = required.
 
-## Station
+## Language
 
-*Where the readings come from, and where that is.*
+| Name | Kind | Default | What it means |
+|---|---|---|---|
+| `language` | choice | `en` | Language used by charts, moon phases, compass points and translated skins |
 
-**These four move.** With a second place they are read from `archives.toml`
-instead, per place, and nothing here is read at all. The settings page marks
-them. → [Several places](Places#the-settings-move)
+## Places (`archives.toml`)
 
-| Name | Kind | Default | | What it means |
-|---|---|---|---|---|
-| `station.name` | text | `weewx-evo` | | On the live page and in reports |
-| `station.latitude` | float | — | | Decimal degrees, negative south of the equator. For sunrise and sunset and for the clear-sky radiation a solar sensor is measured against |
-| `station.longitude` | float | — | | Decimal degrees, negative west of Greenwich |
-| `station.altitude` | float | — | | Metres above sea level. This is what turns station pressure into the barometer value everybody compares. Take it from a map, not from the console: consoles are usually set to whatever made the display look right |
+*Where each measurement series is kept and which live packets it reads.*
+
+These fields belong to each `[archives.<name>]` table from the first archive
+onward. They are not core environment settings.
+
+| Name | Kind | Default | What it means |
+|---|---|---|---|
+| `file` | path | — | The WeeWX database. Required; an existing file is used as it is and supplies its own schema |
+| `label` | text | archive name | The place name shown on pages |
+| `latitude` | float | — | Decimal degrees, negative south of the equator. Used for sunrise, sunset and clear-sky radiation |
+| `longitude` | float | — | Decimal degrees, negative west of Greenwich |
+| `altitude` | float | — | Metres above sea level, used for pressure reduction |
+| `url` | text | — | Published address for this place |
+| `rain_year_start` | int | `1` | First month of the rain year |
+| `color` | text | assigned for display | Line and chip colour when several places are shown together |
+| `code` | text | made from label | Up to four characters for compact legends |
+| `order` | int | `0` | Presentation order; equal values retain file order |
+| `senders` | list or `"*"` | `[]` | Canonical sender IDs selected from the shared live database. `[]` selects none; `"*"` explicitly selects every arrival |
+| `members.<sender>.role` | choice | `main` | How this Place uses the sender: ordinary columns (`main`) or a numbered extra channel (`extra`) |
+| `members.<sender>.channel` | int | `0` | `0` for `main`; `1`–`8` for `extra` |
+| `members.<sender>.indoor` | bool | `true` | Whether this sender's indoor readings belong in this Place |
+
+Field mappings are stored in `placement.toml` and keyed by Place plus canonical
+sender ID. They are edited on the Place's **Fields** tab, not on the Sender
+page.
+
+Legacy `archive_db` and `station.*` values are read only when no
+`archives.toml` exists. They are copied once into `[archives.default]`; after
+that they have no effect. → [Stations and Archives](Stations-and-Archives)
+
+Legacy station-owned `role`, `channel` and `indoor` values are likewise copied
+once into the matching place memberships. They are not Station settings and
+are removed from a writable `stations.toml` after that commit.
 
 ## Archive
 
@@ -45,11 +73,11 @@ them. → [Several places](Places#the-settings-move)
 
 | Name | Kind | Default | | What it means |
 |---|---|---|---|---|
+| `feeds_dir` | path | `data/feeds` | R | Working directory for generated feed files; exports publish from here |
 | `plots_file` | path | `plots.toml` | R | Which plots there are. Its own file rather than a section: it is a list of many alike sets, and a set imported from an old skin is something you want to be able to diff |
-| `archive_db` | path | `data/weewx.sdb` | R | The WeeWX database. Existing ones are used as they are — the schema comes from the file |
 | `live_db` | path | `data/live.sdb` | R | Where packets sit until they are in records. Its own file, so that size and retention have nothing to do with the archive |
 | `retention` | duration | `604800` (min 3600) | | How long raw packets stay. They are what makes a record reproducible: as long as they are there, a wrong calibration or a late packet can be corrected. Seven days is around 80 MB at one packet every eight seconds |
-| `raw_retention` | duration | `3600` (0–86400) | A | How long the upload as it came off the wire sits next to the parsed packet. A debugging aid — the thing you attach to an issue about a sensor that cannot be placed. `0` keeps none |
+| `raw_retention` | duration | `3600` (0–86400) | A | How long the upload as it came off the wire sits next to the readings. For something the driver could not parse at all — where a reading *goes* does not depend on it, since the names the console used are kept for the whole retention period. `0` keeps none |
 | `spool` | path | — | A | A directory. Every day of packets leaving the live table is put there as gzip NDJSON first. Empty means: just drop them |
 
 ## Listener
@@ -60,9 +88,25 @@ them. → [Several places](Places#the-settings-move)
 |---|---|---|---|---|
 | `host` | text | `0.0.0.0` | A R | Every interface. Narrow it when the machine is on more than one network |
 | `port` | int | `8000` | R | Below 1024 needs root, which this service should not have |
+| `reachable_at` | text | guessed | | Address the hardware reaches when it differs from the Listener's bind address |
 | `token` | secret | — | ! | A path segment every upload has to carry. The only thing between the open internet and your record: hardware cannot send a header, so an unguessable path is the practical answer. Anyone who learns it can forge readings |
 | `driver` | choice | `ecowitt` | | Which driver reads an upload whose path names none. The choices are what is installed |
 | `udp_port` | int | `0` | A R | For hardware that broadcasts instead of posting. `0` turns it off. A datagram carries no path, so the port itself is the access control |
+
+## Reading an upload
+
+*Defaults shared by the push protocols. Clock limits may be overridden on an
+individual Sender.*
+
+| Name | Kind | Default | | What it means |
+|---|---|---|---|---|
+| `infer_unknown` | choice | `series` | | `off` lists unknown names; `series` proposes clear continuations; `all` proposes every name the catalog can interpret. Raw readings stay in the live database in every mode |
+| `max_behind` | duration | `3600` | A | Maximum sender timestamp age before arrival time is used |
+| `max_ahead` | duration | `60` | A | Maximum future clock drift before arrival time is used |
+
+The six built-in push protocols expose no separate settings pages. Their
+endpoints, replies, dialects and catalogs are protocol definitions, not
+operator choices.
 
 ## Who is answered
 
@@ -85,7 +129,7 @@ them. → [Several places](Places#the-settings-move)
 | `admin.token` | secret | — | | **Never the same as the upload token.** Otherwise anything that can send a reading could also change what the station records. Empty turns the page off |
 | `admin.port` | int | `8080` | R | |
 | `admin.host` | text | `0.0.0.0` | A R | |
-| `admin.allow` | text | `private` | | As above, and it is worth staying tighter. This page points the archive at files. To reach it from elsewhere without opening it up: `ssh -L 8080:localhost:8080 the-station` |
+| `admin.allow` | text | `private` | | As above, and it is worth staying tighter. This page changes Place databases and sender policy. To reach it from elsewhere without opening it up: `ssh -L 8080:localhost:8080 the-station` |
 | `admin.rate` | float | `5.0` | A | Saving is two requests, and clicking through the tabs makes several a second. A limit that gets in the way is one that gets turned off |
 
 ## Website
@@ -111,23 +155,7 @@ them. → [Several places](Places#the-settings-move)
 | `table` | text | `archive` | A R | The table in the database. Only of interest to an installation that renamed it |
 | `poll` | duration | `5` (1–300) | A | How often the archiver looks for closed intervals. The work is idempotent and the boundaries come from the packets, so a late or missed tick changes nothing |
 | `driver_dir` | path | — | A R | Where drivers installed with `weewx-evo driver install` live. Empty means: next to the archive |
-| `weewx_conf` | path | — | A | A `weewx.conf` to fall back to. Read, never written. Anything set here beats it |
-
-## Driver: ecowitt
-
-Prefix `drivers.ecowitt`. Declared in
-`ingest/plugins/ecowitt/driver.py::EcowittDriver.options()`.
-
-| Name | Kind | Default | | What it means |
-|---|---|---|---|---|
-| `passkey` | secret | — | | The value the console sends first in every upload. Set here, the question is settled for good. Left empty, the first console heard is adopted and noted in the database — which works, but is lost with the database and afterwards leaves the station to whichever console speaks first |
-| `model` | text | `Ecowitt` | A | Appears in logs. Cosmetic |
-| `infer_unknown` | choice | `series` | | `off` = drop them · `series` = take them if they continue a known series, report the rest · `all` = take everything that can be named. A reading in the wrong column cannot be separated out afterwards |
-| `report_file` | path | `/var/tmp/weewx-evo-ecowitt-report.txt` | | Where the first upload containing something unplaceable is written. The file already has the PASSKEY removed and is meant for pasting into an issue. Empty turns it off |
-| `max_behind` | duration | `3600` | A | How old a console's timestamp may be. Beyond that, the arrival time is used |
-| `max_ahead` | duration | `60` | A | And how far into the future. There are no readings from the future, so this only covers drift between two roughly correct clocks |
-
-→ [Driver-Ecowitt](Driver-Ecowitt)
+| `weewx_conf` | path | — | A | A `weewx.conf` to fall back to. Read, never written. Its place and database values are only input to the one-time migration to `archives.toml` |
 
 ## Feed: json
 
@@ -207,7 +235,6 @@ rsync only:
 
 <!-- covers
 src/weewx_evo/options.py
-src/weewx_evo/ingest/plugins/ecowitt/driver.py
 src/weewx_evo/feeds/jsongenerator/__init__.py
 src/weewx_evo/exports/ftp.py
 src/weewx_evo/exports/rsync.py

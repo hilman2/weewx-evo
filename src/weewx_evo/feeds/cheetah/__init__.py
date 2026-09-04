@@ -1434,15 +1434,9 @@ class CheetahFeed:
         }
 
     def _station_name(self) -> str:
-        """What the installation calls itself, not what this place is called.
-
-        `$station.location` is the *place's* label once `Placed` is in the
-        way, so an overview headed with it names one of the four sites it is
-        listing. That is the forty-months lie in a heading.
-        """
-        raw = getattr(self._settings, "settings", self._settings)
+        """The selected place's title when the feed has no site title."""
         try:
-            return str(raw.get("station.name") or "")
+            return str(self._settings.get("station.name") or "")
         except Exception:
             return ""
 
@@ -2212,7 +2206,8 @@ def from_settings(settings: Any, reader: Reader,
                   plots: Any = (), prefix: str = "feeds.cheetah",
                   extra_groups: dict[str, str] | None = None,
                   archives: Any = None,
-                  archive: str = "") -> CheetahFeed:
+                  archive: str = "",
+                  forecast_path: str | Path | None = None) -> CheetahFeed:
     """Build the feed, and the tag layer it renders through.
 
     The tags are built here rather than handed in because they carry the
@@ -2244,8 +2239,8 @@ def from_settings(settings: Any, reader: Reader,
 
     places = _roster(archives, settings)
     tags.moon_phases = spoken.moon_phases()
-    forecast_store = _install_forecast(tags, settings, spoken,
-                                       archive=archive)
+    forecast_store = _install_forecast(
+        tags, settings, spoken, archive=archive, path=forecast_path)
 
     skins = Path(str(option("skins_dir") or "skins"))
     skin = str(option("skin") or "").strip()
@@ -2458,7 +2453,8 @@ def _derived(settings: Any) -> tuple[str, ...]:
 
 
 def _install_forecast(tags: Any, settings: Any, spoken: Any,
-                      archive: str = "", store: Any = None) -> Any:
+                      archive: str = "", store: Any = None,
+                      path: str | Path | None = None) -> Any:
     """Give the skin `$forecast` for one series, if this station fetches one.
 
     Opened here rather than in `tags.py` for two reasons. A station with no
@@ -2479,11 +2475,9 @@ def _install_forecast(tags: Any, settings: Any, spoken: Any,
     renders four places must not open the same file four times and leave
     four handles behind. Returns the store it used, or None.
     """
-    from ...forecast import store_path
-
     if store is None:
-        path = store_path(settings.get("archive_db"))
-        if not path.exists():
+        path = Path(path) if path is not None else _placed_forecast_path(settings)
+        if path is None or not path.exists():
             return None
     try:
         from ...forecast.store import ForecastStore
@@ -2491,7 +2485,7 @@ def _install_forecast(tags: Any, settings: Any, spoken: Any,
 
         made = store if store is not None else ForecastStore(path)
         install(tags, made, spoken,
-                archive=archive or forecast_default_archive())
+                archive=_forecast_archive(settings, archive))
         return made
     except Exception:
         # A forecast nobody can read must not take a page down. The skin
@@ -2499,6 +2493,32 @@ def _install_forecast(tags: Any, settings: Any, spoken: Any,
         log.warning("could not open the forecast; the pages will render "
                     "without it", exc_info=True)
         return store
+
+
+def _placed_forecast_path(settings: Any) -> Path | None:
+    """Find an existing-layout cache from a placed archive, if that is all.
+
+    The normal CLI passes the installation-wide path explicitly. Direct
+    renderer users do not have the archive registry, but a ``Placed`` view
+    still exposes the archive it belongs to. That is a safe compatibility
+    fallback; the old central ``archive_db`` value is intentionally ignored.
+    """
+    from ...forecast import store_path
+
+    archive = getattr(settings, "archive", None)
+    archive_file = getattr(archive, "file", None)
+    if not archive_file:
+        return None
+    configured = getattr(settings, "_path", None)
+    base = Path(configured).parent if configured is not None else None
+    return store_path(archive_file, base)
+
+
+def _forecast_archive(settings: Any, named: str = "") -> str:
+    """The exact placed series, with ``default`` only for legacy callers."""
+    archive = getattr(settings, "archive", None)
+    return (str(named or getattr(archive, "name", "")).strip()
+            or forecast_default_archive())
 
 
 def forecast_default_archive() -> str:

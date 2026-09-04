@@ -1,6 +1,6 @@
 # The live database
 
-`db/live.py`. Every packet that ever arrived, kept for a while. This is the
+`db/live.py`. Every reading that ever arrived, kept for a while. This is the
 store that replaces WeeWX's in-memory accumulator.
 
 A packet is written here the moment it arrives, and nothing else happens to it.
@@ -10,6 +10,25 @@ whether aggregated now, after a restart or a week later.
 
 Its own file, so that size and retention have nothing to do with the archive.
 The archive database stays small and easy to back up.
+
+## It is a sensor journal
+
+`data` holds the readings under the names the console sent them with, and
+`dialect` says which vocabulary that is. `mapping` refers to the versioned,
+declarative JSON description needed to interpret it. Nothing here has been placed into an
+archive column, and nothing has been left out — a field two drivers disagree
+about, one no catalog knows, one you have deliberately placed nowhere, an
+indoor temperature you do not want recorded: they are all in this table.
+
+Which of them reaches an archive, and under which column, is read out of
+`placement.toml` when the record is built → [Placements](Placements).
+
+That is what makes a placement repairable. Change the line, rebuild the span,
+and the archive follows — for as far back as the retention period reaches.
+
+A packet from a collector, from the WeeWX shim or from any driver somebody
+else wrote has no dialect: its names are already WeeWX's, which is what the
+envelope promises → [Drivers](Drivers).
 
 ## Size
 
@@ -32,28 +51,41 @@ CREATE TABLE IF NOT EXISTS packet (
 | `seq` | Sequential, the primary key |
 | `dateTime` | The time of the reading, as the packet gives it |
 | `usUnits` | Unit system, `1` / `16` / `17` → [Units](Units) |
-| `data` | The readings, as JSON |
-| `source` | Which station it came from → [Multiple-Sources](Multiple-Sources) |
+| `data` | The readings, as JSON, under the names the console used |
+| `dialect` | Which vocabulary those names belong to; empty means WeeWX's |
+| `mapping` | SHA-256 reference to its inert description in `dialect_mapping`; empty with no dialect |
+| `driver` | Which plugin read it |
+| `identity` | What the hardware calls itself: a PASSKEY, a serial, a station id |
+| `sender` | Canonical, versioned ID derived from `driver` and `identity`; the key Places select |
 | `kind` | `loop` or `archive` |
 | `interval` | If the packet carries a span |
 | `received` | Time of arrival, independent of the time of the reading |
 | `raw` | The upload as it came off the wire — only for a while |
 
-Alongside that, a `meta` table and a `pending` list.
+Alongside that are `live_metadata`, `pending`, `sender_identity` and
+`dialect_mapping(digest, spec)`. A large console catalog can be 26 KiB; keeping
+it once rather than on every packet preserves the journal's measured size.
+
+There is no mutable display-name routing key. `sender` is derived from the
+driver and hardware identity and stored with every packet. `sender_identity`
+holds presentation metadata. Renaming or adopting a sender therefore does not
+split its raw history. Archive membership is separate: each Place selects
+canonical sender IDs from this database.
 
 ## `Packet`
 
 One reading, as it arrived, before anything was done to it.
 
 ```python
-Packet(dateTime=1787734265, usUnits=1, data={"outTemp": 21.4},
-       source="garden", kind="loop", interval=None,
-       received=1787734266, raw=None)
+Packet(dateTime=1787734265, usUnits=1, data={"tempf": 70.5},
+       driver="ecowitt", identity="3178AB6B…", dialect="ecowitt",
+       mapping={"version": 1, "fields": {"tempf": "outTemp"}, …},
+       kind="loop", interval=None, received=1787734266, raw=None)
 ```
 
 | Method | What it means |
 |---|---|
-| `digest()` | A short hash of the payload, so a retransmission is not a new packet |
+| `digest()` | A short hash of the measurements, so a retransmission is not a new packet |
 | `record()` | The packet as an observation record, ready for the accumulator |
 
 ## `LiveStore`
@@ -113,7 +145,9 @@ slow packet does not cause a record to be computed twice.
 arrived late should be allowed to keep its raw upload a while longer.
 
 `prune` with `archive_dir` writes out every day leaving the table as gzip NDJSON
-first (`_spool`). Nothing is deleted before the file has been written.
+first (`_spool`). The mapping reference is expanded into its JSON description,
+so the file remains self-contained. Nothing is deleted before the file has
+been written.
 
 ```bash
 weewx-evo archive --spool /data/packets
@@ -131,6 +165,17 @@ up in a browser, and is now part of the design. → [Testing](Testing)
 a cache with a few days in it, so a migration going wrong would cost little —
 but the packets are what makes a record reproducible, so nothing is taken away
 regardless.
+
+Rows written before dialect descriptions existed remain visible with their raw
+field names. The archiver reports and skips them: treating a coincidentally
+familiar name as `outTemp` without knowing its scale or units would turn an
+honest gap into plausible false history.
+
+The still older table shape is different: those rows were already placed into
+WeeWX columns. They are copied as passthrough packets with the reserved driver
+`__legacy__` and the old `source` as identity. That preserves any interval
+which was waiting when the upgrade happened, while making the irreversible
+loss of the original hardware names explicit.
 
 ## Why this justifies the live table
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 import html
 import logging
 from typing import Any
+from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ def find(admin: Any, query: str) -> list[Hit]:
     if len(needle) < SHORTEST:
         return []
 
-    hits: list[Hit] = []
+    hits: list[Hit] = _place_settings(admin, needle)
     for schema in admin.schemas:
         for group in schema.groups:
             for option in group.options:
@@ -82,8 +83,16 @@ def find(admin: Any, query: str) -> list[Hit]:
                     if needle not in (option.help or "").casefold():
                         continue
                     rank = 3
+                # These names remain in the core schema so old files stay
+                # readable, but archives.toml is their only editing
+                # authority from the first Place onward. Search must not
+                # resurrect the old central form as a second route to them.
+                from . import archives as archive_defs
                 from .admin import anchor
 
+                if schema.kind == "core" and option.name in archive_defs.FROM_SETTINGS:
+                    hits.extend(_place_option_hits(admin, option, rank))
+                    continue
                 hits.append(Hit(
                     option.label, f"{schema.label} / {group.label}",
                     f"./{schema.name}#{anchor(group.label)}",
@@ -92,6 +101,54 @@ def find(admin: Any, query: str) -> list[Hit]:
     hits.extend(_charts(admin, needle))
     hits.sort(key=lambda one: (one.rank, one.title.casefold()))
     return hits[:MOST]
+
+
+def _place_option_hits(admin: Any, option: Any, rank: int) -> list[Hit]:
+    from . import adminarchives
+
+    try:
+        places = adminarchives.load(admin).ordered()
+    except Exception:
+        log.debug("could not read Places for the settings search",
+                  exc_info=True)
+        places = []
+    if not places:
+        return [Hit(option.label, "Places", "./places", option.name, rank)]
+    return [Hit(option.label, f"Place: {place.title}",
+                f"./places?open={quote(place.name)}", option.name, rank)
+            for place in places]
+
+
+def _place_settings(admin: Any, needle: str) -> list[Hit]:
+    """Fields owned by archives.toml, including the first Place."""
+    from . import adminarchives
+
+    matched = []
+    for name, label in adminarchives.SEARCH_FIELDS:
+        rank = _rank(needle, name, label)
+        if rank is not None:
+            matched.append((name, label, rank))
+    if not matched:
+        return []
+    try:
+        places = adminarchives.load(admin).ordered()
+    except Exception:
+        log.debug("could not read Places for the settings search",
+                  exc_info=True)
+        places = []
+    if not places:
+        return [Hit(label, "Places", "./new-place", name, rank)
+                for name, label, rank in matched]
+
+    hits = []
+    for place in places:
+        for name, label, rank in matched:
+            section = ("senders" if name == "senders" else
+                       "fields" if name == "fields" else "general")
+            href = (f"./places?open={quote(place.name)}"
+                    f"#place-{section}-{quote(place.name)}")
+            hits.append(Hit(label, f"Place: {place.title}", href, name, rank))
+    return hits
 
 
 def _charts(admin: Any, needle: str) -> list[Hit]:
@@ -140,9 +197,7 @@ def results(admin: Any, query: str) -> str:
         return f'''
 <h2>Find a setting</h2>
 {box(query)}
-<p class="lede">Type at least {SHORTEST} letters. It looks through every
-   setting on every page, and through the charts and the readings they
-   draw.</p>
+<p class="lede">Type at least {SHORTEST} letters.</p>
 '''
 
     hits = find(admin, query)
@@ -150,9 +205,7 @@ def results(admin: Any, query: str) -> str:
         return f'''
 <h2>Find a setting</h2>
 {box(query)}
-<p class="navempty">Nothing matches {html.escape(query)!r}. The search
-   covers setting names, their labels and their explanations, chart names
-   and the readings a chart draws.</p>
+<p class="navempty">Nothing matches {html.escape(query)!r}.</p>
 '''
 
     rows = NEWLINE.join(f'''
@@ -163,13 +216,11 @@ def results(admin: Any, query: str) -> str:
       </li>''' for one in hits)
     more = ""
     if len(hits) == MOST:
-        more = (f'<p class="note">Showing the first {MOST}. '
-                "Something more specific will do better.</p>")
+        more = f'<p class="note">First {MOST} shown.</p>'
     return f'''
 <h2>Find a setting</h2>
 {box(query)}
-<p class="lede">{len(hits)} match(es) for {html.escape(query)!r}. Each one
-   goes to the page and the section it is in.</p>
+<p class="lede">{len(hits)} match(es) for {html.escape(query)!r}.</p>
 <section class="flow">
   <ul class="sends plain">{rows}</ul>
 </section>

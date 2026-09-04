@@ -37,7 +37,7 @@ is something you want to be able to diff and pass on.
 | `marker`, `marker_size` | |
 | `gap_fraction` | The distance at which a gap is a gap |
 | `rotate` | |
-| `series` | Which [archive](Stations-and-Archives) this line reads. Empty is the one the chart is being drawn for, which is every line on every station with one series |
+| `series` | Which [archive](Stations-and-Archives) this line reads. Empty means the place the chart is currently being drawn for |
 | `binding` | WeeWX's `data_binding`, carried through an import and back out again. Read by nothing here |
 
 `series` is what "outTemp at all five locations on one axis" is: five lines,

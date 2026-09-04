@@ -17,8 +17,9 @@ console is sending. Below them, the last 24 hours:
 
 ![The last 24 hours](docs/images/readme-2-charts.png)
 
-Everything is set from a page in your browser. No file to edit unless you want
-to — and the file it writes stays readable and editable by hand:
+The Admin UI has five stable sections: Overview, Senders, Places, Publishing
+and System. Sender data is diagnostic; each Place owns its database and sender
+policy. The files stay readable and editable by hand:
 
 ![The settings page](docs/images/readme-3-settings.png)
 
@@ -59,19 +60,36 @@ cd weewx-evo
 pip install -e .
 ```
 
-A token, your position, and go:
+A token, one place, and go:
 
 ```bash
 python -c "import secrets; print(secrets.token_hex(24))"    # your token
 
 weewx-evo config set --config evo.toml token <the-token>
-weewx-evo config set --config evo.toml station.name "Kirchdorf an der Amper"
-weewx-evo config set --config evo.toml station.latitude 48.4596
-weewx-evo config set --config evo.toml station.longitude 11.6539
-weewx-evo config set --config evo.toml station.altitude 440
+```
 
+```toml
+# archives.toml — also used for the first place
+member_policy_version = 2
+
+[archives.default]
+file = "data/weewx.sdb"
+label = "Kirchdorf an der Amper"
+latitude = 48.4596
+longitude = 11.6539
+altitude = 440
+senders = "*"
+```
+
+```bash
 weewx-evo serve --config evo.toml
 ```
+
+Every place, including the first, is an entry in `archives.toml`. It owns its
+database, location and sender selection. Drivers and collectors write raw
+packets to the shared live database under a canonical sender ID; they do not
+choose an archive. Replace the explicit all-senders selection above on the
+**Places** page once the sender has appeared.
 
 Then point the console at `http://<this-machine>:8000/<token>/ecowitt/` and open
 the settings page for everything else.

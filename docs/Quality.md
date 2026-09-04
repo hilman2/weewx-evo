@@ -57,7 +57,7 @@ resolution = 0.1   # what the sensor can tell apart
 [calibrate.everywhere.outHumidity]
 offset = 2.0
 
-[calibrate.schuppen.outTemp]
+[calibrate."v1/wunderground/evo-3f9a2c".outTemp]
 offset = -0.4
 ```
 
@@ -71,10 +71,16 @@ and hand it on.
 The other order tests an uncorrected reading against corrected limits, so a
 thermometer with a 0.4 K offset fails at its own ceiling.
 
-Calibration is **per station**, because that is what it is about: two
-thermometers in one garden disagree by a few tenths, and which of them is
-*the* series is a decision somebody made. `[calibrate.everywhere]` applies to
-all of them; a station's own entry wins.
+Calibration is **per sender**, because two thermometers in one garden can
+disagree by a few tenths. The table key is the canonical Sender ID shown on
+the Senders page, including the quotes. A display name is mutable and the same
+hardware identity can occur under different drivers, so neither identifies a
+calibration. `[calibrate.everywhere]` applies to all senders; a sender's own
+entry wins.
+
+Old `[calibrate.<station-name>]` tables are retained when the Admin page saves
+the file, but are ignored with a warning. Replace the label with the canonical
+Sender ID; it is not guessed from current display metadata.
 
 ### What each rule costs when it is wrong
 

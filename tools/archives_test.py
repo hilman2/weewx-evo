@@ -13,7 +13,7 @@ process, so the altitude has to stop being global instead.
 
 What is checked, in the order it can go wrong:
 
-    the register     one archive is the settings, two is a file
+    the register     one archive and several use the same file
     the pending      two readers of one live table, neither clearing the
                      other's work -- the failure that loses a whole series
     the packets      the north field's readings do not reach the south file
@@ -46,7 +46,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from weewx_evo import archives, stations  # noqa: E402
 from weewx_evo.archiver import Archiver  # noqa: E402
 from weewx_evo.db.archive import ArchiveStore  # noqa: E402
-from weewx_evo.db.live import LiveStore, Packet  # noqa: E402
+from weewx_evo.db.live import LiveStore, Packet, sender_id  # noqa: E402
 
 failures = 0
 
@@ -84,23 +84,53 @@ class Fake:
 # -- the register ------------------------------------------------------
 
 
-def one_archive_is_the_settings() -> None:
-    """No file, no migration, nothing to configure. Every installation today."""
-    print("\nwith no archives.toml, the settings are the archive")
+def the_settings_become_the_file() -> None:
+    """An installation from before places had a file of their own.
+
+    The values have to survive the move and they have to survive it *once*:
+    written down, not worked out again from settings that no longer describe
+    a place. `station.*` is gone from the schema, so a second start reading
+    an empty `cfg` has to find the altitude in the file or lose it.
+    """
+    print("\nwith no archives.toml, the settings are migrated into one")
     cfg = Fake(**{"archive_db": "data/weewx.sdb",
                   "station.name": "Kirchdorf",
                   "station.latitude": 48.4012,
                   "station.longitude": 11.6301,
                   "station.altitude": 440.0})
     with tempfile.TemporaryDirectory() as raw:
-        register = archives.Register.load(Path(raw) / "archives.toml", cfg)
+        where = Path(raw) / "archives.toml"
+        register = archives.Register.load(where, cfg)
         check("there is exactly one", register.names(), ["default"])
         check("it is the file the settings name",
               register.get("default").file, "data/weewx.sdb")
         check("with the settings' altitude",
               register.get("default").altitude, 440.0)
         check("and nothing has to be told apart", register.several(), False)
-        check("so the settings still decide", register.overriding(), False)
+
+        # The point of the whole move: it was written down, so the next
+        # process does not have to be handed the settings to find the place.
+        check("the file is on disk now", where.exists(), True)
+        again = archives.Register.load(where, Fake())
+        check("and it reads back without the settings",
+              again.get("default").altitude, 440.0)
+        check("with the label the settings held",
+              again.get("default").label, "Kirchdorf")
+        check("and its coordinates", again.get("default").longitude, 11.6301)
+        check("and its broad legacy selection", again.get("default").stations,
+              None)
+
+        # The old values remain in evo.toml for compatibility, but they are
+        # never a live fallback once the archive file exists.
+        changed = archives.Register.load(where, Fake(**{
+            "archive_db": "data/wrong.sdb", "station.name": "Wrong place",
+            "station.altitude": 9999.0}))
+        check("later central settings do not replace the file",
+              (changed.get("default").file,
+               changed.get("default").altitude),
+              ("data/weewx.sdb", 440.0))
+        check("and the atomic temporary file is gone",
+              where.with_suffix(".toml.tmp").exists(), False)
 
 
 def the_second_one_brings_the_first_with_it() -> None:
@@ -127,28 +157,234 @@ def the_second_one_brings_the_first_with_it() -> None:
               again.get("default").file, "data/weewx.sdb")
         check("and its altitude", again.get("default").altitude, 440.0)
         check("the second has its own", again.get("nordfeld").altitude, 452.0)
-        check("now the file decides", again.overriding(), True)
         check("and there is something to tell apart", again.several(), True)
 
 
-def a_name_nobody_defined_falls_back() -> None:
-    """A feed pointing at a removed archive produces a page, not a traceback."""
-    print("\na feed naming an archive that is gone")
-    cfg = Fake(archive_db="data/weewx.sdb")
-    register = archives.Register.load(None, cfg)
-    check("it gets the default", register.get("gone").name, "default")
-    check("and so does a feed naming nothing", register.get(None).name,
-          "default")
+def an_unknown_name_is_refused() -> None:
+    """A typo must never publish another place's readings."""
+    print("\nan archive name that is absent")
+    only = archives.Register([archives.Archive("north", "north.sdb")])
+    check("one archive is an unambiguous omitted selection",
+          only.get(None).name, "north")
+    try:
+        only.get("gone")
+    except KeyError as exc:
+        check("an unknown explicit name is refused", "gone" in str(exc), True)
+    else:
+        check("an unknown explicit name is refused", False, True)
+
+    ambiguous = archives.Register([
+        archives.Archive("north", "north.sdb"),
+        archives.Archive("south", "south.sdb")])
+    try:
+        ambiguous.get(None)
+    except LookupError:
+        check("several without an explicit default require a name", True, True)
+    else:
+        check("several without an explicit default require a name", False, True)
 
 
-def the_two_defaults_agree() -> None:
-    """Three modules spell this constant. They must spell it the same."""
-    print("\n'default' means the same thing everywhere")
-    from weewx_evo.db.live import DEFAULT_ARCHIVE
+def station_selections_survive_the_file() -> None:
+    """Broad, empty and canonical IDs survive one Place-owned file."""
+    print("\narchive sender selections round trip")
+    shared = sender_id("weather/underground", "Shared / Süd")
+    north = sender_id("ecowitt", "AA:BB:CC")
+    with tempfile.TemporaryDirectory() as raw:
+        where = Path(raw) / "archives.toml"
+        register = archives.Register([
+            archives.Archive("default", "default.sdb", stations=None),
+            archives.Archive("empty", "empty.sdb", stations=()),
+            archives.Archive("north", "north.sdb",
+                             stations=(shared, north),
+                             members={
+                                 shared: archives.MemberPolicy(
+                                     role="extra", channel=2, indoor=False),
+                             }),
+            archives.Archive("mirror", "mirror.sdb", stations=(shared,)),
+        ], where)
+        register.save()
+        again = archives.Register.load(where, Fake(**{
+            "archive_db": "wrong.sdb", "station.name": "Wrong"}))
+        check("None stays explicit", again.get("default").stations, None)
+        check("empty stays explicit", again.get("empty").stations, ())
+        check("several names keep their order",
+              again.get("north").senders, (shared, north))
+        check("one sender can feed two places",
+              [one.name for one in again.all()
+               if shared in (one.senders or ())], ["north", "mirror"])
+        check("a selected sender keeps its place-specific policy",
+              again.get("north").policy_for(shared),
+              archives.MemberPolicy(role="extra", channel=2, indoor=False))
+        check("an unspecified member has the safe ordinary defaults",
+              again.get("north").policy_for(north),
+              archives.MemberPolicy())
+        written = where.read_text(encoding="utf-8")
+        check("the broad selection is written distinctly",
+              'senders = "*"' in written, True)
+        check("the empty selection is written",
+              "[archives.empty]\nfile = \"empty.sdb\"\nsenders = []" in written,
+              True)
+        check("sender IDs are quoted as one TOML key",
+              f'[archives.north.members."{shared}"]' in written, True)
 
-    check("stations and archives agree",
-          stations.DEFAULT_ARCHIVE, archives.DEFAULT)
-    check("and so does the live table", DEFAULT_ARCHIVE, archives.DEFAULT)
+
+def member_policy_values_are_checked_per_archive() -> None:
+    print("\nmember policy validation")
+
+    for what, values in (
+        ("unknown role", {"role": "secondary", "channel": 0}),
+        ("extra without channel", {"role": "extra", "channel": 0}),
+        ("main with a channel", {"role": "main", "channel": 2}),
+        ("quoted indoor flag", {"indoor": "false"}),
+    ):
+        try:
+            archives.MemberPolicy.from_dict(values)
+        except ValueError:
+            check(what + " is refused", True, True)
+        else:
+            check(what + " is refused", False, True)
+
+    one = sender_id("push", "one")
+    two = sender_id("push", "two")
+    dormant = {
+        one: archives.MemberPolicy(role="extra", channel=1),
+        two: archives.MemberPolicy(role="extra", channel=1),
+    }
+    made = archives.Archive("north", "north.sdb", stations=(one,),
+                            members=dormant)
+    check("unselected policies are not a second authority",
+          sorted(made.members), [one])
+    try:
+        archives.Archive("north", "north.sdb", stations=(one, two),
+                         members=dormant)
+    except ValueError as exc:
+        check("selected extras may not share a channel",
+              "channel 1" in str(exc), True)
+    else:
+        check("selected extras may not share a channel", False, True)
+
+    with tempfile.TemporaryDirectory() as raw:
+        where = Path(raw) / "archives.toml"
+        where.write_text(
+            f"member_policy_version = {archives.MEMBER_POLICY_VERSION + 1}\n"
+            '[archives.north]\nfile = "north.sdb"\nsenders = []\n',
+            encoding="utf-8")
+        try:
+            archives.Register.load(where, Fake())
+        except ValueError as exc:
+            check("a newer policy format is not silently downgraded",
+                  "newer" in str(exc), True)
+        else:
+            check("a newer policy format is not silently downgraded",
+                  False, True)
+
+
+def legacy_station_destinations_move_once() -> None:
+    """Old Station.archive pointers become archive-owned lists atomically."""
+    print("\nlegacy station destinations move into archives.toml")
+    cfg = Fake(**{"archive_db": "data/south.sdb",
+                  "station.name": "South", "station.altitude": 440.0})
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        where = work / "archives.toml"
+        # Old files commonly named only the added archive; Register supplied
+        # the central default at runtime.
+        where.write_text(
+            '[archives.north]\nfile = "data/north.sdb"\n', encoding="utf-8")
+        (work / "stations.toml").write_text(
+            '[stations.south-console]\n'
+            'driver = "wunderground"\nidentity = "south"\n\n'
+            '[stations.north-console]\n'
+            'driver = "wunderground"\nidentity = "north"\n'
+            'archive = "north"\n', encoding="utf-8")
+
+        check("the explicit migration changed the file",
+              archives.migrate_station_ownership(
+                  where, cfg, work / "stations.toml"), True)
+        migrated = archives.Register.load(where, cfg)
+        check("the implicit central archive is written into the file",
+              migrated.names(), ["default", "north"])
+        check("an old implicit destination becomes default's list",
+              migrated.get("default").senders,
+              (sender_id("wunderground", "south"),))
+        check("an old named destination becomes north's list",
+              migrated.get("north").senders,
+              (sender_id("wunderground", "north"),))
+        check("all migrated selections are explicit",
+              where.read_text(encoding="utf-8").count("members."), 2)
+
+        # The old pointer is no longer consulted after the canonical file was
+        # written, even if somebody leaves or changes it.
+        (work / "stations.toml").write_text(
+            '[stations.south-console]\n'
+            'driver = "wunderground"\nidentity = "south"\n'
+            'archive = "north"\n', encoding="utf-8")
+        again = archives.Register.load(where, Fake(archive_db="data/wrong.sdb"))
+        check("later station pointers do not change routing",
+              again.get("default").senders,
+              (sender_id("wunderground", "south"),))
+
+
+def legacy_member_policies_move_once() -> None:
+    """Old global roles move once to the selected sender relationship."""
+    print("\nlegacy station roles move into selected Place members once")
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        where = work / "archives.toml"
+        where.write_text(
+            '[archives.south]\nfile = "south.sdb"\n'
+            'stations = ["shared"]\n\n'
+            '[archives.south.members.shared]\n'
+            'role = "main"\nchannel = 0\nindoor = true\n\n'
+            '[archives.north]\nfile = "north.sdb"\n'
+            'stations = ["shared"]\n',
+            encoding="utf-8")
+        stations_path = work / "stations.toml"
+        stations_path.write_text(
+            '[stations.shared]\n'
+            'driver = "wunderground"\nidentity = "shared"\n'
+            'role = "extra"\nchannel = 3\nindoor = false\n\n'
+            '[stations.later]\n'
+            'driver = "ecowitt"\nidentity = "later"\n'
+            'role = "extra"\nchannel = 4\nindoor = false\n',
+            encoding="utf-8")
+
+        archives.migrate_station_ownership(where, Fake(), stations_path)
+        migrated = archives.Register.load(where, Fake())
+        shared = sender_id("wunderground", "shared")
+        later = sender_id("ecowitt", "later")
+        check("an explicit new policy beats the legacy station value",
+              migrated.get("south").policy_for(shared),
+              archives.MemberPolicy())
+        check("the legacy policy reaches another place",
+              migrated.get("north").policy_for(shared),
+              archives.MemberPolicy(role="extra", channel=3, indoor=False))
+        check("an unselected station creates no dormant authority",
+              later in migrated.get("south").members, False)
+        text = where.read_text(encoding="utf-8")
+        check("the completed migration is marked",
+              f"member_policy_version = {archives.MEMBER_POLICY_VERSION}" in text,
+              True)
+        check("the canonical sender is one quoted TOML key",
+              f'[archives.north.members."{shared}"]' in text, True)
+        check("the obsolete station-owned policy was removed after commit",
+              stations.legacy_member_settings(stations_path), {})
+
+        # Even if an obsolete writer adds the keys again, the marker makes
+        # them cease to be authority. A later edit there must not overwrite
+        # the copied relationship values.
+        stations_path.write_text(
+            stations_path.read_text(encoding="utf-8").replace(
+                'identity = "shared"',
+                'identity = "shared"\nrole = "extra"\nchannel = 8\n'
+                'indoor = true'), encoding="utf-8")
+        check("the versioned migration is not repeated",
+              archives.migrate_station_ownership(
+                  where, Fake(), stations_path), False)
+        again = archives.Register.load(where, Fake())
+        check("later legacy edits cannot replace the migrated policy",
+              again.get("north").policy_for(shared),
+              archives.MemberPolicy(role="extra", channel=3, indoor=False))
 
 
 # -- the pending table -------------------------------------------------
@@ -167,7 +403,7 @@ def two_archives_do_not_clear_each_others_work() -> None:
         live.archives = ["default", "nordfeld"]
         when = 1787800000
         live.add(Packet(dateTime=when, usUnits=1, data={"outTemp": 20.0},
-                        source="south"))
+                        identity="south"))
 
         later = when + INTERVAL * 2
         check("the default has an interval waiting",
@@ -221,22 +457,42 @@ def each_series_takes_only_its_own() -> None:
         live.archives = ["default", "nordfeld"]
         when = 1787800000
         live.add(Packet(dateTime=when, usUnits=1, data={"outTemp": 20.0},
-                        source="south-console"))
+                        identity="south-console"))
         live.add(Packet(dateTime=when, usUnits=1, data={"outTemp": 2.0},
-                        source="north-console"))
+                        identity="north-console"))
 
         south_store = ArchiveStore(work / "south.sdb")
         north_store = ArchiveStore(work / "north.sdb")
         south = Archiver(live, south_store, interval_seconds=INTERVAL,
-                         name="default", stations=["south-console"])
+                         # The pair the table is keyed on. A name is a
+                         # lookup and this is the thing looked up.
+                         name="default",
+                         stations=[("unknown", "south-console")])
         north = Archiver(live, north_store, interval_seconds=INTERVAL,
-                         name="nordfeld", stations=["north-console"])
+                         name="nordfeld",
+                         stations=[("unknown", "north-console")])
 
+        sql: list[str] = []
+        south_store.conn.set_trace_callback(sql.append)
         later = when + INTERVAL * 2
         check("the south archived its interval",
               south.process_due(now=later, grace=0), 1)
         check("and the north its own",
               north.process_due(now=later, grace=0), 1)
+
+        depth = 0
+        daily_outside_transaction = []
+        for statement in sql:
+            command = statement.lstrip().upper()
+            if command.startswith("BEGIN"):
+                depth += 1
+            elif command.startswith(("COMMIT", "ROLLBACK")):
+                depth = max(0, depth - 1)
+            elif ("INSERT OR REPLACE INTO ARCHIVE_DAY_" in command
+                  and depth == 0):
+                daily_outside_transaction.append(statement)
+        check("all daily rows were written inside transactions",
+              len(daily_outside_transaction), 0)
 
         def temp_in(store: ArchiveStore) -> float | None:
             row = store.conn.execute(
@@ -262,7 +518,7 @@ def an_archive_with_no_stations_writes_nothing() -> None:
         work = Path(raw)
         live = LiveStore(work / "live.sdb", interval_seconds=INTERVAL)
         live.add(Packet(dateTime=1787800000, usUnits=1, data={"outTemp": 20.0},
-                        source="somebody"))
+                        identity="somebody"))
         store = ArchiveStore(work / "empty.sdb")
         empty = Archiver(live, store, interval_seconds=INTERVAL,
                          name="empty", stations=[])
@@ -274,20 +530,22 @@ def an_archive_with_no_stations_writes_nothing() -> None:
         live.close()
 
 
-def one_archive_still_takes_everything() -> None:
-    """The rule that keeps every installation that predates all of this.
+def a_broad_archive_selection_takes_everything() -> None:
+    """None is the migrated archive's explicit broad selection.
 
     An unannounced sensor has been reaching the series for a year. It must go
-    on reaching it.
+    on reaching it, but because the archive says so -- not because there is
+    only one archive or because a station points at a default.
     """
-    print("\nwith one archive, an unannounced source still gets in")
+    print("\nwith a broad archive selection, an unannounced source gets in")
     with tempfile.TemporaryDirectory() as raw:
         work = Path(raw)
         live = LiveStore(work / "live.sdb", interval_seconds=INTERVAL)
         live.add(Packet(dateTime=1787800000, usUnits=1, data={"outTemp": 20.0},
-                        source="a-console-nobody-announced"))
+                        identity="a-console-nobody-announced"))
         store = ArchiveStore(work / "weewx.sdb")
-        only = Archiver(live, store, interval_seconds=INTERVAL)
+        only = Archiver(live, store, interval_seconds=INTERVAL,
+                        name="default", stations=None)
         check("it is archived", only.process_due(now=1787800200, grace=0), 1)
         store.close()
         live.close()
@@ -316,6 +574,15 @@ def the_altitude_is_the_archives() -> None:
     check("each deriver got its own altitude",
           (low.station.altitude_m, high.station.altitude_m), (452.0, 1040.0))
 
+    # A declared place with missing coordinates is not the legacy default
+    # place. Borrowing the central values here silently computes plausible
+    # derived readings for the wrong location.
+    blank = deriver_from(cfg, archives.Archive("blank", "blank.sdb"))
+    check("a blank place does not borrow legacy coordinates",
+          (blank.station.latitude, blank.station.longitude,
+           blank.station.altitude_m),
+          (None, None, None))
+
     record = {"dateTime": 1787800000, "usUnits": 1, "pressure": 28.5,
               "outTemp": 50.0, "outHumidity": 60.0}
     low_out = low.apply(dict(record))
@@ -341,12 +608,12 @@ def a_page_prints_its_own_place() -> None:
     check("everything else passes through", view.get("language"), "de")
     check("including what was never asked about", view.get("interval"), 300)
 
-    # An archive that says nothing about a number falls back rather than
-    # answering None: a second file added for its own sake should not lose
-    # the sun.
+    # An archive that says nothing must not borrow another place's position.
     bare = archives.Placed(cfg, archives.Archive("bare", "b.sdb"))
-    check("an archive with no coordinates falls back to the settings",
-          bare.get("station.latitude"), 48.4012)
+    check("an archive with no coordinates stays without them",
+          bare.get("station.latitude"), None)
+    check("and a blank label uses its own stable name",
+          bare.get("station.name"), "bare")
 
 
 # -- end to end --------------------------------------------------------
@@ -391,21 +658,28 @@ def two_sites_through_a_real_serve() -> None:
     with tempfile.TemporaryDirectory() as raw:
         work = Path(raw)
         (work / "data").mkdir()
+        south_sender = sender_id("wunderground", "suedhof")
+        north_sender = sender_id("wunderground", "nordhof")
 
         (work / "archives.toml").write_text(
+            f'member_policy_version = {archives.MEMBER_POLICY_VERSION}\n\n'
             '[archives.default]\n'
             'file = "data/sued.sdb"\n'
             'label = "Suedfeld"\n'
             f'latitude = {SOUTH["latitude"]}\n'
             f'longitude = {SOUTH["longitude"]}\n'
             f'altitude = {SOUTH["altitude"]}\n'
+            f'\n[archives.default.members."{south_sender}"]\n'
+            'role = "main"\nchannel = 0\nindoor = true\n'
             '\n'
             '[archives.nordfeld]\n'
             'file = "data/nord.sdb"\n'
             'label = "Nordfeld"\n'
             f'latitude = {NORTH["latitude"]}\n'
             f'longitude = {NORTH["longitude"]}\n'
-            f'altitude = {NORTH["altitude"]}\n', encoding="utf-8")
+            f'altitude = {NORTH["altitude"]}\n'
+            f'\n[archives.nordfeld.members."{north_sender}"]\n'
+            'role = "main"\nchannel = 0\nindoor = true\n', encoding="utf-8")
 
         (work / "stations.toml").write_text(
             '[stations.suedhof]\n'
@@ -434,16 +708,24 @@ def two_sites_through_a_real_serve() -> None:
         env = dict(os.environ)
         env["PYTHONPATH"] = os.pathsep.join(
             [str(ROOT / "src"), env.get("PYTHONPATH", "")])
+        # Do not leave a chatty child connected to an unread PIPE while this
+        # process waits for its database writes. Once the OS pipe buffer fills,
+        # logging blocks the archiver itself and the test manufactures the
+        # failure it is waiting to observe.
+        log_path = work / "serve.log"
+        log_file = log_path.open("w", encoding="utf-8")
         proc = subprocess.Popen(
             [sys.executable, "-m", "weewx_evo.cli", "serve",
              "--config", str(work / "evo.toml")],
-            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=env, stdout=log_file, stderr=subprocess.STDOUT,
             text=True)
         base = f"http://127.0.0.1:{port}"
         try:
             if not _wait_for(base):
                 proc.terminate()
-                out = proc.communicate(timeout=10)[0]
+                proc.wait(timeout=10)
+                log_file.flush()
+                out = log_path.read_text(encoding="utf-8", errors="replace")
                 check("the listener came up", False, True)
                 print("  --   " + "\n  --   ".join(out.splitlines()[-15:]))
                 return
@@ -481,10 +763,13 @@ def two_sites_through_a_real_serve() -> None:
         finally:
             proc.terminate()
             try:
-                out = proc.communicate(timeout=15)[0]
+                proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                out = proc.communicate()[0]
+                proc.wait()
+            log_file.flush()
+            log_file.close()
+            out = log_path.read_text(encoding="utf-8", errors="replace")
             if failures:
                 print("  --   the log said:")
                 for line in out.splitlines()[-25:]:
@@ -549,8 +834,12 @@ def _sightings(live_path: Path) -> list:
 def _sources_in(live_path: Path, source: str) -> int:
     conn = sqlite3.connect(f"file:{live_path}?mode=ro", uri=True)
     try:
-        return conn.execute("SELECT count(*) FROM packet WHERE source = ?",
-                            (source,)).fetchone()[0]
+        # By the identity the console uploads with, which is what the
+        # table records. The name it answers to is a lookup, so there
+        # is no column to select on.
+        return conn.execute(
+            "SELECT count(*) FROM packet WHERE identity = ?",
+            (source,)).fetchone()[0]
     finally:
         conn.close()
 
@@ -576,8 +865,15 @@ def the_page_is_how_the_second_one_appears() -> None:
     from weewx_evo.admin import Admin
     from weewx_evo.cli import all_schemas
 
+    unsafe_swatch = adminarchives._swatch(
+        "#fff; background-image: url(javascript:alert(1))", "hand edited")
+    check("a hand-edited colour cannot add a CSS declaration",
+          ('style="--c: "' in unsafe_swatch
+           and "background-image" not in unsafe_swatch), True)
+
     with tempfile.TemporaryDirectory() as raw:
         work = Path(raw)
+        (work / "data").mkdir()
         (work / "evo.toml").write_text(
             'token = "abcdefghij123456"\n'
             '[station]\n'
@@ -588,12 +884,39 @@ def the_page_is_how_the_second_one_appears() -> None:
         admin = Admin(work / "evo.toml",
                       lambda: all_schemas(work / "evo.toml"),
                       TOKEN)
+        shared = sender_id("wunderground", "SHARED / Süd")
+        other = sender_id("ecowitt", "AA:BB")
+        with LiveStore(work / "data" / "live.sdb") as live:
+            live.add(Packet(1700000000, 1, {"outTemp": 12.0},
+                            driver="wunderground",
+                            identity="SHARED / Süd",
+                            mapping={"version": 1,
+                                     "fields": {"outTemp": "outTemp"},
+                                     "metadata": [], "contested": [],
+                                     "absent": []}))
+            live.add(Packet(1700000001, 1, {"outTemp": 13.0},
+                            driver="ecowitt", identity="AA:BB"))
+            live.sync_sender_labels([
+                stations.Station("Terrace", "wunderground", "SHARED / Süd")])
 
         register = adminarchives.load(admin)
-        check("before anything, the settings are the archive",
+        check("the migrated file has one archive",
               register.names(), ["default"])
         check("with the name from the settings",
               register.get("default").title, "Kirchdorf")
+        check("and migration wrote the canonical file",
+              adminarchives.path_for(admin).exists(), True)
+
+        one_page = adminarchives.overview(admin)
+        check("one place uses the master-detail shell",
+              ('class="place-shell"' in one_page
+               and one_page.count('class="place-choice') == 1
+               and one_page.count('class="place-detail"') == 1), True)
+        check("the one-place page keeps the Places name",
+              "Where you measure" not in one_page
+              and "<h2>Places</h2>" in one_page, True)
+        check("the canonical edit route is Places",
+              'action="./places/default/set"' in one_page, True)
 
         made, error = adminarchives.create(admin, {
             "name": "nordfeld", "label": "Nordfeld",
@@ -602,6 +925,8 @@ def the_page_is_how_the_second_one_appears() -> None:
         check("it was accepted", error, "")
         check("and given a file nobody had to invent",
               made.file, "data/nordfeld.sdb")
+        check("and a new place starts with no console selected",
+              made.stations, ())
         check("the file now exists",
               adminarchives.path_for(admin).exists(), True)
 
@@ -609,8 +934,141 @@ def the_page_is_how_the_second_one_appears() -> None:
         check("both are in it", again.names(), ["default", "nordfeld"])
         check("and the first kept the settings' altitude",
               again.get("default").altitude, 440.0)
-        check("the page now says the settings have been taken over",
-              again.overriding(), True)
+        check("and the file is what both are read from",
+              again.path, adminarchives.path_for(admin))
+
+        two_page = adminarchives.overview(
+            admin, form={"_open": "nordfeld"})
+        check("two places use the same master-detail shell",
+              (two_page.count('class="place-choice') == 2
+               and two_page.count('class="place-detail"') == 1), True)
+        check("the requested place is the detail",
+              ('id="place-detail-nordfeld"' in two_page
+               and 'href="./new-place"' in two_page), True)
+
+        # Editing unrelated properties must keep all three selection states;
+        # the form can also change the list deliberately.
+        error = adminarchives.configure(admin, "default", {
+            "label": "Kirchdorf updated"})
+        check("editing the migrated place succeeds", error, "")
+        check("and keeps its None selection",
+              adminarchives.load(admin).get("default").stations, None)
+
+        error = adminarchives.configure(admin, "nordfeld", {
+            "label": "North field"})
+        check("editing a new empty place succeeds", error, "")
+        kept = adminarchives.load(admin).get("nordfeld")
+        check("and keeps the empty selection", kept.stations, ())
+        check("and keeps a field absent from the compact post",
+              kept.file, "data/nordfeld.sdb")
+
+        error = adminarchives.configure(admin, "nordfeld", {
+            "_members": "1", f"sender:{shared}": "1",
+            f"member-role:{shared}": "main",
+            f"member-indoor:{shared}": "1"})
+        check("selecting a live sender succeeds", error, "")
+        check("and stores its canonical ID",
+              adminarchives.load(admin).get("nordfeld").senders,
+              (shared,))
+
+        # Role, channel and indoor are answers this place gives about one
+        # console. The same console may therefore answer differently in the
+        # migrated broad place and in the new, explicitly selected one.
+        error = adminarchives.configure(admin, "default", {
+            "_members": "1",
+            "all-senders": "1",
+            f"sender:{shared}": "1",
+            f"sender:{other}": "1",
+            f"member-role:{shared}": "extra",
+            f"member-channel:{shared}": "3",
+            f"member-role:{other}": "main",
+            f"member-indoor:{other}": "1",
+            # An absent checkbox is the deliberate false value.
+        })
+        check("the first place accepts its member policy", error, "")
+        error = adminarchives.configure(admin, "nordfeld", {
+            "_members": "1",
+            f"sender:{shared}": "1",
+            f"member-role:{shared}": "main",
+            f"member-indoor:{shared}": "1",
+        })
+        check("the second place accepts another policy", error, "")
+
+        fields_page = adminarchives.overview(
+            admin, form={"_open": "nordfeld"})
+        check("field mapping is edited inside the Place detail",
+              'action="./places/nordfeld/fields"' in fields_page, True)
+        check("the mapping form carries the canonical sender",
+              f'name="sender" value="{shared}"' in fields_page, True)
+        check("the sender detail remains diagnostic",
+              "./stations/" in fields_page, False)
+
+        policies = adminarchives.load(admin)
+        check("one console can be extra outside in one place",
+              policies.get("default").policy_for(shared),
+              archives.MemberPolicy(role="extra", channel=3, indoor=False))
+        check("and main with indoor readings in another",
+              policies.get("nordfeld").policy_for(shared),
+              archives.MemberPolicy())
+
+        # A compact property update has no member marker. It must not rebuild
+        # the relationship with defaults just because no policy controls were
+        # submitted.
+        error = adminarchives.configure(admin, "default", {
+            "label": "Kirchdorf renamed", "latitude": "48.5"})
+        check("an ordinary place edit succeeds", error, "")
+        preserved = adminarchives.load(admin).get("default")
+        check("and preserves its member policy",
+              preserved.policy_for(shared),
+              archives.MemberPolicy(role="extra", channel=3, indoor=False))
+
+        member_form = adminarchives._member_fields(admin, preserved)
+        check("the place form owns the role control",
+              f'name="member-role:{shared}"' in member_form, True)
+        check("and displays the live label, not as its value",
+              "<strong>Terrace</strong>" in member_form
+              and f'name="sender:{shared}"' in member_form, True)
+        check("and shows the stored extra role",
+              'value="extra" selected' in member_form, True)
+        check("and shows its channel",
+              f'name="member-channel:{shared}"' in member_form
+              and 'value="3"' in member_form, True)
+        check("and names the relationship in user terms",
+              ("Primary readings" in member_form
+               and "Additional sensor" in member_form
+               and "Indoor readings" in member_form), True)
+        indoor_name = f'name="member-indoor:{shared}"'
+        indoor_control = (member_form.split(indoor_name, 1)[1].split(">", 1)[0]
+                          if indoor_name in member_form else "")
+        check("and leaves indoor unticked",
+              bool(indoor_control) and "checked" not in indoor_control, True)
+
+        north_form = adminarchives._member_fields(
+            admin, adminarchives.load(admin).get("nordfeld"))
+        other_row = north_form.split(f'name="sender:{other}"', 1)[1]
+        other_row = other_row.split("</article>", 1)[0]
+        check("an unselected sender has no active policy controls",
+              ('data-place-member-policy' in other_row
+               and "disabled hidden" in other_row), True)
+
+        error = adminarchives.configure(admin, "nordfeld", {
+            "_members": "1", f"sender:{other}": "1"})
+        check("a no-script selection receives the relationship default",
+              error, "")
+        check("including indoor readings by default",
+              adminarchives.load(admin).get("nordfeld").policy_for(other),
+              archives.MemberPolicy())
+
+        selected, defaults = adminarchives._members_from_form({
+            "_members": "1", f"sender:{shared}": "1",
+            f"sender:{other}": "1",
+        }, (), {}, new=True)
+        check("a no-script multi-selection has one primary",
+              (selected, defaults[shared]),
+              ((shared, other), archives.MemberPolicy()))
+        check("and makes the next sender additional",
+              defaults[other],
+              archives.MemberPolicy(role="extra", channel=1))
 
         # A name that is taken, and a file that is taken. Both would mix two
         # places into one series without saying so.
@@ -622,16 +1080,14 @@ def the_page_is_how_the_second_one_appears() -> None:
         check("and so is a second one in the same file",
               "one series with the readings mixed" in error, True)
 
-        # Removing one that is still written into would silently send those
-        # readings to the default archive.
+        # A station's obsolete archive pointer is not the owner of selection.
         (work / "stations.toml").write_text(
             '[stations.nordhof]\n'
             'driver = "wunderground"\n'
             'identity = "nordhof"\n'
             'archive = "nordfeld"\n', encoding="utf-8")
         error = adminarchives.remove(admin, "nordfeld")
-        check("removing one a station writes into is refused",
-              "still write into" in error, True)
+        check("a station.archive pointer does not block removal", error, "")
         check("and the default cannot be removed at all",
               "cannot be removed" in adminarchives.remove(admin, "default"),
               True)
@@ -714,7 +1170,7 @@ def a_place_in_another_timezone_is_said_out_loud() -> None:
     check("an archive with no longitude is not guessed at",
           archives.timezone_concern(blank), "")
 
-    register = archives.Register([here, far], None, here)
+    register = archives.Register([here, far])
     check("the register collects them by name",
           sorted(register.concerns()), ["far"])
 
@@ -988,16 +1444,19 @@ def test_a_line_can_be_pointed_at_another_series_from_the_page() -> None:
 
 
 def main() -> int:
-    one_archive_is_the_settings()
+    the_settings_become_the_file()
     the_second_one_brings_the_first_with_it()
-    a_name_nobody_defined_falls_back()
-    the_two_defaults_agree()
+    an_unknown_name_is_refused()
+    station_selections_survive_the_file()
+    member_policy_values_are_checked_per_archive()
+    legacy_station_destinations_move_once()
+    legacy_member_policies_move_once()
     a_place_in_another_timezone_is_said_out_loud()
     two_archives_do_not_clear_each_others_work()
     an_old_database_gains_the_column()
     each_series_takes_only_its_own()
     an_archive_with_no_stations_writes_nothing()
-    one_archive_still_takes_everything()
+    a_broad_archive_selection_takes_everything()
     the_altitude_is_the_archives()
     a_page_prints_its_own_place()
     the_page_is_how_the_second_one_appears()

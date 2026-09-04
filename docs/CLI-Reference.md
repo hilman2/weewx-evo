@@ -18,10 +18,10 @@ weewx-evo [--log-level LEVEL] <command> …
 |---|---|
 | `--config PATH` | The TOML configuration. Also `WEEWX_EVO_CONFIG` |
 | `--live PATH` | The live packet database |
-| `--archive PATH` | The WeeWX archive database |
 | `--interval SPEC` | Archive interval, e.g. `5m` |
 | `--table NAME` | The archive table |
-| `--sources PATH` | TOML with `[sources]`. Also `WEEWX_EVO_SOURCES` |
+| `--sources PATH` | Obsolete and ignored; accepted only to report the retired configuration. Also `WEEWX_EVO_SOURCES` |
+| `--quality PATH` | Calibration and sensor limits; defaults beside the configuration |
 | `--weewx-conf PATH` | A `weewx.conf` to fall back to. Also `WEEWX_EVO_WEEWX_CONF` |
 | `--driver-dir PATH` | Where third-party drivers live |
 
@@ -29,6 +29,10 @@ weewx-evo [--log-level LEVEL] <command> …
 cannot tell "not given" from "set to the default", and a default here would beat
 the configuration file. The defaults live in the schema.
 → [Configuration](Configuration)
+
+Archive paths and place settings are not common arguments. They come from
+`archives.toml`, including for the first archive. Commands that operate on one
+archive take `--series NAME` and refuse an ambiguous choice.
 
 ## Services
 
@@ -86,6 +90,7 @@ weewx-evo archive --config evo.toml --spool /data/packets
 
 | Argument | What it means |
 |---|---|
+| `--series NAME` | Run this archiver for the named entry in `archives.toml`; required when the file contains more than one |
 | `--grace` | How long to wait after the end of an interval |
 | `--poll` | How often to look, in seconds |
 | `--retention-days` | How long packets stay, in days |
@@ -111,8 +116,8 @@ weewx-evo web --config evo.toml --port 8081
 ### `admin`
 
 The settings page. Its own port and its own token, deliberately: an upload
-endpoint can at worst write a wrong reading, this one can point the archive
-somewhere else.
+endpoint can at worst write a wrong reading, this one can change a Place's
+database and sender policy.
 
 ```bash
 weewx-evo admin --config evo.toml
@@ -144,6 +149,7 @@ weewx-evo catchup --config evo.toml --replace
 
 | Argument | What it means |
 |---|---|
+| `--series NAME` | The entry in `archives.toml`; required when more than one exists |
 | `--replace` | Overwrite records that are already there |
 
 ### `rebuild`
@@ -160,6 +166,7 @@ weewx-evo rebuild 1755000000 1755086400
 |---|---|
 | `start` | Unix timestamp, exclusive |
 | `stop` | Unix timestamp, inclusive |
+| `--series NAME` | The entry in `archives.toml`; required when more than one exists |
 
 → [Archiver](Archiver)
 
@@ -174,11 +181,55 @@ weewx-evo columns --config evo.toml --add
 
 | Argument | What it means |
 |---|---|
+| `--series NAME` | The entry in `archives.toml`; required when more than one exists |
 | `--add` | Create the missing columns. **Back the database up first** |
 
-The default schema has 113 columns; Ecowitt hardware can fill four times that.
-Where a reading belongs is a decision — `python -m
-weewx_evo.ingest.plugins.ecowitt` says more precisely where.
+The default schema has 113 columns; push hardware can send more. The Place's
+**Fields** tab shows every raw name and its archive column.
+
+### `placement list`
+
+What each sender sends, and which Place column it reaches.
+
+```bash
+weewx-evo placement list --config evo.toml
+```
+
+Reads `placement.toml` and the names noted as unplaced. Asks no hardware and
+writes nothing. → [Placements](Placements)
+
+### `placement import`
+
+Move legacy sender field maps from `stations.toml` into Place-scoped entries
+in `placement.toml`.
+
+```bash
+weewx-evo placement import --config evo.toml
+weewx-evo placement import --config evo.toml --write
+```
+
+Without `--write` it reports the move. Existing decisions are not replaced;
+the obsolete entries in `stations.toml` remain present but are not read by the
+Listener or Archiver.
+
+### `placement accept`
+
+Write down what inference has worked out about names no catalog knows.
+
+```bash
+weewx-evo placement accept --config evo.toml
+weewx-evo placement accept --config evo.toml --write
+```
+
+| Argument | What it means |
+|---|---|
+| `--series NAME` | Write the decisions for one measurement series. Default: all |
+| `--mode MODE` | `off`, `series` or `all`. Default: the configured `infer_unknown` |
+| `--write` | Write `placement.toml`. Without it nothing is saved |
+
+The lines are written with `learned = true` and never overwrite a decision of
+yours. They take effect on the next record; `rebuild` applies them to what is
+still in the live table.
 
 ### `status`
 
@@ -246,9 +297,8 @@ the service, and the decision to install it comes before the first run.
 `install` reads the code and reports what it reaches for: `sqlite3`,
 `subprocess`, `socket`. A hint, not a guarantee.
 
-These subcommands take `--driver-dir` and `--archive` (the latter only to find
-the default driver directory), but no `--config`. A bare `weewx-evo driver list`
-therefore carries on working.
+These subcommands take `--driver-dir`, but no `--config`. A bare
+`weewx-evo driver list` therefore carries on working.
 
 → [Drivers](Drivers)
 

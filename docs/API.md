@@ -25,7 +25,7 @@ Served from the [web server](Web-Server), on the same port as the pages, at
 |---|---|
 | `GET /api/v1/` | what this answers, so the rest is findable without the source |
 | `/archives` | the measurement series there are, and what each covers |
-| `/stations` | the consoles that write into them |
+| `/stations` | the known consoles; archive membership comes from each place's selection |
 | `/fields` | what is recorded: unit, group, label, and whether a long span is cheap |
 | `/current` | the newest record |
 | `/series` | a reading over a span |
@@ -111,8 +111,9 @@ A wrong token is a **404**, never a 401. Saying "wrong token" confirms there is
 something here worth trying tokens against — the same rule as the
 [listener](Ingest-Listener).
 
-`/stations` gives names, drivers and roles. It does **not** give identities: an
-identity is what a console proves itself with.
+`/stations` gives names and drivers. It does **not** give identities: an
+identity is what a console proves itself with. Roles belong to a console's
+membership in a place, not to the console itself.
 
 ## Two details
 

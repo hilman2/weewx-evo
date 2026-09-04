@@ -35,6 +35,7 @@ from weewx_evo import adminfields  # noqa: E402
 from weewx_evo.admin import Admin  # noqa: E402
 from weewx_evo.cli import all_schemas  # noqa: E402
 from weewx_evo.db.archive import ArchiveStore  # noqa: E402
+from weewx_evo.db.live import LiveStore, sender_id  # noqa: E402
 
 failures = 0
 TOKEN = "abcdefghij123456"
@@ -63,23 +64,46 @@ def check(what: str, got: object, want: object) -> bool:
 
 
 def an_installation(work: Path, *, two_archives: bool = False,
-                    stations: str = "") -> Admin:
+                    stations: str = "", placements: str = "",
+                    archives: str = "") -> Admin:
     (work / "data").mkdir(exist_ok=True)
     (work / "evo.toml").write_text(
         f'token = "{TOKEN}"\n'
         f'archive_db = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
         f'live_db = "{(work / "data" / "live.sdb").as_posix()}"\n',
         encoding="utf-8")
-    if two_archives:
-        (work / "archives.toml").write_text(
+    if not archives:
+        archives = (
             "[archives.default]\n"
             f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n\n'
+            'stations = ["kirchdorf"]\n\n'
             "[archives.nordfeld]\n"
-            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n',
-            encoding="utf-8")
+            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
+            'stations = ["nordhof"]\n'
+            if two_archives else
+            "[archives.default]\n"
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf"]\n')
+    (work / "archives.toml").write_text(archives, encoding="utf-8")
     (work / "stations.toml").write_text(stations or (
         '[stations.kirchdorf]\ndriver = "ecowitt"\n'
-        'identity = "AAAA"\narchive = "default"\n'), encoding="utf-8")
+        'identity = "AAAA"\n'), encoding="utf-8")
+    from weewx_evo.stations import load as load_stations
+
+    announced = load_stations(work / "stations.toml")
+    # Listener metadata is what the Place UI uses for labels. Selection and
+    # placement still use only the canonical IDs underneath.
+    with LiveStore(work / "data" / "live.sdb") as live:
+        live.sync_sender_labels(announced)
+    for one in announced:
+        placements = placements.replace(
+            f'station = "{one.name}"',
+            f'station = "{sender_id(one.driver, one.identity)}"')
+    # A placement is a decision about a raw name and it lives in its own file,
+    # scoped to the archive it is for. It used to be a field map on the
+    # station, which cannot say anything about a console nobody has announced
+    # -- and with one archive those readings are taken.
+    (work / "placement.toml").write_text(placements, encoding="utf-8")
     path = work / "evo.toml"
     return Admin(path, lambda: all_schemas(path), TOKEN)
 
@@ -201,10 +225,14 @@ def another_station_of_the_same_archive() -> None:
         work = Path(raw)
         admin = an_installation(work, stations=(
             '[stations.kirchdorf]\ndriver = "ecowitt"\n'
-            'identity = "AAAA"\narchive = "default"\n'
-            '[stations.kirchdorf.field_map]\ntf_ch1 = "soilTemp1"\n\n'
+            'identity = "AAAA"\n\n'
             '[stations.garten]\ndriver = "ecowitt"\n'
-            'identity = "BBBB"\narchive = "default"\n'))
+            'identity = "BBBB"\n'), placements=(
+            '[[takes]]\narchive = "default"\nstation = "kirchdorf"\n'
+            '[takes.fields]\n"tf_ch1" = "soilTemp1"\n'), archives=(
+            '[archives.default]\n'
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf", "garten"]\n'))
         an_archive(work / "data" / "weewx.sdb", {"soilTemp1": 40})
         from weewx_evo.stations import load
 
@@ -234,10 +262,11 @@ def another_station_of_a_different_archive() -> None:
         work = Path(raw)
         admin = an_installation(work, two_archives=True, stations=(
             '[stations.kirchdorf]\ndriver = "ecowitt"\n'
-            'identity = "AAAA"\narchive = "default"\n'
-            '[stations.kirchdorf.field_map]\ntf_ch1 = "soilTemp1"\n\n'
+            'identity = "AAAA"\n\n'
             '[stations.nordhof]\ndriver = "ecowitt"\n'
-            'identity = "BBBB"\narchive = "nordfeld"\n'))
+            'identity = "BBBB"\n'), placements=(
+            '[[takes]]\narchive = "default"\nstation = "kirchdorf"\n'
+            '[takes.fields]\n"tf_ch1" = "soilTemp1"\n'))
         an_archive(work / "data" / "weewx.sdb", {"soilTemp1": 40})
         an_archive(work / "data" / "nord.sdb")
         from weewx_evo.stations import load
@@ -261,6 +290,147 @@ def another_station_of_a_different_archive() -> None:
               mine[0].holds, 40)
 
 
+def one_station_in_two_places_is_never_guessed() -> None:
+    print("\none station selected by two places")
+    with a_workspace() as raw:
+        work = Path(raw)
+        admin = an_installation(work, stations=(
+            '[stations.kirchdorf]\ndriver = "ecowitt"\n'
+            'identity = "AAAA"\n'), archives=(
+            '[archives.default]\n'
+            f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf"]\n\n'
+            '[archives.nordfeld]\n'
+            f'file = "{(work / "data" / "nord.sdb").as_posix()}"\n'
+            'stations = ["kirchdorf"]\n'))
+        an_archive(work / "data" / "weewx.sdb")
+        an_archive(work / "data" / "nord.sdb")
+        from weewx_evo.stations import load
+
+        station = load(work / "stations.toml").by_name("kirchdorf")
+        page = adminfields.table(admin, station, {"tf_ch1": 18.0},
+                                 {"tf_ch1": "soilTemp1"}, "ecowitt")
+        check("there is one form for each place",
+              page.count('name="archive"'), 2)
+        check("both scopes are named",
+              all(f'value="{name}"' in page
+                  for name in ("default", "nordfeld")), True)
+        check("each mapping form belongs to its Place",
+              (page.count('class="place-section place-field-scope"') == 2
+               and 'action="./places/default/fields"' in page
+               and 'action="./places/nordfeld/fields"' in page), True)
+        check("an unscoped write is refused",
+              "More than one place" in adminfields.place(
+                  admin, "kirchdorf", "tf_ch1", "soilTemp1", "ecowitt"),
+              True)
+        check("an explicit write succeeds",
+              adminfields.place(admin, "kirchdorf", "tf_ch1", "soilTemp1",
+                                "ecowitt", "nordfeld"), "")
+        from weewx_evo import placement as placement_defs
+
+        plans = placement_defs.load(work / "placement.toml")
+        canonical = sender_id("ecowitt", "AAAA")
+        check("only that place receives the decision",
+              plans.extensions("nordfeld", canonical, "ecowitt"),
+              {"tf_ch1": "soilTemp1"})
+        check("the other place remains untouched",
+              plans.extensions("default", canonical, "ecowitt"), {})
+
+
+def a_place_saves_for_a_canonical_sender() -> None:
+    print("\na Place saves mappings for a canonical sender")
+    with a_workspace() as raw:
+        work = Path(raw)
+        canonical = sender_id("ecowitt", "AAAA")
+        archive_path = (work / "data" / "weewx.sdb").as_posix()
+        admin = an_installation(work, archives=(
+            "member_policy_version = 2\n\n"
+            "[archives.default]\n"
+            f'file = "{archive_path}"\n\n'
+            f'[archives.default.members."{canonical}"]\n'
+            'role = "main"\nchannel = 0\nindoor = true\n'))
+        # The new handler's authority is archives.toml plus the canonical ID.
+        # An announced station is neither required nor consulted.
+        (work / "stations.toml").unlink()
+        an_archive(work / "data" / "weewx.sdb")
+
+        error = adminfields.save_for_place(admin, "default", canonical, {
+            "dialect": "ecowitt", "place:tf_ch1": "soilTemp1"})
+        check("the Place-scoped save succeeds", error, "")
+        from weewx_evo import placement as placement_defs
+
+        plans = placement_defs.load(work / "placement.toml")
+        check("the mapping is keyed by Place and sender",
+              plans.extensions("default", canonical, "ecowitt"),
+              {"tf_ch1": "soilTemp1"})
+
+        page = adminfields.table(
+            admin, canonical, {"tf_ch1": 18.0},
+            {"tf_ch1": "soilTemp1"}, "ecowitt")
+        check("the form posts to its Place",
+              'action="./places/default/fields"' in page, True)
+        check("and carries the canonical sender ID",
+              f'name="sender" value="{canonical}"' in page, True)
+        check("the legacy station route is not rendered",
+              "./stations/" in page, False)
+
+        error = adminfields.save_for_place(admin, "default", canonical, {
+            "place:tf_ch2": "bad;column"})
+        check("an unsafe column name is refused",
+              "not a usable column name" in error, True)
+        check("and it did not partly change the mapping",
+              placement_defs.load(work / "placement.toml").extensions(
+                  "default", canonical, "ecowitt"),
+              {"tf_ch1": "soilTemp1"})
+
+        error = adminfields.save_for_place(admin, "default", canonical, {
+            "place:tf_ch2": "soilTemp2", "addcolumn": "bad;column"})
+        check("an unsafe add-column request is refused before saving",
+              "not a usable column name" in error, True)
+        check("and leaves all field decisions untouched",
+              placement_defs.load(work / "placement.toml").extensions(
+                  "default", canonical, "ecowitt"),
+              {"tf_ch1": "soilTemp1"})
+
+        admin.read_only = True
+        error = adminfields.save_for_place(admin, "default", canonical, {
+            "place:tf_ch1": "soilTemp2"})
+        check("read-only also guards a crafted post",
+              "read-only" in error, True)
+
+
+def dialect_specific_holders_are_seen() -> None:
+    print("\na placement in a named dialect is a holder")
+    with a_workspace() as raw:
+        work = Path(raw)
+        admin = an_installation(work, stations=(
+            '[stations.kirchdorf]\ndriver = "ecowitt"\nidentity = "AAAA"\n\n'
+            '[stations.garten]\ndriver = "ecowitt"\nidentity = "BBBB"\n'),
+            archives=(
+                '[archives.default]\n'
+                f'file = "{(work / "data" / "weewx.sdb").as_posix()}"\n'
+                'stations = ["kirchdorf", "garten"]\n'), placements=(
+                '[[takes]]\narchive = "default"\nstation = "kirchdorf"\n'
+                'dialect = "ecowitt"\n'
+                '[takes.fields]\n"tf_ch1" = "soilTemp1"\n'))
+        an_archive(work / "data" / "weewx.sdb")
+        from weewx_evo.stations import load
+
+        garten = load(work / "stations.toml").by_name("garten")
+        rows = adminfields.placements(
+            admin, garten, {"tf_ch2": 12.0}, {"tf_ch2": "soilTemp1"},
+            "ecowitt", "default")
+        check("the named dialect's owner is reported",
+              rows[0].holder, "kirchdorf/tf_ch1")
+        check("the all-dialects inventory includes it",
+              adminfields.holders(admin, "default")["soilTemp1"],
+              ((sender_id("ecowitt", "AAAA"), "tf_ch1"),))
+        other = adminfields.placements(
+            admin, garten, {"tf_ch2": 12.0}, {"tf_ch2": "soilTemp1"},
+            "wunderground", "default")
+        check("another dialect does not inherit it", other[0].holder, "")
+
+
 def placing_and_making_the_column() -> None:
     print("\nsaving a placement, and creating what it needs")
     with a_workspace() as raw:
@@ -272,8 +442,13 @@ def placing_and_making_the_column() -> None:
         error = adminfields.place(admin, "kirchdorf", "tf_ch1", "extraTemp9")
         check("it saves", error, "")
         again = load(work / "stations.toml").by_name("kirchdorf")
-        check("into the station's own field map",
-              again.field_map.get("tf_ch1"), "extraTemp9")
+        from weewx_evo import placement as placement_defs
+
+        plans = placement_defs.load(work / "placement.toml")
+        check("into the placements, scoped to this archive and console",
+              plans.extensions("default", sender_id("ecowitt", "AAAA"), "")
+              .get("tf_ch1"),
+              "extraTemp9")
 
         error = adminfields.add_column(admin, again, "extraTemp9")
         check("and the column can be made from here", error, "")
@@ -286,58 +461,69 @@ def placing_and_making_the_column() -> None:
 
 
 def a_placement_reaches_the_driver() -> None:
-    """The half nothing checked, and it was not working.
+    """The half nothing checked, and it was not working -- twice.
 
     Every test here stopped at `stations.toml`: the page wrote the file, the
     file read back, and each of them passed. What none of them asked was
-    whether the driver ever sees it -- and it did not. The core hands the
-    stations over keyed by the name somebody typed, the lookup is made with
-    what the protocol read off the upload, and a PASSKEY is not a name. The
-    dictionary never matched.
+    whether the placement ever reaches a reading.
 
-    It was invisible because the same two decisions were also sitting in the
-    driver's own `field_map_extensions`, put there by hand before the page
-    existed. So the readings landed in the right columns and the page said
-    "saved", and both were true, and the page had done nothing.
+    It did not, for two reasons at once. The stations arrived keyed by the
+    name somebody typed while the lookup was made with the PASSKEY, so the
+    dictionary never matched. And even fixed, `configure_drivers` runs once
+    at startup and `apply_live` never rebuilt the registry, so a placement
+    saved on the page reached a driver that had been built before it.
+
+    Both are gone rather than fixed, and that is the point of asking the
+    *driver* for a placement instead of handing it one: it is passed in at
+    the moment a record is built, out of a file the reader re-reads.
     """
-    print("\na placement made on the page reaches the driver")
+    print("\na placement made on the page reaches a reading")
+    from weewx_evo.ingest import drivers as driver_defs
     from weewx_evo.ingest.plugins.push import driver as push
     from weewx_evo.ingest.plugins.push import protocols as protocol_defs
 
     protocol = next(p for p in protocol_defs.registry()
                     if p.name == "ecowitt")
     upload = {"PASSKEY": "AAAA", "tf_ch1": "59.9", "tempf": "68.2"}
-    dialect = protocol.dialect(upload)
     readings = protocol.readings(push._Request(body=b""), upload)
+    driver = push.driver_class(protocol)()
 
     # Contested on purpose: two drivers disagree about where `tf_ch1` goes,
     # so nothing is written until somebody decides. That makes it the field
     # that shows whether the decision arrived.
-    bare = push.driver_class(protocol)()
-    packet, _ = bare._mapper_for(dialect, "AAAA").to_packet(readings)
+    placed = driver_defs.place_with(driver, readings, "ecowitt", {})
     check("without a decision it is not written",
-          "extraTemp9" in packet, False)
+          "extraTemp9" in placed.record, False)
+    check("but the reading is there to be placed later",
+          readings.get("tf_ch1"), "59.9")
 
-    # Keyed by name, exactly as `cli.station_field_maps` hands it over.
-    told = push.driver_class(protocol)(stations={"kirchdorf": {
-        "passkey": "AAAA",
-        "field_map_extensions": {"tf_ch1": "extraTemp9"}}})
-    packet, _ = told._mapper_for(dialect, "AAAA").to_packet(readings)
-    check("with one it goes where the page said", packet.get("extraTemp9"),
-          59.9)
-    # Consoles upper-case what is typed into them.
-    packet, _ = told._mapper_for(dialect, "aaaa").to_packet(readings)
-    check("whatever case the console shouts it in",
-          packet.get("extraTemp9"), 59.9)
+    placed = driver_defs.place_with(driver, readings, "ecowitt",
+                                    {"tf_ch1": "extraTemp9"})
+    check("with one it goes where the page said",
+          placed.record.get("extraTemp9"), 59.9)
+
+    # The same driver instance, a different decision, and no restart in
+    # between. Under the old arrangement the mapper was cached per station
+    # for the life of the process and this was the second reading of the
+    # first decision.
+    placed = driver_defs.place_with(driver, readings, "ecowitt",
+                                    {"tf_ch1": "soilTemp1"})
+    check("changed again, without anything being rebuilt",
+          placed.record.get("soilTemp1"), 59.9)
+    check("and the old column is not left behind",
+          "extraTemp9" in placed.record, False)
 
     # And the clock, which is a property of the box rather than of the six
-    # protocols it might be speaking.
+    # protocols it might be speaking. Still at the front door: a stamp is too
+    # old because a clock is wrong, and there is no answering that later.
     clocks = push.driver_class(protocol)(max_behind=3600, stations={
         "drifty": {"passkey": "BBBB", "max_behind": 1800.0}})
     check("a console can be given its own tolerance",
-          clocks._mapper_for(dialect, "BBBB").max_behind, 1800.0)
+          push._clock(clocks.stations.get("bbbb") or {}, "max_behind",
+                      clocks.max_behind), 1800.0)
     check("and the rest keep the configured one",
-          clocks._mapper_for(dialect, "CCCC").max_behind, 3600)
+          push._clock(clocks.stations.get("cccc") or {}, "max_behind",
+                      clocks.max_behind), 3600)
 
 
 def a_protocol_has_nothing_to_configure() -> None:
@@ -410,13 +596,17 @@ def the_chooser_offers_past_the_schema() -> None:
 def the_rows_are_raw_names_not_mapped_ones() -> None:
     """What the hardware calls it, not what it was turned into.
 
-    The first version read the stored packet, which holds the mapping's
+    The first version read the stored packet, which held the mapping's
     *output* -- `barometer`, `extraTemp9`. Every row then offered to place a
     field that had just been written, and said "not written" about it,
     because no catalog has a raw field called `extraTemp9`.
 
-    A placement is a decision about `baromrelin` and `tf_ch1`. Those are in
-    the kept upload, which is why it is kept.
+    The second re-parsed the kept upload to recover them, and that copy is
+    thrown away after an hour -- so a console quiet any longer put the page
+    back to offering `barometer`, which is a question with no right answer.
+
+    Now the stored packet *is* the raw names, for the whole retention
+    period, and this reads it straight.
     """
     print("\nthe rows are what the hardware sends")
     from weewx_evo.adminstations import what_it_sends
@@ -428,13 +618,35 @@ def the_rows_are_raw_names_not_mapped_ones() -> None:
         admin = an_installation(work)
         an_archive(work / "data" / "weewx.sdb")
 
-        upload = ("PASSKEY=X&stationtype=GW2000A&dateutc=now"
+        upload = ("PASSKEY=AAAA&stationtype=GW2000A&dateutc=now"
                   "&baromrelin=29.923&tf_ch1=68.2&tempf=64.9")
         live = LiveStore(work / "data" / "live.sdb", interval_seconds=300)
+        # Stored as the journal stores it: everything the console sent,
+        # housekeeping included. Those are worth keeping -- they say what
+        # firmware this is -- and they are not readings, so the page has to
+        # tell the two apart rather than offering a chooser for `heap`.
         live.add(Packet(dateTime=int(time.time()), usUnits=1,
-                        source="kirchdorf", raw=upload,
-                        data={"barometer": 29.923, "extraTemp9": 68.2,
-                              "outTemp": 64.9}))
+                        driver="ecowitt", identity="AAAA", dialect="ecowitt",
+                        mapping={
+                            "version": 1,
+                            "fields": {
+                                "baromrelin": "barometer",
+                                "tf_ch1": "extraTemp1",
+                                "tempf": "outTemp",
+                            },
+                            "metadata": ["stationtype", "dateutc", "freq",
+                                         "heap", "interval"],
+                            "contested": ["tf_ch1"],
+                            "absent": [],
+                        },
+                        raw=upload,
+                        data={"baromrelin": 29.923, "tf_ch1": 68.2,
+                              "tempf": 64.9, "stationtype": "GW2000A",
+                              "dateutc": "now", "freq": "868M",
+                              "heap": "18000", "interval": "16"}))
+        # And the copy of the upload is gone, as it is after an hour on any
+        # installation. The rows have to be there anyway.
+        live.forget_raw(time.time() + 1)
         live.close()
 
         found = what_it_sends(admin, load(work / "stations.toml")
@@ -447,6 +659,11 @@ def the_rows_are_raw_names_not_mapped_ones() -> None:
         check("nor what names the device",
               [n for n in ("PASSKEY", "stationtype", "dateutc")
                if n in names], [])
+        # Nor what it says about itself. The journal keeps them, so this is
+        # the split the read side makes, asked of the same catalog -- a name
+        # offered here is exactly a name that can reach a column.
+        check("nor what it says about its own health",
+              [n for n in ("freq", "heap", "interval") if n in names], [])
 
 
 def nothing_is_left_open() -> None:
@@ -479,6 +696,9 @@ def main() -> int:
     a_column_being_written_right_now()
     another_station_of_the_same_archive()
     another_station_of_a_different_archive()
+    one_station_in_two_places_is_never_guessed()
+    a_place_saves_for_a_canonical_sender()
+    dialect_specific_holders_are_seen()
     placing_and_making_the_column()
     a_placement_reaches_the_driver()
     a_protocol_has_nothing_to_configure()

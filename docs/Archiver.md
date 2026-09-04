@@ -1,6 +1,8 @@
 # Archiver
 
 `archiver.py` is the service that replaces WeeWX's `StdArchive`.
+It has no interactive controls in the Admin UI; only its status and results
+are shown on each Place.
 
 The difference is not *what* it computes, but **where it takes it from**. WeeWX
 accumulates in memory as packets arrive and writes the result once at the end of
@@ -8,6 +10,11 @@ the interval. A restart in the middle loses the interval, and a late packet has
 nowhere to go. Here the packets are already in the live table, so an archive
 record is a function of a timespan — and that function can be run at any time,
 any number of times, in any order, with the same result.
+
+There is one archiver per entry in `archives.toml`. Its reader selects the
+senders named by that Place from the shared live database. Senders do not
+carry an archive assignment, and the same sender may be selected by several
+archivers.
 
 ## `Built`
 
@@ -21,23 +28,29 @@ A computed interval, before it is written.
 | `accumulator` | The accumulator behind it, for sharpening the day's values |
 | `packets` | How many packets went into it |
 | `from_hardware` | Whether the console delivered an archive record itself |
-| `provenance` | Which field came from which source → [Multiple-Sources](Multiple-Sources) |
+| `provenance` | Source choices made by the optional low-level `sources.Policy` API; empty in the configured runtime |
 
 ## The path of an interval
 
 ```python
 archiver = Archiver(live, archive, interval_seconds=300,
-                    policy=DEFAULT_POLICY, loop_hilo=True, sources=policy)
+                    policy=DEFAULT_POLICY, loop_hilo=True, placer=placer)
 built = archiver.build(stop)
 archiver.store(built)
 ```
 
 ### `build(stop, seconds=None)`
 
-1. Fetch the packets in `(stop - seconds, stop]`
-2. Determine the winning source per field via `sources.apply()`
+1. Fetch the Place's selected senders in `(stop - seconds, stop]`
+2. Interpret each raw dialect from its stored `DialectSpec` and place its
+   names into this archive's columns. The Place's member role and explicit
+   field mappings are applied here; no driver code is loaded
 3. Feed an `Accumulator`
 4. Pull out a record, apply `derive`
+
+The configured runtime does not read `[sources]` and does not apply a global
+source-precedence policy. Place membership, member roles and Place-scoped
+field mappings are the routing authority.
 
 Returns `None` if no packet fell into the interval. **A gap in the data is a gap
 in the archive** — inventing a record for it would be a claim about weather

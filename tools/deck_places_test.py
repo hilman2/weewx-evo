@@ -8,12 +8,9 @@ comparison pages that draw them together.
 Every check here is something that would ship wrong without it, and the two
 that matter most are these:
 
-  * **At one place nothing changes.** Not an attribute, not an element, not
-    a file. A one-entry `archives.toml` makes the settings page correctly
-    say that `station.*` has moved and is still one place -- and that is the
-    case nothing else in the tree tests, because `overriding()` and
-    `several()` are different gates. So this renders both ways and diffs the
-    trees byte for byte.
+  * **One place stays the flat site.** It is still described in
+    `archives.toml`, because that file is the only authority even for the
+    first place; having one entry changes no page into a multi-place page.
   * **Every figure is compared against the reader**, never against a number
     typed into this file. That is the guard against the forty-months shape:
     forty archived months all printed August under correct headings, and a
@@ -101,32 +98,34 @@ def archive(path: Path, base: float) -> None:
 
 
 def place(name: str, file: Path, label: str, code: str, color: str,
-          settings: Settings) -> dict:
-    """One roster entry, in the shape the runner hands the feed."""
-    return {"name": name, "file": file, "settings": settings,
+          settings: Settings, *, altitude: float = 440.0) -> dict:
+    """One roster entry, with its place settings owned by its archive."""
+    archive = archive_defs.Archive(
+        name, str(file), label=label, latitude=48.4596,
+        longitude=11.6539, altitude=altitude, code=code, color=color)
+    return {"name": name, "file": file,
+            "settings": archive_defs.placed(settings, archive),
             "label": label, "code": code, "color": color, "url": "",
             "reader": None, "tags": None, "covers": None, "has_data": False}
 
 
-def base_values(room: Path, name: str) -> dict:
+def base_values(room: Path) -> dict:
     return {
         "language": "de",
-        "station.name": name,
-        "station.latitude": 48.4596,
-        "station.longitude": 11.6539,
-        "station.altitude": 440.0,
         "feeds.deck.skin": "deck",
         "feeds.deck.extras": {"base_path": "/"},
     }
 
 
 def render(room: Path, into: Path, database: Path, places: list[dict],
-           home: str = "default", station: str = "Kirchdorf",
-           extra: dict | None = None) -> object:
+           home: str = "default", extra: dict | None = None) -> object:
     conn = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     try:
+        mine = next(one["settings"] for one in places
+                    if one["name"] == home)
+        general = Settings({**mine.settings.values, **(extra or {})})
         feed = cheetah.from_settings(
-            Settings(dict(base_values(room, station), **(extra or {}))),
+            archive_defs.placed(general, mine.archive),
             Reader(conn), (), prefix="feeds.deck", archive=home)
         # As the runner does it: the roster is already in the shape the feed
         # keeps, so `from_settings` only normalises the older forms.
@@ -170,32 +169,24 @@ def tree(root: Path, mask: bool = True) -> dict[str, bytes]:
 # -- the checks ------------------------------------------------------------
 
 
-def one_place_is_unchanged(room: Path) -> None:
-    """A one-entry `archives.toml` renders exactly what no file renders.
-
-    The gate is how many places this feed shows, never `Register.overriding()`
-    -- and this is the case that separates them. A station that adds a second
-    place and removes it again must get its old site back, file for file.
-    """
-    print("\\none place, with the file and without it")
+def one_place_stays_flat(room: Path) -> None:
+    """A one-entry archive register keeps the ordinary flat site."""
+    print("\\none place is still a flat site")
     south = room / "south.sdb"
     archive(south, SOUTH)
-    settings = Settings(base_values(room, "Kirchdorf"))
+    settings = Settings(base_values(room))
+    withfile = room / "one-place"
+    render(room, withfile, south, [
+        place("default", south, "Kirchdorf", "KIR", "#4282b4", settings)])
 
-    without = room / "without"
-    render(room, without, south, [])
-
-    withfile = room / "withfile"
-    render(room, withfile, south,
-           [place("default", south, "Kirchdorf", "KIR", "#4282b4", settings)])
-
-    a, b = tree(without), tree(withfile)
-    check("the same files", sorted(b), sorted(a))
-    differ = sorted(name for name in a if a.get(name) != b.get(name))
-    check("and every one of them byte for byte", differ, [])
+    check("the ordinary page is written at the root",
+          (withfile / "index.html").is_file(), True)
     check("no directory was made for the one place",
-          sorted(p.name for p in withfile.iterdir() if p.is_dir()),
-          sorted(p.name for p in without.iterdir() if p.is_dir()))
+          (withfile / "default").exists(), False)
+    page = (withfile / "index.html").read_text(encoding="utf-8",
+                                                errors="replace")
+    check("the page gets its place name from the archive",
+          "Kirchdorf" in page, True)
 
 
 def two_places(room: Path) -> tuple[Path, list[dict]]:
@@ -206,13 +197,12 @@ def two_places(room: Path) -> tuple[Path, list[dict]]:
 
     places = [
         place("default", south, "Kirchdorf", "KIR", "#4282b4",
-              Settings(base_values(room, "Kirchdorf"))),
+              Settings(base_values(room))),
         place("nordfeld", north, "Nordfeld", "NOR", "#d1642a",
-              Settings(dict(base_values(room, "Nordfeld"),
-                            **{"station.altitude": 512.0}))),
+              Settings(base_values(room)), altitude=512.0),
     ]
     out = room / "site"
-    feed = render(room, out, south, places, station="Zwei Orte")
+    feed = render(room, out, south, places)
 
     check("a page for the site at the root", (out / "index.html").is_file(),
           True)
@@ -326,12 +316,12 @@ def a_place_with_no_records(room: Path) -> None:
     south = room / "south.sdb"
     places = [
         place("default", south, "Kirchdorf", "KIR", "#4282b4",
-              Settings(base_values(room, "Kirchdorf"))),
+              Settings(base_values(room))),
         place("schuppen", room / "nothing.sdb", "Schuppen", "SCH", "#3d8f5c",
-              Settings(base_values(room, "Schuppen"))),
+              Settings(base_values(room))),
     ]
     out = room / "empty"
-    feed = render(room, out, south, places, station="Zwei Orte")
+    feed = render(room, out, south, places)
     check("the site still renders", (out / "index.html").is_file(), True)
     check("the place that has readings has its directory",
           (out / "default" / "index.html").is_file(), True)
@@ -355,22 +345,22 @@ def a_place_taken_off_the_list(room: Path) -> None:
     """
     print("\\na place taken off the list stops being published")
     south, north = room / "south.sdb", room / "north.sdb"
-    settings = Settings(base_values(room, "Kirchdorf"))
+    settings = Settings(base_values(room))
     both = [
         place("default", south, "Kirchdorf", "KIR", "#4282b4", settings),
         place("nordfeld", north, "Nordfeld", "NOR", "#d1642a",
-              Settings(base_values(room, "Nordfeld"))),
+              Settings(base_values(room))),
     ]
     out = room / "dropped"
-    render(room, out, south, both, station="Zwei Orte")
+    render(room, out, south, both)
     check("both are published first",
           (out / "nordfeld" / "index.html").is_file(), True)
 
     # Only one place now, so there is no site to render at all: the feed
     # falls back to the single-place layout, and the leftover directory is
     # the thing being tested.
-    render(room, out, south, both, station="Zwei Orte")
-    feed = render(room, out, south, both, station="Zwei Orte")
+    render(room, out, south, both)
+    feed = render(room, out, south, both)
     feed.shown = ("default",)
     feed.places = [dict(one) for one in both]
     feed.narrow()
@@ -384,14 +374,19 @@ def the_settings_narrow_it(room: Path) -> None:
     south, north = room / "south.sdb", room / "north.sdb"
     both = [
         place("default", south, "Kirchdorf", "KIR", "#4282b4",
-              Settings(base_values(room, "Kirchdorf"))),
+              Settings(base_values(room))),
         place("nordfeld", north, "Nordfeld", "NOR", "#d1642a",
-              Settings(base_values(room, "Nordfeld"))),
+              Settings(base_values(room))),
     ]
     conn = sqlite3.connect(f"file:{south}?mode=ro", uri=True)
     try:
         feed = cheetah.from_settings(
-            Settings(base_values(room, "Zwei Orte")), Reader(conn), (),
+            archive_defs.placed(
+                Settings(base_values(room)),
+                archive_defs.Archive("default", str(south), label="Kirchdorf",
+                                     latitude=48.4596, longitude=11.6539,
+                                     altitude=440.0)),
+            Reader(conn), (),
             prefix="feeds.deck", archive="default")
         feed.places = [dict(one) for one in both]
         feed.shown = ("nordfeld",)
@@ -430,13 +425,13 @@ def told_to_show_one_place(room: Path) -> None:
     south, north = room / "south.sdb", room / "north.sdb"
     both = [
         place("default", south, "Kirchdorf", "KIR", "#4282b4",
-              Settings(base_values(room, "Kirchdorf"))),
+              Settings(base_values(room))),
         place("nordfeld", north, "Nordfeld", "NOR", "#d1642a",
-              Settings(base_values(room, "Nordfeld"))),
+              Settings(base_values(room))),
     ]
     solo = room / "solo"
     feed = render(room, solo, north, [dict(one) for one in both],
-                  home="nordfeld", station="Zwei Orte",
+                  home="nordfeld",
                   extra={"feeds.deck.shows": "one"})
 
     check("the feed shows one place", feed.several, False)
@@ -453,7 +448,9 @@ def told_to_show_one_place(room: Path) -> None:
     # differs, on purpose -- but that the set of files is the same one: an
     # overview, a place folder or a comparison page would show up here.
     alone = room / "alone"
-    render(room, alone, north, [], home="nordfeld", station="Nordfeld")
+    render(room, alone, north, [place(
+        "nordfeld", north, "Nordfeld", "NOR", "#d1642a",
+        Settings(base_values(room)))], home="nordfeld")
     check("the same files as a site that has only one place",
           sorted(tree(solo)), sorted(tree(alone)))
 
@@ -723,17 +720,23 @@ def narrowing_writes_no_dead_links(room: Path) -> None:
     south, north = room / "south.sdb", room / "north.sdb"
     both = [
         place("default", south, "Kirchdorf", "KIR", "#4282b4",
-              Settings(base_values(room, "Kirchdorf"))),
+              Settings(base_values(room))),
         place("nordfeld", north, "Nordfeld", "NOR", "#d1642a",
-              Settings(base_values(room, "Nordfeld"))),
+              Settings(base_values(room))),
     ]
-    for label, places, wanted in (("one place", [], ("today", "week")),
+    for label, places, wanted in (("one place", [dict(both[0])],
+                                   ("today", "week")),
                                   ("two places", both, ("today", "week"))):
         out = room / f"narrow-{label.replace(' ', '-')}"
         conn = sqlite3.connect(f"file:{south}?mode=ro", uri=True)
         try:
             feed = cheetah.from_settings(
-                Settings(base_values(room, "Zwei Orte")), Reader(conn), (),
+                archive_defs.placed(
+                    Settings(base_values(room)),
+                    archive_defs.Archive(
+                        "default", str(south), label="Kirchdorf",
+                        latitude=48.4596, longitude=11.6539, altitude=440.0)),
+                Reader(conn), (),
                 prefix="feeds.deck", archive="default")
             feed.places = [dict(one) for one in places]
             feed.place_pages = wanted
@@ -744,7 +747,7 @@ def narrowing_writes_no_dead_links(room: Path) -> None:
         # Where the place pages land: at the root with one place, in a
         # directory each with two. The root's own `index.html` is the site
         # overview and belongs there either way.
-        where = out if not places else out / "default"
+        where = out if len(places) == 1 else out / "default"
         written = sorted(one.name for one in where.glob("*.html"))
         check(f"{label}: only the pages that were asked for",
               [n for n in written if n.startswith(("index", "week", "month",
@@ -775,23 +778,38 @@ def how_often_a_place_reports(room: Path) -> None:
     rare. With one console it is that console's own figure.
     """
     print("\nhow often a place reports")
-    from weewx_evo.uploads.records import Live
-
     live = room / "live.sdb"
     conn = sqlite3.connect(live)
-    conn.execute("CREATE TABLE packet (dateTime INTEGER, source TEXT, "
-                 "usUnits INTEGER, interval INTEGER, data TEXT, "
-                 "seq INTEGER)")
+    # Keyed on (driver, identity), which is what the table records. A name is
+    # a lookup, so the reader is given a register to make it with.
+    conn.execute("CREATE TABLE packet (dateTime INTEGER, driver TEXT, "
+                 "identity TEXT, dialect TEXT, usUnits INTEGER, "
+                 "interval INTEGER, data TEXT, seq INTEGER)")
     now = int(time.time())
     # One console every 60 s, one every 300 s, one that has said almost
     # nothing -- too few gaps to measure.
     for source, every, count in (("garten", 60, 30), ("schuppen", 300, 30),
                                  ("neu", 60, 2)):
         for step in range(count):
-            conn.execute("INSERT INTO packet VALUES (?, ?, 16, 5, '{}', ?)",
-                         (now - step * every, source, step))
+            conn.execute(
+                "INSERT INTO packet VALUES (?, 'json', ?, NULL, 16, 5, '{}', ?)",
+                (now - step * every, source, step))
     conn.commit()
     conn.close()
+
+    from weewx_evo import placement as placement_defs
+    from weewx_evo import stations as station_defs
+
+    register = station_defs.Register(stations=[
+        station_defs.Station(name=name, driver="json", identity=name)
+        for name in ("garten", "schuppen", "neu")])
+
+    def Live(path, names):  # noqa: N802 - reads like the class it wraps
+        """The reader as the service builds it: with a placer."""
+        from weewx_evo.uploads.records import Live as Reader
+
+        return Reader(path, names, placer=placement_defs.Placer(
+            "default", placement_defs.Placements(), register))
 
     one = Live(live, ["garten"]).rhythm(now)
     check("one console: its own median", round(one or 0), 60)
@@ -828,19 +846,15 @@ def how_often_a_place_reports(room: Path) -> None:
           "_every" in slices["nordfeld"], False)
 
 
-def a_station_can_be_given_a_series(room: Path) -> None:
-    """And moved to another one afterwards.
+def a_place_selects_its_stations(room: Path) -> None:
+    """The archive owns membership, including when it is the only one.
 
-    Both back ends were there and neither form had the control: the router
-    passed `archive` to `adopt`, `configure` read it out of the form, and
-    nothing ever put one in. So every console adopted from the stations page
-    landed in the default series whatever the page said, and there was no way
-    to move it -- which also meant an archive could never be removed, because
-    removal is refused while a station still writes into it.
+    A console identifies what arrived in the live database. It does not name
+    a destination. Each archive selects console names, so the same console can
+    deliberately feed two archives and no second source of truth can disagree.
     """
-    print("\na station can be told which series it writes into")
-    from weewx_evo import adminstations
-    from weewx_evo import stations as station_defs
+    print("\na place selects the consoles it archives")
+    from weewx_evo import adminarchives, adminstations
 
     class Admin:
         def __init__(self, path):
@@ -870,61 +884,63 @@ def a_station_can_be_given_a_series(room: Path) -> None:
 
     where = room / "stationsite"
     where.mkdir(parents=True, exist_ok=True)
-    (where / "evo.toml").write_text('station.name = "One"\n', encoding="utf-8")
-    admin = Admin(where / "evo.toml")
-
-    # With one series there is nothing to choose, and asking would be a
-    # question with one answer on the page that says whether readings are
-    # arriving.
-    adopting = adminstations._waiting(admin, Seen(), adminstations.load(admin))
-    check("one series: nothing to choose when adopting",
-          'name="archive"' in adopting, False)
-    station = station_defs.Station(name="garten", driver="ecowitt",
-                                   identity="X", archive="default")
-    check("one series: and nothing on its properties",
-          'name="archive"' in adminstations._properties(admin, station), False)
-
+    (where / "evo.toml").write_text('interval = 300\n', encoding="utf-8")
     (where / "archives.toml").write_text(
         '[archives.default]\nfile = "a.sdb"\nlabel = "Kirchdorf"\n'
-        '[archives.nordfeld]\nfile = "b.sdb"\nlabel = "Nordfeld"\n',
-        encoding="utf-8")
-    adopting = adminstations._waiting(admin, Seen(), adminstations.load(admin))
-    check("two series: the adopt form offers them",
-          'name="archive"' in adopting and "Nordfeld" in adopting, True)
-    check("two series: and so do a station's properties",
-          'name="archive"' in adminstations._properties(admin, station), True)
+        'stations = []\n', encoding="utf-8")
+    admin = Admin(where / "evo.toml")
 
-    check("adopting into the second one works",
+    # Membership never belongs to the console page, even with one place.
+    adopting = adminstations._waiting(admin, Seen(), adminstations.load(admin),
+                                      adminstations._places(admin))
+    check("one place: adoption has no destination choice",
+          'name="archive"' in adopting, False)
+    check("adopting needs only the console identity and name",
           adminstations.adopt(admin, "ecowitt",
                               "0000000000000000000000000000AAAA",
-                              "nordgarten", "nordfeld"), "")
-    check("and that is where it writes",
-          [one.archive for one in adminstations.load(admin)
-           if one.name == "nordgarten"], ["nordfeld"])
-    check("moving it afterwards works too",
-          adminstations.configure(admin, "nordgarten",
-                                  {"archive": "default", "role": "main"}), "")
-    check("and it moved",
-          [one.archive for one in adminstations.load(admin)
-           if one.name == "nordgarten"], ["default"])
+                              "garten"), "")
+    station = adminstations.load(admin).by_name("garten")
+    check("a console has no archive attribute", hasattr(station, "archive"),
+          False)
+    check("and its properties have no destination choice",
+          'name="archive"' in adminstations._properties(admin, station), False)
 
-    # Only reachable by hand -- the control is a list of what exists -- but
-    # `stations.toml` says in its own header that editing it by hand is fine,
-    # and a station pointed at a series that is not there would quietly write
-    # one site's readings into another's.
-    check("a series that is not there is refused, and named",
-          adminstations.configure(admin, "nordgarten",
-                                  {"archive": "suedfeld", "role": "main"}),
-          "There is no series called 'suedfeld'. There is: default, nordfeld.")
+    # As the members form posts it: a marker saying the selection was sent,
+    # and one key per selected sender. A name is not a selection -- the
+    # canonical sender ID is, so a renamed console keeps its membership.
+    sender = "v1/ecowitt/0000000000000000000000000000aaaa"
+    picked = {"_members": "1", f"sender:{sender}": "on"}
+    check("the first place can select it",
+          adminarchives.configure(admin, "default", dict(picked)), "")
+    check("membership is stored on that place",
+          adminarchives.load(admin).get("default").stations, (sender,))
+
+    (where / "archives.toml").write_text(
+        adminarchives.load(admin).render()
+        + '\n[archives.nordfeld]\nfile = "b.sdb"\nlabel = "Nordfeld"\n',
+        encoding="utf-8")
+    adopting = adminstations._waiting(admin, Seen(), adminstations.load(admin),
+                                      adminstations._places(admin))
+    check("two places still add no destination to adoption",
+          'name="archive"' in adopting, False)
+    check("or to a console's properties",
+          'name="archive"' in adminstations._properties(admin, station), False)
+
+    check("the second place can select the same console",
+          adminarchives.configure(admin, "nordfeld", dict(picked)), "")
+    register = adminarchives.load(admin)
+    check("one console may feed both places",
+          {one.name: one.stations for one in register.all()},
+          {"default": (sender,), "nordfeld": (sender,)})
 
 
 def moving_a_station_reaches_the_archiver(room: Path) -> None:
-    """The control is only worth having if the change arrives.
+    """A changed archive selection reaches the running archiver.
 
-    An `Archiver` filters the live table by station name, and that list was
-    read once at startup. So a console adopted afterwards, or moved to
-    another series on the stations page, went on being archived where it had
-    been -- or nowhere at all.
+    An `Archiver` filters the live table by station identity, and that list is
+    resolved from the names each archive owns. A save to `archives.toml` must
+    reach it without a restart; a change to `stations.toml` must refresh the
+    name-to-identity lookup without becoming a destination assignment.
 
     Measured on a real instance before this was fixed: the process started,
     logged "archive 'testort' has no stations, so nothing will be written",
@@ -933,19 +949,30 @@ def moving_a_station_reaches_the_archiver(room: Path) -> None:
     correctly, and its series stayed an empty file with nothing anywhere
     saying why.
     """
-    print("\nmoving a station reaches the running archiver")
+    print("\na place's changed selection reaches the running archiver")
     from weewx_evo import cli
 
     where = room / "repoint"
     where.mkdir(parents=True, exist_ok=True)
-    (where / "evo.toml").write_text(
-        'station.name = "One"\ninterval = 300\n', encoding="utf-8")
-    (where / "archives.toml").write_text(
-        '[archives.default]\nfile = "a.sdb"\n'
-        '[archives.nordfeld]\nfile = "b.sdb"\n', encoding="utf-8")
-    (where / "stations.toml").write_text(
-        '[stations.garten]\ndriver = "ecowitt"\nidentity = "A"\n'
-        'archive = "default"\n', encoding="utf-8")
+    (where / "evo.toml").write_text('interval = 300\n', encoding="utf-8")
+
+    garten = "v1/ecowitt/a"
+    schuppen = "v1/ecowitt/b"
+
+    def selects(default_members, nordfeld_members):
+        """Write the file the way the settings page writes it."""
+        lines = ["member_policy_version = 2", ""]
+        for name, file, members in (("default", "a.sdb", default_members),
+                                    ("nordfeld", "b.sdb", nordfeld_members)):
+            lines += [f"[archives.{name}]", f'file = "{file}"']
+            lines.append("senders = []" if not members else "")
+            for sender in members:
+                lines += [f'[archives.{name}.members."{sender}"]',
+                          'role = "main"', "channel = 0", "indoor = true", ""]
+        (where / "archives.toml").write_text("\n".join(lines) + "\n",
+                                             encoding="utf-8")
+
+    selects([garten], [])
 
     class Args:
         config = str(where / "evo.toml")
@@ -953,39 +980,50 @@ def moving_a_station_reaches_the_archiver(room: Path) -> None:
         archive = None
 
     class Archiver:
-        def __init__(self, names):
-            self.stations = names
+        # What the refresh touches: the placer holds the membership, and the
+        # live database is the sender directory it resolves a broad `"*"`
+        # against. Nothing here knows a station name -- that lookup belongs
+        # to the listener and the pages, not to the archive path.
+        def __init__(self):
+            self.placer = None
+            self.live = None
+
+    def selected(series):
+        return [a.placer.selected_senders() for _one, _s, a in series]
 
     cfg = cli.settings_for(Args())
     archives = cli.read_archives(Args(), cfg)
-    series = [(one, None, Archiver(["garten"] if one.name == "default" else []))
-              for one in archives.all()]
+    placements = cli.read_placements(Args(), cfg)
+    series = [(one, None, Archiver()) for one in archives.all()]
+    for one, _store, archiver in series:
+        archiver.placer = cli.build_placer(one, placements, archiver.live,
+                                           archives)
     check("it starts pointed where the file says",
-          [a.stations for _one, _s, a in series], [["garten"], []])
+          selected(series), [[garten], []])
 
-    # The station moves, exactly as the properties form writes it.
-    (where / "stations.toml").write_text(
-        '[stations.garten]\ndriver = "ecowitt"\nidentity = "A"\n'
-        'archive = "nordfeld"\n', encoding="utf-8")
-    cli._repoint_stations(Args(), cfg, series)
-    check("and follows it without a restart",
-          [a.stations for _one, _s, a in series], [[], ["garten"]])
+    # The place selection changes, exactly as its form writes it.
+    selects([], [garten])
+    cli._refresh_archiver_inputs(Args(), cfg, series)
+    check("the archive selection is followed without a restart",
+          selected(series), [[], [garten]])
 
-    # A second console adopted into the first one afterwards.
-    (where / "stations.toml").write_text(
-        '[stations.garten]\ndriver = "ecowitt"\nidentity = "A"\n'
-        'archive = "nordfeld"\n'
-        '[stations.schuppen]\ndriver = "ecowitt"\nidentity = "B"\n'
-        'archive = "default"\n', encoding="utf-8")
-    cli._repoint_stations(Args(), cfg, series)
-    check("an adopted console arrives too",
-          [a.stations for _one, _s, a in series], [["schuppen"], ["garten"]])
+    # A second console is adopted afterwards, and the archive selects it.
+    selects([schuppen], [garten])
+    cli._refresh_archiver_inputs(Args(), cfg, series)
+    check("an adopted console selected by the place arrives too",
+          selected(series), [[schuppen], [garten]])
+
+    # Membership is not exclusive: the same live identity can feed both.
+    selects([garten, schuppen], [garten])
+    cli._refresh_archiver_inputs(Args(), cfg, series)
+    check("one live identity may feed both archives",
+          selected(series), [[garten, schuppen], [garten]])
 
 
 def main(argv: list[str]) -> int:
     room = Path(tempfile.mkdtemp(prefix="deck-places-"))
     try:
-        one_place_is_unchanged(room)
+        one_place_stays_flat(room)
         out, _places = two_places(room)
         each_place_shows_its_own(out, room)
         every_link_resolves(out)
@@ -999,7 +1037,7 @@ def main(argv: list[str]) -> int:
         narrowing_writes_no_dead_links(room)
         the_live_document(room)
         how_often_a_place_reports(room)
-        a_station_can_be_given_a_series(room)
+        a_place_selects_its_stations(room)
         moving_a_station_reaches_the_archiver(room)
     finally:
         shutil.rmtree(room, ignore_errors=True)

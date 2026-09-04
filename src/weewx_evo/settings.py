@@ -8,9 +8,9 @@ fight. This is the order, strongest first:
      unit overrides one thing without editing a file.
   3. **The configuration file.** What the admin page writes, and what a person
      edits. The normal place for a setting to live.
-  4. **weewx.conf**, if one was named. The settings both systems share --
-     latitude, altitude, the archive interval -- can go on living there, so
-     changing the altitude in one place changes it for both.
+  4. **weewx.conf**, if one was named. Process settings both systems share,
+     such as the archive interval, can go on living there. Legacy place
+     values are read only to create the first `archives.toml`.
   5. **The default** the component declared.
 
 Every layer is optional and each one only covers what it actually says. A
@@ -68,11 +68,9 @@ log = logging.getLogger(__name__)
 
 
 #: Command-line names that differ from the setting they carry. Written out
-#: rather than guessed at: `--archive` is a path and `archive_db` is a
-#: setting, and a rule that turned one into the other would also turn
-#: `--allow` into something.
+#: rather than guessed at: a rule that transformed every option name would
+#: also turn `--allow` into something unrelated.
 ARGUMENT_NAMES = {
-    "archive": "archive_db",
     "live": "live_db",
     "retention_days": None,   # a duration in days, handled below
     "raw_minutes": None,      # likewise, in minutes
@@ -136,9 +134,8 @@ class Settings:
 
         Two readers of one setting were resolving it two different ways: the
         settings page against the configuration file, the service against
-        whatever directory it was started in. So `archive_db = "weewx.sdb"`
-        named two files, and the page offering to add a column added it to
-        the one the service was not writing -- and said it had worked.
+        whatever directory it was started in. A relative `live_db`, for
+        example, must name the same file on the page and in the service.
 
         The command line is the exception, and it is the obvious one: a path
         somebody just typed means the directory they typed it in.

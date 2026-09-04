@@ -38,6 +38,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -166,18 +167,33 @@ class Simulator(threading.Thread):
 
 
 def lay_out(work: Path, port: int) -> Path:
-    """Write the whole configuration: two archives, three stations, feeds."""
+    """Write two Places, three canonical senders, feeds and exports."""
+    from weewx_evo.archives import MEMBER_POLICY_VERSION
+    from weewx_evo.db.live import sender_id
+
     (work / "data").mkdir(exist_ok=True)
     (work / "out").mkdir(exist_ok=True)
     (work / "published").mkdir(exist_ok=True)
 
+    south_sender = sender_id("json", "suedhof")
+    north_sender = sender_id("json", "nordhof")
+    shed_sender = sender_id("json", "nordschuppen")
+
     (work / "archives.toml").write_text(f"""
+member_policy_version = {MEMBER_POLICY_VERSION}
+
 [archives.default]
 file = "data/sued.sdb"
 label = "{SOUTH['label']}"
 latitude = {SOUTH['latitude']}
 longitude = {SOUTH['longitude']}
 altitude = {SOUTH['altitude']}
+senders = ["{south_sender}"]
+
+[archives.default.members."{south_sender}"]
+role = "main"
+channel = 0
+indoor = true
 
 [archives.nordfeld]
 file = "data/nord.sdb"
@@ -185,25 +201,31 @@ label = "{NORTH['label']}"
 latitude = {NORTH['latitude']}
 longitude = {NORTH['longitude']}
 altitude = {NORTH['altitude']}
+senders = ["{north_sender}", "{shed_sender}"]
+
+[archives.nordfeld.members."{north_sender}"]
+role = "main"
+channel = 0
+indoor = true
+
+[archives.nordfeld.members."{shed_sender}"]
+role = "extra"
+channel = 1
+indoor = true
 """, encoding="utf-8")
 
     (work / "stations.toml").write_text("""
 [stations.suedhof]
 driver = "json"
 identity = "suedhof"
-archive = "default"
 
 [stations.nordhof]
 driver = "json"
 identity = "nordhof"
-archive = "nordfeld"
 
 [stations.nordschuppen]
 driver = "json"
 identity = "nordschuppen"
-archive = "nordfeld"
-role = "extra"
-channel = 1
 """, encoding="utf-8")
 
     # The JSON feed writes one file per chart, so with no charts it has
@@ -296,6 +318,31 @@ def serve(work: Path, config: Path, port: int):
         stderr=subprocess.STDOUT, text=True)
 
 
+def drain(process: subprocess.Popen, lines: deque[str]) -> None:
+    """Continuously empty the child pipe so logging cannot stop the service.
+
+    Windows anonymous pipes are small. Waiting until ``communicate()`` at the
+    end let ordinary startup/status logging fill one, after which the service
+    blocked inside logging before its Archiver loop could run.
+    """
+    if process.stdout is None:
+        return
+    for line in process.stdout:
+        lines.append(line.rstrip())
+
+
+def stop_service(process: subprocess.Popen,
+                 reader: threading.Thread) -> None:
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
+    reader.join(timeout=2)
+
+
 def up(base: str, seconds: float = 60) -> bool:
     until = time.time() + seconds
     while time.time() < until:
@@ -378,20 +425,23 @@ def main() -> int:
     print(f"  listener on {base}, interval {INTERVAL}s")
 
     process = serve(work, config, port)
+    service_log: deque[str] = deque(maxlen=2000)
+    log_reader = threading.Thread(
+        target=drain, args=(process, service_log), daemon=True,
+        name="service-log")
+    log_reader.start()
     sim = Simulator(base)
     try:
         if not up(base):
-            out = ""
             try:
-                process.terminate()
-                out = process.communicate(timeout=10)[0]
+                stop_service(process, log_reader)
             except Exception as exc:
                 # Nothing useful left to do: the point of this branch is to
                 # print why the service did not start, and it not stopping
                 # cleanly is a second problem for a second day.
                 print(f"    (and it would not stop: {exc})")
             print("  the service never came up. It said:")
-            for line in (out or "").splitlines()[-8:]:
+            for line in list(service_log)[-8:]:
                 print(f"    {line}")
             return 1
 
@@ -467,15 +517,10 @@ def main() -> int:
 
     finally:
         sim.stop()
-        process.terminate()
-        try:
-            out = process.communicate(timeout=20)[0]
-        except subprocess.TimeoutExpired:
-            process.kill()
-            out = process.communicate()[0]
+        stop_service(process, log_reader)
         if failures:
             print("\n  the service said:")
-            for line in (out or "").splitlines()[-40:]:
+            for line in list(service_log)[-40:]:
                 print(f"    {line}")
         if args.keep:
             print(f"\n  left behind: {work}")

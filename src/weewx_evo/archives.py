@@ -2,7 +2,8 @@
 
 An **archive** is a series for one *place*. It has a file, a name to print on
 a page, and the three numbers every formula about the sky needs: latitude,
-longitude and altitude. Stations write into it; feeds read out of it.
+longitude and altitude. It selects station readings from `live`; feeds read
+out of it.
 
     [archives.nordfeld]
     file = "data/nordfeld.sdb"
@@ -11,10 +12,10 @@ longitude and altitude. Stations write into it; feeds read out of it.
     longitude = 11.6301
     altitude = 452.0
 
-One archive is the ordinary case and it needs no file at all: the settings
-already describe it. `station.name`, `station.latitude`, `station.longitude`
-and `station.altitude` **are** the default archive, and an installation that
-never has a second one never sees this module's file.
+One archive is the ordinary case, but it is still an archive and is still
+described here. An installation made before this file existed is migrated on
+the first read: its old `station.*` and `archive_db` settings are written once
+as `[archives.default]`. From then on this file is the authority.
 
 The second archive is why `station.*` had to stop being global. Sunrise,
 pressure reduction, evapotranspiration and every skin hang off those three
@@ -24,19 +25,12 @@ coordinates, differs by seconds and looks entirely correct.
 
 ## Where the values come from
 
-    no archives.toml        the settings are the one archive
-    archives.toml exists    it is the list, and it names the default too
+    no archives.toml        migrate the old settings, atomically
+    archives.toml exists    read only this list
 
-The switch is deliberate and it is the reason there is no migration. The file
-appears when somebody adds a second archive, and the page writes the first one
-into it at the same time. Until then nothing changed and there is nothing to
-change.
-
-The trap that follows: with the file there, `station.altitude` in the settings
-is no longer read. Saying nothing about that would be the settings page
-appearing to work and doing nothing -- the same failure as an environment
-variable quietly beating a saved field. So `overriding()` answers it, and the
-page prints it beside the field.
+There is no live fallback to the old settings. A misspelled archive name or a
+broken file must fail where it is read; silently choosing another place mixes
+correct-looking readings under the wrong name.
 
 ## What is not here
 
@@ -49,9 +43,10 @@ question.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -59,19 +54,78 @@ log = logging.getLogger(__name__)
 
 FILENAME = "archives.toml"
 
-#: The archive everything writes into when nobody said otherwise. Matches
-#: `stations.DEFAULT_ARCHIVE`, which is what a station names.
+#: The name used for the one-time migration of the legacy settings. It is not
+#: an archive silently supplied at runtime: it exists only when the file names
+#: it (or after migration has written it there).
 DEFAULT = "default"
 
 #: The same shape as a station name: this ends up in a filename and in a URL.
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
-#: Which settings the default archive is made of. Named here rather than
-#: spelled out at each use, because the settings page has to say which of them
-#: have stopped being read once the file exists.
+#: Which old settings are copied into the first archive during migration.
 FROM_SETTINGS = ("archive_db", "station.name", "station.latitude",
                  "station.longitude", "station.altitude", "station.url",
                  "station.rain_year_start")
+
+#: Version two is the sender-owned shape. Version one used names from
+#: ``stations.toml`` both in ``stations = [...]`` and below ``members``.  A
+#: running archiver must never open that file to translate them, so the
+#: translation is an explicit installation/admin migration (see
+#: :func:`migrate_station_ownership`).
+MEMBER_POLICY_VERSION = 2
+
+
+@dataclass(frozen=True, slots=True)
+class MemberPolicy:
+    """How one archive treats one of the stations it selects.
+
+    A role is relative to a series.  The same console can be the main source
+    in its own archive and an extra source in a combined archive; likewise,
+    an indoor reading can be useful in one series and deliberately absent in
+    another.  Keeping these three values on the relationship is what makes
+    that many-to-many arrangement expressible.
+    """
+
+    role: str = "main"
+    channel: int = 0
+    indoor: bool = True
+
+    def __post_init__(self) -> None:
+        from . import roles
+
+        if self.role not in roles.ROLES:
+            raise ValueError(
+                f"member role is 'main' or 'extra', not {self.role!r}")
+        if isinstance(self.channel, bool) or not isinstance(self.channel, int):
+            raise ValueError("member channel is a whole number")
+        if self.role == roles.MAIN and self.channel != 0:
+            raise ValueError("a main member has channel 0")
+        if self.role == roles.EXTRA and not 1 <= self.channel <= roles.CHANNELS:
+            raise ValueError(
+                f"an extra member has a channel from 1 to {roles.CHANNELS}")
+        if not isinstance(self.indoor, bool):
+            raise ValueError("member indoor is true or false")
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> MemberPolicy:
+        """One strictly checked policy from TOML values."""
+        if not isinstance(raw, dict):
+            raise ValueError("a member policy is a table")
+        unknown = set(raw) - {"role", "channel", "indoor"}
+        if unknown:
+            raise ValueError(
+                "unknown member setting" + ("s" if len(unknown) != 1 else "")
+                + f": {', '.join(sorted(str(one) for one in unknown))}")
+        role = raw.get("role", "main")
+        channel = raw.get("channel", 0)
+        indoor = raw.get("indoor", True)
+        if not isinstance(role, str):
+            raise ValueError("member role is a word")
+        if isinstance(channel, bool) or not isinstance(channel, int):
+            raise ValueError("member channel is a whole number")
+        if not isinstance(indoor, bool):
+            raise ValueError("member indoor is true or false")
+        return cls(role=role.strip(), channel=channel, indoor=indoor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,11 +134,11 @@ class Archive:
 
     name: str
     file: str
-    #: What a page calls this place. `station.name` for the default one.
+    #: What a page calls this place.
     label: str = ""
     latitude: float | None = None
     longitude: float | None = None
-    #: Metres above sea level, as `station.altitude` has always been.
+    #: Metres above sea level.
     altitude: float | None = None
     url: str = ""
     rain_year_start: int = 1
@@ -110,11 +164,60 @@ class Archive:
     #: overview, the compare legend, the sidebar.
     #:
     #: Not the file's line order, and `Register.all()` is deliberately left
-    #: alone. `cmd_serve` takes `all()[0]` as the default archive, which is
-    #: only correct because `add()` inserts the fallback first -- sorting
-    #: that list would move the drivers' state, the `status` command and
-    #: every feed naming nothing to a different series, silently.
+    #: alone. Storage order and display order are separate facts.
     order: int = 0
+
+    #: Which senders from the live database feed this series. Values are the
+    #: canonical, versioned IDs produced by ``db.live.sender_id``.  The old
+    #: attribute name remains for a short source-compatibility window; the
+    #: public spelling is :attr:`senders` and the file spells it ``senders``.
+    #:
+    #: **None and empty are different answers.** None is the explicit broad
+    #: selection inherited by a migrated installation; an empty tuple selects
+    #: none. Both belong to this archive -- neither is looked up on a station.
+    stations: tuple[str, ...] | None = ()
+
+    #: Per-sender interpretation inside this archive. For an explicit
+    #: selection this table is also the selection: it is normalised to exactly
+    #: the IDs in ``stations``. This keeps one writable authority rather than
+    #: a list and a policy table that can disagree. In broad mode it contains
+    #: optional overrides; unlisted live senders use ``MemberPolicy()``.
+    members: dict[str, MemberPolicy] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        made: dict[str, MemberPolicy] = {}
+        try:
+            entries = self.members.items()
+        except AttributeError as exc:
+            raise ValueError("archive members is a table") from exc
+        for raw_name, raw_policy in entries:
+            name = str(raw_name)
+            policy = (raw_policy if isinstance(raw_policy, MemberPolicy)
+                      else MemberPolicy.from_dict(raw_policy))
+            made[name] = policy
+
+        if self.stations is not None:
+            selected = tuple(dict.fromkeys(str(one) for one in self.stations))
+            # Policy entries and selection become one fact in memory too.
+            # A removed sender loses its policy; adding it later starts with
+            # the explicit ordinary defaults instead of reviving stale state.
+            made = {name: made.get(name, MemberPolicy()) for name in selected}
+            object.__setattr__(self, "stations", selected)
+        # Frozen protects assignment, not a caller mutating a dict it retained.
+        # Keep our own copy so an Archive remains a stable configuration value.
+        object.__setattr__(self, "members", made)
+
+        active = set(made) if self.stations is None else set(self.stations)
+        channels: dict[int, str] = {}
+        for name, policy in made.items():
+            if name not in active or policy.role != "extra":
+                continue
+            previous = channels.get(policy.channel)
+            if previous is not None:
+                raise ValueError(
+                    f"archive {self.name!r} gives extra channel "
+                    f"{policy.channel} to both {previous!r} and {name!r}")
+            channels[policy.channel] = name
 
     @property
     def title(self) -> str:
@@ -127,7 +230,27 @@ class Archive:
                 "altitude": self.altitude}
 
     def as_dict(self) -> dict[str, Any]:
-        return {name: getattr(self, name) for name, _read_as in FIELDS}
+        names = [name for name, _read_as in FIELDS]
+        names.extend(EXTRA_FIELDS)
+        return {name: getattr(self, name) for name in names}
+
+    def policy_for(self, station: str) -> MemberPolicy:
+        """How this archive treats one sender; defaults are intentionally plain."""
+        return self.members.get(station, MemberPolicy())
+
+    @property
+    def senders(self) -> tuple[str, ...] | None:
+        """Canonical live sender IDs selected by this place.
+
+        ``None`` is only the explicit broad legacy mode. The compatibility
+        storage name is intentionally hidden behind this property so new code
+        cannot mistake a friendly station name for the journal identity.
+        """
+        return self.stations
+
+    def selects(self, sender: str) -> bool:
+        """Whether this place reads one canonical sender ID."""
+        return self.senders is None or sender in self.senders
 
 
 def _number(value: Any) -> float | None:
@@ -165,6 +288,71 @@ FIELDS: tuple[tuple[str, Any], ...] = (
     ("code", str),
     ("order", _int_or(0)),
 )
+
+#: Fields the settings page does not offer as a text box, so they are not in
+#: `FIELDS`. `stations` is a list and its own page; putting it in the table
+#: would render it as a line of text somebody could half-edit.
+EXTRA_FIELDS: tuple[str, ...] = ("stations", "members")
+
+
+def _sender_ids(value: Any, *, missing: tuple[str, ...] | None = ()) \
+        -> tuple[str, ...] | None:
+    """Canonical sender IDs, or ``None`` for an explicit ``*``.
+
+    Missing means empty for the sender-owned format. That fail-closed default
+    is deliberate: a typo or partially-written place must never start reading
+    every station in the shared journal.
+    """
+    if value is None:
+        return missing
+    if isinstance(value, str):
+        text = value.strip()
+        values: Any = None if text == "*" else ((text,) if text else ())
+        if values is None:
+            return None
+    elif isinstance(value, (list, tuple)):
+        values = value
+    else:
+        raise ValueError("senders is '*' or a list of canonical sender IDs")
+    from .db.live import sender_parts
+
+    found: list[str] = []
+    try:
+        for one in values:
+            sender = str(one).strip()
+            if not sender or sender in found:
+                continue
+            sender_parts(sender)
+            found.append(sender)
+    except TypeError as exc:
+        raise ValueError(
+            "senders is '*' or a list of canonical sender IDs") from exc
+    return tuple(found)
+
+
+def _members(value: Any, archive: str) -> dict[str, MemberPolicy]:
+    """Strict member policies from one archive table."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"[archives.{archive}.members] is not a table")
+    found: dict[str, MemberPolicy] = {}
+    from .db.live import sender_parts
+
+    for raw_name, raw_policy in value.items():
+        name = str(raw_name)
+        try:
+            sender_parts(name)
+        except ValueError as exc:
+            raise ValueError(
+                f"[archives.{archive}.members] has invalid sender ID "
+                f"{name!r}") from exc
+        try:
+            found[name] = MemberPolicy.from_dict(raw_policy)
+        except ValueError as exc:
+            raise ValueError(
+                f"[archives.{archive}.members.{name}]: {exc}") from exc
+    return found
 
 #: Eight hues a place can be given when nobody chose one, mid-lightness so
 #: each reads on both the light and the dark ground. Assigned by position.
@@ -205,11 +393,10 @@ _CODE = re.compile(r"^[A-Za-z0-9]{1,4}$")
 
 
 def from_settings(cfg: Any) -> Archive:
-    """The one archive an installation has before it has two.
+    """The archive copied from an installation's legacy settings.
 
-    Reads exactly what has always been read, so nothing about a single-site
-    installation changes: this object is a view of the settings, not a second
-    copy of them.
+    This is migration input, never a live fallback. `Register.load` writes the
+    result to `archives.toml` before returning it.
     """
     return Archive(
         name=DEFAULT,
@@ -220,6 +407,10 @@ def from_settings(cfg: Any) -> Archive:
         altitude=_number(cfg.get("station.altitude")),
         url=str(cfg.get("station.url") or ""),
         rain_year_start=int(cfg.get("station.rain_year_start") or 1),
+        # Existing one-place installations accepted every arrival. Preserve
+        # that as an explicit migration result, never as a missing-key
+        # fallback in the new format.
+        stations=None,
     )
 
 
@@ -281,13 +472,9 @@ class Register:
     processes, and on a split deployment they are different machines.
     """
 
-    def __init__(self, archives: list[Archive], path: Path | None = None,
-                 fallback: Archive | None = None) -> None:
+    def __init__(self, archives: list[Archive], path: Path | None = None) -> None:
         self.archives = archives
         self.path = path
-        #: What `default` means when the file does not name it. The settings,
-        #: which is what every installation had before this module existed.
-        self.fallback = fallback
         self._mtime: float | None = None
         if path is not None and path.exists():
             self._mtime = path.stat().st_mtime
@@ -295,27 +482,41 @@ class Register:
     # -- reading -------------------------------------------------------
 
     @classmethod
-    def load(cls, path: str | Path | None, cfg: Any) -> Register:
-        """The list, or the settings where there is no list.
+    def load(cls, path: str | Path | None, cfg: Any = None) -> Register:
+        """Read the list without consulting listener configuration.
 
-        `cfg` is always used for the fallback even when the file exists, so
-        that a file naming only a second archive still has a first one.
+        A present file is the whole answer. In particular, this method never
+        opens ``stations.toml``: it is on the Archiver path, and the Archiver
+        knows only the live database and this Place configuration. Old
+        station-owned routing is moved by :func:`migrate_station_ownership`,
+        which the installer/listener/admin may call before starting it.
         """
-        fallback = from_settings(cfg)
         if path is None:
-            return cls([], None, fallback)
+            raise ValueError("archives.toml needs a path")
         path = Path(path)
         if not path.exists():
-            return cls([], path, fallback)
-        try:
-            found = _read(path)
-        except Exception:
-            # A broken file must not stop the archiver: it would take the
-            # series with it, and the series is the thing being protected.
-            log.exception("could not read %s; carrying on with the settings "
-                          "alone", path)
-            return cls([], path, fallback)
-        return cls(found, path, fallback)
+            if cfg is None:
+                raise FileNotFoundError(path)
+            found = [from_settings(cfg)]
+            log.info("migrating the legacy place settings to %s", path)
+            register = cls(found, path)
+            register.save(path)
+            return register
+        else:
+            data = _data(path)
+            version = _member_policy_version(data)
+            legacy_membership = any(
+                isinstance(entry, dict)
+                and ("stations" in entry or bool(entry.get("members")))
+                for entry in (data.get("archives") or {}).values())
+            if version < MEMBER_POLICY_VERSION and legacy_membership:
+                raise ValueError(
+                    f"{path} uses station-owned archive membership; run its "
+                    "configuration migration before the archiver")
+            found = _read(path, data)
+            if not found:
+                raise ValueError(f"{path} defines no archives")
+        return cls(found, path)
 
     def refresh(self) -> bool:
         """Re-read if the file has changed. True when something did."""
@@ -328,8 +529,12 @@ class Register:
         if now == self._mtime:
             return False
         self._mtime = now
+        if now is None:
+            log.error("%s disappeared; keeping the archives already loaded",
+                      self.path)
+            return False
         try:
-            self.archives = _read(self.path) if now is not None else []
+            self.archives = _read(self.path)
         except Exception:
             log.exception("could not re-read %s; keeping what was loaded",
                           self.path)
@@ -347,36 +552,39 @@ class Register:
         return iter(self.all())
 
     def all(self) -> list[Archive]:
-        """Every archive, with the default first.
-
-        The default is here whether or not the file names it. An installation
-        whose file lists only `nordfeld` still has the series it had before,
-        and dropping it would mean dropping the history in it.
-        """
-        found = list(self.archives)
-        if not any(one.name == DEFAULT for one in found) and self.fallback:
-            found.insert(0, self.fallback)
-        return found
+        """Every archive the file names, in storage order."""
+        return list(self.archives)
 
     def names(self) -> list[str]:
         return [one.name for one in self.all()]
 
-    def get(self, name: str | None) -> Archive:
-        """One archive by name, falling back to the default.
+    def default_name(self) -> str:
+        """The unambiguous implicit name, or a clear refusal.
 
-        Falling back rather than raising: the name comes from a feed's
-        settings or a station's, and one pointing at an archive somebody
-        removed must produce a page from the remaining series rather than an
-        exception at four in the morning.
+        A literal `[archives.default]` is an explicit choice in the file. A
+        sole differently named archive is unambiguous too. With several and
+        no such entry, the caller must name one.
         """
-        wanted = name or DEFAULT
-        for one in self.all():
+        if len(self.archives) == 1:
+            return self.archives[0].name
+        if any(one.name == DEFAULT for one in self.archives):
+            return DEFAULT
+        if not self.archives:
+            raise LookupError("archives.toml defines no archives")
+        raise LookupError("more than one archive exists; name one")
+
+    def get(self, name: str | None) -> Archive:
+        """One archive by exact name.
+
+        `None` is accepted only through `default_name`; an unknown non-empty
+        name never redirects to another archive.
+        """
+        wanted = self.default_name() if name in (None, "") else str(name)
+        for one in self.archives:
             if one.name == wanted:
                 return one
-        if wanted != DEFAULT:
-            log.warning("no archive called %r; using %r", wanted, DEFAULT)
-        return self.get(DEFAULT) if wanted != DEFAULT else (
-            self.fallback or Archive(DEFAULT, "data/weewx.sdb"))
+        known = ", ".join(self.names()) or "none"
+        raise KeyError(f"no archive called {wanted!r}; configured: {known}")
 
     def ordered(self) -> list[Archive]:
         """Every place, in the order pages present them.
@@ -414,18 +622,12 @@ class Register:
         return out
 
     def several(self) -> bool:
-        """Whether anything has to be told apart at all.
-
-        The rule that hangs off this: with one archive it takes every packet,
-        because that is what it has always done and an installation that never
-        heard of stations must keep working. With two, each takes the packets
-        of its own stations, because there is nothing left to guess with.
-        """
+        """Whether anything has to be told apart in the presentation."""
         return len(self.all()) > 1
 
     def overriding(self) -> bool:
-        """Whether the file is what decides, rather than the settings."""
-        return bool(self.archives)
+        """Compatibility answer: a loaded register always comes from the file."""
+        return self.path is not None
 
     def concerns(self, now: float | None = None) -> dict[str, str]:
         """What is wrong with this arrangement, by archive name.
@@ -447,17 +649,10 @@ class Register:
         problem = self.why_not(archive)
         if problem:
             raise ValueError(problem)
-        # The first write has to carry the default in with it. Otherwise the
-        # file says "nordfeld" and the series that has a year of readings in
-        # it becomes a fallback nobody can edit.
-        if not self.archives and self.fallback:
-            self.archives.append(self.fallback)
         self.archives.append(archive)
         return archive
 
     def replace(self, name: str, archive: Archive) -> None:
-        if not self.archives and self.fallback:
-            self.archives.append(self.fallback)
         for n, one in enumerate(self.archives):
             if one.name == name:
                 self.archives[n] = archive
@@ -546,10 +741,12 @@ class Register:
             "# The measurement series this installation keeps.",
             "#",
             "# Each one is a place: its own file, its own altitude and its own",
-            "# coordinates. Stations name the archive they write into; feeds",
-            "# name the one they read out of.",
+            "# coordinates. Its members select sender IDs from the live DB;",
+            "# feeds name the archive they read out of.",
             "#",
             "# Written by the settings page. Editing it by hand is fine.",
+            "",
+            f"member_policy_version = {MEMBER_POLICY_VERSION}",
             "",
         ]
         blank = Archive("", "")
@@ -568,15 +765,36 @@ class Register:
                 lines.append(f'{field_name} = "{_escape(value)}"'
                              if isinstance(value, str)
                              else f"{field_name} = {value}")
+            # Broad and empty are written explicitly. A non-empty explicit
+            # selection is the member-table keys themselves; there is no
+            # second list that can drift away from its policies.
+            if one.senders is None:
+                lines.append('senders = "*"')
+            elif not one.senders:
+                lines.append("senders = []")
             lines.append("")
+            for sender, policy in one.members.items():
+                lines.append(
+                    f"[archives.{one.name}.members.{_toml_key(sender)}]")
+                lines.append(f'role = "{policy.role}"')
+                lines.append(f"channel = {policy.channel}")
+                lines.append("indoor = " + ("true" if policy.indoor else "false"))
+                lines.append("")
         return "\n".join(lines)
 
     def save(self, path: str | Path | None = None) -> Path:
         """Write the file, atomically. Same as the station register."""
+        import tomllib
+
         where = Path(path or self.path or FILENAME)
         where.parent.mkdir(parents=True, exist_ok=True)
         temp = where.with_suffix(where.suffix + ".tmp")
         temp.write_text(self.render(), encoding="utf-8")
+        # Parse the bytes that reached disk before replacing the authority
+        # every archiver will read. A renderer regression must leave the last
+        # valid Place configuration in service.
+        with open(temp, "rb") as handle:
+            tomllib.load(handle)
         temp.replace(where)
         self.path = where
         self._mtime = where.stat().st_mtime
@@ -603,23 +821,220 @@ def _short(title: str, taken: set[str]) -> str:
 
 
 def _escape(value: str) -> str:
-    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+    # JSON's string escapes are also TOML basic-string escapes. Unlike the
+    # old quote/backslash-only replacement this covers newlines and control
+    # characters supplied through an Admin form without escaping Unicode.
+    # JSON permits a literal DEL while TOML does not, so cover that one extra
+    # code point explicitly.
+    return json.dumps(str(value), ensure_ascii=False)[1:-1].replace(
+        "\x7f", "\\u007f")
 
 
-def _read(path: Path) -> list[Archive]:
+def _toml_key(value: str) -> str:
+    """One quoted TOML key segment.
+
+    Sender IDs contain slashes and percent escapes, so treating them as bare
+    table components would either be invalid TOML or change the table shape.
+    """
+    return f'"{_escape(value)}"'
+
+
+def _data(path: Path) -> dict[str, Any]:
     import tomllib
 
     with open(path, "rb") as handle:
-        data = tomllib.load(handle)
+        return tomllib.load(handle)
+
+
+def _member_policy_version(data: dict[str, Any]) -> int:
+    """The completed member-policy migration, or zero for an old file."""
+    raw = data.get("member_policy_version", 0)
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise ValueError("member_policy_version is a non-negative whole number")
+    if raw > MEMBER_POLICY_VERSION:
+        raise ValueError(
+            f"member_policy_version {raw} is newer than this program "
+            f"understands ({MEMBER_POLICY_VERSION})")
+    return raw
+
+
+def migrate_station_ownership(path: str | Path, cfg: Any = None,
+                              station_path: str | Path | None = None) -> bool:
+    """Move the committed station-owned layout to canonical sender IDs.
+
+    This helper is deliberately *not* called by :meth:`Register.load`. The
+    listener, installer or admin process may call it while it still has
+    ``stations.toml``; the Archiver path consequently has no import, file read
+    or fallback involving a driver/station registry.
+
+    Returns true when ``archives.toml`` was written. The write is atomic, and
+    the version marker makes the operation idempotent.
+    """
+    path = Path(path)
+    station_path = (Path(station_path) if station_path is not None
+                    else path.with_name("stations.toml"))
+    station_data = _data(station_path) if station_path.exists() else {}
+    announced = station_data.get("stations") or {}
+    if not isinstance(announced, dict):
+        announced = {}
+
+    from .db.live import LEGACY_DRIVER, sender_id, sender_parts
+
+    identities: dict[str, str] = {}
+    destinations: dict[str, list[str]] = {}
+    policies: dict[str, MemberPolicy] = {}
+    for raw_name, raw in announced.items():
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw_name)
+        driver = str(raw.get("driver") or "").strip()
+        identity = str(raw.get("identity") or "").strip()
+        if not driver or not identity:
+            continue
+        canonical = sender_id(driver, identity)
+        identities[name] = canonical
+        destination = str(raw.get("archive") or DEFAULT).strip() or DEFAULT
+        destinations.setdefault(destination, []).append(canonical)
+        values = {key: raw[key] for key in ("role", "channel", "indoor")
+                  if key in raw}
+        if values:
+            try:
+                policies[canonical] = MemberPolicy.from_dict(values)
+            except ValueError as exc:
+                raise ValueError(
+                    f"[stations.{name}] cannot be migrated: {exc}") from exc
+
+    def canonical(name: Any) -> str:
+        text = str(name).strip()
+        if not text:
+            raise ValueError("an empty legacy station cannot be migrated")
+        try:
+            sender_parts(text)
+            return text
+        except ValueError:
+            # Rows from the first live-table shape were already named with
+            # the friendly station/source string. The driver's migration
+            # keeps them under this reserved, canonical pair.
+            return identities.get(text, sender_id(LEGACY_DRIVER, text))
+
+    if path.exists():
+        data = _data(path)
+        if _member_policy_version(data) >= MEMBER_POLICY_VERSION:
+            return False
+        raw_archives = data.get("archives") or {}
+        if not isinstance(raw_archives, dict):
+            raise ValueError(f"{path} has no [archives] table")
+    else:
+        data = {}
+        raw_archives = {}
+
+    entries: list[tuple[str, dict[str, Any]]] = [
+        (str(name), raw) for name, raw in raw_archives.items()
+        if isinstance(raw, dict)]
+    if not any(name == DEFAULT for name, _raw in entries):
+        # A named Place with its own selection is already the complete
+        # authority.  Adding a legacy ``default`` beside it would make the
+        # same live packets feed an extra archive merely because the file is
+        # receiving its version marker.  Only the older shape -- Places with
+        # no selection of their own -- still needs the central settings
+        # materialised as ``default``.
+        owns_selection = any(
+            "stations" in raw or bool(raw.get("members"))
+            for _name, raw in entries)
+        if not owns_selection:
+            if cfg is None:
+                if entries:
+                    raise ValueError(
+                        f"{path} needs the legacy place settings to migrate "
+                        "its default archive")
+                raise FileNotFoundError(path)
+            first = from_settings(cfg)
+            raw_first = {field_name: getattr(first, field_name)
+                         for field_name, _read_as in FIELDS}
+            entries.insert(0, (DEFAULT, raw_first))
+
+    several = len(entries) > 1
+    migrated: list[Archive] = []
+    for name, raw in entries:
+        made: dict[str, Any] = {"name": name}
+        for field_name, read_as in FIELDS:
+            value = raw.get(field_name)
+            made[field_name] = read_as("" if value is None else value)
+
+        raw_members = raw.get("members") or {}
+        if not isinstance(raw_members, dict):
+            raise ValueError(f"[archives.{name}.members] is not a table")
+        existing: dict[str, MemberPolicy] = {}
+        for old, values in raw_members.items():
+            sender = canonical(old)
+            try:
+                existing[sender] = MemberPolicy.from_dict(values)
+            except ValueError as exc:
+                raise ValueError(
+                    f"[archives.{name}.members.{old}]: {exc}") from exc
+
+        if "stations" in raw:
+            old_selection = raw.get("stations")
+            if isinstance(old_selection, str) and old_selection.strip() == "*":
+                selected: tuple[str, ...] | None = None
+            elif isinstance(old_selection, (list, tuple)):
+                selected = tuple(dict.fromkeys(canonical(one)
+                                                for one in old_selection))
+            else:
+                raise ValueError(
+                    f"[archives.{name}].stations is '*' or a list")
+        elif several:
+            selected = tuple(dict.fromkeys(destinations.get(name, ())))
+        else:
+            selected = None
+
+        active = set(existing) if selected is None else set(selected)
+        members = {sender: existing.get(sender, policies.get(sender,
+                                                              MemberPolicy()))
+                   for sender in active}
+        made["stations"] = selected
+        made["members"] = members
+        migrated.append(Archive(**made))
+
+    Register(migrated, path).save(path)
+    log.info("migrated station ownership to canonical sender IDs in %s", path)
+
+    # Cleanup is best effort and happens only after the canonical file is
+    # durable. A read-only copy remains harmless because this helper will see
+    # the version marker and no runtime reader consults it.
+    try:
+        from . import stations as station_defs
+
+        station_defs.clear_legacy_member_settings(station_path)
+    except Exception as exc:
+        log.warning("could not remove migrated station member settings from "
+                    "%s: %s", station_path, exc)
+    return True
+
+
+def _read(path: Path, data: dict[str, Any] | None = None) -> list[Archive]:
+    data = _data(path) if data is None else data
+    _member_policy_version(data)
     found = []
     for name, entry in (data.get("archives") or {}).items():
         if not isinstance(entry, dict):
             log.warning("%s: [archives.%s] is not a table; skipped", path, name)
             continue
-        made = {"name": str(name)}
+        made: dict[str, Any] = {"name": str(name)}
         for field_name, read_as in FIELDS:
             raw = entry.get(field_name)
             made[field_name] = read_as("" if raw is None else raw)
+        if "stations" in entry:
+            # Never reinterpret old friendly names as journal IDs. That would
+            # make every explicit selection silently empty.
+            raise ValueError(
+                f"[archives.{name}].stations is legacy station ownership; "
+                "migrate it before the archiver")
+        members = _members(entry.get("members"), str(name))
+        made["stations"] = _sender_ids(
+            entry.get("senders") if "senders" in entry else None,
+            missing=tuple(members))
+        made["members"] = members
         found.append(Archive(**made))
     return found
 
@@ -669,12 +1084,13 @@ class Placed:
     def get(self, name: str, default: Any = None) -> Any:
         field_name = self.PLACE.get(name)
         if field_name is not None:
-            value = getattr(self.archive, field_name)
-            # An archive that says nothing about its coordinates falls back
-            # to the settings rather than to None. A second archive added for
-            # its file alone should not silently lose the sun.
-            if value not in (None, ""):
-                return value
+            if field_name == "label":
+                return self.archive.title
+            # A missing coordinate stays missing. Falling through to the old
+            # central station.* value would give this place another place's
+            # sun and pressure correction while every reading still looked
+            # plausible.
+            return getattr(self.archive, field_name)
         return self.settings.get(name, default)
 
     def __getattr__(self, name: str) -> Any:
@@ -684,5 +1100,7 @@ class Placed:
 
 
 def placed(settings: Any, archive: Archive | None) -> Any:
-    """The settings for one archive, or the settings themselves."""
-    return settings if archive is None else Placed(settings, archive)
+    """The settings for one archive; a place is required."""
+    if archive is None:
+        raise ValueError("placed settings need an archive")
+    return Placed(settings, archive)

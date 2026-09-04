@@ -15,9 +15,11 @@ Everything else is negotiable. This is not.
 | **The database** | Shared. The same file, the same meaning |
 | **The configuration** | Not shared. `weewx.conf` is **read, never written** |
 
-Two programs writing one configuration file destroy each other's comments. What
-both systems share — location, altitude, archive interval — may nevertheless
-stay where it is, and is read from there.
+Two programs writing one configuration file destroy each other's comments.
+`weewx.conf` is therefore only read. Its archive path, location and altitude
+can seed the first `archives.toml` once; afterwards every place, including the
+first, is read only from that file. Process settings such as the archive
+interval may continue to fall back to `weewx.conf`.
 
 ## How the compatibility is achieved
 
@@ -123,11 +125,15 @@ weewx-evo config import /etc/weewx/weewx.conf --write --overwrite
 
 | | |
 |---|---|
-| `[Station]` | Name, latitude, longitude, altitude (`_altitude_metres` converts feet) |
-| `[DataBindings]` / `[Databases]` | `_databases()` finds the SQLite file behind the archive binding |
+| `[Station]` | Name, latitude, longitude and altitude for one-time creation of `[archives.default]` (`_altitude_metres` converts feet) |
+| `[DataBindings]` / `[Databases]` | `_databases()` finds the SQLite file for that one-time migration |
 | `[StdArchive]` | Archive interval, `loop_hilo` |
 | The driver | `_driver()` works out which one is in use and brings its settings along |
 | `[Accumulator]` | `_accumulators()` — see below |
+
+If `archives.toml` already exists, the first two rows do not update it. Place
+and database settings have one owner and cannot silently change because a
+legacy file or environment variable still contains another value.
 
 ### `[Accumulator]` is special
 

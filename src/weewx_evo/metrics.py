@@ -48,7 +48,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import watchdog
+from . import placement, watchdog
 
 log = logging.getLogger(__name__)
 
@@ -107,12 +107,19 @@ class Metrics:
     def __init__(self, live: Path | None = None,
                  archives: dict[str, Path] | None = None,
                  dog: Any = None, senders: Any = None,
-                 station_name: str = "", started: float | None = None) -> None:
+                 station_name: str = "", started: float | None = None,
+                 stations: Any = None) -> None:
         self.live = Path(live) if live else None
         self.archives = dict(archives or {})
         self.dog = dog
         self.senders = list(senders or [])
         self.station_name = station_name
+        #: The announced consoles, so a series is labelled with the name
+        #: somebody chose rather than with a PASSKEY. The table records the
+        #: pair a console uploads with; the name is a lookup, and one this
+        #: does not have to make means a dashboard whose labels change the
+        #: day a station is renamed.
+        self.stations = stations
         self.started = started if started is not None else time.time()
 
     def render(self, now: float | None = None) -> str:
@@ -233,16 +240,42 @@ class Metrics:
 
         with closing(sqlite3.connect(f"file:{self.live}?mode=ro",
                                      uri=True)) as conn:
-            for source, last in conn.execute(
-                    "SELECT source, MAX(dateTime) FROM packet "
-                    "GROUP BY source"):
+            columns = {row[1] for row in conn.execute(
+                "PRAGMA table_info(packet)")}
+            directory = bool(conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'sender_identity'").fetchone())
+            if "sender" in columns and directory:
+                latest = conn.execute(
+                    "SELECT p.sender, COALESCE(NULLIF(s.label, ''), p.sender), "
+                    "MAX(p.dateTime) FROM packet AS p LEFT JOIN sender_identity AS s "
+                    "ON s.sender = p.sender GROUP BY p.sender")
+                recent = conn.execute(
+                    "SELECT p.sender, COALESCE(NULLIF(s.label, ''), p.sender), "
+                    "COUNT(*) FROM packet AS p LEFT JOIN sender_identity AS s "
+                    "ON s.sender = p.sender WHERE p.dateTime > ? GROUP BY p.sender",
+                    (now - WINDOW,))
+            else:
+                # Rolling upgrade: the already-open service migrates the
+                # table, but a read-only scrape may reach an older copy.
+                latest = ((driver, placement.name_for(
+                    self.stations, driver, identity), last)
+                    for driver, identity, last in conn.execute(
+                        "SELECT driver, identity, MAX(dateTime) FROM packet "
+                        "GROUP BY driver, identity"))
+                recent = ((driver, placement.name_for(
+                    self.stations, driver, identity), seen)
+                    for driver, identity, seen in conn.execute(
+                        "SELECT driver, identity, COUNT(*) FROM packet "
+                        "WHERE dateTime > ? GROUP BY driver, identity",
+                        (now - WINDOW,)))
+
+            for _sender, source, last in latest:
                 if source:
                     heard.add(now - float(last or 0), station=source)
             # One grouped query over a window, not a count over the whole
             # retention period: this is answered every scrape.
-            for source, seen in conn.execute(
-                    "SELECT source, COUNT(*) FROM packet WHERE dateTime > ? "
-                    "GROUP BY source", (now - WINDOW,)):
+            for _sender, source, seen in recent:
                 if source:
                     rate.add(seen * 60.0 / WINDOW, station=source)
         return [heard, rate]

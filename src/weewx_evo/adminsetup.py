@@ -44,9 +44,9 @@ log = logging.getLogger(__name__)
 STEPS = ("start", "place", "readings", "publish", "done")
 
 TITLES = {
-    "start": "Where the readings come from",
-    "place": "Where the station is",
-    "readings": "Charts and the archive",
+    "start": "Source",
+    "place": "Place",
+    "readings": "Archive and charts",
     "publish": "Publishing",
     "done": "Ready",
 }
@@ -72,12 +72,14 @@ def state(admin: Any) -> dict[str, Any]:
         log.debug("could not read the stations", exc_info=True)
 
     archive = None
+    place = None
     try:
-        from . import config as config_file
+        from . import adminarchives
 
-        archive = config_file.resolved_path(cfg, "archive_db",
-                                            Path(admin.path).parent,
-                                            "data/weewx.sdb")
+        place = adminarchives.load(admin).get(None)
+        archive = Path(place.file)
+        if not archive.is_absolute():
+            archive = Path(admin.path).parent / archive
     except Exception:
         log.debug("could not work out where the archive is", exc_info=True)
 
@@ -91,10 +93,10 @@ def state(admin: Any) -> dict[str, Any]:
 
     return {
         "token": bool(said("token")),
-        "name": str(said("station.name") or "").strip(),
-        "latitude": said("station.latitude"),
-        "longitude": said("station.longitude"),
-        "altitude": said("station.altitude"),
+        "name": str(place.title if place is not None else "").strip(),
+        "latitude": place.latitude if place is not None else None,
+        "longitude": place.longitude if place is not None else None,
+        "altitude": place.altitude if place is not None else None,
         "stations": stations,
         "charts": charts,
         "archive": archive,
@@ -180,11 +182,9 @@ def _start(admin: Any, now: dict, form: dict) -> str:
     if weewx is not None:
         found = f"""
     <div class="field found">
-      <p><strong>A WeeWX installation is on this machine.</strong>
+      <p><strong>WeeWX installation found</strong>
          <code>{html.escape(str(weewx))}</code></p>
-      <p class="help">Its station, coordinates, archive interval, skins and
-         upload accounts are read straight out of it. Read, not written: the
-         file is opened for reading and closed again.</p>
+      <p class="help">Configuration is read only.</p>
       <form method="post" action="./setup/adopt">
         <input type="hidden" name="conf" value="{html.escape(str(weewx))}">
         <button type="submit">Read this installation</button>
@@ -192,35 +192,22 @@ def _start(admin: Any, now: dict, form: dict) -> str:
     </div>"""
 
     return f"""
-  <p class="lede">Two ways in. Neither of them asks for anything twice.</p>
+  <p class="lede">New installation or import from WeeWX.</p>
 
   <div class="field notice">
-    <h4>Nothing of WeeWX's is written to</h4>
-    <p class="help">Everything here <strong>copies</strong>. Its
-       <code>weewx.conf</code> is read and never written; its archive is
-       copied to a file of this station's own; its FTP account is brought
-       over switched off. WeeWX carries on recording throughout, and if this
-       turns out not to be for you, deleting this directory is the whole of
-       undoing it.</p>
-    <p class="help"><strong>Run one of them, not both.</strong> Two programs
-       writing one SQLite file lose it, and two publishing into one directory
-       give a site made of halves. So: set this up beside WeeWX, look at what
-       it produces, and stop WeeWX when you are ready to swap -- not before,
-       and not after.</p>
-    <p class="help">The database stays WeeWX's. Not "exported to" or
-       "migrated from": the same tables, the same meaning, and WeeWX 5 can
-       carry on using it afterwards -- so going back is starting WeeWX again.
-       There is a test that does exactly that, in both directions
-       (<code>tools/stillweewx_test.py</code>).</p>
+    <h4>WeeWX stays untouched</h4>
+    <p class="help"><code>weewx.conf</code> is read only. The archive is
+       copied. Imported exports remain off.</p>
+    <p class="help"><strong>Do not run both against the same database or
+       output directory.</strong></p>
+    <p class="help">The copied database remains WeeWX-compatible.</p>
   </div>
   {found}
 
   <div class="field">
     <h4>Moving over from WeeWX</h4>
-    <p class="help">Send its <code>weewx.conf</code>. The station's name and
-       coordinates, its archive interval, which skins it renders and its FTP
-       or rsync account all come out of that one file. Its readings come
-       next, as a file of their own.</p>
+    <p class="help">Imports the Place, archive interval, skins and publishing
+       settings from <code>weewx.conf</code>.</p>
     <form method="post" action="./setup/adopt" enctype="multipart/form-data">
       <label>weewx.conf
         <input type="file" name="upload" accept=".conf,.txt,text/plain">
@@ -230,10 +217,8 @@ def _start(admin: Any, now: dict, form: dict) -> str:
   </div>
 
   <div class="field">
-    <h4>A new station</h4>
-    <p class="help">Nothing to bring over. There are already
-       {now["charts"]} charts and a website; what is missing is where the
-       station is and which console it is.</p>
+    <h4>New installation</h4>
+    <p class="help">Configure a Place, then connect a Sender.</p>
     <div class="actions">
       <a class="button" href="./setup/place">Start here</a>
     </div>
@@ -247,10 +232,7 @@ def _place(admin: Any, now: dict, form: dict) -> str:
         return html.escape("" if got is None else str(got))
 
     return f"""
-  <p class="lede">The name goes at the top of every page. The coordinates
-     decide sunrise, sunset, the moon and every twilight band on a chart --
-     which is why they are asked for rather than guessed: a sunrise computed
-     for the wrong field is wrong by minutes and looks entirely correct.</p>
+  <p class="lede">Coordinates set sunrise, sunset and forecasts.</p>
   <form method="post" action="./setup/place">
     <div class="field">
       <label for="s-name">Name</label>
@@ -281,8 +263,7 @@ def _place(admin: Any, now: dict, form: dict) -> str:
                {"checked" if not now["forecast"] else ""}>
         Fetch a forecast for this place
       </label>
-      <p class="help">Open-Meteo. Free, no account, and it needs nothing
-         beyond the coordinates above.</p>
+      <p class="help">Open-Meteo. No account.</p>
     </div>
     <div class="actions"><button type="submit">Save and carry on</button></div>
   </form>"""
@@ -298,16 +279,13 @@ def _readings(admin: Any, now: dict, form: dict) -> str:
     <p class="ok">This installation already has an archive:
        {records} records in <code>{html.escape(str(archive))}</code>.</p>"""
     return f"""
-  <p class="lede">Charts are definitions, not pictures: the feeds draw
-     whichever of them the readings support and skip the rest. There are
-     {now["charts"]} of them now.</p>
+  <p class="lede">{now["charts"]} chart definitions configured.</p>
   {holding}
 
   <div class="field">
     <h4>Charts from a skin</h4>
-    <p class="help">A WeeWX skin keeps its charts in its own
-       <code>skin.conf</code>, under <code>[ImageGenerator]</code> -- not in
-       weewx.conf. Send that file and its charts come over as they are.</p>
+    <p class="help">Imports <code>[ImageGenerator]</code> from
+       <code>skin.conf</code>.</p>
     <form method="post" action="./setup/charts" enctype="multipart/form-data">
       <label>skin.conf
         <input type="file" name="upload" accept=".conf,.txt,text/plain">
@@ -322,10 +300,7 @@ def _readings(admin: Any, now: dict, form: dict) -> str:
 
   <div class="field">
     <h4>An existing archive</h4>
-    <p class="help">A WeeWX <code>weewx.sdb</code> needs no conversion: it
-       holds exactly the tables this program reads and writes. It is copied
-       rather than moved, so the installation it came from goes on recording
-       from it.</p>
+    <p class="help">Copied without conversion. The source remains untouched.</p>
     {_archive_form(admin, now)}
   </div>
 
@@ -344,9 +319,8 @@ def _archive_form(admin: Any, now: dict) -> str:
     one form is raised for exactly that reason.
     """
     if now["records"]:
-        return ('<p class="help">There are readings here already, so this is '
-                "left alone. Move the file aside first if you mean to "
-                "replace it -- nothing here will write over readings.</p>")
+        return ('<p class="help">The archive already contains readings and '
+                "will not be overwritten.</p>")
     weewx = now["weewx"]
     suggested = ""
     if weewx is not None:
@@ -368,9 +342,6 @@ def _archive_form(admin: Any, now: dict) -> str:
       <label>or send the file
         <input type="file" name="upload" accept=".sdb,.db,.sqlite">
       </label>
-      <p class="help">Its own route, not the form above: an archive is tens
-         or hundreds of megabytes, so it is written to disk as it arrives
-         rather than held in memory and decoded as text.</p>
       <div class="actions"><button type="submit">Upload it</button></div>
     </form>"""
 
@@ -378,18 +349,14 @@ def _archive_form(admin: Any, now: dict) -> str:
 def _publish(admin: Any, now: dict, form: dict) -> str:
     """Where the pages go. Optional, and it says so."""
     return f"""
-  <p class="lede">A feed writes files; an export moves them somewhere. This
-     station already produces {len(now["feeds"])} feed(s). Where they go is
-     the last thing, and it can wait -- the pages are served on this machine
-     either way.</p>
+  <p class="lede">{len(now["feeds"])} feed(s) configured. FTP is optional.</p>
 
   <form method="post" action="./setup/publish">
     <div class="field">
       <label for="p-host">FTP server</label>
       <input type="text" id="p-host" name="host"
              placeholder="ftp.example.org">
-      <p class="help">Leave empty to skip this. Everything below is only
-         asked because this is filled in.</p>
+      <p class="help">Leave empty to skip FTP.</p>
     </div>
     <div class="row">
       <div class="field">
@@ -410,11 +377,7 @@ def _publish(admin: Any, now: dict, form: dict) -> str:
       <label for="p-url">Address the pages are served at</label>
       <input type="text" id="p-url" name="live_push_url"
              placeholder="https://example.org/">
-      <p class="help">With one, the published pages show live readings: a
-         small PHP file goes up with them and the station posts to it every
-         few seconds. Nothing is opened; the connection goes outwards, like
-         the upload itself. Leave it empty and the pages are as new as the
-         last upload.</p>
+      <p class="help">Optional. Enables live readings on published pages.</p>
     </div>
     <div class="actions">
       <button type="submit">Save</button>
@@ -437,7 +400,7 @@ def _done(admin: Any, now: dict, form: dict) -> str:
     rows.append((f"{len(now['exports'])} export(s)",
                  ", ".join(now["exports"]) or "publishing on this machine "
                  "only", True))
-    rows.append(("Console",
+    rows.append(("Sender",
                  ", ".join(one.name for one in stations) or "none yet",
                  bool(stations)))
 
@@ -450,19 +413,14 @@ def _done(admin: Any, now: dict, form: dict) -> str:
     if not stations:
         left = """
     <div class="field">
-      <h4>One thing left</h4>
-      <p class="help">A console has to be announced before its readings are
-         recorded under a name. That is the Stations page: it hands out an
-         identity to type into the console, or adopts one that has already
-         started uploading.</p>
+      <h4>Connect a sender</h4>
+      <p class="help">Create a Sender before readings can be identified.</p>
       <div class="actions">
-        <a class="button" href="./new-station">Add a console</a>
+        <a class="button" href="./new-sender">Add sender</a>
       </div>
     </div>"""
 
     return f"""
   <table class="summary">{listed}</table>
   {left}
-  <p class="help">This wizard can be reopened at any time from the overview.
-     Nothing here is a one-off: every one of these is also its own settings
-     page.</p>"""
+  <p class="help">Setup can be reopened from Overview.</p>"""
