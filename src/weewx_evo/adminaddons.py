@@ -88,10 +88,19 @@ def _rows(plugins: list, installed: dict, admin: Any, suggested: bool = False
             note = (f'<p class="help">'
                     f'{html.escape(say("Reads an upload arriving here that nothing can read."))}'
                     f"</p>")
+        # The boxes it reads, named the way a box is named. Somebody looking
+        # for an add-on knows what is on their pole and nothing else -- and
+        # one entry here covers the thirteen drivers WeeWX ships, so the row
+        # that answers "does it do my Vantage" said Vantage nowhere. Not
+        # translated: they are model names.
+        boxes = ""
+        if one.hardware:
+            boxes = (f'<p class="help hardware">'
+                     f'{html.escape(", ".join(one.hardware))}</p>')
         out.append(f'''
   <tr>
     <td><strong>{html.escape(one.name)}</strong>
-        <p class="help">{html.escape(say(one.summary))}</p>{note}</td>
+        <p class="help">{html.escape(say(one.summary))}</p>{boxes}{note}</td>
     <td>{kind}</td>
     <td><a href="{html.escape(one.repository)}" rel="noreferrer noopener"
            target="_blank">{html.escape(say("Source"))}</a></td>

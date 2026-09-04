@@ -66,7 +66,27 @@ name = "weewx-evo-sftp"
 kind = "export"
 provides = "sftp"
 summary = "An export, which reads no uploads at all."
+
+[[plugin]]
+name = "weewx-evo-weewx-driver"
+kind = "collector"
+provides = "weewx-driver"
+summary = "Any WeeWX driver, run in its own process."
+hardware = ["Davis Vantage Pro, Pro2, Vue", "ADS WS1"]
+
+[[plugin]]
+name = "weewx-evo-onebox"
+kind = "driver"
+provides = "onebox"
+summary = "An entry naming one box, written the way one is written."
+hardware = "Peet Bros Ultimeter"
 """
+
+
+#: How many entries the sample above has. Counted rather than typed: the
+#: three checks below say "the copy came back whole", and a literal there
+#: makes adding an entry to the sample look like a broken fallback.
+ENTRIES = CATALOGUE.count("[[plugin]]")
 
 
 def check(what: str, got: object, want: object) -> bool:
@@ -150,7 +170,7 @@ def offline_keeps_what_it_had() -> None:
             encoding="utf-8")
         got = catalogue.fetch(where, url="http://127.0.0.1:1/nope",
                               timeout=0.5)
-        check("with a copy, the copy", [one.provides for one in got],
+        check("with a copy, the copy", [one.provides for one in got][:5],
               ["ecowitt", "ambient", "acurite", "wunderground", "sftp"])
 
         # And a fetch that succeeds but brings back something that is not a
@@ -159,7 +179,7 @@ def offline_keeps_what_it_had() -> None:
             json.dumps({"when": 0, "text": CATALOGUE}), encoding="utf-8")
         kept = catalogue.fetch(where, url="http://127.0.0.1:1/nope",
                                timeout=0.5, force=True)
-        check("a failed refresh keeps the last good one", len(kept), 5)
+        check("a failed refresh keeps the last good one", len(kept), ENTRIES)
 
 
 def a_fresh_copy_is_not_fetched_every_time() -> None:
@@ -173,18 +193,46 @@ def a_fresh_copy_is_not_fetched_every_time() -> None:
         # An unreachable URL: if it were asked, this would be empty.
         check("a copy from just now is used without asking",
               len(catalogue.fetch(where, url="http://127.0.0.1:1/nope",
-                                  timeout=0.5)), 5)
+                                  timeout=0.5)), ENTRIES)
         (where / catalogue.FILENAME).write_text(
             json.dumps({"when": time.time() - catalogue.STALE_AFTER - 1,
                         "text": CATALOGUE}), encoding="utf-8")
         # Stale, so it asks, fails, and falls back to the same copy.
         check("a stale one is still used when the asking fails",
               len(catalogue.fetch(where, url="http://127.0.0.1:1/nope",
-                                  timeout=0.5)), 5)
+                                  timeout=0.5)), ENTRIES)
+
+
+def an_entry_names_the_boxes_it_reads() -> None:
+    """Searchable by what is on the pole, which is all anybody knows.
+
+    One entry covers the thirteen drivers WeeWX ships, so the row holding the
+    answer to "does it do my Vantage" has to say Vantage. It is in the
+    catalogue rather than worked out here: only the add-on knows what it
+    reads, and a list in the core would be a second one to keep current.
+    """
+    found = {one.name: one for one in catalogue.parse(CATALOGUE)}
+
+    shim = found["weewx-evo-weewx-driver"]
+    check("the boxes are read off the entry", shim.hardware,
+          ("Davis Vantage Pro, Pro2, Vue", "ADS WS1"))
+    check("and a search for one of them finds it",
+          any("Vantage" in one for one in shim.hardware), True)
+
+    # A string is one name. Split into characters it would put twenty
+    # entries in the row, and the row is what somebody reads.
+    check("one box may be written as one string",
+          found["weewx-evo-onebox"].hardware, ("Peet Bros Ultimeter",))
+
+    # Optional, and an entry without it is not broken. Every entry that
+    # existed before this field does without it.
+    check("an entry that names none has none",
+          found["weewx-evo-sftp"].hardware, ())
 
 
 def main() -> int:
     what_sent_it_beats_where_it_was_sent()
+    an_entry_names_the_boxes_it_reads()
     the_order_is_the_same_everywhere()
     a_broken_catalogue_is_no_catalogue()
     offline_keeps_what_it_had()

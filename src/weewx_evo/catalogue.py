@@ -86,6 +86,16 @@ class Plugin:
     licence: str = ""
     tested: str = ""
     author: str = ""
+    #: The hardware this add-on reads, named the way a box is named. Somebody
+    #: looking for an add-on knows what is on their pole and nothing else --
+    #: not the protocol it speaks, not the package that reads it. One entry
+    #: covers thirteen WeeWX drivers, so without this a page holding the
+    #: answer to "does it do my Vantage" says nothing a search can find.
+    #:
+    #: A list rather than a longer summary: the summary is one line and it
+    #: has a job, and thirteen model names in it is the line nobody finishes
+    #: reading.
+    hardware: tuple[str, ...] = ()
     detects: dict[str, Any] = field(default_factory=dict)
 
     def reads(self, body: str, path: str = "") -> int:
@@ -156,7 +166,14 @@ def parse(text: str) -> list[Plugin]:
                  ("name", "kind", "provides", "summary", "repository",
                   "licence", "tested", "author", "ref", "version")}
         detects = entry.get("detects")
+        # A string is taken as one name rather than as a list of characters:
+        # `hardware = "Vantage"` is what somebody writes when there is only
+        # one, and splitting it would put twenty entries in the row.
+        raw = entry.get("hardware") or ()
+        raw = [raw] if isinstance(raw, str) else raw
         out.append(Plugin(**{k: str(v) for k, v in known.items()},
+                          hardware=tuple(str(one) for one in raw
+                                         if isinstance(one, (str, int, float))),
                           detects=detects if isinstance(detects, dict) else {}))
     return out
 

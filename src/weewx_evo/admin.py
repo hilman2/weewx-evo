@@ -2320,6 +2320,11 @@ _PAGE = """<!doctype html>
     outline-offset: -1px; }}
   .unit {{ font-size: .8125rem; color: var(--dim); margin-left: .4rem; }}
   .help {{ font-size: .8125rem; color: var(--dim); margin: .3rem 0 0; }}
+  /* The boxes an add-on reads, under its summary. Set apart because it is a
+     different kind of line: the summary is a sentence somebody wrote, this
+     is a list of model names being scanned for one of them. */
+  .help.hardware {{ font-size: .78125rem; margin-top: .2rem;
+                   border-left: 2px solid var(--line); padding-left: .5rem; }}
   .alt {{ font-size: .78125rem; color: var(--dim); margin: .25rem 0 0;
          font-family: var(--mono); }}
   .pair {{ display: flex; gap: .5rem; }}

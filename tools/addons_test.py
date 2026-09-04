@@ -49,6 +49,22 @@ summary = "Acurite bridges."
 repository = "https://github.com/weewx-evo/weewx-evo-acurite"
 detects = { body = ["mt=", "id="] }
 
+# One entry standing for many boxes, which is the case the `hardware` field
+# is for: the summary cannot name thirteen of them and stay one line.
+#
+# Named for a package no machine has rather than for the real one, and that
+# is the same trap twice now: the Docker image these run in has the eight
+# real add-ons installed, and an installed add-on is not on the shelf any
+# more -- so a row that is checked for has to be one nothing can install
+# out from under it.
+[[plugin]]
+name = "weewx-evo-notonthismachine"
+kind = "collector"
+provides = "notonthismachine"
+summary = "One entry standing for many boxes."
+repository = "https://github.com/weewx-evo/weewx-evo-notonthismachine"
+hardware = ["Davis Vantage Pro, Pro2, Vue", "ADS WS1"]
+
 [[plugin]]
 name = "weewx-evo-push-common"
 kind = "library"
@@ -422,6 +438,18 @@ def the_page_renders_without_a_network(where: Path) -> None:
           "weewx-evo-ecowitt" in page, True)
     check("with a button that names the package",
           'value="weewx-evo-ecowitt"' in page, True)
+
+    # The boxes, on the row. One entry stands for the thirteen drivers WeeWX
+    # ships, and somebody looking for an add-on knows what is on their pole
+    # and nothing else -- so the row holding the answer to "does it do my
+    # Vantage" has to say Vantage, or a search of the page finds nothing.
+    check("and the hardware an entry names is on the row",
+          "Davis Vantage Pro, Pro2, Vue" in page, True)
+    # Said as one line rather than as a word next to the package name: a row
+    # is a row, and a list of nine model names down the first column pushes
+    # the button off the screen.
+    check("and it is one line under the summary",
+          page.count('class="help hardware"'), 1)
     # Nested forms do not exist in HTML: the browser drops the inner tag and
     # keeps its closing one, which closes the outer form early. Every row
     # here has a form in it.
