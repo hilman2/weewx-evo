@@ -926,7 +926,7 @@ def overridden(option: Option) -> str:
 SPARE_SLOTS = 3
 
 
-def slots(option: Option, shown: Any) -> str:
+def slots(option: Option, shown: Any, lang: Any = None) -> str:
     """A list of choices, in an order that is the value's order.
 
     Every candidate gets a row, ticked or not. What stood here was three
@@ -953,6 +953,7 @@ def slots(option: Option, shown: Any) -> str:
     written ("One tile each, in this order") and could not deliver from a
     textarea.
     """
+    lang = lang if lang is not None else language_defs.get("en")
     name = html.escape(option.name)
     available = [(str(value), str(text)) for value, text in option.options()]
     known = {value for value, _text in available}
@@ -984,40 +985,47 @@ def slots(option: Option, shown: Any) -> str:
         # of twelve places is a row of twelve small squares otherwise.
         note = ""
         if value not in known:
-            note = ('<span class="alt">not one of the ones offered</span>')
+            unoffered = html.escape(lang.say("not one of the ones offered"))
+            note = f'<span class="alt">{unoffered}</span>'
         said = html.escape(text)
         if text != value:
             said += f' <span class="alt">{html.escape(value)}</span>'
+        up = html.escape(lang.say("Move up"))
+        down = html.escape(lang.say("Move down"))
         out.append(
             f'<li><label><input type="checkbox" class="pick"'
             f' name="{name}__slot{n}" value="{html.escape(value)}"'
             f'{" checked" if ticked else ""}>'
             f"<span>{said}</span></label>{note}"
-            '<button type="button" class="quiet lift" aria-label="Move up">'
+            f'<button type="button" class="quiet lift" aria-label="{up}">'
             "&#9650;</button>"
-            '<button type="button" class="quiet drop" aria-label="Move down">'
+            f'<button type="button" class="quiet drop" aria-label="{down}">'
             "&#9660;</button></li>")
 
     # Free rows, for a list that is not closed. None at all on a closed one:
     # a place that is not on the list is refused at startup, so a box to
     # type one into is a box that can only be filled in wrongly.
+    label = html.escape(lang.setting(option.name, "label") or option.label)
+    free = html.escape(lang.say("something not in the list"))
     for n in range(0 if option.closed else SPARE_SLOTS):
         at = len(rows) + n
         first = f' id="f-{name}"' if not rows and n == 0 else ""
         out.append(
             f'<li class="free"><input class="slot"{first}'
             f' name="{name}__slot{at}" value="" autocomplete="off"'
-            f' spellcheck="false" placeholder="something not in the list"'
-            f' aria-label="{html.escape(option.label)} {at + 1}"></li>')
+            f' spellcheck="false" placeholder="{free}"'
+            f' aria-label="{label} {at + 1}"></li>')
     out.append("</ul>")
     if not option.closed:
         # One button, any number of rows. Three spare boxes is three per
         # save, and somebody describing twelve of anything had to save four
         # times to do it -- with nothing on the page saying that would work.
+        more = html.escape(lang.say("+ another line"))
         out.append('<button type="button" class="quiet more" '
-                   f'data-list="{name}">+ another line</button>')
-    out.append('<p class="hint">Ticked ones are used, top to bottom. The '
-               "arrows move a row.</p>")
+                   f'data-list="{name}">{more}</button>')
+    hint = html.escape(lang.say(
+        "Ticked ones are used, top to bottom. The arrows move a row."))
+    out.append(f'<p class="hint">{hint}</p>')
     return "\n".join(out)
 
 
@@ -1085,11 +1093,13 @@ def field(option: Option, value: Any, error: str = "",
         amount, unit = split_duration(seconds)
         units = "".join(
             f'<option value="{code}"{" selected" if code == unit else ""}>'
-            f"{word}</option>" for code, word in UNITS)
+            f"{html.escape(lang.say(word))}</option>" for code, word in UNITS)
+        said = html.escape(lang.say("unit"))
         out.append('<div class="pair">')
         out.append(f'<input type="number" id="f-{name}" name="{name}__amount" '
                    f'value="{amount}" min="0" step="1" inputmode="numeric">')
-        out.append(f'<select name="{name}__unit" aria-label="unit">{units}</select>')
+        out.append(f'<select name="{name}__unit" aria-label="{said}">'
+                   f"{units}</select>")
         out.append("</div>")
     elif option.kind == "choice":
         available = option.options()
@@ -1104,7 +1114,12 @@ def field(option: Option, value: Any, error: str = "",
             # offers quality-of-service as 0, 1 and 2, and `html.escape` on an
             # int raises -- which took the settings page of any MQTT upload
             # with it, and with it the whole connection.
-            available = [(str(choice), str(text)) for choice, text in available]
+            # The text through `say`, the value never. A choice reads as a
+            # sentence half the time ("the local network", "this machine
+            # only"); the other half it is a name somebody invented, and
+            # `say` hands those straight back.
+            available = [(str(choice), lang.say(str(text)))
+                         for choice, text in available]
             known = {choice for choice, _ in available}
             if shown and str(shown) not in known:
                 # A value naming something no longer installed. Kept and
@@ -1119,10 +1134,10 @@ def field(option: Option, value: Any, error: str = "",
                            f'{html.escape(text)}</option>')
             out.append("</select>")
     elif option.kind == "list" and option.options():
-        out.append(slots(option, shown))
+        out.append(slots(option, shown, lang))
     elif option.kind == "list":
         out.append(f'<textarea id="f-{name}" name="{name}" rows="4" '
-                   f'placeholder="{html.escape(option.placeholder)}">'
+                   f'placeholder="{html.escape(lang.say(option.placeholder))}">'
                    f'{html.escape(str(shown))}</textarea>')
     else:
         kinds = {"int": "number", "float": "number", "secret": "password"}
@@ -1132,7 +1147,7 @@ def field(option: Option, value: Any, error: str = "",
             limits += f' min="{option.minimum}"'
         if option.maximum is not None and option.kind in ("int", "float"):
             limits += f' max="{option.maximum}"'
-        placeholder = option.placeholder or (
+        placeholder = lang.say(option.placeholder) if option.placeholder else (
             lang.say("unset") if option.default is None else "")
         # Suggestions rather than a dropdown, where the usual answers are
         # worth one click but an unusual one must still be typeable. `allow`
@@ -1148,11 +1163,14 @@ def field(option: Option, value: Any, error: str = "",
             out.append(f'<datalist id="l-{name}">')
             for value_, text in suggestions:
                 out.append(f'<option value="{html.escape(str(value_))}">'
-                           f"{html.escape(str(text))}</option>")
+                           f"{html.escape(lang.say(str(text)))}</option>")
             out.append("</datalist>")
 
     if option.unit:
-        out.append(f'<span class="unit">{html.escape(option.unit)}</span>')
+        # Through `say` as well: most of these are a symbol that reads the
+        # same everywhere, but a few are words ("days", "per second").
+        out.append(f'<span class="unit">'
+                   f"{html.escape(lang.say(option.unit))}</span>")
     if option.kind == "choice" and option.options():
         # What else could go here. A dropdown shows one thing at a time, and
         # knowing the alternatives without opening it is worth a line.
@@ -1231,43 +1249,64 @@ def group_html(group: Group, values: dict[str, Any],
     return "\n".join(out)
 
 
+def _kind_options(kinds: list[tuple[str, str, str]], chosen: str,
+                  say: Any) -> tuple[str, str]:
+    """The dropdown and the list under it, for every "add one" page.
+
+    Six pages built these two the same way. The words in them come out of a
+    registry rather than out of the markup, so each of the six had to
+    remember to hand them to the language -- and one that forgets renders a
+    page that is translated except for the part that says what the choices
+    mean.
+    """
+    options = NEWLINE.join(
+        f'<option value="{html.escape(kind)}"'
+        f'{" selected" if chosen == kind else ""}>'
+        f"{html.escape(say(label))}</option>"
+        for kind, label, _summary in kinds)
+    # The select holds the names; this holds what they mean. A dropdown
+    # cannot carry a sentence, and the sentence is the part that helps.
+    explained = "".join(
+        f"<li><strong>{html.escape(say(label))}</strong>: "
+        f"{html.escape(say(summary))}</li>"
+        for _kind, label, summary in kinds if summary)
+    return options, explained
+
+
 def new_export_page(admin: Admin, error: str = "", form: dict | None = None) -> str:
     """The form that creates one. Two fields, and nothing else yet."""
     form = form or {}
+    say = admin.say
     kinds = export_kind_choices()
     # Local first and chosen by default: it is the one that needs nothing
     # else installed and the one somebody adding their first export wants.
     kinds.sort(key=lambda row: row[0] != "local")
     chosen = form.get("kind") or kinds[0][0]
-    options = NEWLINE.join(
-        f'<option value="{html.escape(kind)}"'
-        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
-        for kind, label, _summary in kinds)
-    # The select holds the names; this holds what they mean. A dropdown
-    # cannot carry a sentence, and the sentence is the part that helps.
-    explained = "".join(
-        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
-        for _kind, label, summary in kinds if summary)
+    options, explained = _kind_options(kinds, str(chosen), say)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <p class="lede">Send files produced by a feed to a destination.</p>
+  <p class="lede">{html.escape(say(
+     "Send files produced by a feed to a destination."))}</p>
   {problem}
   <form method="post" action="./new-export">
     <div class="field">
-      <label for="f-name">Name</label>
+      <label for="f-name">{html.escape(say("Name"))}</label>
       <input type="text" id="f-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="site" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _.</p>
+      <p class="help">{html.escape(say(
+         "Lowercase letters, digits, - and _."))}</p>
     </div>
     <div class="field">
-      <label for="f-kind">Destination</label>
+      <label for="f-kind">{html.escape(say("Destination"))}</label>
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
-    <div class="actions"><button type="submit">Continue</button>
-      <a class="button quiet" href="./publishing">Cancel</a></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Continue"))}</button>
+      <a class="button quiet" href="./publishing">
+        {html.escape(say("Cancel"))}</a></div>
   </form>
 </section>'''
 
@@ -1286,39 +1325,38 @@ def new_notify_page(admin: Admin, error: str = "",
                     form: dict | None = None) -> str:
     """The form that creates one. A name and a way of reaching somebody."""
     form = form or {}
+    say = admin.say
     kinds = notify_kind_choices()
     # Email first: everybody has an address, and it is the one that needs
     # nothing installed anywhere.
     kinds.sort(key=lambda row: row[0] != "email")
     chosen = form.get("kind") or (kinds[0][0] if kinds else "")
-    options = NEWLINE.join(
-        f'<option value="{html.escape(kind)}"'
-        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
-        for kind, label, _summary in kinds)
-    explained = "".join(
-        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
-        for _kind, label, summary in kinds if summary)
+    options, explained = _kind_options(kinds, str(chosen), say)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <p class="lede">Send operational alerts through this channel.</p>
+  <p class="lede">{html.escape(say(
+     "Send operational alerts through this channel."))}</p>
   {problem}
   <form method="post" action="./new-notify">
     <div class="field">
-      <label for="f-name">Name</label>
+      <label for="f-name">{html.escape(say("Name"))}</label>
       <input type="text" id="f-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="mail" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _.</p>
+      <p class="help">{html.escape(say(
+         "Lowercase letters, digits, - and _."))}</p>
     </div>
     <div class="field">
-      <label for="f-kind">How</label>
+      <label for="f-kind">{html.escape(say("How"))}</label>
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
     <div class="actions">
-      <button class="button" type="submit">Continue</button>
-      <a class="button quiet" href="./publishing">Cancel</a>
+      <button class="button" type="submit">
+        {html.escape(say("Continue"))}</button>
+      <a class="button quiet" href="./publishing">
+        {html.escape(say("Cancel"))}</a>
     </div>
   </form>
 </section>
@@ -1329,38 +1367,37 @@ def new_upload_page(admin: Admin, error: str = "",
                     form: dict | None = None) -> str:
     """The form that creates one. A name and a service."""
     form = form or {}
+    say = admin.say
     kinds = upload_kind_choices()
     # Weather Underground first: it is what most people mean by publishing
     # their readings, and it is the one they came here to set up.
     kinds.sort(key=lambda row: row[0] != "wunderground")
     chosen = form.get("kind") or (kinds[0][0] if kinds else "")
-    options = NEWLINE.join(
-        f'<option value="{html.escape(kind)}"'
-        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
-        for kind, label, _summary in kinds)
-    explained = "".join(
-        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
-        for _kind, label, summary in kinds if summary)
+    options, explained = _kind_options(kinds, str(chosen), say)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <p class="lede">Send readings from a Place to a weather service.</p>
+  <p class="lede">{html.escape(say(
+     "Send readings from a Place to a weather service."))}</p>
   {problem}
   <form method="post" action="./new-upload">
     <div class="field">
-      <label for="f-name">Name</label>
+      <label for="f-name">{html.escape(say("Name"))}</label>
       <input type="text" id="f-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="wu" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _.</p>
+      <p class="help">{html.escape(say(
+         "Lowercase letters, digits, - and _."))}</p>
     </div>
     <div class="field">
-      <label for="f-kind">Service</label>
+      <label for="f-kind">{html.escape(say("Service"))}</label>
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
-    <div class="actions"><button type="submit">Continue</button>
-      <a class="button quiet" href="./publishing">Cancel</a></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Continue"))}</button>
+      <a class="button quiet" href="./publishing">
+        {html.escape(say("Cancel"))}</a></div>
   </form>
 </section>'''
 
@@ -1369,38 +1406,36 @@ def new_forecast_page(admin: Admin, error: str = "",
                       form: dict | None = None) -> str:
     """A name and a source. The rest waits."""
     form = form or {}
+    say = admin.say
     kinds = forecast_kind_choices()
     # Open-Meteo first and chosen by default: it needs no account, covers
     # anywhere, and is the one somebody adding their first forecast wants.
     kinds.sort(key=lambda row: row[0] != "open-meteo")
     chosen = form.get("kind") or (kinds[0][0] if kinds else "")
-    options = NEWLINE.join(
-        f'<option value="{html.escape(kind)}"'
-        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
-        for kind, label, _summary in kinds)
-    explained = "".join(
-        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
-        for _kind, label, summary in kinds if summary)
+    options, explained = _kind_options(kinds, str(chosen), say)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <p class="lede">Add forecast data for a Place.</p>
+  <p class="lede">{html.escape(say("Add forecast data for a Place."))}</p>
   {problem}
   <form method="post" action="./new-forecast">
     <div class="field">
-      <label for="f-name">Name</label>
+      <label for="f-name">{html.escape(say("Name"))}</label>
       <input type="text" id="f-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="ahead" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _.</p>
+      <p class="help">{html.escape(say(
+         "Lowercase letters, digits, - and _."))}</p>
     </div>
     <div class="field">
-      <label for="f-kind">Source</label>
+      <label for="f-kind">{html.escape(say("Source"))}</label>
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
-    <div class="actions"><button type="submit">Continue</button>
-      <a class="button quiet" href="./publishing">Cancel</a></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Continue"))}</button>
+      <a class="button quiet" href="./publishing">
+        {html.escape(say("Cancel"))}</a></div>
   </form>
 </section>'''
 
@@ -1424,19 +1459,21 @@ def new_collector_page(admin: Admin, error: str = "",
     from . import collectors as collector_defs
 
     form = form or {}
+    say = admin.say
     chosen = form.get("kind") or "weewx-driver"
     options = NEWLINE.join(
         f'<option value="{html.escape(kind)}"'
         f'{" selected" if chosen == kind else ""}>'
-        f"{html.escape(one.label)}</option>"
+        f"{html.escape(say(one.label))}</option>"
         for kind, one in collector_defs.KINDS.items())
     # Both kinds, from the same table the menu is built from. Written out by
     # hand, this list described the WeeWX driver and never mentioned the
     # broker -- so half of what the menu offered was unexplained, and the
     # command printed above it was the wrong one for that half.
+    started = html.escape(say("Started with"))
     explained = "".join(
-        f"<li><strong>{html.escape(one.label)}</strong>: "
-        f"{html.escape(one.reads)} Started with "
+        f"<li><strong>{html.escape(say(one.label))}</strong>: "
+        f"{html.escape(say(one.reads))} {started} "
         f"<code>weewx-evo {html.escape(one.command)}</code>.</li>"
         for one in collector_defs.KINDS.values())
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
@@ -1448,47 +1485,54 @@ def new_collector_page(admin: Admin, error: str = "",
     picked = str(form.get("driver", ""))
     hardware = NEWLINE.join(
         f'<option value="{html.escape(value)}"'
-        f'{" selected" if picked == value else ""}>{html.escape(label)}</option>'
+        f'{" selected" if picked == value else ""}>'
+        f"{html.escape(say(label))}</option>"
         for value, label in
         [("", "-- from a weewx.conf --"),
          *collector_defs._hardware_choices(picked)])
+    reuse = admin.language.fill(
+        "Leave this on {choice} to reuse that driver's configuration.",
+        choice=f"<em>{html.escape(say('from a weewx.conf'))}</em>")
 
     return f'''
 <section class="group">
-  <p class="lede">A collector reads hardware and sends packets to the
-     listener. It runs as a separate process.</p>
+  <p class="lede">{html.escape(say(
+     "A collector reads hardware and sends packets to the listener. "
+     "It runs as a separate process."))}</p>
   <ol class="steps">
-    <li>Name the collector and choose its kind.</li>
-    <li>Set its hardware or broker options.</li>
-    <li>Start it where the hardware is connected.</li>
+    <li>{html.escape(say("Name the collector and choose its kind."))}</li>
+    <li>{html.escape(say("Set its hardware or broker options."))}</li>
+    <li>{html.escape(say("Start it where the hardware is connected."))}</li>
   </ol>
   {problem}
   <form method="post" action="./new-collector">
     <div class="field">
-      <label for="f-name">Name</label>
+      <label for="f-name">{html.escape(say("Name"))}</label>
       <input type="text" id="f-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="shed" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _.</p>
+      <p class="help">{html.escape(say(
+         "Lowercase letters, digits, - and _."))}</p>
     </div>
     <div class="field">
-      <label for="f-kind">What it runs</label>
+      <label for="f-kind">{html.escape(say("What it runs"))}</label>
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
     <div class="field" data-when="kind" data-when-is="weewx-driver">
-      <label for="f-driver">The hardware</label>
+      <label for="f-driver">{html.escape(say("The hardware"))}</label>
       <select id="f-driver" name="driver">{hardware}</select>
-      <p class="help">Leave this on <em>from a weewx.conf</em> to reuse that
-         driver's configuration.</p>
+      <p class="help">{reuse}</p>
     </div>
-    <div class="actions"><button type="submit">Continue</button>
-      <a class="button quiet" href="./system">Cancel</a></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Continue"))}</button>
+      <a class="button quiet" href="./system">
+        {html.escape(say("Cancel"))}</a></div>
   </form>
 </section>'''
 
 
-def _collector_note(schema: Any) -> str:
+def _collector_note(schema: Any, lang: Any = None) -> str:
     """How to start this collector, at the top of its own page.
 
     Every other page on this site configures something this process runs, so
@@ -1500,17 +1544,21 @@ def _collector_note(schema: Any) -> str:
     """
     from . import collectors as collector_defs
 
+    lang = lang if lang is not None else language_defs.get("en")
     name = schema.name.split(":", 1)[-1]
     kind = ""
     for group in schema.groups:
         for option in group.options:
             if option.name == "kind":
                 kind = str(option.default)
+    where = lang.fill(
+        "Its data appears under {link}.",
+        link=f'<a href="./senders">{html.escape(lang.say("Senders"))}</a>')
     return f'''
 <section class="group">
-  <h3>Start collector</h3>
+  <h3>{html.escape(lang.say("Start collector"))}</h3>
   <p><code>{html.escape(collector_defs.start_command(kind, name))}</code></p>
-  <p class="help">Its data appears under <a href="./senders">Senders</a>.</p>
+  <p class="help">{where}</p>
 </section>'''
 
 
@@ -1518,35 +1566,34 @@ def new_feed_page(admin: Admin, error: str = "",
                   form: dict | None = None) -> str:
     """Two fields: a name and a kind. The rest waits."""
     form = form or {}
+    say = admin.say
     kinds = feed_kind_choices()
     chosen = form.get("kind") or (kinds[0][0] if kinds else "")
-    options = NEWLINE.join(
-        f'<option value="{html.escape(kind)}"'
-        f'{" selected" if chosen == kind else ""}>{html.escape(label)}</option>'
-        for kind, label, _summary in kinds)
-    explained = "".join(
-        f"<li><strong>{html.escape(label)}</strong>: {html.escape(summary)}</li>"
-        for _kind, label, summary in kinds if summary)
+    options, explained = _kind_options(kinds, str(chosen), say)
     problem = f'<p class="err">{html.escape(error)}</p>' if error else ""
     return f'''
 <section class="group">
-  <p class="lede">Generate files from one or more Places.</p>
+  <p class="lede">{html.escape(say(
+     "Generate files from one or more Places."))}</p>
   {problem}
   <form method="post" action="./new-feed">
     <div class="field">
-      <label for="f-name">Name</label>
+      <label for="f-name">{html.escape(say("Name"))}</label>
       <input type="text" id="f-name" name="name" required
              value="{html.escape(str(form.get("name", "")))}"
              placeholder="metric" autocomplete="off" spellcheck="false">
-      <p class="help">Lowercase letters, digits, - and _.</p>
+      <p class="help">{html.escape(say(
+         "Lowercase letters, digits, - and _."))}</p>
     </div>
     <div class="field">
-      <label for="f-kind">Kind</label>
+      <label for="f-kind">{html.escape(say("Kind"))}</label>
       <select id="f-kind" name="kind">{options}</select>
       <ul class="kinds">{explained}</ul>
     </div>
-    <div class="actions"><button type="submit">Continue</button>
-      <a class="button quiet" href="./publishing">Cancel</a></div>
+    <div class="actions">
+      <button type="submit">{html.escape(say("Continue"))}</button>
+      <a class="button quiet" href="./publishing">
+        {html.escape(say("Cancel"))}</a></div>
   </form>
 </section>'''
 
@@ -1562,6 +1609,8 @@ def _where_it_lands(admin: Admin, name: str) -> str:
     if not isinstance(settings, dict) or settings.get("kind") != "local":
         return ""
 
+    lang = admin.language
+    say = admin.say
     web = config.get("web", {}) or {}
     directory = str(settings.get("directory") or "")
     # As typed, and as it actually lands. A relative path is resolved against
@@ -1571,29 +1620,40 @@ def _where_it_lands(admin: Admin, name: str) -> str:
     resolved = ""
     if directory and not Path(directory).is_absolute():
         resolved = str((Path(admin.path).parent / directory).resolve())
+    heading = html.escape(say("Where it lands"))
     if not web.get("enabled"):
+        unset = say("-- no directory set --")
+        where = html.escape(resolved or directory or unset)
+        offer = lang.fill(
+            "In {directory} on this machine. Point a web server at it, or "
+            "{link} and it is readable straight away.",
+            directory=f"<code>{where}</code>",
+            link=f'<a href="./website">'
+                 f'{html.escape(say("turn the built-in one on"))}</a>')
         return f'''
 <section class="group">
-  <h3>Where it lands</h3>
-  <p class="lede">In
-     <code>{html.escape(resolved or directory or "-- no directory set --")}</code>
-     on this machine. Point a web server at it, or
-     <a href="./website">turn the built-in one on</a> and it is readable
-     straight away.</p>
+  <h3>{heading}</h3>
+  <p class="lede">{offer}</p>
 </section>'''
 
     port = web.get("port", 8081)
     path = "/" if web.get("default") == name else f"/{html.escape(name)}/"
     host = _addresses()[0][0]
+    address = f"http://{html.escape(host)}:{port}{path}"
+    typed = ""
+    if resolved:
+        typed = " " + lang.fill(
+            "(you wrote {directory}, which is relative to the settings file)",
+            directory=f"<code>{html.escape(directory)}</code>")
+    served = lang.fill(
+        "In {directory}{typed}, and the built-in server hands it out at "
+        "{link}. The name in the address is this export's name.",
+        directory=f"<code>{html.escape(resolved or directory)}</code>",
+        typed=typed, link=f'<a href="{address}">{address}</a>')
     return f'''
 <section class="group">
-  <h3>Where it lands</h3>
-  <p class="lede">In <code>{html.escape(resolved or directory)}</code>
-     {f'(you wrote <code>{html.escape(directory)}</code>, which is'
-      f' relative to the settings file)' if resolved else ''},
-     and the built-in server hands it out at
-     <a href="http://{html.escape(host)}:{port}{path}">http://{html.escape(host)}:{port}{path}</a>.
-     The name in the address is this export's name.</p>
+  <h3>{heading}</h3>
+  <p class="lede">{served}</p>
 </section>'''
 
 
@@ -1608,14 +1668,16 @@ def website_summary(admin: Admin) -> str:
     from .webserver import site_from
 
     config = admin.config()
+    say = admin.say
     web = config.get("web", {}) or {}
     if not web.get("enabled"):
-        return '''
+        return f'''
 <section class="group">
-  <h3>Nothing is being served</h3>
-  <p class="lede">Turn the server on above and whatever a local export
-     published becomes readable in a browser. Until then the exports still
-     run and still write their files.</p>
+  <h3>{html.escape(say("Nothing is being served"))}</h3>
+  <p class="lede">{html.escape(say(
+     "Turn the server on above and whatever a local export published "
+     "becomes readable in a browser. Until then the exports still run and "
+     "still write their files."))}</p>
 </section>'''
 
     class _View:
@@ -1630,18 +1692,20 @@ def website_summary(admin: Admin) -> str:
     hosts = _addresses()
 
     if not site.feeds:
+        at = f"http://{html.escape(hosts[0][0])}:{port}/"
+        idle = admin.language.fill(
+            "The server is on, at {address}, and there is nothing to hand "
+            "out.", address=f"<code>{at}</code>")
         return f'''
 <section class="group">
-  <h3>Serving nothing yet</h3>
-  <p class="lede">The server is on, at
-     <code>http://{html.escape(hosts[0][0])}:{port}/</code>, and there is
-     nothing to hand out.</p>
-  <p class="lede">A feed writes into its own working directory. What puts it
-     somewhere readable is an <strong>export</strong> of kind
-     <em>local</em>: choose the feed, say which directory, and it appears
-     here under the export's own name.</p>
-  <div class="actions"><a class="button" href="./new-export">Add an
-     export</a></div>
+  <h3>{html.escape(say("Serving nothing yet"))}</h3>
+  <p class="lede">{idle}</p>
+  <p class="lede">{html.escape(say(
+     "A feed writes into its own working directory. What puts it somewhere "
+     "readable is an export of kind local: choose the feed, say which "
+     "directory, and it appears here under the export's own name."))}</p>
+  <div class="actions"><a class="button" href="./new-export">
+     {html.escape(say("Add an export"))}</a></div>
 </section>'''
 
     rows = []
@@ -1664,18 +1728,23 @@ def website_summary(admin: Admin) -> str:
 
     also = ""
     if site.default:
-        also = (f"<p class='lede'><code>{html.escape(site.default)}</code> is "
-                "also at the address itself, without a name after it.</p>")
+        said = admin.language.fill(
+            "{name} is also at the address itself, without a name after it.",
+            name=f"<code>{html.escape(site.default)}</code>")
+        also = f"<p class='lede'>{said}</p>"
 
     return f'''
 <section class="group">
-  <h3>What is being served</h3>
-  <p class="lede">The name in the address is the name of the export that
-     published it. Rename the export and the address follows.</p>
+  <h3>{html.escape(say("What is being served"))}</h3>
+  <p class="lede">{html.escape(say(
+     "The name in the address is the name of the export that published it. "
+     "Rename the export and the address follows."))}</p>
   {also}
   <table>
-    <thead><tr><th>name</th><th>address</th><th class="n">files</th>
-      <th>from</th></tr></thead>
+    <thead><tr><th>{html.escape(say("name"))}</th>
+      <th>{html.escape(say("address"))}</th>
+      <th class="n">{html.escape(say("files"))}</th>
+      <th>{html.escape(say("from"))}</th></tr></thead>
     <tbody>
 {chr(10).join(rows)}
     </tbody>
@@ -1878,6 +1947,48 @@ def _primary_nav(active: str, schema: Schema | None, lang: Any = None) -> str:
     return "".join(links)
 
 
+def _try_it(schema: Schema, lang: Any, lede: str, button: str) -> str:
+    """The "try this before trusting it" section, for one kind of thing.
+
+    Five kinds had this written out five times, and the words differ by one
+    sentence and one button. Written out, the sixth one to be added is the
+    one that misses the language.
+    """
+    return f'''
+<section class="group">
+  <h3>{html.escape(lang.say("Try it"))}</h3>
+  <p class="lede">{html.escape(lang.say(lede))}</p>
+  <form method="post" action="./{html.escape(schema.name)}/test">
+    <div class="actions">
+      <button type="submit">{html.escape(lang.say(button))}</button></div>
+  </form>
+</section>'''
+
+
+def _removal(schema: Schema, lang: Any, lede: str, question: str) -> str:
+    """The delete section. `question` is what the browser asks first.
+
+    Escaped twice, in that order: the question is a JavaScript string inside
+    an HTML attribute, so an apostrophe has to survive both. A German line
+    with one in it -- or a feed somebody called `bob's` -- would otherwise
+    close the string early and leave a button that does nothing.
+    """
+    name = schema.name.split(":", 1)[-1]
+    asked = lang.fill(question, name=name)
+    asked = html.escape(asked.replace(chr(92), chr(92) * 2)
+                        .replace("'", chr(92) + "'"), quote=True)
+    return f'''
+<section class="group danger">
+  <h3>{html.escape(lang.say("Remove"))}</h3>
+  <p class="lede">{html.escape(lang.say(lede))}</p>
+  <form method="post" action="./{html.escape(schema.name)}/remove"
+        onsubmit="return confirm('{asked}')">
+    <div class="actions"><button class="warn" type="submit">
+      {html.escape(lang.say("Remove"))}</button></div>
+  </form>
+</section>'''
+
+
 def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
          message: str = "", form: dict[str, Any] | None = None) -> bytes:
     errors = errors or {}
@@ -1999,8 +2110,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
         # without opening a second tab.
         body = [adminpublish.context(admin, active)]
         if schema.kind == "collector":
-            body.append(_collector_note(schema))
-        body.append(f'<nav class="jump" aria-label="Sections">{jump}</nav>')
+            body.append(_collector_note(schema, lang))
+        sections = html.escape(lang.say("Sections"))
+        body.append(f'<nav class="jump" aria-label="{sections}">{jump}</nav>')
         body += [group_html(g, values, errors, moved, moved_names, lang)
                  for g in schema.groups]
 
@@ -2011,54 +2123,20 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     if schema is not None and schema.name == "website":
         extra = website_summary(admin)
     if schema is not None and schema.kind == "feed" and not admin.read_only:
-        name = schema.name.split(":", 1)[-1]
-        extra = f'''
-<section class="group danger">
-  <h3>Remove</h3>
-  <p class="lede">Existing files remain. Linked exports stop.</p>
-  <form method="post" action="./{html.escape(schema.name)}/remove"
-        onsubmit="return confirm('Remove the feed {html.escape(name)}?')">
-    <div class="actions"><button class="warn" type="submit">Remove</button></div>
-  </form>
-</section>'''
+        extra = _removal(schema, lang, "Existing files remain. "
+                         "Linked exports stop.", "Remove the feed {name}?")
 
     if schema is not None and schema.kind == "forecast" and not admin.read_only:
-        name = schema.name.split(":", 1)[-1]
-        extra += f'''
-<section class="group">
-  <h3>Try it</h3>
-  <p class="lede">Fetch once without storing.</p>
-  <form method="post" action="./{html.escape(schema.name)}/test">
-    <div class="actions"><button type="submit">Fetch once</button></div>
-  </form>
-</section>
-<section class="group danger">
-  <h3>Remove</h3>
-  <p class="lede">Cached forecasts remain until cleanup.</p>
-  <form method="post" action="./{html.escape(schema.name)}/remove"
-        onsubmit="return confirm(\'Remove the forecast source {html.escape(name)}?\')">
-    <div class="actions"><button class="warn" type="submit">Remove</button></div>
-  </form>
-</section>'''
+        extra += _try_it(schema, lang, "Fetch once without storing.",
+                         "Fetch once")
+        extra += _removal(schema, lang, "Cached forecasts remain until "
+                          "cleanup.", "Remove the forecast source {name}?")
 
     if schema is not None and schema.kind == "upload" and not admin.read_only:
-        name = schema.name.split(":", 1)[-1]
-        extra += f'''
-<section class="group">
-  <h3>Try it</h3>
-  <p class="lede">Check the account without publishing.</p>
-  <form method="post" action="./{html.escape(schema.name)}/test">
-    <div class="actions"><button type="submit">Test the account</button></div>
-  </form>
-</section>
-<section class="group danger">
-  <h3>Remove</h3>
-  <p class="lede">Already published readings remain.</p>
-  <form method="post" action="./{html.escape(schema.name)}/remove"
-        onsubmit="return confirm(\'Remove the upload {html.escape(name)}?\')">
-    <div class="actions"><button class="warn" type="submit">Remove</button></div>
-  </form>
-</section>'''
+        extra += _try_it(schema, lang, "Check the account without publishing.",
+                         "Test the account")
+        extra += _removal(schema, lang, "Already published readings remain.",
+                          "Remove the upload {name}?")
 
     # Its own, because what removal means here is different: the collector
     # is a process this one does not run, so nothing is stopped. The route
@@ -2066,36 +2144,17 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # -- a collector could be created from the page and only ever removed by
     # editing the file.
     if schema is not None and schema.kind == "collector" and not admin.read_only:
-        name = schema.name.split(":", 1)[-1]
-        extra += f'''
-<section class="group danger">
-  <h3>Remove</h3>
-  <p class="lede">Removes the endpoint. The collector process keeps running.</p>
-  <form method="post" action="./{html.escape(schema.name)}/remove"
-        onsubmit="return confirm('Remove the collector {html.escape(name)}?')">
-    <div class="actions"><button class="warn" type="submit">Remove</button></div>
-  </form>
-</section>'''
+        extra += _removal(schema, lang, "Removes the endpoint. The collector "
+                          "process keeps running.",
+                          "Remove the collector {name}?")
 
     if schema is not None and schema.kind == "export" and not admin.read_only:
-        name = schema.name.split(":", 1)[-1]
-        extra += _where_it_lands(admin, name)
-        extra += f'''
-<section class="group">
-  <h3>Try it</h3>
-  <p class="lede">Connects and looks, without sending anything.</p>
-  <form method="post" action="./{html.escape(schema.name)}/test">
-    <div class="actions"><button type="submit">Test the connection</button></div>
-  </form>
-</section>
-<section class="group danger">
-  <h3>Remove</h3>
-  <p class="lede">Remote files remain.</p>
-  <form method="post" action="./{html.escape(schema.name)}/remove"
-        onsubmit="return confirm('Remove the export {html.escape(name)}?')">
-    <div class="actions"><button class="warn" type="submit">Remove</button></div>
-  </form>
-</section>'''
+        extra += _where_it_lands(admin, schema.name.split(":", 1)[-1])
+        extra += _try_it(schema, lang,
+                         "Connects and looks, without sending anything.",
+                         "Test the connection")
+        extra += _removal(schema, lang, "Remote files remain.",
+                          "Remove the export {name}?")
 
     banner = ""
     if errors and charting and "" not in errors:
