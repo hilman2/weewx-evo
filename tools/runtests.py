@@ -250,6 +250,8 @@ def tests() -> list[Test]:
         Test("restart", ["restart_test.py"],
              "a restart re-does nothing, and the site is up meanwhile",
              slow=True),
+        Test("driverprocess", ["driverprocess_test.py"],
+             "a driver on this machine is started and kept alive here"),
         Test("collector", ["collector_test.py"],
              "a collector is a station: its own name, its own rules"),
         # Running a WeeWX driver is an add-on, and its seven tests went with

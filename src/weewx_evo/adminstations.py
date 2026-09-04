@@ -649,42 +649,110 @@ def _running_elsewhere(admin: Any, register: Any) -> str:
         return ""
 
     known = {one.driver for one in register}
+    # What each one is doing, from the process that runs them. A different
+    # process writes it, so it comes through the live table -- the only
+    # channel between the parts of this program.
+    running = _driver_states(admin, list(configured))
     rows = []
     for name, one in sorted(configured.items()):
         kind = str(one.get("kind", "")).strip()
-        # Delivering, or waiting to be started. Read from the register
-        # rather than from a flag: what a driver elsewhere is doing is not
-        # this process's business, and a name that has announced a sender is
-        # the one fact this side has.
-        state = say("Delivering") if name in known else say("Not started yet")
-        try:
-            command = collector_defs.start_command(kind, name)
-        except Exception:
-            log.debug("no start command for %r", kind, exc_info=True)
-            command = ""
+        here = str(one.get("runs_here", True)).strip().lower() not in (
+            "false", "no", "0", "off")
         rows.append(f'''
     <tr>
       <td><a href="./collector:{html.escape(name)}">
           <strong>{html.escape(name)}</strong></a></td>
       <td>{html.escape(kind)}</td>
-      <td>{html.escape(state)}</td>
-      <td><code>{html.escape(command)}</code></td>
+      <td>{_driver_state(name, kind, here, name in known,
+                         running.get(name), admin)}</td>
     </tr>''')
 
     return f'''
 <section class="group">
-  <h3>{html.escape(say("Runs where the hardware is"))}</h3>
+  <h3>{html.escape(say("Drivers with their own process"))}</h3>
   <p class="lede">{html.escape(say(
-     "Configured here, started there. Nothing on this machine starts "
-     "them."))}</p>
+     "Started and kept alive by weewx-evo, and back up after a reboot. "
+     "Switch that off on a driver whose hardware is plugged into another "
+     "machine; then it is started over there."))}</p>
   <table class="stations">
     <thead><tr><th>{html.escape(say("Name"))}</th>
                <th>{html.escape(say("What it runs"))}</th>
-               <th>{html.escape(say("Status"))}</th>
-               <th>{html.escape(say("Start it with"))}</th></tr></thead>
+               <th>{html.escape(say("Status"))}</th></tr></thead>
     <tbody>{"".join(rows)}</tbody>
   </table>
 </section>'''
+
+
+def _driver_states(admin: Any, names: list[str]) -> dict[str, dict]:
+    """What the supervising process wrote about each of them."""
+    from .db.live import LiveStore
+    from .ingest import driverrunner
+
+    where = live_db(admin)
+    if where is None or not names:
+        return {}
+    store = None
+    try:
+        store = LiveStore(where)
+        return driverrunner.states(store, names)
+    except Exception:
+        log.debug("could not read the driver states", exc_info=True)
+        return {}
+    finally:
+        # One connection per page view, closed here. A held handle is the
+        # shape that took an instance down with 477 descriptors.
+        if store is not None:
+            try:
+                store.close()
+            except Exception:
+                log.debug("could not close the live store", exc_info=True)
+
+
+def _driver_state(name: str, kind: str, here: bool, delivering: bool,
+                  said: dict | None, admin: Any) -> str:
+    """The status cell: what it is doing, and what to do about it.
+
+    Three different things, and the row has to say which:
+
+      * it runs here and this process is watching it -- then the state is a
+        fact rather than a guess, and it includes *why* it stopped.
+      * it runs somewhere else -- then the command is the whole of what this
+        page can offer, and it is there to be copied.
+      * it has never been heard from and nothing is watching it. Saying
+        "not started" would be a guess; saying what is known is not.
+    """
+    say = admin.say
+    if not here:
+        try:
+            from . import collectors as collector_defs
+
+            command = collector_defs.start_command(kind, name)
+        except Exception:
+            log.debug("no start command for %r", kind, exc_info=True)
+            command = ""
+        said_it = (say("Delivering") if delivering
+                   else say("Waiting for its first packet"))
+        return (f'{html.escape(said_it)}<p class="help">'
+                f'{html.escape(say("Started on its own machine with"))}'
+                f' <code>{html.escape(command)}</code></p>')
+
+    state = str((said or {}).get("state") or "")
+    trouble = str((said or {}).get("said") or "")
+    words = {
+        "running": say("Running here"),
+        "stopped": say("Stopped"),
+        "failed": say("Failed, trying again"),
+        "gave up": say("Failed too often; not trying again"),
+    }
+    shown = words.get(state) or say("Not started yet")
+    # The last lines it printed, for the two states where they are the
+    # answer. "Died" on its own sends somebody to a log file; `no module
+    # named 'serial'` sends them to pip.
+    why = ""
+    if trouble and state in ("failed", "gave up"):
+        why = (f'<pre class="driver-said">'
+               f"{html.escape(trouble[-600:])}</pre>")
+    return f"{html.escape(shown)}{why}"
 
 
 def _waiting(admin: Any, seen: Any, register: Any, places: list[Any]) -> str:
@@ -834,7 +902,7 @@ def new(admin: Any, error: str = "", form: dict | None = None,
         options = (
             f'<optgroup label="{html.escape(say("It uploads to this machine"))}">'
             f"{uploads}</optgroup>"
-            f'<optgroup label="{html.escape(say("It is read where it is plugged in"))}">'
+            f'<optgroup label="{html.escape(say("It is plugged into this machine"))}">'
             f"{fetched}</optgroup>")
     # And the explanation is per protocol, not per endpoint. Three endpoints
     # of one driver have one sentence between them, and printing it three
@@ -855,7 +923,7 @@ def new(admin: Any, error: str = "", form: dict | None = None,
     # entries in the menu share one sentence about what they are.
     for said in dict.fromkeys(reads for _v, _l, reads in elsewhere(say)):
         explained += (f"<li><strong>"
-                      f'{html.escape(say("Read where it is plugged in"))}'
+                      f'{html.escape(say("Plugged in here"))}'
                       f"</strong>: {html.escape(said)}</li>")
     # Named rather than described in general terms. "Hardware that cannot be
     # told where to upload" leaves somebody holding an AcuRite bridge to work

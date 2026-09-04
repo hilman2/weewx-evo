@@ -1524,13 +1524,14 @@ def new_collector_page(admin: Admin, error: str = "",
     return f'''
 <section class="group">
   <p class="lede">{html.escape(say(
-     "A driver that runs where the hardware is and sends its readings "
-     "here. It is a process of its own, so it can be on another machine."))}
+     "A driver for hardware that has to be read rather than heard: a "
+     "cable, a USB port, a radio. It gets a process of its own, which "
+     "weewx-evo starts and keeps running."))}
   </p>
   <ol class="steps">
     <li>{html.escape(say("Name the driver and choose what it runs."))}</li>
     <li>{html.escape(say("Set its hardware or broker options."))}</li>
-    <li>{html.escape(say("Start it where the hardware is connected."))}</li>
+    <li>{html.escape(say("Save it. weewx-evo starts it."))}</li>
   </ol>
   {problem}
   <form method="post" action="./new-collector">
@@ -1580,7 +1581,7 @@ def _collector_note(schema: Any, lang: Any = None) -> str:
         link=f'<a href="./senders">{html.escape(lang.say("Drivers"))}</a>')
     return f'''
 <section class="group">
-  <h3>{html.escape(lang.say("Start it where the hardware is"))}</h3>
+  <h3>{html.escape(lang.say("Starting it"))}</h3>
   <p><code>{html.escape(collector_defs.start_command(kind, name))}</code></p>
   <p class="help">{where}</p>
 </section>'''
@@ -2079,8 +2080,8 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
     # one could be created from the page and only ever removed by editing
     # the file.
     if schema is not None and schema.kind == "collector" and not admin.read_only:
-        extra += _removal(schema, lang, "Removes the endpoint. The process "
-                          "where the hardware is keeps running.",
+        extra += _removal(schema, lang, "Stops it and takes its endpoint "
+                          "away. Readings already recorded stay.",
                           "Remove the driver {name}?")
 
     if schema is not None and schema.kind == "export" and not admin.read_only:

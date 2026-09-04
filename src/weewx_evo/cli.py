@@ -61,6 +61,7 @@ from .forecast import Place as ForecastPlace
 from .forecast import codes as forecast_codes
 from .forecast import runner as forecast_runner
 from .forecast.store import ForecastStore
+from .ingest import driverrunner as driver_runner
 from .ingest import drivers, userdrivers
 from .ingest import proposals as proposal_defs
 from .ingest import state as state_module
@@ -827,6 +828,13 @@ def cmd_listen(args: argparse.Namespace) -> int:
     # and a leaked connection per upload is exactly this process's failure.
     dog = start_watchdog(cfg, live, lambda why: http.stop(), udp,
                          heartbeat=False)
+
+    # The drivers that run on this machine. Here and not in the archiver:
+    # they deliver to this process, and in the split arrangement both would
+    # otherwise start one -- two processes on one serial port, which reads
+    # as a broken adapter rather than as our own doing.
+    drivers_here = driver_runner.Runner(driver_runner.wanted(cfg), live)
+    drivers_here.start()
     try:
         http.serve_forever()
     except KeyboardInterrupt:
@@ -834,6 +842,7 @@ def cmd_listen(args: argparse.Namespace) -> int:
     finally:
         if dog is not None:
             dog.stop()
+        drivers_here.stop()
         http.stop()
         if udp:
             udp.stop()
@@ -1513,6 +1522,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
         uploader = upload_runner.Runner(scheduled_uploads)
         uploader.start()
 
+    # And the drivers that run on this machine. Started here rather than
+    # typed into a terminal: the ordinary arrangement is one machine, and a
+    # process somebody started by hand is gone after the next reboot -- with
+    # the station quietly silent, which is the failure notify/ exists for.
+    # Still a separate process, so the isolation the split is for is intact.
+    drivers_here = driver_runner.Runner(driver_runner.wanted(cfg), live)
+    drivers_here.start()
+
     # The forecast. Its own database and its own threads: a 350 kB MOSMIX
     # file over somebody else's connection has no business on this loop, and
     # a predicted temperature has no business in the archive.
@@ -1606,7 +1623,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                         stopping.set()
                         continue
                     apply_live(args, cfg, web, runner, uploader, forecaster,
-                               feeds, notifier, series)
+                               feeds, notifier, series, drivers_here)
 
                 if dog is not None:
                     dog.beats()
@@ -1651,6 +1668,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             runner.stop()
         if uploader is not None:
             uploader.stop()
+        if drivers_here is not None:
+            drivers_here.stop()
         if notifier is not None:
             notifier.stop()
             notifier.close()
@@ -3441,7 +3460,8 @@ def build_forecast_schedule(args: argparse.Namespace, cfg: Settings,
 def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
                runner: Any, uploader: Any = None,
                forecaster: Any = None, feeds: Any = None,
-               notifier: Any = None, series: Any = None) -> None:
+               notifier: Any = None, series: Any = None,
+               drivers: Any = None) -> None:
     """Apply a changed configuration to a running process.
 
     Everything that can be rebuilt in place, in one function. Scattering
@@ -3504,6 +3524,18 @@ def apply_live(args: argparse.Namespace, cfg: Settings, web: Any,
             # An upload added on the settings page joins the running set.
             uploader.replace(fresh)
             log.info("%d upload(s) running", len(fresh))
+
+    if drivers is not None:
+        # A driver added on the settings page, or switched between "start it
+        # here" and "started over there". `replace` rather than stop-assign-
+        # start, for the reason at `exports/runner.replace` -- and here it
+        # costs more than a sleeping thread: the old child has to actually
+        # end before the new one opens the same serial port.
+        fresh = driver_runner.wanted(cfg)
+        shape = [(one.name, one.command) for one in fresh]
+        if shape != [(one.name, one.command) for one in drivers.drivers]:
+            drivers.replace(fresh)
+            log.info("%d driver(s) running here", len(fresh))
 
     if forecaster is not None:
         fresh = build_forecast_schedule(args, cfg, forecaster.store, uploader)

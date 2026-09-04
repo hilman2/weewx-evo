@@ -308,9 +308,17 @@ def options(kind: str = "mqtt", settings: dict | None = None) -> list:
         Option("kind", "What kind of driver this is",
                kind="choice", default=kind,
                choices=tuple((name, one.label) for name, one in table.items()),
-               help="It runs in its own process, where the hardware is, and "
-                    "delivers over the network -- so a serial port or a "
-                    "broker that stops answering cannot stop the archiver."),
+               help="It gets a process of its own and delivers over the "
+                    "network -- so a serial port or a broker that stops "
+                    "answering cannot hold up the archiver."),
+        Option("runs_here", "Start it on this machine", kind="bool",
+               default=True,
+               help="On is the ordinary case: the hardware is plugged into "
+                    "this machine, and weewx-evo starts the driver and keeps "
+                    "it alive, so it comes back after a reboot with "
+                    "everything else. Turn it off only for hardware plugged "
+                    "into a different machine -- the page then prints the "
+                    "command to run over there."),
     ))
 
     # The kind says what else it needs. A kind an add-on contributed answers

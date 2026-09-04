@@ -165,9 +165,26 @@ def the_form_configures_either(work: Path, admin: Admin) -> None:
 def one_list_shows_both(admin: Admin) -> None:
     print("\nthe list afterwards")
     shown = visible(adminstations.overview(admin))
-    check("the driver that runs elsewhere is on it", "shed" in shown, True)
+    check("the driver with its own process is on it", "shed" in shown, True)
     check("and the console that uploads", "garden" in shown, True)
-    check("with the command for the one that needs it",
+
+    # A driver on this machine is started by weewx-evo, so the row says what
+    # it is doing rather than what to type. The command is for the other
+    # case, and only for it: printing one for a driver this process runs
+    # would be an instruction to start a second copy on the same port.
+    check("no command for one this machine runs",
+          "--collector shed" in shown, False)
+
+    # And the other case still gets it. Switched through the file the way
+    # the settings page writes it.
+    from weewx_evo import config as config_file
+
+    current = admin.config()
+    config_file.put(current, "collectors.shed.runs_here", False)
+    config_file.write(admin.path, current, admin.schemas)
+    admin.refresh()
+    shown = visible(adminstations.overview(admin))
+    check("but one started elsewhere prints the command",
           "--collector shed" in shown, True)
 
 
