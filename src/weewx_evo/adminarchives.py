@@ -533,7 +533,7 @@ def _member_fields(admin: Any, archive: archive_defs.Archive) -> str:
   <input type="hidden" name="_members" value="1">
   <section class="place-section place-members"
            id="place-members-{html.escape(archive.name)}">
-    <header><h4>{html.escape(say("Senders"))}</h4></header>
+    <header><h4>{html.escape(say("Drivers"))}</h4></header>
     <label class="place-broad tick">
       <input name="all-senders" type="checkbox" value="1"
              {"checked" if archive.senders is None else ""}>
@@ -958,7 +958,7 @@ def _place_detail(admin: Any, register: archive_defs.Register,
       <a class="place-tab" href="#place-general-{html.escape(archive.name)}"
          >{html.escape(say("General"))}</a>
       <a class="place-tab" href="#place-members-{html.escape(archive.name)}"
-         >{html.escape(say("Senders"))}</a>
+         >{html.escape(say("Drivers"))}</a>
       <a class="place-tab" href="#place-fields-{html.escape(archive.name)}"
          >{html.escape(say("Fields"))}</a>
       <a class="place-tab" href="#place-outputs-{html.escape(archive.name)}"

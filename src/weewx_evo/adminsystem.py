@@ -49,39 +49,31 @@ def _instance_rows(schemas: list[Any], empty: str, say: Any = None) -> str:
                    for schema in schemas)
 
 
-def _driver_rows(collectors: list[Any], drivers: list[Any],
+def _driver_note(collectors: list[Any], drivers: list[Any],
                  say: Any = None) -> str:
-    """Everything that brings readings in, as one list.
+    """One line pointing at Drivers, and no list of its own.
 
-    Two panels before, and the split was ours rather than the reader's: a
-    driver that listens on HTTP and one that asks a USB console every minute
-    are one thing to somebody with a weather station. What differs is where
-    the process runs, and that is worth saying on the row where it is true --
-    a driver somebody has to start on another machine is not a setting they
-    can save here.
+    There were two panels here, then one, and both were the same fault: a
+    second place to find a driver. Somebody with a Vantage on a cable had to
+    know that this program files it under System while the Ecowitt on the
+    wifi is under its own first-level entry -- for two ways of reading a
+    thermometer. They are one list now, and it is the one in the navigation.
+
+    The count stays, because "is anything set up at all" is a question this
+    page is fair to answer, and a panel that vanished entirely would read as
+    the feature having gone with it.
     """
     say = say or str
-    if not collectors and not drivers:
-        return (f'<p class="system-empty">'
-                f'{html.escape(say("No driver settings."))}</p>')
-
-    # "Driver: shed (weewx-driver)" under a heading that already says Drivers
-    # is the word twice, and the half in front of the colon is built in
-    # `all_schemas`, where there is no language -- so on a German page it was
-    # the one English word in the panel. The name is the whole of it here.
-    def said(schema: Any) -> str:
-        return schema.label.split(": ", 1)[-1]
-
-    out = []
-    for schema in collectors:
-        # Named for what it is rather than for how it is wired: "runs where
-        # the hardware is" is the whole of what a reader needs from the
-        # distinction, and it is the half that costs them something.
-        out.append(_row(f"./{schema.name}", said(schema),
-                        "Runs where the hardware is", say=say))
-    for schema in drivers:
-        out.append(_row(f"./{schema.name}", said(schema), say=say))
-    return "".join(out)
+    total = len(collectors) + len(drivers)
+    where = say("Drivers")
+    if not total:
+        said = say("None yet. They are set up under {link}.")
+    else:
+        said = say("{count} configured, under {link}.")
+    line = (said.replace("{count}", str(total))
+                .replace("{link}", f'<a href="./senders">{html.escape(where)}'
+                                   f"</a>"))
+    return f'<p class="system-empty">{line}</p>'
 
 
 def _addon_rows(admin: Any, say: Any = None) -> str:
@@ -141,10 +133,8 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     {_row("./quality", "Sensor checks", "Global acceptance rules", say=say)}
   </section>
   <section class="system-panel">
-    <div class="system-panel-head"><h3>{html.escape(say("Drivers"))}</h3>
-      <a class="small-action" href="./new-collector">
-        {html.escape(say("Add"))}</a></div>
-    {_driver_rows(collectors, drivers, say)}
+    <h3>{html.escape(say("Drivers"))}</h3>
+    {_driver_note(collectors, drivers, say)}
   </section>
   <section class="system-panel">
     <h3 class="system-central">

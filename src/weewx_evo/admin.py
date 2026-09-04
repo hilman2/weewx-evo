@@ -1577,7 +1577,7 @@ def _collector_note(schema: Any, lang: Any = None) -> str:
                 kind = str(option.default)
     where = lang.fill(
         "Its data appears under {link}.",
-        link=f'<a href="./senders">{html.escape(lang.say("Senders"))}</a>')
+        link=f'<a href="./senders">{html.escape(lang.say("Drivers"))}</a>')
     return f'''
 <section class="group">
   <h3>{html.escape(lang.say("Start it where the hardware is"))}</h3>
@@ -1831,9 +1831,13 @@ def sub_pages(admin: Admin) -> list[str]:
         return []
 
 
+#: The five first-level tasks. "Drivers" and not "Senders": a driver that
+#: runs in its own process was reachable only through System, so setting up a
+#: Vantage meant knowing that this program files it somewhere else than the
+#: Ecowitt on the wifi. They are one entry, one list and one way in now.
 _PRIMARY_NAV = (
     ("overview", "Overview", "./overview"),
-    ("senders", "Senders", "./senders"),
+    ("senders", "Drivers", "./senders"),
     ("places", "Places", "./places"),
     ("publishing", "Publishing", "./publishing"),
     ("system", "System", "./system"),
@@ -1844,7 +1848,8 @@ def _primary_section(active: str, schema: Schema | None) -> str:
     """Return the first-level task containing *active*."""
     if active == "overview":
         return "overview"
-    if active in ("senders", "stations", "new-sender", "new-station"):
+    if active in ("senders", "stations", "new-sender", "new-station",
+                  "new-collector"):
         return "senders"
     if active in ("places", "archives", "new-place", "new-archive"):
         return "places"
@@ -1857,6 +1862,11 @@ def _primary_section(active: str, schema: Schema | None) -> str:
             return "publishing"
         if schema.name == "website":
             return "publishing"
+        # A driver's own settings belong under Drivers, wherever the process
+        # runs. Its page was in System because that is where the panel was,
+        # and that is what made two ways in out of one thing.
+        if schema.kind in ("collector", "driver"):
+            return "senders"
     return "system"
 
 
@@ -2138,8 +2148,9 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "new-collector": "Add a driver",
                     "new-forecast": "Add a forecast",
                     "new-notify": "Add a notification channel",
-                    "new-station": "Add a sender", "new-sender": "Add a sender",
-                    "stations": "Senders", "senders": "Senders",
+                    "new-station": "Add a driver",
+                    "new-sender": "Add a driver",
+                    "stations": "Drivers", "senders": "Drivers",
                     "live": "Live database",
                     "new-archive": "Add a place", "new-place": "Add a place",
                     "overview": "Overview", "system": "System",
@@ -3864,6 +3875,24 @@ class _Handler(BaseHTTPRequestHandler):
         "adopt" is a duplicate name error on a page that just worked.
         """
         if action in ("new-station", "new-sender"):
+            # One form, two things it can be. A driver that runs where the
+            # hardware is has no console to type an address into, so it is
+            # configured here and started there -- and that is the whole of
+            # the difference. It used to be a second page under a second
+            # menu, which meant knowing our word for it before finding it.
+            fetching = adminstations.runs_elsewhere(form.get("driver", ""))
+            if fetching is not None:
+                kind, hardware = fetching
+                error = self.admin.add_collector(form.get("name", ""), kind,
+                                                 hardware)
+                if error:
+                    self._reply(200, page(self.admin, "new-sender",
+                                          errors={"": error}, form=form))
+                    return
+                made = form.get("name", "").strip().lower()
+                self._redirect(f"./collector:{made}")
+                return
+
             station, error = adminstations.announce(
                 self.admin, form.get("name", ""), form.get("driver", ""))
             if error:

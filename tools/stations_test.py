@@ -440,8 +440,13 @@ def the_settings_page() -> None:
             status, body = get(f"{base}/senders")
             check("the page is there", status, 200)
             check("and the stranger is on it", "STRANGER1" in body, True)
-            check("the page consistently calls them senders",
-                  ("<h2>Senders</h2>" in body, "Add sender" in body),
+            # One word for the page and its button, and the word is Drivers.
+            # It was Senders, with hardware that needs its own process filed
+            # under System -- two names and two menus for two ways of
+            # reading a thermometer. The check is the same check: whatever
+            # the page is called, it is called that throughout.
+            check("the page consistently calls them drivers",
+                  ("<h2>Drivers</h2>" in body, "Add driver" in body),
                   (True, True))
             check("it does not display an archive column",
                   "<th>Place</th>" in body, False)

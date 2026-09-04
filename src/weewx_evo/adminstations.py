@@ -52,6 +52,69 @@ def tellable() -> dict[str, Any]:
     return {name: one for name, one in setups().items() if one.tellable}
 
 
+#: Marks a choice on the add page that is a driver running in its own
+#: process rather than a console uploading here. `runs:<kind>` for one with
+#: nothing further to pick, `runs:<kind>:<hardware>` where the kind offers a
+#: list -- which is the thirteen WeeWX drivers.
+#:
+#: A prefix and not a second form, because the two were two forms and that is
+#: the whole complaint: somebody with a Vantage on a cable and somebody with
+#: an Ecowitt on the wifi are both looking at hardware and both looking for
+#: the same page. What differs is the second step, and the page can work that
+#: out from the answer.
+RUNS = "runs:"
+
+
+def elsewhere(say: Any = None) -> list[tuple[str, str, str]]:
+    """Hardware that has to be fetched from: `(value, label, what it reads)`.
+
+    Read out of the collector kinds, which is where it belongs: what this
+    machine can fetch from is what somebody installed on it, and a kind that
+    offers a list of hardware (`choosing`) becomes one entry per box rather
+    than one entry called "a WeeWX driver". Somebody standing next to a Davis
+    is looking for the word Vantage.
+    """
+    say = say or str
+    from . import collectors as collector_defs
+
+    out: list[tuple[str, str, str]] = []
+    for kind, one in collector_defs.kinds().items():
+        choice = getattr(one, "choosing", None)
+        if choice is None:
+            out.append((f"{RUNS}{kind}", say(one.label), say(one.reads)))
+            continue
+        try:
+            offered = list(choice.options(""))
+        except Exception:
+            # A kind that cannot list its hardware must not take the page
+            # with it: everything else on it still works, and one missing
+            # group is visible where a 500 is not.
+            log.exception("the collector kind %r could not list its choices",
+                          kind)
+            offered = []
+        for value, label in offered:
+            # The empty one is "configured from a weewx.conf", which is a
+            # setting on the page after rather than a piece of hardware.
+            if not str(value):
+                continue
+            out.append((f"{RUNS}{kind}:{value}", str(label), say(one.reads)))
+    return out
+
+
+def runs_elsewhere(chosen: str) -> tuple[str, str] | None:
+    """`(kind, hardware)` for a choice made on the add page, or None.
+
+    None for every protocol, which is what makes one form serve both: the
+    page asks for a name and a choice, and this is what says which of the two
+    things the answer was.
+    """
+    if not chosen.startswith(RUNS):
+        return None
+    rest = chosen[len(RUNS):]
+    kind, _, hardware = rest.partition(":")
+    return (kind, hardware) if kind else None
+
+
 def learns_its_identity(driver: str) -> bool:
     """Whether this hardware carries a name of its own we have to read.
 
@@ -364,7 +427,7 @@ def nav(admin: Any, active: str) -> list[str]:
     here = active in ("senders", "stations", "new-sender", "new-station")
     current = " aria-current='page'" if here else ""
     out.append(f'<a href="./senders"{current}>'
-               f'{html.escape(admin.say("Senders"))}'
+               f'{html.escape(admin.say("Drivers"))}'
                f'<span class="count">{len(register)}</span></a>')
     if not len(register):
         out.append(f'<p class="navempty">{html.escape(admin.say("None"))}</p>')
@@ -521,17 +584,19 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     if not admin.read_only:
         add = ('<div class="actions">'
                '<a class="button" href="./new-sender">'
-               f'{html.escape(say("Add sender"))}</a>'
+               f'{html.escape(say("Add driver"))}</a>'
                "</div>")
+    fetching = _running_elsewhere(admin, register)
     try:
         waiting = _waiting(admin, seen, register, places)
         folded = _folded(seen, lang)
     finally:
         _close_sightings(seen)
     return f'''
-<h2>{html.escape(say("Senders"))}</h2>
+<h2>{html.escape(say("Drivers"))}</h2>
 {chain}
 {problem}{add}
+{fetching}
 <section class="group">
   {announced}
 </section>
@@ -555,6 +620,71 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
   row.scrollIntoView({{block: 'center'}});
 }}());
 </script>'''
+
+
+def _running_elsewhere(admin: Any, register: Any) -> str:
+    """The drivers configured to run in their own process, on this page.
+
+    They were reachable only through System, and that is what made setting up
+    a Vantage a different task from setting up an Ecowitt: two menus, two
+    forms, two lists, for two ways of reading a thermometer. One list here,
+    and the row says the one thing that is actually different about them --
+    that somebody has to start it where the hardware is.
+
+    A driver that has already delivered is in the table below as well, under
+    the name its readings arrive with. That is not a repetition: this row is
+    its *settings* and that row is what it has sent, and the link between
+    them is the name.
+    """
+    say = admin.say
+    try:
+        from . import collectors as collector_defs
+
+        configured = collector_defs.configured(admin.config())
+    except Exception:
+        log.debug("could not list the drivers that run elsewhere",
+                  exc_info=True)
+        return ""
+    if not configured:
+        return ""
+
+    known = {one.driver for one in register}
+    rows = []
+    for name, one in sorted(configured.items()):
+        kind = str(one.get("kind", "")).strip()
+        # Delivering, or waiting to be started. Read from the register
+        # rather than from a flag: what a driver elsewhere is doing is not
+        # this process's business, and a name that has announced a sender is
+        # the one fact this side has.
+        state = say("Delivering") if name in known else say("Not started yet")
+        try:
+            command = collector_defs.start_command(kind, name)
+        except Exception:
+            log.debug("no start command for %r", kind, exc_info=True)
+            command = ""
+        rows.append(f'''
+    <tr>
+      <td><a href="./collector:{html.escape(name)}">
+          <strong>{html.escape(name)}</strong></a></td>
+      <td>{html.escape(kind)}</td>
+      <td>{html.escape(state)}</td>
+      <td><code>{html.escape(command)}</code></td>
+    </tr>''')
+
+    return f'''
+<section class="group">
+  <h3>{html.escape(say("Runs where the hardware is"))}</h3>
+  <p class="lede">{html.escape(say(
+     "Configured here, started there. Nothing on this machine starts "
+     "them."))}</p>
+  <table class="stations">
+    <thead><tr><th>{html.escape(say("Name"))}</th>
+               <th>{html.escape(say("What it runs"))}</th>
+               <th>{html.escape(say("Status"))}</th>
+               <th>{html.escape(say("Start it with"))}</th></tr></thead>
+    <tbody>{"".join(rows)}</tbody>
+  </table>
+</section>'''
 
 
 def _waiting(admin: Any, seen: Any, register: Any, places: list[Any]) -> str:
@@ -681,11 +811,31 @@ def new(admin: Any, error: str = "", form: dict | None = None,
         said = say(one.label)
         return f"{said} ({name})" if seen_label.get(said, 0) > 1 else said
 
-    options = NEWLINE.join(
+    uploads = NEWLINE.join(
         f'<option value="{html.escape(kind)}"'
         f'{" selected" if chosen == kind else ""}>'
         f"{html.escape(shown(kind, one))}</option>"
         for kind, one in offered.items())
+    # And the hardware that has to be fetched from, in the same menu. It was
+    # a second page under a second menu, so somebody with a Davis on a cable
+    # had to know that this program calls that something else before they
+    # could find the form. They are one thing: hardware, and a driver for it.
+    fetched = NEWLINE.join(
+        f'<option value="{html.escape(value)}"'
+        f'{" selected" if chosen == value else ""}>'
+        f"{html.escape(label)}</option>"
+        for value, label, _reads in elsewhere(say))
+    options = uploads
+    if fetched:
+        # Grouped, because the difference is real and costs something: one
+        # is set up by typing an address into the console, the other by
+        # starting a process where the hardware is. Naming it here is what
+        # lets the rest of the page stop being about it.
+        options = (
+            f'<optgroup label="{html.escape(say("It uploads to this machine"))}">'
+            f"{uploads}</optgroup>"
+            f'<optgroup label="{html.escape(say("It is read where it is plugged in"))}">'
+            f"{fetched}</optgroup>")
     # And the explanation is per protocol, not per endpoint. Three endpoints
     # of one driver have one sentence between them, and printing it three
     # times says nothing the first one did not.
@@ -701,6 +851,12 @@ def new(admin: Any, error: str = "", form: dict | None = None,
         f"<li><strong>{html.escape(said)}</strong>: "
         f"{html.escape(say(one.hardware))}</li>"
         for said, one in once.items())
+    # One line per kind that runs elsewhere, not one per box: thirteen
+    # entries in the menu share one sentence about what they are.
+    for said in dict.fromkeys(reads for _v, _l, reads in elsewhere(say)):
+        explained += (f"<li><strong>"
+                      f'{html.escape(say("Read where it is plugged in"))}'
+                      f"</strong>: {html.escape(said)}</li>")
     # Named rather than described in general terms. "Hardware that cannot be
     # told where to upload" leaves somebody holding an AcuRite bridge to work
     # out which sentence is about them; the protocols say what they are, and
@@ -729,7 +885,7 @@ def new(admin: Any, error: str = "", form: dict | None = None,
 
     return f'''
 <section class="group">
-  <h3>{html.escape(say("Add sender"))}</h3>
+  <h3>{html.escape(say("Add driver"))}</h3>
   {problem}
   <form method="post" action="./new-sender">
     <div class="field">
@@ -854,7 +1010,7 @@ def _what_to_enter(admin: Any, station: Any) -> str:
     else:
         listening = f'''
   <p class="help">{html.escape(say("Waiting for the first upload. Return to"))}
-     <a href="./senders">{html.escape(say("Senders"))}</a>
+     <a href="./senders">{html.escape(say("Drivers"))}</a>
      {html.escape(say("to check its status."))}</p>'''
 
     def _stage(step: Any, last: bool) -> str:
