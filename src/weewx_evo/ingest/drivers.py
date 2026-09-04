@@ -134,8 +134,41 @@ class BaseDriver:
         """Whatever the driver wants reported at /status. Optional."""
         return {}
 
+    def start(self, deliver: Callable[[bytes], int]) -> None:
+        """Begin whatever this driver runs on its own. Optional.
+
+        For hardware with nowhere to type a server address into. A PurpleAir
+        sensor, a Davis AirLink and an Ecowitt gateway on its own API all
+        answer whoever asks and can be pointed at nothing, so a driver that
+        only ever waits never sees them.
+
+        `deliver(body)` takes the answer, and is the same door an upload
+        comes through: what arrives is parsed by this driver, stored under
+        the names the hardware used, and reaches a page and an archive the
+        way a pushed reading does. It returns how many packets were stored.
+
+        **The whole of what a polling driver is given.** Not the store, not
+        the archive, not the settings -- the same reasoning as `state`: hand
+        over the narrow thing and the wide one is not reachable. A driver
+        that could write records would make that our bug to explain.
+
+        Run it on a thread of your own and return. This is called once, while
+        the listener is coming up, and `close()` is called when it goes down.
+
+        ## Why here and not in a process of its own
+
+        `CLAUDE.md` says a collector costs a process and a parser costs
+        lines, and that is still the rule: a serial Vantage or anything
+        needing pyusb belongs outside, where it may hang and crash without
+        taking the archiver with it. An HTTP GET to an address on the same
+        network every sixty seconds is the other case. It needs no device
+        access, no dependency and no supervision, so it costs lines -- and
+        the same arrangement the export runners use, a thread each so that
+        one host which stops answering holds up only itself.
+        """
+
     def close(self) -> None:
-        """Release anything held. Optional."""
+        """Release anything held, and stop anything `start` began. Optional."""
 
     def place(self, readings: dict[str, Any], dialect: str,
               decisions: dict[str, str], infer: str = "off") -> Placed | None:

@@ -1391,6 +1391,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
              cfg.get("host"), cfg.get("port"), access, cfg.get("driver"),
              ", ".join(drivers.names()))
 
+    # Hardware with nowhere to type an address into has to be asked. After the
+    # socket is up rather than before, so that a sensor answering in the first
+    # second reaches a listener that is ready for it.
+    polling = ingest.begin()
+    if polling:
+        log.info("asking on their own schedule: %s", ", ".join(polling))
+
     # The settings page, if it has been given a token of its own. Silence
     # rather than a default token: a configuration editor that comes up
     # reachable without anyone asking for it is not a thing to ship.
@@ -1653,6 +1660,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
             forecast_store.close()
         if web is not None:
             web.stop()
+        # Before the socket closes, not after: a driver's own thread may be
+        # part-way through delivering, and `fetched` writes to the live table
+        # this is about to close underneath it.
+        ingest.finish()
         http.stop()
         if admin_server:
             admin_server.stop()

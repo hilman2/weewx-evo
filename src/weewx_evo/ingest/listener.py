@@ -244,6 +244,82 @@ class Ingest:
             return 0, f"could not store: {type(exc).__name__}: {exc}", response
         return stored, "ok", response
 
+    # -- what a driver went and asked for ---------------------------------
+
+    def begin(self) -> list[str]:
+        """Let every driver start whatever it runs on its own.
+
+        Hardware with nowhere to type an address into has to be asked, and
+        `Driver.start` is where a driver does the asking. Returns the names
+        that started, for the log.
+
+        One that raises is reported and skipped, the same rule as everywhere
+        else on this path: the protocols that push still have measurements
+        arriving, and losing those over one sensor's bad address is by far
+        the worse outcome.
+        """
+        started = []
+        for name in self.registry.names():
+            driver = self.registry.get(name)
+            begin = getattr(driver, "start", None)
+            if begin is None:
+                continue
+            try:
+                begin(lambda body, _name=name: self.fetched(_name, body))
+            except Exception:
+                log.exception("the %s driver would not start; carrying on "
+                              "without whatever it polls", name)
+                continue
+            started.append(name)
+        return started
+
+    def finish(self) -> None:
+        """Stop what `begin` started. Safe to call without it."""
+        for name in self.registry.names():
+            done = getattr(self.registry.get(name), "close", None)
+            if done is None:
+                continue
+            try:
+                done()
+            except Exception:
+                log.exception("the %s driver would not stop cleanly", name)
+
+    def fetched(self, name: str, body: bytes) -> int:
+        """One answer a driver asked for, stored as though it had arrived.
+
+        The same door an upload comes through, minus the two things that
+        guard the door: no token and no rate limit. Nothing here crossed a
+        network boundary this process did not open itself, and asking a
+        driver to know the upload token so it could hand it back would be a
+        secret travelling in a circle.
+
+        Everything after that is identical -- the same parse, the same raw
+        names, the same redaction, the same live table. So a polled sensor
+        reaches a page and an archive by the route a pushed one does, and
+        nothing downstream has to learn that there are two kinds.
+        """
+        driver = self.registry.get(name)
+        if driver is None:
+            log.warning("the %s driver delivered a reading after it was "
+                        "unregistered; dropping it", name)
+            return 0
+        meta = {"received": int(time.time()), "source": "poll"}
+        try:
+            packets = driver.packets(body, meta)
+        except Exception as exc:
+            with self._lock:
+                self.rejected += 1
+            log.warning("the %s driver could not read what it fetched: %s",
+                        name, exc)
+            return 0
+        try:
+            return self._store(packets, driver, name, "poll", body)
+        except Exception:
+            with self._lock:
+                self.rejected += 1
+            log.exception("could not record what the %s driver fetched", name)
+            return 0
+
     def _store(self, packets: list, driver: object, name: str, peer: str,
                body: bytes) -> int:
         """Put the parsed packets in the table. Everything that can fail."""

@@ -187,6 +187,8 @@ def tests() -> list[Test]:
              "an interval runs on the hour's grid, not from when it started"),
         Test("watchdog", ["watchdog_test.py"],
              "it restarts for what a restart fixes, and not more often"),
+        Test("polling", ["polling_test.py"],
+             "hardware that has to be asked arrives like one that pushes"),
         Test("livedb", ["livedb_test.py"],
              "the live table hands a descriptor back when its thread ends"),
         Test("livesource", ["livesource_test.py"],
