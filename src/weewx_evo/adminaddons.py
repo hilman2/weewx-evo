@@ -90,26 +90,41 @@ def _rows(plugins: list, installed: dict, admin: Any, suggested: bool = False
     return "".join(out)
 
 
-def _installed_rows(installed: dict, admin: Any) -> str:
-    """What is here, and what each one registers."""
-    say = admin.say
+def _installed_rows(installed: dict, admin: Any, newer: dict) -> str:
+    """What is here, what each registers, and what a newer one would be."""
+    say, lang = admin.say, admin.language
     out = []
     for one in installed.values():
         provides = ", ".join(one.names) or say("nothing on its own")
-        button = ""
+        version = html.escape(one.version)
+        buttons = ""
         if not admin.read_only:
-            button = (
+            if one.package in newer:
+                # Installing again is what updating is: the same route, the
+                # same tarball, and pip replaces what is there. A separate
+                # verb would be a second path doing the same thing.
+                buttons += (
+                    f'<form method="post" action="./addons/install">'
+                    f'<input type="hidden" name="package" '
+                    f'value="{html.escape(one.package)}">'
+                    f'<button type="submit">'
+                    f'{html.escape(say("Update"))}</button></form>')
+            buttons += (
                 f'<form method="post" action="./addons/remove">'
                 f'<input type="hidden" name="package" '
                 f'value="{html.escape(one.package)}">'
                 f'<button type="submit" class="quiet">'
                 f'{html.escape(say("Remove"))}</button></form>')
+        if one.package in newer:
+            version += ('<span class="hint">' + html.escape(lang.fill(
+                "{version} is available", version=newer[one.package]))
+                + "</span>")
         out.append(f'''
   <tr>
     <td><strong>{html.escape(one.package)}</strong></td>
-    <td>{html.escape(one.version)}</td>
+    <td>{version}</td>
     <td>{html.escape(provides)}</td>
-    <td>{button}</td>
+    <td>{buttons}</td>
   </tr>''')
     return "".join(out)
 
@@ -119,6 +134,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     say, lang = admin.say, admin.language
     have = addons.installed()
     offered = addons.offered()
+    newer = addons.updatable()
     suggested = [one for one in addons.wanted_by_sightings(admin)
                  if one.name not in have]
 
@@ -188,7 +204,7 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     <tr><th>{html.escape(say("Package"))}</th>
         <th>{html.escape(say("Version"))}</th>
         <th>{html.escape(say("Provides"))}</th><th></th></tr>
-    {_installed_rows(have, admin)}
+    {_installed_rows(have, admin, newer)}
   </table>
 </section>'''
     else:

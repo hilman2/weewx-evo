@@ -78,6 +78,11 @@ class Plugin:
     #: branch. A catalogue entry that pins one is saying "this is the version
     #: that was tested", which `tested` claims and cannot enforce.
     ref: str = ""
+    #: What the package's own pyproject declares, so an installation can tell
+    #: whether what it has is current. In this file rather than fetched per
+    #: add-on: it is pulled once a day anyway, which makes the check a string
+    #: comparison instead of one request per package.
+    version: str = ""
     licence: str = ""
     tested: str = ""
     author: str = ""
@@ -149,7 +154,7 @@ def parse(text: str) -> list[Plugin]:
             continue
         known = {name: entry.get(name, "") for name in
                  ("name", "kind", "provides", "summary", "repository",
-                  "licence", "tested", "author", "ref")}
+                  "licence", "tested", "author", "ref", "version")}
         detects = entry.get("detects")
         out.append(Plugin(**{k: str(v) for k, v in known.items()},
                           detects=detects if isinstance(detects, dict) else {}))

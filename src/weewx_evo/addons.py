@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -91,7 +92,14 @@ def installed() -> dict[str, Installed]:
     matters is what the running process would actually load, and a package
     that is installed but declares nothing weewx-evo reads is not an add-on
     of ours.
+
+    The path first, and that was the fault: without it this answered with
+    whatever had happened to load a registry earlier in the process. So an
+    add-on installed from the page showed up under Installed on one request
+    and stayed in the Available list on the next, with a button offering to
+    install what was already there.
     """
+    on_path()
     found: dict[str, list[tuple[str, str]]] = {}
     for group in GROUPS:
         for entry in entry_points(group=group):
@@ -243,6 +251,14 @@ def install(package: str, where: Path | None = None,
     listed = {one.name: one for one in offered(where)}
     one = listed.get(package.strip())
     if one is None:
+        # The list is kept for a day, so "not in it" is more often "not in
+        # the copy from this morning" -- somebody publishing an add-on and
+        # then not being able to install it is the case this is for. Asked
+        # again only here, where the answer would otherwise be a refusal.
+        listed = {one.name: one for one in
+                  catalogue.fetch(where or _where(), force=True)}
+        one = listed.get(package.strip())
+    if one is None:
         return (f"{package!r} is not in the add-on list. What can be "
                 f"installed here is what that list has.")
     if not one.repository.startswith(ORGANISATION):
@@ -339,6 +355,47 @@ def install_unlisted(spec: str, where: Path | None = None,
     if arrived:
         log.info("installed %s from %r", ", ".join(arrived), spec)
     return ""
+
+
+def updatable(where: Path | None = None) -> dict[str, str]:
+    """Installed add-ons the list says a newer version exists for.
+
+    Package -> the version on offer. Free, and that decides the shape: the
+    catalogue is fetched once a day whatever happens, so this is a string
+    comparison rather than a request per add-on. An entry with no version
+    says nothing, which is the right answer for one nobody has kept up to
+    date -- "up to date" about something that is not is worse than silence.
+
+    Compared as tuples of integers where both sides are numbers, and as
+    strings otherwise: "0.10.0" is newer than "0.9.0" and sorts before it.
+    """
+    have = installed()
+    found: dict[str, str] = {}
+    for one in offered(where):
+        mine = have.get(one.name)
+        theirs = str(getattr(one, "version", "") or "")
+        if mine is None or not theirs or mine.version in ("", "?"):
+            continue
+        if _newer(theirs, mine.version):
+            found[one.name] = theirs
+    return found
+
+
+def _newer(offered_version: str, installed_version: str) -> bool:
+    """Whether the first is a later version than the second."""
+    def parts(text: str):
+        bits = re.split(r"[-.+]", text.strip())
+        return [int(one) if one.isdigit() else one for one in bits if one]
+
+    left, right = parts(offered_version), parts(installed_version)
+    try:
+        return left > right
+    except TypeError:
+        # A number against a word: "1.0" and "1.0rc1" cannot be ordered
+        # without inventing a rule about which is newer. Saying nothing is
+        # the honest answer, and it costs an update nobody was told about
+        # rather than an update that goes the wrong way.
+        return False
 
 
 def archive_url(one: object) -> str:

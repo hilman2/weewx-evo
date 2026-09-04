@@ -17,6 +17,7 @@ runner is handed in, and what is checked is the command that would have run.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import time
@@ -54,6 +55,13 @@ kind = "library"
 provides = ""
 summary = "The parts the push protocols share. On its own it does nothing."
 repository = "https://github.com/weewx-evo/weewx-evo-push-common"
+
+[[plugin]]
+name = "weewx-evo-neverinstalled"
+kind = "library"
+provides = ""
+summary = "A dependency no machine running this test has."
+repository = "https://github.com/weewx-evo/weewx-evo-neverinstalled"
 
 [[plugin]]
 name = "weewx-evo-elsewhere"
@@ -97,6 +105,12 @@ def only_what_the_catalogue_lists() -> None:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
         where = Path(raw)
         _cached(where)
+        # A name that is not in the list makes `install` fetch a fresh one --
+        # "not in it" is usually "not in the copy from this morning". Pointed
+        # at a closed port so this measures the catalogue written here rather
+        # than whatever is on GitHub today, and so that a refusal is still a
+        # refusal when the refresh fails.
+        was, catalogue.URL = catalogue.URL, "http://127.0.0.1:1/nope"
 
         ran = Ran()
         check("a listed one goes ahead",
@@ -143,6 +157,7 @@ def only_what_the_catalogue_lists() -> None:
         check("and it says which command would install it anyway",
               "--unlisted" in problem, True)
         check("and pip was not run for it", ran.calls, [])
+        catalogue.URL = was
 
 
 def a_dependency_comes_too_and_only_from_the_list() -> None:
@@ -160,15 +175,18 @@ def a_dependency_comes_too_and_only_from_the_list() -> None:
         _cached(where)
         was = addons._needs
         try:
+            # A name no machine can already have: in the Docker image the
+            # push protocols are installed, and "it is already here" is a
+            # correct answer that measures nothing about fetching.
             addons._needs = lambda package: (
-                ["weewx-evo-push-common"] if package == "weewx-evo-ecowitt"
+                ["weewx-evo-neverinstalled"] if package == "weewx-evo-ecowitt"
                 else [])
             ran = Ran()
             check("installing one that needs a library succeeds",
                   addons.install("weewx-evo-ecowitt", where, ran), "")
             check("and the library was fetched too",
                   [one[-1].split(" @ ")[0] for one in ran.calls],
-                  ["weewx-evo-ecowitt", "weewx-evo-push-common"])
+                  ["weewx-evo-ecowitt", "weewx-evo-neverinstalled"])
 
             # The same thing, needing something the catalogue does not have.
             addons._needs = lambda package: (
@@ -225,6 +243,85 @@ def the_command_line_may_install_anything() -> None:
         check("and an unknown verb is refused",
               bool(adminaddons.act(None, "install_unlisted",
                                    {"package": "x"})), True)
+
+
+def what_is_installed_disappears_from_the_shelf() -> None:
+    """Two lists of one thing, and it must not be in both.
+
+    Reported from the beta: an add-on installed from the page stayed in
+    Available, with a button offering to install what was already there.
+    `installed()` did not put the add-on directory on `sys.path` itself, so
+    it answered with whatever had happened to load a registry earlier in the
+    process -- which is a different answer on two requests of the same page.
+    """
+    print()
+    print("what is installed is not offered")
+    from weewx_evo import adminaddons
+
+    have = addons.installed()
+    if not have:
+        # Nothing installed here, so nothing could wrongly be offered. Said
+        # rather than passed quietly: a check that measures nothing on this
+        # machine must not read like one that measured something.
+        print("  ..   no add-on is installed here, so nothing can be in both")
+        return
+
+    class FakeAdmin:
+        path = Path("evo.toml")
+        read_only = False
+
+        def config(self):
+            return {}
+
+        @property
+        def language(self):
+            from weewx_evo import language as language_defs
+
+            return language_defs.get("en")
+
+        def say(self, english: str) -> str:
+            return self.language.say(english)
+
+    # The page, not the raw catalogue: the catalogue lists everything by
+    # design, and what must not repeat itself is what a reader sees.
+    page = adminaddons.overview(FakeAdmin())
+    below = page.split("Available", 1)[-1]
+    offered_names = re.findall(r"<td><strong>([^<]+)</strong>", below)
+    check("nothing installed is offered again",
+          sorted(name for name in offered_names if name in have), [])
+    check("and what is installed is on the page",
+          any(name in page for name in have), True)
+
+
+def an_update_is_a_string_comparison() -> None:
+    """The catalogue carries the version, so the check costs no request.
+
+    It is pulled once a day whatever happens. Fetching a version per add-on
+    would be fifteen requests to answer a question nobody asked, on a page
+    somebody opened to do something else.
+    """
+    print()
+    print("what is out of date")
+    from weewx_evo.addons import _newer
+
+    for later, older, want in (("0.2.0", "0.1.0", True),
+                               ("0.10.0", "0.9.0", True),   # not a string sort
+                               ("0.1.0", "0.1.0", False),
+                               ("0.1.0", "0.2.0", False),
+                               ("1.0", "1.0rc1", False)):   # unorderable
+        check(f"{later} newer than {older}", _newer(later, older), want)
+
+    # An entry with no version says nothing rather than guessing, because
+    # "up to date" about something that is not is worse than silence.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        where = Path(raw)
+        _cached(where)
+        was, catalogue.URL = catalogue.URL, "http://127.0.0.1:1/nope"
+        try:
+            # The test catalogue declares no versions at all.
+            check("nothing is offered as an update", addons.updatable(where), {})
+        finally:
+            catalogue.URL = was
 
 
 def what_pip_says_is_reported() -> None:
@@ -366,6 +463,8 @@ def main() -> int:
     only_what_the_catalogue_lists()
     a_dependency_comes_too_and_only_from_the_list()
     the_command_line_may_install_anything()
+    what_is_installed_disappears_from_the_shelf()
+    an_update_is_a_string_comparison()
     what_pip_says_is_reported()
     removing_asks_what_is_here()
     what_is_installed_is_read_from_the_entry_points()
