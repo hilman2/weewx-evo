@@ -128,15 +128,6 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     elif message:
         banner = f'<div class="banner">{html.escape(message)}</div>'
 
-    if addons.in_a_container():
-        # Before the buttons, not after. Installing here works and is gone at
-        # the next rebuild, and somebody who found that out by their console
-        # going unread would have no way to guess why.
-        banner += (
-            '<div class="banner warn">' + html.escape(say(
-                "This is running in a container, so anything installed here "
-                "is gone at the next rebuild. Put it in deploy/addons.txt to "
-                "keep it.")) + "</div>")
 
     top = ""
     if suggested:
@@ -162,13 +153,24 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
       "weewx-evo driver install /path/to/it"))}</p>
 </section>'''
     else:
-        rest = [one for one in offered if one.name not in have]
+        # A library is in the list so that it may be installed and never
+        # offered: installing `weewx-evo-push-common` on its own registers
+        # nothing and answers on no endpoint, and a shelf with a thing on it
+        # that does nothing when chosen is a shelf somebody has to be warned
+        # about. It arrives as a dependency of whatever needed it.
+        rest = [one for one in offered
+                if one.name not in have and one.kind != "library"]
         listing = f'''
 <section class="group">
   <h3>{html.escape(say("Available"))}</h3>
   <p class="lede">{html.escape(lang.fill(
       "{n} add-on(s) in the list. The core ships none of them.",
       n=len(offered)))}</p>
+  <p class="help">{html.escape(lang.fill(
+      "Installed into {where}, which is in the data directory rather than "
+      "with the program: what is installed here outlives an upgrade, and in "
+      "a container it outlives the container.",
+      where=str(addons.directory())))}</p>
   <table class="stations">
     <tr><th>{html.escape(say("Add-on"))}</th>
         <th>{html.escape(say("Kind"))}</th>

@@ -122,6 +122,17 @@ def kinds() -> dict[str, Kind]:
     if _contributed is None:
         from importlib.metadata import entry_points
 
+        # Same reason as in `drivers.Registry.load`: an add-on installed into
+        # the data directory is found by looking along `sys.path`, and this
+        # is the other place that looks.
+        try:
+            from . import addons
+
+            addons.on_path()
+        except Exception:
+            log.debug("could not add the add-on directory to the path",
+                      exc_info=True)
+
         found: dict[str, Kind] = {}
         for entry in entry_points(group=ENTRY_POINT_GROUP):
             try:

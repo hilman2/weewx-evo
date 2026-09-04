@@ -827,6 +827,19 @@ class Registry:
             return
         self._loaded = True
 
+        # Before the entry points are walked, never after: an add-on lives in
+        # the data directory so that it outlives the container it was
+        # installed from, and a distribution is found by looking along
+        # `sys.path` for its `.dist-info`. Without this it is installed and
+        # invisible, which is indistinguishable from not installed.
+        try:
+            from .. import addons
+
+            addons.on_path()
+        except Exception:
+            log.debug("could not add the add-on directory to the path",
+                      exc_info=True)
+
         from importlib.metadata import entry_points
 
         for entry in entry_points(group=ENTRY_POINT_GROUP):

@@ -30,6 +30,13 @@ services:
       # The archive day boundary is local time, so this is part of the data
       # and not a display setting. Set it to the station's own zone.
       - TZ=${TZ:-Europe/Berlin}
+      # Add-ons installed from the settings page go here, which is in the
+      # volume. Without it they would land in site-packages, which is in the
+      # image -- so an add-on installed from the page would be gone at the
+      # next `docker compose up`, with the console still uploading and
+      # nothing reading it. What is in deploy/addons.txt comes with the image
+      # instead, and both are found the same way.
+      - WEEWX_EVO_ADDON_DIR=/data/addons
       - PYTHONDONTWRITEBYTECODE=1
       - WEEWX_EVO_LIVE=/data/live.sdb
       # Bootstrap only: if /data/archives.toml does not exist yet, its first

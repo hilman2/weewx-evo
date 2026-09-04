@@ -1,14 +1,13 @@
-# The add-ons this installation runs, installed into the image.
+# The add-ons this image comes with.
 #
-# weewx-evo ships no driver. In a container that has to be said somewhere the
-# image can read, because a driver installed from the settings page lives in
-# site-packages and site-packages is not a volume: it works until the next
-# `docker compose up` and is then gone, with the console still uploading and
-# nothing reading it.
+# One of two ways, and both work. This one is pinned, diffable and rebuilt
+# the same on any machine, which is what a deployment wants. The other is the
+# Add-ons page, which installs into the data directory -- a volume here, so
+# what is installed that way outlives the container it was installed from.
 #
-# So this file is the truth for a container, and the page says so when it is
-# running in one. Edit it, rebuild, and the station comes back with what it
-# needs.
+# Use this for what the station must have when it comes up. A station whose
+# console stops being read because somebody forgot to click something after
+# a rebuild is the failure this file exists to make impossible.
 #
 # Pinned to commits, like everything else in this project that is compared
 # against or depended on. A station that runs untouched for years should not

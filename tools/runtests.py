@@ -155,6 +155,8 @@ def tests() -> list[Test]:
              "one guided setup per driver, derived from what it already says"),
         Test("addons", ["addons_test.py"],
              "an add-on is installed by name, and only a name from the list"),
+        Test("addonpath", ["addonpath_test.py"],
+             "what is installed outlives the process that installed it"),
         Test("web", ["web_test.py"],
              "the built-in server"),
         Test("smoke", ["smoke.py"],

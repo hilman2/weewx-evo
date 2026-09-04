@@ -49,6 +49,13 @@ repository = "https://github.com/weewx-evo/weewx-evo-acurite"
 detects = { body = ["mt=", "id="] }
 
 [[plugin]]
+name = "weewx-evo-push-common"
+kind = "library"
+provides = ""
+summary = "The parts the push protocols share. On its own it does nothing."
+repository = "https://github.com/weewx-evo/weewx-evo-push-common"
+
+[[plugin]]
 name = "weewx-evo-elsewhere"
 kind = "driver"
 provides = "elsewhere"
@@ -94,12 +101,17 @@ def only_what_the_catalogue_lists() -> None:
         ran = Ran()
         check("a listed one goes ahead",
               addons.install("weewx-evo-ecowitt", where, ran), "")
+        # The first call: what follows may be a dependency, see below.
         check("with the URL from the entry, not from the caller",
-              ran.calls[-1][-1],
+              ran.calls[0][-1],
               "weewx-evo-ecowitt @ git+https://github.com/weewx-evo/"
               "weewx-evo-ecowitt")
         check("and through this interpreter's own pip",
-              ran.calls[-1][1:4], ["-m", "pip", "install"])
+              ran.calls[0][1:4], ["-m", "pip", "install"])
+        # Into the data directory rather than site-packages: the reason the
+        # whole thing works in a container.
+        check("and into the add-on directory",
+              "--target" in ran.calls[0], True)
 
         # The one that matters. Without the lookup this is `pip install
         # <whatever the form said>`, which is remote code execution with
@@ -120,6 +132,46 @@ def only_what_the_catalogue_lists() -> None:
         check("a listed one with a repository elsewhere is refused",
               "install from" in problem, True)
         check("and pip was not run for it", ran.calls, [])
+
+
+def a_dependency_comes_too_and_only_from_the_list() -> None:
+    """`--no-deps` is passed, so this has to fetch what a package needs.
+
+    Fetched here rather than left to pip, and that is the fence again: pip
+    would resolve whatever a package asked for, from wherever it asked. So a
+    dependency is looked up in the catalogue like anything else, and one that
+    is not there is named rather than fetched.
+    """
+    print()
+    print("a dependency")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        where = Path(raw)
+        _cached(where)
+        was = addons._needs
+        try:
+            addons._needs = lambda package: (
+                ["weewx-evo-push-common"] if package == "weewx-evo-ecowitt"
+                else [])
+            ran = Ran()
+            check("installing one that needs a library succeeds",
+                  addons.install("weewx-evo-ecowitt", where, ran), "")
+            check("and the library was fetched too",
+                  [one[-1].split(" @ ")[0] for one in ran.calls],
+                  ["weewx-evo-ecowitt", "weewx-evo-push-common"])
+
+            # The same thing, needing something the catalogue does not have.
+            addons._needs = lambda package: (
+                ["weewx-evo-somethingelse"] if package == "weewx-evo-ecowitt"
+                else [])
+            ran = Ran()
+            problem = addons.install("weewx-evo-ecowitt", where, ran)
+            check("one needing something unlisted says so",
+                  "not in the add-on list" in problem, True)
+            check("and that something was not fetched",
+                  [one[-1].split(" @ ")[0] for one in ran.calls],
+                  ["weewx-evo-ecowitt"])
+        finally:
+            addons._needs = was
 
 
 def what_pip_says_is_reported() -> None:
@@ -259,6 +311,7 @@ def a_read_only_page_offers_no_buttons(where: Path) -> None:
 
 def main() -> int:
     only_what_the_catalogue_lists()
+    a_dependency_comes_too_and_only_from_the_list()
     what_pip_says_is_reported()
     removing_asks_what_is_here()
     what_is_installed_is_read_from_the_entry_points()

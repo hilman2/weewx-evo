@@ -37,6 +37,8 @@ add-on installed and apparently doing nothing is the confusing state.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -118,27 +120,87 @@ def _version_of(package: str) -> str:
         return ""
 
 
-def in_a_container() -> bool:
-    """Whether this is running in a container, as far as can be told.
+#: Where an add-on installed here goes, under the data directory.
+#:
+#: Not site-packages, and that is the whole of what makes this work in a
+#: container: site-packages is in the image, so an add-on installed there is
+#: gone at the next `docker compose up` -- with the console still uploading
+#: and nothing reading it, which is the worst way to find out. The data
+#: directory is a volume on every deployment this ships, so what is installed
+#: outlives the container that installed it.
+#:
+#: Beside `drivers/` and `weewx-drivers/`, which are there for the same
+#: reason and were there first.
+DIRECTORY = "addons"
 
-    It decides what is said, never what is done. Installing works either way;
-    in a container it works until the next `docker compose up`, because
-    site-packages is in the image and the image is rebuilt from
-    `deploy/addons.txt`. Somebody who installs a driver from the page,
-    restarts, and finds their console unread again would have no way to
-    guess why -- so it is said before the button is pressed.
+#: Set to the directory this process has already put on `sys.path`, so that
+#: repeated calls are free and a second one cannot add it twice.
+_on_path: Path | None = None
 
-    `/.dockerenv` and the cgroup line are the two usual tells, and either
-    being wrong costs a sentence on a page, which is why a guess is
-    acceptable here and would not be anywhere the data is decided.
+#: What a container installs at build time, for a deployment that wants its
+#: add-ons pinned in a file rather than clicked. Both work and neither is
+#: required: this one is reproducible, the page is immediate, and an add-on
+#: installed either way is found the same way.
+BUILD_LIST = "deploy/addons.txt"
+
+
+def directory(archive: str | os.PathLike | None = None) -> Path:
+    """Where add-ons installed from here live.
+
+    `WEEWX_EVO_ADDON_DIR` first, because a container may want it somewhere
+    else entirely; then beside the archive, which is where the data
+    directory is.
     """
-    if Path("/.dockerenv").exists():
-        return True
-    try:
-        return "docker" in Path("/proc/self/cgroup").read_text(
-            encoding="utf-8", errors="replace")
-    except OSError:
-        return False
+    from_env = os.environ.get("WEEWX_EVO_ADDON_DIR")
+    if from_env:
+        return Path(from_env).expanduser()
+    if archive:
+        return Path(archive).expanduser().parent / DIRECTORY
+    return _data_directory() / DIRECTORY
+
+
+def _data_directory() -> Path:
+    """The data directory, from the running settings or as a guess."""
+    from . import settings as settings_state
+
+    running = settings_state.running()
+    if running is not None:
+        try:
+            archive = running.get("archive_db")
+            if archive:
+                return Path(str(archive)).expanduser().parent
+        except Exception:
+            log.debug("could not read archive_db for the add-on directory",
+                      exc_info=True)
+    return Path("data")
+
+
+def on_path(archive: str | os.PathLike | None = None) -> Path | None:
+    """Put the add-on directory on `sys.path`. Returns it, or None.
+
+    Called before the entry points are walked, which is the only moment it
+    matters: `importlib.metadata` finds a distribution by looking along
+    `sys.path` for its `.dist-info`, so an add-on installed into a directory
+    nothing has added is installed and invisible.
+
+    Idempotent, and it has to be: `Registry.load()` is called from several
+    entry points and a path added twice is a path searched twice for every
+    import for the life of the process.
+    """
+    global _on_path
+
+    where = directory(archive)
+    if _on_path == where:
+        return where
+    if not where.is_dir():
+        return None
+    text = str(where.resolve())
+    if text not in sys.path:
+        # Appended, not prepended: an add-on must not be able to shadow the
+        # core's own modules by being installed under one of their names.
+        sys.path.append(text)
+    _on_path = where
+    return where
 
 
 def _where() -> Path:
@@ -175,9 +237,72 @@ def install(package: str, where: Path | None = None,
         return (f"{package!r} does not have a repository this can install "
                 f"from. Install it by hand.")
 
-    command = [sys.executable, "-m", "pip", "install",
+    into = directory()
+    try:
+        into.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"could not make {into}: {exc}"
+
+    # `--target` rather than site-packages, so it survives the container it
+    # was installed from. `--upgrade` because pip refuses to overwrite a
+    # directory that is already there, and reinstalling is what somebody
+    # does when an add-on is broken.
+    #
+    # `--no-deps` because these depend on `weewx-evo`, which is the running
+    # program rather than something to fetch. What they need of each other is
+    # in the catalogue as its own entry -- push-common is listed and can be
+    # installed on its own.
+    command = [sys.executable, "-m", "pip", "install", "--upgrade",
+               "--no-deps", "--target", str(into),
                f"{one.name} @ git+{one.repository}"]
-    return _run(command, runner, f"could not install {one.name}")
+    problem = _run(command, runner, f"could not install {one.name}")
+    if problem:
+        return problem
+    on_path()
+
+    # What it needs and did not get, because `--no-deps` was passed. Fetched
+    # here rather than left to pip, and the difference is the fence: pip
+    # would resolve whatever a package asked for, from wherever it asked,
+    # which is a way round the rule that what may be installed is what the
+    # catalogue lists. So each dependency is looked up in the catalogue too,
+    # and one that is not there is named rather than fetched.
+    for name in _needs(one.name):
+        if name in installed():
+            continue
+        if name not in listed:
+            return (f"Installed, but it needs {name}, which is not in the "
+                    f"add-on list. Install that by hand.")
+        problem = install(name, where, runner)
+        if problem:
+            return f"Installed {one.name}, but {problem}"
+    return ""
+
+
+def _needs(package: str) -> list[str]:
+    """Which weewx-evo packages this one declares a dependency on.
+
+    Only ours. Nothing in the catalogue depends on anything outside the
+    standard library, which is the property that makes `--no-deps` safe: what
+    is left to resolve is a short list of names this program already knows
+    how to check.
+    """
+    wanted = []
+    try:
+        from importlib.metadata import distribution
+
+        for raw in distribution(package).requires or ():
+            if ";" in raw and "extra" in raw.split(";", 1)[1]:
+                # An optional extra. Nobody asked for it.
+                continue
+            name = raw.split(";")[0].split("[")[0]
+            for stop in ("<", ">", "=", "!", "~", " ", "("):
+                name = name.split(stop)[0]
+            name = name.strip()
+            if name.startswith("weewx-evo-") and name != package:
+                wanted.append(name)
+    except Exception:
+        log.debug("could not read what %r requires", package, exc_info=True)
+    return wanted
 
 
 def remove(package: str, where: Path | None = None,
@@ -191,11 +316,83 @@ def remove(package: str, where: Path | None = None,
     configuration because a package was removed would be the expensive
     direction of a decision somebody may be reversing in a minute.
     """
-    have = installed()
-    if package not in have:
+    # The directory decides, not the registry. What can be taken away is what
+    # is on disk here -- and this process may have been started before the
+    # add-on was installed, in which case the entry points it read do not
+    # have it and never will until it restarts.
+    #
+    # `pip uninstall` cannot undo a `--target` install: it knows nothing about
+    # a directory it was told to write into once. So the files are removed
+    # here, and from the record pip itself wrote -- `RECORD` in the
+    # `.dist-info` lists every file that was put there, which is exactly the
+    # question being asked and the only answer that cannot be a guess.
+    where = directory(None)
+    marker = _dist_info(where, package)
+    if marker is None:
+        if package in installed():
+            return (f"{package!r} came with this installation rather than "
+                    f"being installed here. In a container, take it out of "
+                    f"deploy/addons.txt and rebuild.")
         return f"{package!r} is not installed here."
-    command = [sys.executable, "-m", "pip", "uninstall", "-y", package]
-    return _run(command, runner, f"could not remove {package}")
+    try:
+        _delete_recorded(where, marker)
+    except OSError as exc:
+        return f"could not remove {package}: {exc}"
+    return ""
+
+
+def _dist_info(where: Path, package: str) -> Path | None:
+    """The `.dist-info` for this package under `where`, or None."""
+    if not where.is_dir():
+        return None
+    # Distribution names are normalised in a directory name: `-` becomes `_`,
+    # and case is folded. Comparing the raw name would miss every package
+    # whose name has a dash in it, which is all of ours.
+    wanted = package.replace("-", "_").lower()
+    for entry in where.glob("*.dist-info"):
+        if entry.name.split("-")[0].replace("-", "_").lower() == wanted:
+            return entry
+    return None
+
+
+def _delete_recorded(where: Path, marker: Path) -> None:
+    """Remove everything pip recorded for this distribution, then the record.
+
+    Paths outside `where` are skipped rather than followed: a RECORD is a
+    file in a directory this program writes to, and one that names
+    `../../something` is either broken or malicious. Neither is a reason to
+    delete anything.
+    """
+    record = marker / "RECORD"
+    lines = (record.read_text(encoding="utf-8").splitlines()
+             if record.exists() else [])
+    root = where.resolve()
+    directories: set[Path] = set()
+    for line in lines:
+        named = line.split(",")[0].strip()
+        if not named:
+            continue
+        target = (where / named).resolve()
+        if root not in target.parents and target != root:
+            log.warning("%s records a path outside %s; leaving it alone",
+                        marker.name, where)
+            continue
+        try:
+            target.unlink()
+        except IsADirectoryError:
+            shutil.rmtree(target, ignore_errors=True)
+        except FileNotFoundError:
+            pass
+        directories.add(target.parent)
+
+    shutil.rmtree(marker, ignore_errors=True)
+    # Empty directories, deepest first, so a package's own tree goes with it.
+    for one in sorted(directories, key=lambda p: len(p.parts), reverse=True):
+        try:
+            if one != root and one.is_dir() and not any(one.iterdir()):
+                one.rmdir()
+        except OSError:
+            pass
 
 
 def _run(command: list[str], runner: object, whatever_failed: str) -> str:
