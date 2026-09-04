@@ -72,3 +72,7 @@ PLAN.md
 # The exception: a wiki page that shows the settings page needs pictures of
 # it, and those are the deliverable rather than a look taken while working.
 !docs/images/*.png
+
+# The add-on list, fetched and kept for a day. Not authoritative and
+# nothing but `catalogue.py` reads it.
+plugins.cache.toml
