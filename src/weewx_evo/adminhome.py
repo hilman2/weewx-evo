@@ -926,25 +926,9 @@ def _nothing_reads_it(admin: Any) -> list[str]:
     that something is uploading and being unreadable is most of the value;
     which add-on reads it is the part that needs the network.
     """
-    from . import catalogue
-    from .db.live import LiveStore
-    from .ingest.listener import UNREAD
+    from . import addons, catalogue
 
-    try:
-        where = config_file.resolved_path(
-            admin.config(), "live_db", Path(admin.path).parent,
-            "data/live.sdb")
-        if not where.exists():
-            return []
-        with closing(LiveStore(where)) as live:
-            from .ingest.sightings import Sightings
-
-            with closing(Sightings(live)) as seen:
-                unread = [one for one in seen.waiting()
-                          if one.driver == UNREAD]
-    except Exception:
-        log.debug("could not read the unreadable uploads", exc_info=True)
-        return []
+    unread = addons.unread_sightings(admin)
     if not unread:
         return []
 

@@ -162,7 +162,7 @@ def cached(where: Path) -> tuple[list[Plugin], float]:
         return [], 0.0
 
 
-def fetch(where: Path, url: str = URL, timeout: float = TIMEOUT,
+def fetch(where: Path, url: str = "", timeout: float = TIMEOUT,
           force: bool = False) -> list[Plugin]:
     """The catalogue, from the network or from the last copy of it.
 
@@ -174,6 +174,11 @@ def fetch(where: Path, url: str = URL, timeout: float = TIMEOUT,
     if have and not force and time.time() - when < STALE_AFTER:
         return have
 
+    # Read here rather than bound as a default: a default is evaluated once,
+    # when this module is imported, so nothing could point this anywhere else
+    # afterwards -- including a test measuring what happens when the address
+    # cannot be reached, which is the one behaviour that must not be assumed.
+    url = url or URL
     try:
         request = urllib.request.Request(  # noqa: S310 - a constant https URL
             url, headers={"Accept": "text/plain"})

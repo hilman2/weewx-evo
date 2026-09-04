@@ -2290,6 +2290,67 @@ def cmd_driver_remove(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_addon_list(args: argparse.Namespace) -> int:
+    """What is installed here, and what the catalogue offers.
+
+    Both, because the useful question on a fresh machine is "what can I
+    have" and on a working one it is "what have I got", and a person asking
+    either does not know which command answers which.
+    """
+    from . import addons
+
+    settings_for(args)  # so the cache is looked for beside the right file
+    have = addons.installed()
+    print(f"installed ({len(have)}):")
+    for one in have.values():
+        provides = ", ".join(one.names) or "(a dependency; provides nothing)"
+        print(f"  {one.package:<32} {one.version:<8} {provides}")
+    if not have:
+        print("  (none)")
+
+    offered = addons.offered()
+    rest = [one for one in offered if one.name not in have]
+    print()
+    if not offered:
+        # Offline with nothing cached. Not an error: `driver install` takes a
+        # local file, which is the whole reason that path exists.
+        print("the add-on list could not be fetched and none is cached here.")
+        return 0
+    print(f"available ({len(rest)}):")
+    for one in rest:
+        print(f"  {one.name:<32} {one.kind:<10} {one.summary}")
+    return 0
+
+
+def cmd_addon_install(args: argparse.Namespace) -> int:
+    from . import addons
+
+    settings_for(args)
+    problem = addons.install(args.package)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+    # Said every time, because it is the state that reads as a broken
+    # install: entry points are read once per process, so it is there and
+    # doing nothing until the service comes back.
+    print(f"Installed {args.package}. Restart weewx-evo for it to take "
+          f"effect.")
+    return 0
+
+
+def cmd_addon_remove(args: argparse.Namespace) -> int:
+    from . import addons
+
+    settings_for(args)
+    problem = addons.remove(args.package)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+    print(f"Removed {args.package}. What it recorded stays: the packets are "
+          f"in the journal and the archive keeps its columns.")
+    return 0
+
+
 def local_addresses() -> list[tuple[str, str]]:
     """Addresses this machine can be reached on, as (address, what it is).
 
@@ -5650,6 +5711,23 @@ def main(argv: list[str] | None = None) -> int:
     _add_driver_dir(q)
     q.add_argument("name")
     q.set_defaults(func=cmd_driver_remove)
+
+    p = sub.add_parser("addon", help="what add-ons exist, and install them")
+    addon_sub = p.add_subparsers(dest="addon_command", required=True)
+
+    q = addon_sub.add_parser("list", help="what is installed and what exists")
+    add_common(q)
+    q.set_defaults(func=cmd_addon_list)
+
+    q = addon_sub.add_parser("install", help="install one from the list")
+    add_common(q)
+    q.add_argument("package", help="its name, as `addon list` prints it")
+    q.set_defaults(func=cmd_addon_install)
+
+    q = addon_sub.add_parser("remove", help="uninstall one")
+    add_common(q)
+    q.add_argument("package")
+    q.set_defaults(func=cmd_addon_remove)
 
     p = sub.add_parser("url", help="the live view and upload addresses, with the token")
     p.add_argument("--config", type=Path, default=(

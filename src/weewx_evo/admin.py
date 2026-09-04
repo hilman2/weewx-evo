@@ -34,6 +34,7 @@ from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import (
+    adminaddons,
     adminarchives,
     adminhome,
     adminlive,
@@ -187,7 +188,7 @@ ADD_PAGES = ("new-export", "new-feed", "new-upload", "new-forecast",
 #: it is the path from an empty directory to a station recording.
 OWN_PAGES = ("overview", "senders", "places", "system", "stations", "live",
              "archives", "publishing", "charts", "quality", "search",
-             "setup")
+             "setup", "addons")
 
 #: What a POST to the stations page may ask for. Named rather than inferred
 #: from the path: a path is whatever a browser resolved a relative link to,
@@ -2088,7 +2089,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                  "stations": adminstations, "senders": adminstations,
                  "publishing": adminpublish, "system": adminsystem,
                  "charts": adminplots, "quality": adminquality,
-                 "live": adminlive}
+                 "live": adminlive, "addons": adminaddons}
         body = [pages[active].overview(admin, message, errors.get("", ""))]
     elif active in ("new-archive", "new-place"):
         body = [adminarchives.new(admin, errors.get("", ""), form)]
@@ -2235,6 +2236,7 @@ def page(admin: Admin, active: str, errors: dict[str, str] | None = None,
                     "overview": "Overview", "system": "System",
                     "publishing": "Publishing",
                     "charts": "Charts", "quality": "Sensor checks",
+                    "addons": "Add-ons",
                     "search": "Find a setting"}
         # The compatibility route and the canonical route render the same
         # Place list and therefore share its title.
@@ -3604,6 +3606,13 @@ class _Handler(BaseHTTPRequestHandler):
         said = parse_qs(parsed.query)
         message = ("Saved." if "saved" in said
                    else "Removed." if "removed" in said else "")
+        if said.get("done"):
+            # An add-on. Named, and with the restart said out loud: entry
+            # points are read once per process, so it is installed and doing
+            # nothing until the service comes back, and "Saved." would let
+            # somebody go looking for it on a page that cannot show it yet.
+            message = (f"{said['done'][0]} is done. Restart weewx-evo for it "
+                       f"to take effect.")
         # `?learn=name` reopens the wizard on a station still waiting for its
         # console, so the values to type in are one link away rather than
         # gone once the page was left.
@@ -3793,6 +3802,19 @@ class _Handler(BaseHTTPRequestHandler):
 
         if "quality" in parts:
             self._quality_action(action, form)
+            return
+
+        if "addons" in parts:
+            # Redirect after it, like every other save here: pip took twenty
+            # seconds and a reload would run it again. `done=` carries what
+            # to say, because the message is about a package this process
+            # cannot see yet -- entry points are read once.
+            error = adminaddons.act(self.admin, action, form)
+            if error:
+                self._reply(200, page(self.admin, "addons",
+                                      errors={"": error}))
+                return
+            self._redirect(f"./addons?done={quote(str(form.get('package', '')))}")
             return
 
         if action in ("new-archive", "new-place") or any(

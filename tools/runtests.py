@@ -153,6 +153,8 @@ def tests() -> list[Test]:
              "hardware with no field for a token, and everything that has one"),
         Test("wizard", ["wizard_test.py"],
              "one guided setup per driver, derived from what it already says"),
+        Test("addons", ["addons_test.py"],
+             "an add-on is installed by name, and only a name from the list"),
         Test("web", ["web_test.py"],
              "the built-in server"),
         Test("smoke", ["smoke.py"],

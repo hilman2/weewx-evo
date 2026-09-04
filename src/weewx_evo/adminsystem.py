@@ -69,6 +69,8 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     {_row("./live", "Live database", "Incoming packets", readonly=True,
           say=say)}
     {_row("./quality", "Sensor checks", "Global acceptance rules", say=say)}
+    {_row("./addons", "Add-ons", "Drivers and everything else not shipped",
+          say=say)}
   </section>
   <section class="system-panel">
     <div class="system-panel-head"><h3>{html.escape(say("Collectors"))}</h3>
