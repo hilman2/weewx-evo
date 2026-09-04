@@ -88,12 +88,31 @@ class MemberPolicy:
         if not isinstance(self.indoor, bool):
             raise ValueError("member indoor is true or false")
 
+    #: Settings this used to have, and what replaced each. Refused like any
+    #: other unknown key -- reading and ignoring one would leave a place
+    #: working with a line in it that means nothing, which is how somebody
+    #: spends an afternoon on a setting that was never applied.
+    #:
+    #: What they get instead of "unknown member setting" is what to do. The
+    #: message is read by somebody whose station has just refused to start,
+    #: and "unknown" is true and no help at all.
+    RETIRED: ClassVar[dict[str, str]] = {
+        "role": "a place names one primary sender instead, on the Place page",
+        "channel": "the Fields page places a reading in the column you choose",
+    }
+
     @classmethod
     def from_dict(cls, raw: Any) -> MemberPolicy:
         """One strictly checked policy from TOML values."""
         if not isinstance(raw, dict):
             raise ValueError("a member policy is a table")
         unknown = set(raw) - {"indoor"}
+        retired = sorted(unknown & set(cls.RETIRED))
+        if retired:
+            raise ValueError(
+                "; ".join(f"{name} is no longer a member setting: "
+                          f"{cls.RETIRED[name]}" for name in retired)
+                + ". Take the line out of the file.")
         if unknown:
             raise ValueError(
                 "unknown member setting" + ("s" if len(unknown) != 1 else "")
