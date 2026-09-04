@@ -955,7 +955,10 @@ def slots(option: Option, shown: Any, lang: Any = None) -> str:
     """
     lang = lang if lang is not None else language_defs.get("en")
     name = html.escape(option.name)
-    available = [(str(value), str(text)) for value, text in option.options()]
+    # The text through `say`, never the value: a row is `Desert days` over
+    # `desertDays`, and only the first of those is a word.
+    available = [(str(value), lang.say(str(text)))
+                 for value, text in option.options()]
     known = {value for value, _text in available}
     labels = dict(available)
     chosen = [line.strip() for line in str(shown or "").splitlines()
@@ -1490,9 +1493,9 @@ def new_collector_page(admin: Admin, error: str = "",
         for value, label in
         [("", "-- from a weewx.conf --"),
          *collector_defs._hardware_choices(picked)])
-    reuse = admin.language.fill(
+    reuse = html.escape(admin.language.fill(
         "Leave this on {choice} to reuse that driver's configuration.",
-        choice=f"<em>{html.escape(say('from a weewx.conf'))}</em>")
+        choice=say("from a weewx.conf")))
 
     return f'''
 <section class="group">
@@ -1623,17 +1626,18 @@ def _where_it_lands(admin: Admin, name: str) -> str:
     heading = html.escape(say("Where it lands"))
     if not web.get("enabled"):
         unset = say("-- no directory set --")
-        where = html.escape(resolved or directory or unset)
-        offer = lang.fill(
-            "In {directory} on this machine. Point a web server at it, or "
-            "{link} and it is readable straight away.",
-            directory=f"<code>{where}</code>",
-            link=f'<a href="./website">'
-                 f'{html.escape(say("turn the built-in one on"))}</a>')
+        # The path goes in as text and the link comes last. A tag in the
+        # middle of a sentence cuts it into runs, and the run between two of
+        # them is one no translator is ever shown.
+        offer = html.escape(lang.fill(
+            "In {directory} on this machine. Point a web server at it, or",
+            directory=resolved or directory or unset))
+        turn = html.escape(say("turn the built-in one on"))
+        ready = html.escape(say("and it is readable straight away."))
         return f'''
 <section class="group">
   <h3>{heading}</h3>
-  <p class="lede">{offer}</p>
+  <p class="lede">{offer} <a href="./website">{turn}</a> {ready}</p>
 </section>'''
 
     port = web.get("port", 8081)
@@ -1644,16 +1648,15 @@ def _where_it_lands(admin: Admin, name: str) -> str:
     if resolved:
         typed = " " + lang.fill(
             "(you wrote {directory}, which is relative to the settings file)",
-            directory=f"<code>{html.escape(directory)}</code>")
-    served = lang.fill(
-        "In {directory}{typed}, and the built-in server hands it out at "
-        "{link}. The name in the address is this export's name.",
-        directory=f"<code>{html.escape(resolved or directory)}</code>",
-        typed=typed, link=f'<a href="{address}">{address}</a>')
+            directory=directory)
+    served = html.escape(lang.fill(
+        "In {directory}{typed}, and the built-in server hands it out at",
+        directory=resolved or directory, typed=typed))
+    named = html.escape(say("The name in the address is this export's name."))
     return f'''
 <section class="group">
   <h3>{heading}</h3>
-  <p class="lede">{served}</p>
+  <p class="lede">{served} <a href="{address}">{address}</a>. {named}</p>
 </section>'''
 
 
@@ -1692,10 +1695,10 @@ def website_summary(admin: Admin) -> str:
     hosts = _addresses()
 
     if not site.feeds:
-        at = f"http://{html.escape(hosts[0][0])}:{port}/"
-        idle = admin.language.fill(
+        at = f"http://{hosts[0][0]}:{port}/"
+        idle = html.escape(admin.language.fill(
             "The server is on, at {address}, and there is nothing to hand "
-            "out.", address=f"<code>{at}</code>")
+            "out.", address=at))
         return f'''
 <section class="group">
   <h3>{html.escape(say("Serving nothing yet"))}</h3>
@@ -1728,9 +1731,9 @@ def website_summary(admin: Admin) -> str:
 
     also = ""
     if site.default:
-        said = admin.language.fill(
+        said = html.escape(admin.language.fill(
             "{name} is also at the address itself, without a name after it.",
-            name=f"<code>{html.escape(site.default)}</code>")
+            name=site.default))
         also = f"<p class='lede'>{said}</p>"
 
     return f'''
