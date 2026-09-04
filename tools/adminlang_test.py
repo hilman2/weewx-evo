@@ -264,6 +264,15 @@ def report(show_all: bool, show_missing: bool) -> int:
               len(admin.pseudo.settings_asked) > 0, True)
         check("and the pages themselves",
               len(admin.pseudo.asked) > 0, True)
+        # A file that does not parse loses *every* word in it, and the pages
+        # still render -- in English, correctly, with nothing on them saying
+        # why. `language.py` logs it and carries on, which is right for one
+        # broken translation and unreadable from here.
+        #
+        # Found by breaking it: a duplicate key put "German: 0 of 524" in
+        # this output and the run stayed green. A count with a zero in it is
+        # the whole file gone.
+        check("the German file is readable at all", len(said) > 0, True)
     return failures
 
 

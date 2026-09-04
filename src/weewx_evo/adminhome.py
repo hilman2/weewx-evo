@@ -896,6 +896,16 @@ def _judge(admin: Any, state: State) -> None:
             f"{ago(state.newest_stranger)} and are selected by no place.",
             "./senders")
 
+    # Before anything about what arrived, because with no driver installed
+    # nothing can arrive at all. weewx-evo ships none, so this is the state a
+    # fresh installation is in -- and every other line on this page is about
+    # readings it cannot have yet.
+    if _no_driver_installed():
+        _concern(state,
+                 "No driver is installed, so nothing can read what a console "
+                 "uploads. Install the one for your hardware.",
+                 "./addons")
+
     for said in _nothing_reads_it(admin):
         _concern(state, said, "./senders")
 
@@ -911,6 +921,22 @@ def _judge(admin: Any, state: State) -> None:
 
     for said, where in _senders_placing_nothing(admin):
         _concern(state, said, where)
+
+
+def _no_driver_installed() -> bool:
+    """Whether this installation has nothing that can read an upload.
+
+    The envelope does not count. It is the core's own contract -- the door a
+    collector delivers through -- and it is always present, so counting it
+    would make a station with nothing installed look equipped.
+    """
+    from .ingest import drivers as driver_defs
+
+    try:
+        return not [one for one in driver_defs.names() if one != "json"]
+    except Exception:
+        log.debug("could not list the drivers", exc_info=True)
+        return False
 
 
 def _nothing_reads_it(admin: Any) -> list[str]:

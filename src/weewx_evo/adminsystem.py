@@ -9,8 +9,11 @@ service; in particular, the Archiver is only observable through each Place.
 from __future__ import annotations
 
 import html
+import logging
 from collections.abc import Iterable
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 
 def _row(href: str, title: str, detail: str = "", count: int | None = None,
@@ -46,6 +49,38 @@ def _instance_rows(schemas: list[Any], empty: str, say: Any = None) -> str:
                    for schema in schemas)
 
 
+def _addon_rows(admin: Any, say: Any = None) -> str:
+    """What is installed, or the sentence a fresh installation needs.
+
+    Its own panel rather than a line under Data flow: what a machine has
+    installed is not part of how readings move through it, and the panel it
+    was in reads as a list of the station's own data.
+
+    And the empty state is the one that matters. weewx-evo ships no driver,
+    so a new installation has nothing that can read an upload -- and a page
+    that says "None configured." leaves somebody looking for a setting they
+    have not got. This says what to do instead.
+    """
+    say = say or str
+    try:
+        from . import addons
+
+        have = addons.installed()
+    except Exception:
+        log.debug("could not list the add-ons", exc_info=True)
+        return ""
+    if not have:
+        # Built outside the f-string: a line break inside a replacement field
+        # needs Python 3.12, and this runs on 3.11.
+        empty = say("None. This installation can receive nothing until a "
+                    "driver is installed.")
+        return f'<p class="system-empty">{html.escape(empty)}</p>'
+    return "".join(
+        _row("./addons", one.package,
+             ", ".join(one.names) or say("a dependency"), say=say)
+        for one in have.values())
+
+
 def overview(admin: Any, message: str = "", error: str = "") -> str:
     say = admin.say
     schemas = list(admin.schemas)
@@ -69,8 +104,6 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     {_row("./live", "Live database", "Incoming packets", readonly=True,
           say=say)}
     {_row("./quality", "Sensor checks", "Global acceptance rules", say=say)}
-    {_row("./addons", "Add-ons", "Drivers and everything else not shipped",
-          say=say)}
   </section>
   <section class="system-panel">
     <div class="system-panel-head"><h3>{html.escape(say("Collectors"))}</h3>
@@ -86,6 +119,12 @@ def overview(admin: Any, message: str = "", error: str = "") -> str:
     <h3 class="system-central">
       {html.escape(say("Installation-wide settings"))}</h3>
     {_instance_rows(core, "No installation settings.", say)}
+  </section>
+  <section class="system-panel">
+    <div class="system-panel-head"><h3>{html.escape(say("Add-ons"))}</h3>
+      <a class="small-action" href="./addons">
+        {html.escape(say("Manage"))}</a></div>
+    {_addon_rows(admin, say)}
   </section>
 </div>
 <section class="system-panel service-boundary">
