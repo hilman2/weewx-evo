@@ -28,16 +28,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from weewx_evo_push_common import protocols  # noqa: E402
+from weewx_evo_push_common.driver import PushDriver  # noqa: E402
+from weewx_evo_push_common.transport import METADATA  # noqa: E402
+from weewx_evo_wunderground.catalogs import (  # noqa: E402
+    wunderground as catalog,
+)
+
 from weewx_evo import placement  # noqa: E402
 from weewx_evo.db.live import LiveStore, sender_id  # noqa: E402
 from weewx_evo.ingest import drivers  # noqa: E402
 from weewx_evo.ingest.listener import HttpListener, Ingest  # noqa: E402
-from weewx_evo.ingest.plugins.push import protocols  # noqa: E402
-from weewx_evo.ingest.plugins.push.catalogs import (  # noqa: E402
-    wunderground as catalog,
-)
-from weewx_evo.ingest.plugins.push.driver import PushDriver  # noqa: E402
-from weewx_evo.ingest.plugins.push.transport import METADATA  # noqa: E402
 from weewx_evo.units import US  # noqa: E402
 
 # The catalog is upstream's now, so the two names this file used come from

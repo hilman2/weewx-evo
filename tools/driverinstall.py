@@ -147,15 +147,20 @@ def main() -> int:
         rows = dict(userdrivers.installed(where))
         failures += not check("two installed", sorted(rows), ["fromzip", "tinystation"])
 
-        print("\nloading, beside the bundled drivers")
+        print("\nloading, beside what else is installed")
         registry = Registry()
         loaded = userdrivers.load(registry, where)
         failures += not check("user drivers loaded", sorted(loaded),
                               ["fromzip", "tinystation"])
-        registry.load()  # the bundled ones too
+        registry.load()  # the entry points and the envelope too
         names = registry.names()
         failures += not check("tiny is registered", "tiny" in names, True)
-        failures += not check("ecowitt is still there", "ecowitt" in names, True)
+        # The envelope rather than a protocol: the core ships no driver, so
+        # the thing that has to survive a directory install is the one that
+        # is always present. Naming a protocol would check which add-ons this
+        # machine happens to have.
+        failures += not check("and the envelope is still there",
+                              "json" in names, True)
 
         print("\ntaking an upload with it")
         live = LiveStore(tmp / "live.sdb", interval_seconds=60)

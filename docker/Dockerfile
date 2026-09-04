@@ -75,6 +75,30 @@ RUN pip install --no-cache-dir \
         "pytest==8.4.2" \
         "ruff==0.16.4"
 
+# The push protocols, which the core no longer ships. Installed the way an
+# operator installs them, which is the point: before this they were imported
+# out of the source tree, so nothing ever ran the entry point that a real
+# installation depends on entirely.
+#
+# Pinned to commits for the same reason WeeWX is pinned to a version. And a
+# test that needs one says so and skips where it is absent -- the core has to
+# be testable with no driver at all, because that is what a fresh install is.
+ARG PUSH_COMMON=52559665bb349e4cfa34d90745662b776fc0fd99
+ARG ECOWITT=1e1ad54fb4ae1945da3c7a0b7b5ac7286dc84e01
+ARG AMBIENT=69e0ce8a4df0c90a20f60efb6bd086a3d3ac9af5
+ARG WUNDERGROUND=390a13402845924a38b321d9177b2bd6556303e7
+ARG ACURITE=029cc9b35e97b2cd3e4b4b41e696d2775b8d3717
+ARG LACROSSE=4ae4c03df5af3950256fd79808c07833ba85a92b
+ARG WEATHERFLOW=e75158e51be8a476f4269ea896ded07273af83f0
+RUN pip install --no-cache-dir --no-deps \
+   "weewx-evo-push-common @ git+https://github.com/weewx-evo/weewx-evo-push-common@${PUSH_COMMON}" \
+   "weewx-evo-ecowitt @ git+https://github.com/weewx-evo/weewx-evo-ecowitt@${ECOWITT}" \
+   "weewx-evo-ambient @ git+https://github.com/weewx-evo/weewx-evo-ambient@${AMBIENT}" \
+   "weewx-evo-wunderground @ git+https://github.com/weewx-evo/weewx-evo-wunderground@${WUNDERGROUND}" \
+   "weewx-evo-acurite @ git+https://github.com/weewx-evo/weewx-evo-acurite@${ACURITE}" \
+   "weewx-evo-lacrosse @ git+https://github.com/weewx-evo/weewx-evo-lacrosse@${LACROSSE}" \
+   "weewx-evo-weatherflow @ git+https://github.com/weewx-evo/weewx-evo-weatherflow@${WEATHERFLOW}"
+
 # weewx-sdr, one file, for `sdr_test.py`. It is not part of WeeWX and not
 # pip-installable, so it comes down as the file it is -- which is also how
 # somebody installs it. Pinned to a commit for the same reason everything

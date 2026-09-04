@@ -485,15 +485,18 @@ def a_placement_reaches_the_driver() -> None:
     the moment a record is built, out of a file the reader re-reads.
     """
     print("\na placement made on the page reaches a reading")
-    from weewx_evo.ingest import drivers as driver_defs
-    from weewx_evo.ingest.plugins.push import driver as push
-    from weewx_evo.ingest.plugins.push import protocols as protocol_defs
+    from weewx_evo_push_common import driver as push
 
-    protocol = next(p for p in protocol_defs.registry()
-                    if p.name == "ecowitt")
+    from weewx_evo.ingest import drivers as driver_defs
+
+    # Out of the registry, which is the installed add-on rather than a class
+    # built here out of its internals. What is being measured is whether a
+    # decision reaches a reading, and the driver that has to do that is the
+    # one an operator's pip install put there.
+    driver = driver_defs.DEFAULT.get("ecowitt")
+    protocol = type(driver).protocol_class
     upload = {"PASSKEY": "AAAA", "tf_ch1": "59.9", "tempf": "68.2"}
     readings = protocol.readings(push._Request(body=b""), upload)
-    driver = push.driver_class(protocol)()
 
     # Contested on purpose: two drivers disagree about where `tf_ch1` goes,
     # so nothing is written until somebody decides. That makes it the field
@@ -523,7 +526,7 @@ def a_placement_reaches_the_driver() -> None:
     # And the clock, which is a property of the box rather than of the six
     # protocols it might be speaking. Still at the front door: a stamp is too
     # old because a clock is wrong, and there is no answering that later.
-    clocks = push.driver_class(protocol)(max_behind=3600, stations={
+    clocks = type(driver)(max_behind=3600, stations={
         "drifty": {"passkey": "BBBB", "max_behind": 1800.0}})
     check("a console can be given its own tolerance",
           push._clock(clocks.stations.get("bbbb") or {}, "max_behind",

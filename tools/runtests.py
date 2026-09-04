@@ -137,7 +137,10 @@ def tests() -> list[Test]:
         Test("setup", ["setup_test.py"],
              "an empty directory to a configured station, by forms alone"),
         Test("consolesetup", ["console_setup_test.py"],
-             "the page asks each driver how its hardware is pointed here"),
+             "the page asks each driver how its hardware is pointed here",
+             needs=("weewx_evo_ecowitt", "weewx_evo_ambient",
+                    "weewx_evo_wunderground", "weewx_evo_acurite",
+                    "weewx_evo_lacrosse", "weewx_evo_weatherflow")),
         Test("admin", ["adminpage.py"],
              "the settings page: every form, and what a partial POST does"),
         Test("resilience", ["resilience_test.py"],
@@ -153,7 +156,8 @@ def tests() -> list[Test]:
         Test("web", ["web_test.py"],
              "the built-in server"),
         Test("smoke", ["smoke.py"],
-             "listener, archiver and database together"),
+             "listener, archiver and database together",
+             needs=("weewx_evo_ecowitt",)),
         Test("multisource", ["multisource.py"],
              "isolated source policy and Place-owned runtime routing"),
         Test("driverinstall", ["driverinstall.py"],
@@ -204,9 +208,13 @@ def tests() -> list[Test]:
         Test("roles", ["roles_test.py"],
              "a second station is moved aside, and one notices nothing"),
         Test("placement", ["placement_test.py"],
-             "the read side gives what the write side gave, on real payloads"),
+             "the read side gives what the write side gave, on real payloads",
+             needs=("weewx_evo_ecowitt", "weewx_evo_ambient",
+                    "weewx_evo_wunderground", "weewx_evo_acurite",
+                    "weewx_evo_lacrosse", "weewx_evo_weatherflow")),
         Test("adminfields", ["adminfields_test.py"],
-             "a reading can be placed, and what is already there is said"),
+             "a reading can be placed, and what is already there is said",
+             needs=("weewx_evo_ecowitt",)),
         Test("adminlive", ["adminlive_test.py"],
              "the live table's own rows, and where each reading goes"),
         Test("adminsearch", ["adminsearch_test.py"],
@@ -216,7 +224,8 @@ def tests() -> list[Test]:
         Test("adminhome", ["adminhome_test.py"],
              "the overview says what is wrong, and only when something is"),
         Test("archives", ["archives_test.py"],
-             "two places, two series, and neither one is the other's"),
+             "two places, two series, and neither one is the other's",
+             needs=("weewx_evo_ecowitt", "weewx_evo_wunderground")),
         # Slow on purpose: a real serve, a simulator uploading
         # throughout, and two archive intervals to wait for. It
         # covers the half archives_test does not -- feeds,
@@ -225,7 +234,8 @@ def tests() -> list[Test]:
              "two archives, from the console to the published file",
              slow=True),
         Test("stations", ["stations_test.py"],
-             "announced consoles, strangers noticed, neither guessed at"),
+             "announced consoles, strangers noticed, neither guessed at",
+             needs=("weewx_evo_wunderground",)),
         Test("restart", ["restart_test.py"],
              "a restart re-does nothing, and the site is up meanwhile",
              slow=True),
@@ -251,7 +261,8 @@ def tests() -> list[Test]:
         Test("alldrivers", ["alldrivers_test.py"],
              "every driver behaves the same on the stand-in as on WeeWX"),
         Test("wunderground", ["wunderground_test.py"],
-             "the WU protocol, against our own upload of the same protocol"),
+             "the WU protocol, against our own upload of the same protocol",
+             needs=("weewx_evo_wunderground",)),
 
         # -- what a page comes out as ------------------------------------
         Test("feeds", ["feeds_test.py"],
@@ -275,13 +286,13 @@ def tests() -> list[Test]:
              "one site, several places -- and one place unchanged",
              needs=("Cheetah",)),
 
-        # -- the driver's own suite --------------------------------------
-        Test("push", ["-m", "pytest", "tests/push", "-q"],
-             "the six push protocols' own suite, 135 tests",
-             needs=("pytest",)),
+        # The protocols' own suite moved out with them. It tests
+        # `protocols/` and `catalogs/`, which are byte-identical to
+        # weewx-ultimate-push, and it belongs beside them: run there, a fix
+        # to a field placement is one diff in one repository.
 
         # -- and the check that finds what no test does -------------------
-        Test("ruff", ["-m", "ruff", "check", "src/", "tools/", "tests/"],
+        Test("ruff", ["-m", "ruff", "check", "src/", "tools/"],
              "a call in a branch nothing walks through",
              needs=("ruff",)),
     ]
@@ -308,6 +319,21 @@ def importable(module: str) -> bool:
         capture_output=True, cwd=ROOT, check=False).returncode == 0
 
 
+def _add_on(module: str) -> str:
+    """What to install, for a test that needs a driver the core does not ship.
+
+    The core ships none, so a run on a machine with no add-on installed skips
+    these rather than failing -- that machine is a valid installation, and it
+    is exactly what a fresh one looks like. The Docker image installs them,
+    which is where they are actually measured.
+    """
+    if not module.startswith("weewx_evo_"):
+        return ""
+    package = module.replace("_", "-")
+    return (f"{package} is not installed. It is an add-on, not part of the "
+            f"core: pip install git+https://github.com/weewx-evo/{package}")
+
+
 def missing(test: Test, have: dict[str, bool], reference: bool) -> str:
     for module in test.needs:
         if not have.get(module, False):
@@ -319,7 +345,7 @@ def missing(test: Test, have: dict[str, bool], reference: bool) -> str:
                 "ephem": "pyephem is not installed (pip install ephem)",
                 "pytest": "pytest is not installed",
                 "ruff": "ruff is not installed",
-            }.get(module, f"{module} is not importable")
+            }.get(module, _add_on(module) or f"{module} is not importable")
     if test.needs_reference and not reference:
         return (f"{database()} is not there. It holds real measurements, so "
                 f"it is not in the repository; the wiki page Testing says "

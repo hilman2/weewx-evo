@@ -10,7 +10,7 @@ live table, and the archiver at the other end of it.
 It sends a **recorded** upload rather than an invented one. The field names,
 their spelling and their units are the console's, not ours, and a simulator
 that made them up would agree with our own parser and with nothing else.
-`tests/push/fixtures/hp2561ae_pro.txt` is the shape; the values move and the
+`tests/uploads/hp2561ae_pro.txt` is the shape; the values move and the
 clock is now.
 
     python tools/ecowittsim.py http://box.local:8000/<token>/ecowitt/
@@ -42,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 #: is useful copied onto the machine the console is pretending to stand next
 #: to, and there it arrives as two files in one directory.
 RECORDED_AT = (HERE / "hp2561ae_pro.txt",
-               HERE.parent / "tests" / "push" / "fixtures"
+               HERE.parent / "tests" / "uploads"
                / "hp2561ae_pro.txt")
 
 def expected_answer() -> str:
@@ -60,7 +60,7 @@ def expected_answer() -> str:
     """
     try:
         sys.path.insert(0, str(HERE.parent / "src"))
-        from weewx_evo.ingest.plugins.push.protocols import ecowitt
+        from weewx_evo_ecowitt.protocols import ecowitt
 
         return str(getattr(ecowitt.Ecowitt, "answer", "") or "success")
     except Exception:

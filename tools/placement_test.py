@@ -42,7 +42,7 @@ Four layers:
     python tools/placement_test.py
     python tools/placement_test.py --capture reference/live.sdb
 
-The captured payloads under `tests/push/fixtures` are real uploads from six
+The captured payloads under `tests/uploads` are real uploads from six
 protocols. `--capture` points at a live database or an ndjson spool from a
 running instance, so a run can cover a week of one console rather than
 twenty-three single frames.
@@ -63,6 +63,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from weewx_evo_push_common import mapping  # noqa: E402
+
 from weewx_evo import archives as archive_defs  # noqa: E402
 from weewx_evo import placement, roles, units  # noqa: E402
 from weewx_evo import stations as station_defs  # noqa: E402
@@ -75,10 +77,9 @@ from weewx_evo.db.live import (  # noqa: E402
     sender_id,
 )
 from weewx_evo.ingest import drivers  # noqa: E402
-from weewx_evo.ingest.plugins.push import mapping  # noqa: E402
 
 failures = 0
-FIXTURES = ROOT / "tests" / "push" / "fixtures"
+FIXTURES = ROOT / "tests" / "uploads"
 
 #: Which driver reads each fixture directory. By directory rather than by
 #: asking the registry to claim: a test that guessed would be testing the
@@ -114,7 +115,7 @@ def oracle(driver: object, body: bytes, meta: dict, station: object = None,
     were before the journal. Kept here on purpose: once the product no longer
     contains this path, a copy of it is the only thing a comparison can mean.
     """
-    from weewx_evo.ingest.plugins.push.driver import _Request
+    from weewx_evo_push_common.driver import _Request
 
     request = _Request(path=str(meta.get("path") or "/"), body=body)
     raw = driver._raw(request)
@@ -160,7 +161,7 @@ def oracle(driver: object, body: bytes, meta: dict, station: object = None,
 def guesses_of(driver: object, body: bytes, meta: dict,
                infer: str = mapping.SERIES) -> dict:
     """What the old path would have placed by guessing. Raw name -> column."""
-    from weewx_evo.ingest.plugins.push.driver import _Request
+    from weewx_evo_push_common.driver import _Request
 
     request = _Request(path=str(meta.get("path") or "/"), body=body)
     raw = driver._raw(request)
@@ -372,7 +373,7 @@ def what_moved_off_the_front_door() -> None:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
         work = Path(raw)
         passkey = driver._station_of(driver._raw(
-            __import__("weewx_evo.ingest.plugins.push.driver", fromlist=["x"])
+            __import__("weewx_evo_push_common.driver", fromlist=["x"])
             ._Request(path="/ecowitt/", body=body)))
 
         # -- indoor ---------------------------------------------------

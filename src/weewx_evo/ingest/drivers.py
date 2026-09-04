@@ -842,8 +842,16 @@ class Registry:
                 log.exception("could not load the driver %r; carrying on without it",
                               entry.name)
 
-        from . import plugins
-        plugins.load(self)
+        # The envelope, which is not a driver: it is the door every collector
+        # delivers through, so it is always here and an add-on cannot displace
+        # it. Registered after the entry points for exactly that reason.
+        from .envelope import EnvelopeDriver
+
+        self.register("json", EnvelopeDriver(), replace=True)
+
+        from . import userdrivers
+
+        userdrivers.load(self)
 
 
 #: The registry the listener uses unless it is given another.

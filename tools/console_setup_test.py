@@ -29,12 +29,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from weewx_evo_push_common import driver as push
+
 from weewx_evo import adminstations
 from weewx_evo.db.live import LiveStore
 from weewx_evo.ingest import drivers
-from weewx_evo.ingest.envelope import EnvelopeDriver
 from weewx_evo.ingest.listener import Ingest, UdpListener
-from weewx_evo.ingest.plugins.push import driver as push
 from weewx_evo.netaccess import Access
 
 #: Everything `adminstations.fill` can answer. A placeholder outside this is
@@ -120,9 +120,14 @@ class FakeAdmin:
 
 
 def installed() -> None:
-    """Every pushing protocol, plus the envelope, into the registry."""
-    push.load(drivers.DEFAULT)
-    drivers.DEFAULT.register("json", EnvelopeDriver(), replace=True)
+    """Whatever is installed, through the door an operator's install uses.
+
+    `load()` walks the entry points, so this is the real path: pip installed
+    the protocols, they declared themselves, and the page finds them. Before
+    the drivers moved out this imported them from the source tree, which
+    proved that an import works and nothing about an installation.
+    """
+    drivers.DEFAULT.load()
 
 
 def what_the_drivers_say() -> None:

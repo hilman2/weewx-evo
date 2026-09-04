@@ -2619,11 +2619,21 @@ def cmd_columns(args: argparse.Namespace) -> int:
 
 def cmd_driver_list(args: argparse.Namespace) -> int:
     where = driver_directory(args)
-    from .ingest.plugins import bundled
+    # Packages first, because that is how a driver arrives now: the core
+    # ships none, and `pip install weewx-evo-ecowitt` is the ordinary way in.
+    # Named with the package they came from, so that "which add-on do I
+    # remove" has an answer that does not require guessing.
+    from importlib.metadata import entry_points
 
-    print(f"bundled with weewx-evo ({len(bundled())}):")
-    for name in bundled():
-        print(f"  {name}")
+    packaged = sorted(
+        (entry.name, entry.value)
+        for entry in entry_points(group=drivers.ENTRY_POINT_GROUP))
+    print(f"installed as packages ({len(packaged)}):")
+    for name, comes_from in packaged:
+        print(f"  {name:<24} {comes_from}")
+    if not packaged:
+        print("  (none -- 'weewx-evo driver install' or see the add-on list)")
+    print()
 
     rows = userdrivers.installed(where)
     print()

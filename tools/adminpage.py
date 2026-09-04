@@ -483,12 +483,13 @@ def main() -> int:
         print("\nwhat declares settings")
         names = [s.name for s in admin.schemas]
         failures += not check("the core does", "core" in names, True)
-        # Not "and the ecowitt driver": the six that ship declare nothing
-        # now, and the mechanism is checked below with a driver written for
-        # the purpose -- which is the case that matters, since a driver from
-        # outside the repository is the one that has settings of its own.
+        # The envelope, not a protocol: the core ships no driver at all, so
+        # a check naming one measures whether an add-on happened to be
+        # installed. `json` is the one thing always there -- it is the door a
+        # collector delivers through -- and what is being checked is that the
+        # page asks the registry rather than holding a list.
         failures += not check("and it knows the drivers",
-                              "ecowitt" in drivers_seen(), True)
+                              "json" in drivers_seen(), True)
         kinds = {s.kind for s in admin.schemas} | {"driver"}
         # Every kind the page groups by has to be represented, or a whole
         # heading in the sidebar is quietly empty. Exports appear only once
@@ -611,7 +612,7 @@ def main() -> int:
         failures += not check("the driver is a dropdown",
                               'id="f-driver"' in html and "<select" in html, True)
         failures += not check("listing what is installed",
-                              ">ecowitt<" in html, True)
+                              ">json<" in html, True)
         failures += not check("who is answered has suggestions",
                               'list="l-allow"' in html, True)
         failures += not check("including the bounded and broad choices",
@@ -666,7 +667,11 @@ def main() -> int:
             "port": "8000",
             "rate": "12.5",
             "token": "an-upload-token",
-            "driver": "ecowitt",
+            # The envelope: it is the one driver always present, because it
+            # is the core's own contract rather than an add-on. Naming a
+            # protocol here made this whole round trip depend on which
+            # add-ons a machine happened to have.
+            "driver": "json",
             "udp_port": "0",
         })
         failures += not check("it redirects rather than re-saving", code, 303)

@@ -56,6 +56,32 @@ feeds.metric.kind = "json"
 """
 
 
+class _TimelyDriver:
+    """A driver whose settings are durations, for the parsing to be measured.
+
+    Its own rather than an installed protocol's. The core ships no driver, so
+    a check that named one would be measuring which add-ons this machine has;
+    what matters here is that a `kind="duration"` reaches the driver as
+    seconds, which is the core's job for every driver there will ever be.
+    """
+
+    def __init__(self, max_behind: int = 3600, max_ahead: int = 60) -> None:
+        self.max_behind = max_behind
+        self.max_ahead = max_ahead
+
+    @classmethod
+    def options(cls) -> tuple:
+        return (option_defs.Group("Clock", "How far out a console may be.", (
+            option_defs.Option("max_behind", "Oldest accepted",
+                               kind="duration", default="1h"),
+            option_defs.Option("max_ahead", "Furthest ahead accepted",
+                               kind="duration", default="1m"),
+        )),)
+
+    def packets(self, body: bytes, meta: dict) -> list:
+        return []
+
+
 def args_with(**kwargs) -> argparse.Namespace:
     """A namespace where everything not named is None, as argparse leaves it."""
     blank = {name.replace(".", "_"): None for _g, o in CORE for name in [o.name]}
@@ -265,10 +291,15 @@ def main() -> int:
         # wrong setting, and the option silently does nothing.
         from weewx_evo.ingest import drivers as driver_registry
 
-        registry = driver_registry.DEFAULT
-        registry.load()
-        built = registry.configure("ecowitt", {"max_behind": "4h",
-                                               "max_ahead": "5m"})
+        # A driver written here rather than an installed one. The core ships
+        # none, so naming a protocol would make this measure whether an
+        # add-on happened to be present -- and what is being measured is the
+        # core's own parsing, which is the same for every driver there will
+        # ever be.
+        registry = driver_registry.Registry()
+        registry.register_factory("timely", _TimelyDriver)
+        built = registry.configure("timely", {"max_behind": "4h",
+                                              "max_ahead": "5m"})
         failures += not check("a duration arrives as seconds",
                               getattr(built, "max_behind", None), 14400)
         failures += not check("and so does the other one",
@@ -276,7 +307,7 @@ def main() -> int:
 
         # And a value nothing can read must not take the station down with
         # it: the driver falls back to its own default and keeps recording.
-        built = registry.configure("ecowitt", {"max_behind": "gestern"})
+        built = registry.configure("timely", {"max_behind": "gestern"})
         failures += not check("an unreadable one falls back",
                               getattr(built, "max_behind", None), 3600)
         failures += not check("rather than leaving no driver at all",
