@@ -22,9 +22,16 @@ steps. What may be installed is what the catalogue lists, and the URL comes
 from the catalogue entry rather than from the request -- so the worst a
 tampered form can do is name a package that is not there.
 
-A path or a URL somebody types on the command line is a different matter and
-stays possible (`weewx-evo driver install`): that is a person on the machine
-doing it deliberately, which is not the same as a form field.
+**The command line may install anything, and should.** Who publishes an
+add-on is not ours to decide -- the catalogue says what *we* offer, not what
+anybody is allowed to run. So `weewx-evo addon install --unlisted <spec>`
+takes whatever pip takes, and the difference from the page is not a judgement
+about the package: it is that a person on the machine typed it, and a form
+field is not a person.
+
+The flag is required rather than inferred from "not in the catalogue",
+because inferring it would turn a mistyped catalogue name into an install of
+whatever happens to have that name on PyPI.
 
 ## A new add-on needs a restart
 
@@ -143,6 +150,14 @@ _on_path: Path | None = None
 #: installed either way is found the same way.
 BUILD_LIST = "deploy/addons.txt"
 
+#: Where everything the catalogue lists lives, and the condition for being
+#: listed at all. The page installs with one click and no further question,
+#: and the only honest answer to "who stands behind that" is whoever can
+#: write to the repository it came from.
+#:
+#: Not a rule about what may be run. `install_unlisted` takes anything.
+ORGANISATION = "https://github.com/weewx-evo/"
+
 
 def directory(archive: str | os.PathLike | None = None) -> Path:
     """Where add-ons installed from here live.
@@ -230,12 +245,18 @@ def install(package: str, where: Path | None = None,
     if one is None:
         return (f"{package!r} is not in the add-on list. What can be "
                 f"installed here is what that list has.")
-    if not one.repository.startswith("https://github.com/"):
-        # The catalogue is ours, so this cannot normally happen -- and if the
-        # catalogue is ever served from somewhere it should not be, this is
-        # the line that stops it turning into an install.
-        return (f"{package!r} does not have a repository this can install "
-                f"from. Install it by hand.")
+    if not one.repository.startswith(ORGANISATION):
+        # Everything the catalogue lists is in the organisation -- that is the
+        # condition for being merged into it, because this is the route with
+        # one click and no further question. A catalogue served from somewhere
+        # it should not be cannot turn that click into an install of anything
+        # else, and this is the line that makes that true rather than assumed.
+        #
+        # It is not a rule about what may be run: `install_unlisted` takes
+        # whatever pip takes.
+        return (f"{package!r} is in the list but does not live in the "
+                f"weewx-evo organisation. Install it with "
+                f"`weewx-evo addon install --unlisted` if you want it.")
 
     into = directory()
     try:
@@ -275,6 +296,48 @@ def install(package: str, where: Path | None = None,
         problem = install(name, where, runner)
         if problem:
             return f"Installed {one.name}, but {problem}"
+    return ""
+
+
+def install_unlisted(spec: str, where: Path | None = None,
+                     runner: object = None) -> str:
+    """Install anything pip takes. For the command line only.
+
+    Who publishes an add-on is not ours to decide. The catalogue is what this
+    installation *offers*, and offering is not permitting -- so a person on
+    the machine can install a package from anywhere, and the settings page
+    cannot, because a form field is not a person.
+
+    `--no-deps` here too, and it costs something: a package that really needs
+    another gets neither, and is told so rather than half-installed. The
+    reason is the same as everywhere else here -- these depend on
+    `weewx-evo`, which is the running program and not something pip can
+    fetch, so a resolver would fail on every one of them.
+    """
+    spec = spec.strip()
+    if not spec:
+        return "Nothing to install."
+    into = where or directory()
+    try:
+        into.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"could not make {into}: {exc}"
+
+    before = set(installed())
+    command = [sys.executable, "-m", "pip", "install", "--upgrade",
+               "--no-deps", "--target", str(into), spec]
+    problem = _run(command, runner, f"could not install {spec}")
+    if problem:
+        return problem
+    on_path()
+
+    # What arrived, rather than what was asked for: a spec can be a URL, a
+    # path or a name with a version on it, and none of those is the package
+    # name. The one thing that answers reliably is looking at what is there
+    # now that was not there before.
+    arrived = sorted(set(installed()) - before)
+    if arrived:
+        log.info("installed %s from %r", ", ".join(arrived), spec)
     return ""
 
 

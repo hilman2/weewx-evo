@@ -2326,7 +2326,10 @@ def cmd_addon_install(args: argparse.Namespace) -> int:
     from . import addons
 
     settings_for(args)
-    problem = addons.install(args.package)
+    if getattr(args, "unlisted", False):
+        problem = addons.install_unlisted(args.package)
+    else:
+        problem = addons.install(args.package)
     if problem:
         print(problem, file=sys.stderr)
         return 1
@@ -5722,6 +5725,14 @@ def main(argv: list[str] | None = None) -> int:
     q = addon_sub.add_parser("install", help="install one from the list")
     add_common(q)
     q.add_argument("package", help="its name, as `addon list` prints it")
+    # Who publishes an add-on is not ours to decide: the list says what this
+    # installation offers, not what anybody may run. Required rather than
+    # inferred from "not in the list", because inferring it would turn a
+    # mistyped name into an install of whatever has that name on PyPI.
+    q.add_argument("--unlisted", action="store_true",
+                   help="take anything pip takes -- a name, a git URL, a "
+                        "path -- rather than a name from the list. Its "
+                        "dependencies are not fetched: install those too.")
     q.set_defaults(func=cmd_addon_install)
 
     q = addon_sub.add_parser("remove", help="uninstall one")

@@ -148,9 +148,34 @@ weewx-evo addon remove weewx-evo-ecowitt
 The settings page does the same thing under System -> Add-ons, and puts what
 would read an upload arriving here unread at the top of it.
 
+**The list is what we offer, not what you may run.** Everything in it lives
+in the weewx-evo organisation, because that page installs with one click and
+no further question. Anything else is one flag away:
+
+```bash
+weewx-evo addon install --unlisted git+https://example.org/someone/theirs
+```
+
+Required rather than inferred from "not in the list", because inferring it
+would turn a mistyped name into an install of whatever has that name on PyPI.
+Its dependencies are not fetched; install those too.
+
+It goes into `<data directory>/addons`, not into site-packages: in a
+container site-packages is in the image, so an add-on installed from the page
+would be gone at the next rebuild -- with the console still uploading and
+nothing reading it. `deploy/addons.txt` is the other way, for a deployment
+that wants what it runs pinned in a file, and both are found the same way.
+
 A new one needs a restart. Entry points are read once per process, so an
 add-on installed while the service runs is there and doing nothing until it
 comes back; both the page and the command say so.
+
+**Removing one leaves what it recorded.** The packets stay in the journal,
+the archive keeps its columns and `stations.toml` keeps the sender. Deleting
+a station's configuration because a package went away is the expensive
+direction of a decision somebody may be reversing in a minute -- and the
+sender shows up as "nothing reads this", which is the right thing to say and
+comes with the add-on's name attached.
 
 ### 2. Dropped into `<data directory>/drivers/`
 

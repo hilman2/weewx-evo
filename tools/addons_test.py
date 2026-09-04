@@ -59,8 +59,8 @@ repository = "https://github.com/weewx-evo/weewx-evo-push-common"
 name = "weewx-evo-elsewhere"
 kind = "driver"
 provides = "elsewhere"
-summary = "One whose repository is not somewhere this may install from."
-repository = "https://example.invalid/someone/else"
+summary = "One whose repository is outside the organisation."
+repository = "https://github.com/someone/else"
 """
 
 
@@ -127,10 +127,16 @@ def only_what_the_catalogue_lists() -> None:
         # In the catalogue, but pointing somewhere this will not install
         # from. The catalogue is ours, so this should never happen -- and it
         # is the line that stops it becoming an install if it ever does.
+        # On GitHub, and still not ours. Everything the catalogue lists is
+        # in the organisation, because this is the route with one click and
+        # no further question -- a catalogue served from somewhere it should
+        # not be cannot turn that click into an install of anything else.
         ran = Ran()
         problem = addons.install("weewx-evo-elsewhere", where, ran)
-        check("a listed one with a repository elsewhere is refused",
-              "install from" in problem, True)
+        check("a listed one outside the organisation is refused",
+              "weewx-evo organisation" in problem, True)
+        check("and it says which command would install it anyway",
+              "--unlisted" in problem, True)
         check("and pip was not run for it", ran.calls, [])
 
 
@@ -172,6 +178,48 @@ def a_dependency_comes_too_and_only_from_the_list() -> None:
                   ["weewx-evo-ecowitt"])
         finally:
             addons._needs = was
+
+
+def the_command_line_may_install_anything() -> None:
+    """Who publishes an add-on is not ours to decide.
+
+    The catalogue says what this installation *offers*, and offering is not
+    permitting -- so a person on the machine can install from anywhere. The
+    page cannot, and that is not a judgement about the package: it is that a
+    form field is not a person.
+    """
+    print()
+    print("the command line, with --unlisted")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as raw:
+        where = Path(raw)
+        _cached(where)
+
+        ran = Ran()
+        check("a git URL nobody listed is installed",
+              addons.install_unlisted("git+https://example.org/someone/theirs",
+                                      where, ran), "")
+        check("as given, with no lookup",
+              ran.calls[0][-1], "git+https://example.org/someone/theirs")
+        check("and into the add-on directory like anything else",
+              "--target" in ran.calls[0], True)
+
+        ran = Ran()
+        check("a local path too",
+              addons.install_unlisted("./a-directory", where, ran), "")
+        check("nothing to install is said rather than run",
+              bool(addons.install_unlisted("   ", where, ran)), True)
+
+        # And the page has no way to reach it. `act` takes the verb from the
+        # path, and there are two verbs.
+        from weewx_evo import adminaddons
+
+        source = Path("src/weewx_evo/adminaddons.py").read_text(
+            encoding="utf-8")
+        check("the page never calls it",
+              "install_unlisted" in source, False)
+        check("and an unknown verb is refused",
+              bool(adminaddons.act(None, "install_unlisted",
+                                   {"package": "x"})), True)
 
 
 def what_pip_says_is_reported() -> None:
@@ -312,6 +360,7 @@ def a_read_only_page_offers_no_buttons(where: Path) -> None:
 def main() -> int:
     only_what_the_catalogue_lists()
     a_dependency_comes_too_and_only_from_the_list()
+    the_command_line_may_install_anything()
     what_pip_says_is_reported()
     removing_asks_what_is_here()
     what_is_installed_is_read_from_the_entry_points()
